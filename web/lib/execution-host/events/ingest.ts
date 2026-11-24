@@ -151,6 +151,7 @@ async function retainedWorkspaceProvenance(
   operationId: WorkspaceTerminalPayload["operationId"],
 ) {
   const kind = operationId === "stageCPublish" ? "workspace.publish"
+    : operationId === "stageCSync" ? "workspace.sync"
     : operationId === "stageCPreserve" ? "workspace.preserve"
     : operationId === "stageCRelease" ? "workspace.release" : null;
   if (!kind) return undefined;

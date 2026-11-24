@@ -93,8 +93,9 @@ x-operations:
     request: StageCSyncRequest
     response: CommandAccepted
     status: 202
-    result: GitResult
+    result: SyncResult
     replay: sameCommand
+    implementedProfile: { owner: workspaceOperation, strategy: [fastForward, merge, rebase] }
   stageCPublish:
     method: POST
     path: /v1/workspaces/{id}/publication
@@ -789,6 +790,16 @@ definitions:
       head: *a4
       priorTarget: *a7
       observedTarget: *a7
+  SyncResult:
+    type: object
+    additionalProperties: false
+    required: [generation, head, priorTarget, observedTarget, behind]
+    properties:
+      generation: *a1
+      head: *a4
+      priorTarget: *a4
+      observedTarget: *a4
+      behind: { type: integer, minimum: 0 }
   Preserved:
     type: object
     additionalProperties: false
@@ -831,6 +842,8 @@ definitions:
             command_digest_mismatch,
             retained_disposition_required,
             target_ref_changed,
+            sync_conflict,
+            non_fast_forward,
             head_changed,
             workspace_writer_active,
             selection_changed,
@@ -908,7 +921,7 @@ definitions:
           - properties: { operationId: { const: stageCCancelWorkload }, result: { $ref: "#/definitions/CancelResult" } }
           - properties: { operationId: { const: stageCCheckpoint }, result: { $ref: "#/definitions/GitCheckpoint" } }
           - properties: { operationId: { const: stageCRestore }, result: { $ref: "#/definitions/GitCheckpoint" } }
-          - properties: { operationId: { const: stageCSync }, result: { $ref: "#/definitions/GitResult" } }
+          - properties: { operationId: { const: stageCSync }, result: { $ref: "#/definitions/SyncResult" } }
           - properties: { operationId: { const: stageCPublish }, result: { $ref: "#/definitions/PublicationResult" } }
           - properties: { operationId: { const: stageCPreserve }, result: { $ref: "#/definitions/Preserved" } }
           - properties: { operationId: { const: stageCRelease }, result: { $ref: "#/definitions/Released" } }
@@ -1068,10 +1081,7 @@ definitions:
           kind:
             enum: [ workspace.sync ]
           issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
-      owner:
-        oneOf:
-          - { $ref: "#/definitions/AssignmentOwner" }
-          - { $ref: "#/definitions/WorkspaceOperationOwner" }
+      owner: { $ref: "#/definitions/WorkspaceOperationOwner" }
       payload: { $ref: "#/definitions/SyncPayload" }
   StageCPublishRequest:
     type: object

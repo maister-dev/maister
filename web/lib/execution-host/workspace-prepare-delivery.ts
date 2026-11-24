@@ -33,6 +33,7 @@ import {
   WorkspaceCheckpointPayloadSchema,
   WorkspaceRestorePayloadSchema,
   RetainedWorkspacePublishSchema,
+  RetainedWorkspaceSyncSchema,
   RetainedWorkspacePreserveSchema,
   RetainedWorkspaceReleaseSchema,
 } from "./workspace-prepare-schema";
@@ -71,7 +72,7 @@ export function retainedWorkspaceGitRequest(command: ExecutionCommand, hostKey: 
 }
 
 export function isAddressedRetainedWorkspaceCommand(command: ExecutionCommand): boolean {
-  return command.kind === "workspace.publish" || command.kind === "workspace.preserve" ||
+  return command.kind === "workspace.publish" || command.kind === "workspace.preserve" || command.kind === "workspace.sync" ||
     (command.kind === "workspace.release" && typeof command.payload.claimId === "string");
 }
 
@@ -99,6 +100,11 @@ function retainedWorkspaceEnvelope(
 
 export function retainedWorkspaceOperationRequest(command: ExecutionCommand, hostKey: string): WorkspaceRetainedRequest {
   const identity = { id: command.id, issuedAt: command.createdAt.toISOString() };
+  if (command.kind === "workspace.sync") {
+    const { claimId, fence, ...payload } = RetainedWorkspaceSyncSchema.parse(command.payload);
+    return { ...retainedWorkspaceEnvelope(command, hostKey, { ...payload, claimId, fence }),
+      command: { ...identity, kind: command.kind }, payload };
+  }
   if (command.kind === "workspace.publish") {
     const { claimId, fence, ...payload } = RetainedWorkspacePublishSchema.parse(command.payload);
     return { ...retainedWorkspaceEnvelope(command, hostKey, { ...payload, claimId, fence }),

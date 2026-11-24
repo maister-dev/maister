@@ -38,7 +38,10 @@ import { pgErrorOf } from "@/lib/db/pg-error";
 import { getAssignmentById } from "@/lib/execution-host/assignments";
 import { insertCommand } from "@/lib/execution-host/commands";
 import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
-import { settleRetainedWorkspaceCommand } from "@/lib/execution-host/workspace-retained-operation";
+import {
+  nextRetainedWorkspaceFence,
+  settleRetainedWorkspaceCommand,
+} from "@/lib/execution-host/workspace-retained-operation";
 import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
 import { WORKTREE_ACTION_STATUSES } from "@/lib/workbench-git/policy";
 import { MaisterError } from "@/lib/errors";
@@ -1077,15 +1080,11 @@ async function archiveAddressedWorkbench(
           eq(schema.executionCommands.runId, runId),
           eq(schema.executionCommands.executionHostId, hostId),
           eq(schema.executionCommands.targetSessionId, handle),
-          inArray(schema.executionCommands.kind, [
-            "workspace.publish",
-            "workspace.preserve",
-          ]),
+          eq(schema.executionCommands.kind, "workspace.preserve"),
         ),
       );
     const resumed = rows.find(
       (row) =>
-        row.kind === "workspace.preserve" &&
         row.payload.claimId === workspace.lifecycleOperationAttemptId,
     );
     const claim = await claimLifecycleOperation({
@@ -1126,25 +1125,6 @@ async function archiveAddressedWorkbench(
     if (resumed && resumed.payload.claimId === claim.attemptId) {
       preserve = resumed;
     } else {
-      const highestFence = rows.reduce((highest, row) => {
-        const fence = row.payload.fence;
-        if (
-          typeof fence !== "number" ||
-          !Number.isSafeInteger(fence) ||
-          fence <= 0
-        )
-          throw new MaisterError(
-            "ACP_PROTOCOL",
-            "A retained workspace fence is invalid",
-          );
-
-        return Math.max(highest, fence);
-      }, 0);
-      if (!Number.isSafeInteger(highestFence + 1))
-        throw new MaisterError(
-          "ACP_PROTOCOL",
-          "Retained workspace fence is exhausted",
-        );
       preserve = await insertCommand(tx, {
         ...target,
         kind: "workspace.preserve",
@@ -1153,7 +1133,7 @@ async function archiveAddressedWorkbench(
         payload: {
           generation,
           claimId: claim.attemptId,
-          fence: highestFence + 1,
+          fence: await nextRetainedWorkspaceFence(tx, hostId, handle),
           disposition: "archive",
           quiescenceId: claim.attemptId,
         },

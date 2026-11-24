@@ -353,6 +353,7 @@ function receiptAdmission(
     case "workspace.run":
     case "workspace.checkpoint":
     case "workspace.restore":
+    case "workspace.sync":
     case "workspace.publish":
     case "workspace.preserve":
     case "workspace.publication":

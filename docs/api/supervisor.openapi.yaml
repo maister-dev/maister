@@ -378,6 +378,29 @@ paths:
               schema: { type: string }
         "400": { description: Invalid archive request or owner. }
         "409": { description: Different host or command digest. }
+  /v1/workspaces/{id}/sync:
+    post:
+      tags: [execution-host]
+      operationId: stageCSync
+      summary: Sync a retained workspace to its approved Git target
+      description: The original supervisor compares the source HEAD and exact remote tip, prepares a candidate away from the live checkout, and verifies the applied result under the retained workspace fence.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCSyncRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the verified sync receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid sync request or owner. }
+        "409": { description: Different host or command digest. }
   /v1/workspaces/{id}/publication:
     post:
       tags: [execution-host]

@@ -1945,7 +1945,8 @@ export function sendWorkspaceGitCommand(handle: string, input: WorkspaceCheckpoi
 export function sendRetainedWorkspaceCommand(input: WorkspaceRetainedRequest): Promise<void> {
   const workspace = `/v1/workspaces/${encodeURIComponent(input.owner.workspaceHandle)}`;
   if (input.command.kind === "workspace.release") return sendWorkspaceCommand(workspace, input, "DELETE");
-  const action = input.command.kind === "workspace.preserve" ? "preserve" : "publication";
+  const action = input.command.kind === "workspace.preserve" ? "preserve"
+    : input.command.kind === "workspace.sync" ? "sync" : "publication";
 
   return sendWorkspaceCommand(`${workspace}/${action}`, input);
 }

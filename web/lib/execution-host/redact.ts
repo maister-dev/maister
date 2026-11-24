@@ -69,6 +69,10 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
   "workspace.checkpoint": (payload) => pickScalars(payload, ["generation"]),
   "workspace.restore": (payload) => pickScalars(payload, ["generation", "checkpointId", "policy"]),
   "workspace.preserve": (payload) => pickScalars(payload, ["generation", "claimId", "fence", "disposition", "quiescenceId"]),
+  "workspace.sync": (payload) => ({
+    ...pickScalars(payload, ["generation", "claimId", "fence", "strategy"]),
+    expected: pickScalars(asObject(payload.expected), ["head", "remoteId", "targetRef", "priorTarget"]),
+  }),
   "workspace.publish": (payload) => {
     const expected = asObject(payload.expected);
 

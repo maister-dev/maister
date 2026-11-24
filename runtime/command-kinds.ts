@@ -6,6 +6,7 @@ export const COMMAND_KINDS = [
   "workspace.cancel",
   "workspace.checkpoint",
   "workspace.restore",
+  "workspace.sync",
   "workspace.publish",
   "workspace.preserve",
   "workspace.release",

@@ -1197,11 +1197,15 @@ async function prepareAndRead(
   expect(response.status).toBe(202);
   await response.body?.cancel();
 
+  return (await waitForWorkspaceReceipt(host, id)) as WorkspacePrepareReceipt;
+}
+
+async function waitForWorkspaceReceipt(host: BootedHost, id: string): Promise<unknown> {
   return vi.waitFor(
     async () => {
       const record = await addressedRequest(host, `/v1/commands/${id}`);
       expect(record.status).toBe(200);
-      const receipt = (await record.json()) as WorkspacePrepareReceipt;
+      const receipt = (await record.json()) as { phase: string };
       expect(receipt.phase).not.toBe("accepted");
       return receipt;
     },
@@ -1276,6 +1280,64 @@ it("C-10 publishes one committed ref from its retained worktree and reconciles t
     expect(await response.json()).toMatchObject({ phase: "rejected", refusal: { details: { reason: "target_ref_changed" } } });
   }, { timeout: 5_000 });
   expect(git(remote, "reflog", "show", "--format=%H", "refs/heads/main").split("\n")).toEqual([head, priorTarget]);
+}, 30_000);
+
+it("C-10 syncs an exact retained target and verifies one checkout update after a lost receipt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-retained-sync-"));
+  roots.push(root);
+  const repo = join(root, "source");
+  git(root, "init", "-b", "main", repo);
+  await writeFile(join(repo, "input.txt"), "base\n");
+  git(repo, "add", "--", "input.txt");
+  git(repo, "commit", "-m", "base");
+  const head = git(repo, "rev-parse", "HEAD");
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repo }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, {
+    mode: "ownWorktree", repositoryId: "fixture", commit: head, inputDigest: "a".repeat(64),
+  });
+  if (prepared.phase !== "completed") throw new Error("sync fixture did not prepare");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout) throw new Error("sync fixture has no checkout");
+  await writeFile(join(repo, "input.txt"), "upstream advanced\n");
+  git(repo, "commit", "-am", "upstream advanced");
+  const target = git(repo, "rev-parse", "HEAD");
+  const command = {
+    workspaceProtocol: 1,
+    command: { id: randomUUID(), kind: "workspace.sync", issuedAt: new Date().toISOString() },
+    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle, workspaceGeneration: generation, claimId: randomUUID(), fence: 2 },
+    payload: { generation, expected: { head, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget: target }, strategy: "fastForward" },
+  };
+  const stale = {
+    ...command,
+    command: { ...command.command, id: randomUUID() },
+    owner: { ...command.owner, claimId: randomUUID(), fence: 1 },
+    payload: { ...command.payload, expected: { ...command.payload.expected, priorTarget: head } },
+  };
+  const route = `/v1/workspaces/${handle}/sync`;
+  expect((await addressedRequest(host, route, stale)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(host, stale.command.id)).toMatchObject({
+    phase: "rejected", refusal: { details: { reason: "target_ref_changed" } },
+  });
+  expect(git(checkout.realPath, "rev-parse", "HEAD")).toBe(head);
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted after the Git sync and before the terminal SQLite commit");
+  });
+  expect((await addressedRequest(host, route, command)).status).toBe(202);
+  await vi.waitFor(() => expect(git(checkout.realPath, "rev-parse", "HEAD")).toBe(target), { timeout: 5_000 });
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect((await addressedRequest(restarted, route, command)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(restarted, command.command.id)).toMatchObject({
+    operationId: "stageCSync", phase: "completed", owner: command.owner,
+    result: { generation, head: target, priorTarget: target, observedTarget: target, behind: 1 },
+  });
+  expect(await readFile(join(checkout.realPath, "input.txt"), "utf8")).toBe("upstream advanced\n");
+  expect(git(checkout.realPath, "reflog", "show", "--format=%H", "HEAD").split("\n").slice(0, 2)).toEqual([target, head]);
 }, 30_000);
 
 it("C-10 preserves dirty tracked and untracked files before releasing a retained address", async () => {

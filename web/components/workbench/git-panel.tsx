@@ -71,6 +71,8 @@ const KNOWN_REASONS = new Set([
   "public_branch_template_invalid",
   "clean_worktree",
   "dirty_worktree",
+  "sync_conflict",
+  "target_ref_changed",
   "not_published",
   "published_remote_not_origin",
   "publish_stale",
@@ -474,14 +476,20 @@ export function WorkbenchGitPanel({
         <>
           <GitTreeSection {...sectionProps} />
           <GitPublishSection {...sectionProps} runId={runId} />
-          <GitUpdateSection
-            {...sectionProps}
-            runId={runId}
-            syncDefaults={syncDefaults}
-          />
+        </>
+      ) : null}
+      {sectionProps && usable && !addressed ? (
+        <>
           <GitPrSection {...sectionProps} />
           <GitCommandsSection state={sectionProps.state} />
         </>
+      ) : null}
+      {sectionProps && usable ? (
+        <GitUpdateSection
+          {...sectionProps}
+          runId={runId}
+          syncDefaults={syncDefaults}
+        />
       ) : null}
 
       {sectionProps && !usable && !addressed ? (

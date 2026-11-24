@@ -5,7 +5,7 @@ import type { RealSupervisor } from "@/test-support/real-supervisor";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { and, eq } from "drizzle-orm";
@@ -24,6 +24,7 @@ import {
   hitlRequests,
   nodeAttempts,
   runs,
+  runSyncAttempts,
   runSessions,
   workspaces,
 } from "@/lib/db/schema";
@@ -493,6 +494,110 @@ it("C-09 rejects stale rework feedback after an addressed checkout changes and a
   expect(await readFile(join(path, "README.md"), "utf8")).toBe(
     "captured base\n",
   );
+}, 60_000);
+
+it("C-10 updates a retained worktree through the normal sync route and settles its original claim", async () => {
+  const {
+    db,
+    supervisor: owningHost,
+    base,
+    runId,
+    repository,
+    readWorkspace,
+  } = await prepareWorkspaceFixture();
+  const { executionWorkspaceId: handle } = await readWorkspace();
+  if (!handle) throw new Error("The sync fixture has no checkout");
+  const checkout = privateCheckoutPath(owningHost, handle);
+  await writeFile(join(checkout, "retained.txt"), "local commit\n");
+  await git(checkout, "add", "--", "retained.txt");
+  await git(checkout, "commit", "-m", "retained work");
+  const local = await git(checkout, "rev-parse", "HEAD");
+  const upstream = join(dirname(repository), "upstream");
+  await git(repository, "config", "receive.denyCurrentBranch", "updateInstead");
+  await git(dirname(repository), "clone", repository, upstream);
+  await writeFile(join(upstream, "upstream.txt"), "approved upstream commit\n");
+  await git(upstream, "add", "--", "upstream.txt");
+  await git(upstream, "commit", "-m", "advance the approved target");
+  await git(upstream, "push", "origin", "HEAD:refs/heads/main");
+  const target = await git(upstream, "rev-parse", "HEAD");
+  expect(target).not.toBe(base);
+  await db.transaction(async (tx) => {
+    await tx
+      .update(runs)
+      .set({ status: "Review", reviewEnteredAt: new Date() })
+      .where(eq(runs.id, runId));
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+  });
+  startCanonicalProjectionWorker();
+  const { GET: readGitState } =
+    await import("@/app/api/runs/[runId]/git-state/route");
+  const actionState = await readGitState(
+    new Request(`http://localhost/api/runs/${runId}/git-state`),
+    { params: Promise.resolve({ runId }) },
+  );
+  expect(actionState.status).toBe(200);
+  expect(await actionState.json()).toMatchObject({
+    actions: expect.arrayContaining([
+      { id: "update", enabled: true, disabledReason: null },
+    ]),
+  });
+  const { POST } = await import("@/app/api/runs/[runId]/sync/route");
+  const send = (strategy: "merge" | "rebase") =>
+    POST(
+      new NextRequest(`http://localhost/api/runs/${runId}/sync`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ strategy, agent: false, push: false }),
+      }),
+      { params: Promise.resolve({ runId }) },
+    );
+  const response = await send("merge");
+  const result = await response.json();
+  expect(response.status, JSON.stringify(result)).toBe(200);
+  expect(result).toMatchObject({ outcome: "synced", behind: 1, pushed: false });
+  const observed = await git(checkout, "rev-parse", "HEAD");
+  expect(await git(checkout, "rev-list", "--parents", "-n", "1", "HEAD")).toBe(
+    `${observed} ${local} ${target}`,
+  );
+  expect(await git(repository, "rev-parse", "main")).toBe(target);
+  expect(await readWorkspace()).toMatchObject({
+    worktreePath: null,
+    lifecycleOperationState: "none",
+    lifecycleOperationAttemptId: null,
+  });
+  const [attempt] = await db
+    .select()
+    .from(runSyncAttempts)
+    .where(eq(runSyncAttempts.id, result.attemptId));
+  expect(attempt).toMatchObject({
+    phase: "succeeded",
+    strategy: "merge",
+    headShaBefore: local,
+    headShaAfter: observed,
+    targetSha: target,
+  });
+
+  await writeFile(
+    join(upstream, "retained.txt"),
+    "incompatible upstream commit\n",
+  );
+  await git(upstream, "add", "--", "retained.txt");
+  await git(upstream, "commit", "-m", "add conflicting upstream file");
+  await git(upstream, "push", "origin", "HEAD:refs/heads/main");
+  const refusal = await send("rebase");
+  const refusedBody = await refusal.json();
+  expect(refusal.status, JSON.stringify(refusedBody)).toBe(409);
+  expect(refusedBody).toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "sync_conflict" },
+  });
+  expect(await git(checkout, "rev-parse", "HEAD")).toBe(observed);
+  expect(await git(checkout, "status", "--porcelain")).toBe("");
+  expect(await git(checkout, "show", "HEAD:retained.txt")).toBe("local commit");
+  expect(await readWorkspace()).toMatchObject({
+    lifecycleOperationState: "none",
+    lifecycleOperationAttemptId: null,
+  });
 }, 60_000);
 
 it("C-10 publishes and finalizes a host-owned Run through the normal promotion route", async () => {

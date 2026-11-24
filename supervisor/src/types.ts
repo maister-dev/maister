@@ -728,6 +728,8 @@ export const REASON_TOKENS = [
   "workspace_checkpoint_unknown",
   "workspace_writer_active",
   "target_ref_changed",
+  "sync_conflict",
+  "non_fast_forward",
   "head_changed",
   "stale_workspace_claim",
   "retained_disposition_required",

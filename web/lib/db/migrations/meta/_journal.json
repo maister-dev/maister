@@ -2647,6 +2647,13 @@
       "when": 1795513090625,
       "tag": "0381_stage_c_retained_workspace_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 382,
+      "version": "7",
+      "when": 1795515124740,
+      "tag": "0382_stage_c_retained_workspace_sync",
+      "breakpoints": true
     }
   ]
 }

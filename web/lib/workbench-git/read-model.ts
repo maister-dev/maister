@@ -253,6 +253,11 @@ export async function loadGitState(args: {
       ? {
           addressedWorkspace: true,
           hasWorkspace: true,
+          promotionState: workspace.promotionState,
+          updateSupported:
+            facts.policy.updateSupported &&
+            !facts.hasActiveAssignment &&
+            status?.workspace.mode === "ownWorktree",
           workspaceRemoved: workspace.removedAt !== null,
           worktreePresent:
             status?.workspace.mode === "ownWorktree" ||

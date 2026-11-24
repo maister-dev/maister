@@ -418,7 +418,13 @@ operationCases:
         id: a7fced07-3241-4d20-9245-000000000006
         kind: workspace.sync
         issuedAt: 2026-11-23T00:00:00Z
-      owner: *a2
+      owner: &workspaceSyncOwner
+        kind: workspaceOperation
+        hostKey: eh_host-one
+        workspaceHandle: ws_354c9b5edffe43f0b3a53ffd05b047ef
+        workspaceGeneration: 1
+        claimId: a7fced07-3241-4d20-9245-000000000060
+        fence: 1
       payload:
         generation: 1
         expected: &a27
@@ -430,7 +436,7 @@ operationCases:
     invalidRequest:
       workspaceProtocol: 1
       command: *a26
-      owner: *a2
+      owner: *workspaceSyncOwner
       payload:
         generation: 1
         expected: *a27
@@ -439,11 +445,12 @@ operationCases:
     response: &a29
       commandId: a7fced07-3241-4d20-9245-000000000006
       state: accepted
-    result: &a32
+    result:
       generation: 1
       head: 0123456789abcdef0123456789abcdef01234567
       priorTarget: 0123456789abcdef0123456789abcdef01234567
       observedTarget: 0123456789abcdef0123456789abcdef01234567
+      behind: 0
     refusal:
       status: 409
       body:
@@ -453,7 +460,7 @@ operationCases:
           reason: target_ref_changed
       newEffects: 0
     target: {"kind":"workspace","handle":"ws_354c9b5edffe43f0b3a53ffd05b047ef","generation":1}
-    requestSha256: 601f076ac62c81ce92103afdc41e75efd14fd0ba6a5117bab824a1b41a1d7f14
+    requestSha256: 5ada0ce0848b341c02a47788ad33d136800d4ca5fbadce9938a276082dad58bc
     location: /v1/commands/a7fced07-3241-4d20-9245-000000000006
     replay:
       location: /v1/commands/a7fced07-3241-4d20-9245-000000000006
@@ -504,7 +511,11 @@ operationCases:
       state: accepted
     result:
       publication: promote
-      git: *a32
+      git:
+        generation: 1
+        head: 0123456789abcdef0123456789abcdef01234567
+        priorTarget: 0123456789abcdef0123456789abcdef01234567
+        observedTarget: 0123456789abcdef0123456789abcdef01234567
     refusal:
       status: 409
       body:

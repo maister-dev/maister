@@ -110,6 +110,7 @@ async function loadActiveAttempt(
     .where(
       and(
         eq(runSyncAttempts.runId, runId),
+        eq(workspaces.ownershipKind, "legacy_path"),
         notInArray(
           runSyncAttempts.phase,
           RUN_SYNC_TERMINAL_PHASES as unknown as string[],
@@ -624,9 +625,12 @@ async function loadSweepCandidates(db: Db): Promise<SweepCandidate[]> {
     .innerJoin(runs, eq(runs.id, runSyncAttempts.runId))
     .innerJoin(workspaces, eq(workspaces.id, runSyncAttempts.workspaceId))
     .where(
-      notInArray(
-        runSyncAttempts.phase,
-        RUN_SYNC_TERMINAL_PHASES as unknown as string[],
+      and(
+        eq(workspaces.ownershipKind, "legacy_path"),
+        notInArray(
+          runSyncAttempts.phase,
+          RUN_SYNC_TERMINAL_PHASES as unknown as string[],
+        ),
       ),
     );
 

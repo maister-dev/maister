@@ -3,6 +3,8 @@ import "server-only";
 import type { Db } from "./db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 
+import { and, eq, inArray, sql } from "drizzle-orm";
+
 import { getCommand } from "./commands";
 import { defaultTransport } from "./default-transport";
 import { runEventWakeBus } from "./events/run-wake";
@@ -12,6 +14,41 @@ import {
 } from "./workspace-prepare-delivery";
 
 import { MaisterError } from "@/lib/errors";
+import { executionCommands } from "@/lib/db/schema";
+
+/** The workspace row must be locked before calculating the next retained fence. */
+export async function nextRetainedWorkspaceFence(
+  db: Db,
+  hostId: string,
+  handle: string,
+): Promise<number> {
+  const [row] = await db
+    .select({
+      fence: sql<
+        string | null
+      >`max((${executionCommands.payload}->>'fence')::bigint)`,
+    })
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.executionHostId, hostId),
+        eq(executionCommands.targetSessionId, handle),
+        inArray(executionCommands.kind, [
+          "workspace.sync",
+          "workspace.publish",
+          "workspace.preserve",
+        ]),
+      ),
+    );
+  const highest = Number(row?.fence ?? 0);
+  if (!Number.isSafeInteger(highest + 1) || highest < 0)
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "The retained workspace fence is invalid",
+    );
+
+  return highest + 1;
+}
 
 /** Wait for the canonical result while the original command remains recoverable. */
 export async function settleRetainedWorkspaceCommand(

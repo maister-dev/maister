@@ -15,6 +15,7 @@ import {
   type WorkspaceCommandBinding,
   type WorkspaceRetainedBinding,
   type WorkspacePublishReceipt,
+  type WorkspaceSyncReceipt,
   type WorkspacePreserveReceipt,
   type WorkspaceReleaseReceipt,
 } from "../../../../runtime/workspace-prepare";
@@ -42,6 +43,7 @@ import {
 import { WorkspaceCommandReceiptSchema } from "../workspace-prepare-schema";
 
 import { ExecutionEventProjectionError } from "./projector";
+import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 
 import {
   emitDomainEvent,
@@ -53,6 +55,7 @@ import {
   executionAssignments,
   executionCommands,
   executionEventStreams,
+  runSyncAttempts,
   runs,
   workspaces,
 } from "@/lib/db/schema";
@@ -80,6 +83,7 @@ const matchingCommandKind = {
   stageCCheckpoint: "workspace.checkpoint",
   stageCRestore: "workspace.restore",
   stageCPublish: "workspace.publish",
+  stageCSync: "workspace.sync",
   stageCPreserve: "workspace.preserve",
   stageCRelease: "workspace.release",
 } as const satisfies Record<(WorkspaceCommandBinding | WorkspaceRetainedBinding)["operationId"], string>;
@@ -114,7 +118,7 @@ export async function prepareWorkspaceEvidence(
     expectedDigest = workspacePrepareRequestDigest(
       retainedWorkspacePrepareRequest(command, host.hostKey),
     );
-  } else if (payload.operationId === "stageCPublish" || payload.operationId === "stageCPreserve" || payload.operationId === "stageCRelease") {
+  } else if (payload.operationId === "stageCPublish" || payload.operationId === "stageCSync" || payload.operationId === "stageCPreserve" || payload.operationId === "stageCRelease") {
     const request = retainedWorkspaceOperationRequest(command, host.hostKey);
     expectedDigest = workspaceCommandRequestDigest(request, {
       operationId: payload.operationId,
@@ -199,7 +203,7 @@ async function applyRetainedWorkspaceReceipt(
   tx: Db,
   event: ExecutionEvent,
   command: ExecutionCommand,
-  receipt: Exclude<WorkspacePublishReceipt | WorkspacePreserveReceipt | WorkspaceReleaseReceipt, { phase: "accepted" }>,
+  receipt: Exclude<WorkspaceSyncReceipt | WorkspacePublishReceipt | WorkspacePreserveReceipt | WorkspaceReleaseReceipt, { phase: "accepted" }>,
 ): Promise<void> {
   const { owner, target } = receipt;
   const request = retainedWorkspaceOperationRequest(command, owner.hostKey);
@@ -218,6 +222,8 @@ async function applyRetainedWorkspaceReceipt(
 
   if (receipt.phase === "rejected") {
     await markFailed(tx, command.id, null, { ...receipt.refusal, eventId: event.id });
+    if (receipt.operationId === "stageCSync")
+      await settleAddressedSyncAttempt(tx, workspace.id, receipt);
 
     return;
   }
@@ -231,11 +237,17 @@ async function applyRetainedWorkspaceReceipt(
   }
   const { result } = receipt;
   if (receipt.operationId === "stageCPublish") {
-    if (!("expected" in request.payload)) throw inconsistent();
+    if (!("publication" in request.payload)) throw inconsistent();
     const { expected, publication } = request.payload;
     const observed = receipt.result;
     if (observed.publication !== publication || observed.git.generation !== target.generation ||
       observed.git.head !== expected.head || observed.git.priorTarget !== expected.priorTarget || observed.git.observedTarget !== expected.head)
+      throw inconsistent();
+  } else if (receipt.operationId === "stageCSync") {
+    if (!("strategy" in request.payload) || !request.payload.expected.priorTarget ||
+      receipt.result.generation !== target.generation ||
+      receipt.result.priorTarget !== request.payload.expected.priorTarget ||
+      receipt.result.observedTarget !== request.payload.expected.priorTarget)
       throw inconsistent();
   } else if (receipt.operationId === "stageCPreserve") {
     if (receipt.result.generation !== target.generation || receipt.result.dispositionId !== command.id)
@@ -248,6 +260,30 @@ async function applyRetainedWorkspaceReceipt(
     ...result, eventId: event.id, outcomeSha256: receipt.outcomeSha256,
   });
   if (!transition.changed) throw inconsistent();
+  if (receipt.operationId === "stageCSync")
+    await settleAddressedSyncAttempt(tx, workspace.id, receipt);
+}
+
+async function settleAddressedSyncAttempt(
+  tx: Db,
+  workspaceId: string,
+  receipt: Extract<WorkspaceSyncReceipt, { phase: "rejected" | "completed" }>,
+): Promise<void> {
+  const { claimId } = receipt.owner;
+  const [attempt] = await tx
+    .update(runSyncAttempts)
+    .set(receipt.phase === "completed"
+      ? { phase: "succeeded", headShaAfter: receipt.result.head, updatedAt: new Date() }
+      : { phase: "failed", errorCode: receipt.refusal.code, errorMessage: receipt.refusal.message, updatedAt: new Date() })
+    .where(and(eq(runSyncAttempts.id, claimId), eq(runSyncAttempts.workspaceId, workspaceId), eq(runSyncAttempts.phase, "starting")))
+    .returning({ id: runSyncAttempts.id });
+  const [released] = await tx
+    .update(workspaces)
+    .set(RELEASED_LIFECYCLE_CLAIM)
+    .where(and(eq(workspaces.id, workspaceId), eq(workspaces.lifecycleOperationName, "sync"),
+      eq(workspaces.lifecycleOperationState, "claiming"), eq(workspaces.lifecycleOperationAttemptId, claimId)))
+    .returning({ id: workspaces.id });
+  if (!attempt || !released) throw inconsistent();
 }
 
 export async function applyWorkspaceEvidence(
@@ -286,7 +322,7 @@ export async function applyWorkspaceEvidence(
   )
     throw inconsistent();
   if (command.state === "succeeded" || command.state === "failed") return;
-  if (receipt.operationId === "stageCPublish" || receipt.operationId === "stageCPreserve" || receipt.operationId === "stageCRelease") {
+  if (receipt.operationId === "stageCPublish" || receipt.operationId === "stageCSync" || receipt.operationId === "stageCPreserve" || receipt.operationId === "stageCRelease") {
     await applyRetainedWorkspaceReceipt(tx, event, command, receipt);
 
     return;

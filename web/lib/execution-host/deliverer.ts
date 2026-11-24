@@ -109,6 +109,12 @@ export const COMMAND_POLICY: Readonly<Record<CommandKind, KindPolicy>> = {
     driverless: true,
     timeoutMs: 10_000,
   },
+  "workspace.sync": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: true,
+    timeoutMs: 10_000,
+  },
   "workspace.preserve": {
     maxAttempts: 3,
     backoffBaseMs: 500,

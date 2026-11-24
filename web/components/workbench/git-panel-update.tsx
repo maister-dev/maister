@@ -52,6 +52,7 @@ export function GitUpdateSection({
   syncDefaults: WorkbenchGitSyncDefaults | null;
 }): ReactElement {
   const t = useTranslations("workbenchGit");
+  const addressed = state.workspaceStatus !== undefined;
   const [onto, setOnto] = useState<UpdateOnto>("target");
   const [strategy, setStrategy] = useState<"rebase" | "merge">(
     syncDefaults?.strategy ?? "rebase",
@@ -109,10 +110,10 @@ export function GitUpdateSection({
     send({
       onto,
       strategy,
-      push,
+      push: !addressed && push,
       // D9: the resolver's Review→Running CAS exists only in Review.
-      agent: inReview && resolver,
-      ...(inReview && resolver && runnerId ? { runnerId } : {}),
+      agent: !addressed && inReview && resolver,
+      ...(!addressed && inReview && resolver && runnerId ? { runnerId } : {}),
     });
   }
 
@@ -190,16 +191,18 @@ export function GitUpdateSection({
           <option value="merge">{t("update.merge")}</option>
         </select>
       </label>
-      <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
-        <input
-          checked={push}
-          data-testid="git-panel-update-push"
-          type="checkbox"
-          onChange={(event) => setPush(event.target.checked)}
-        />
-        {t("update.push")}
-      </label>
-      {state.runStatus === "Review" ? (
+      {!addressed ? (
+        <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
+          <input
+            checked={push}
+            data-testid="git-panel-update-push"
+            type="checkbox"
+            onChange={(event) => setPush(event.target.checked)}
+          />
+          {t("update.push")}
+        </label>
+      ) : null}
+      {!addressed && state.runStatus === "Review" ? (
         <>
           <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
             <input
@@ -234,7 +237,10 @@ export function GitUpdateSection({
         {actionButton({
           id: "update",
           tone: primary,
-          blockedBy: dirtyCount > 0 ? t("hint.commitOrDiscardFirst") : null,
+          blockedBy:
+            dirtyCount > 0 || state.workspaceStatus?.workingTree === "dirty"
+              ? t("hint.commitOrDiscardFirst")
+              : null,
           icon: <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />,
           onClick: update,
         })}

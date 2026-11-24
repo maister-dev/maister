@@ -35,6 +35,9 @@ export const RetainedWorkspacePublishSchema = WorkspacePublishPayloadSchema.exte
   claimId: z.string().uuid(),
   fence: generation,
 });
+export const RetainedWorkspaceSyncSchema = RetainedWorkspacePublishSchema.omit({
+  publication: true,
+}).extend({ strategy: z.enum(["fastForward", "merge", "rebase"]) });
 export const WorkspacePreservePayloadSchema = z.object({
   generation, disposition: z.literal("archive"), quiescenceId: opaqueId,
 }).strict();
@@ -301,7 +304,7 @@ const cancellationResult = z
   .strict();
 
 function commandResultReceipt<
-  Op extends "stageCRunWorkload" | "stageCCancelWorkload" | "stageCCheckpoint" | "stageCRestore" | "stageCPublish" | "stageCPreserve" | "stageCRelease",
+  Op extends "stageCRunWorkload" | "stageCCancelWorkload" | "stageCCheckpoint" | "stageCRestore" | "stageCSync" | "stageCPublish" | "stageCPreserve" | "stageCRelease",
   T extends z.ZodType,
   R extends z.ZodType,
   O extends z.ZodType,
@@ -367,6 +370,12 @@ export const WorkspaceCommandReceiptSchema = z.union([
   ),
   commandResultReceipt("stageCCheckpoint", workspaceTarget, WorkspaceGitCheckpointResultSchema, assignmentOwner),
   commandResultReceipt("stageCRestore", workspaceTarget, WorkspaceGitCheckpointResultSchema, assignmentOwner),
+  commandResultReceipt(
+    "stageCSync",
+    workspaceTarget,
+    z.strictObject({ generation, head: gitObject, priorTarget: gitObject, observedTarget: gitObject, behind: z.int().nonnegative() }),
+    workspaceOperationOwner,
+  ),
   commandResultReceipt(
     "stageCPublish",
     workspaceTarget,

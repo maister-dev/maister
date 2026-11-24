@@ -2854,7 +2854,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
                 }),
           });
           settleReceiptBudget(db, receipt);
-          if (receipt.kind === "workspace.checkpoint" || receipt.kind === "workspace.restore" || receipt.kind === "workspace.publish") {
+          if (receipt.kind === "workspace.checkpoint" || receipt.kind === "workspace.restore" || receipt.kind === "workspace.publish" || receipt.kind === "workspace.sync") {
             const body = receipt.body as { workspacePhase?: unknown; workspaceTarget?: unknown };
             if ((body.workspacePhase === "completed" || body.workspacePhase === "rejected") && isWorkspaceGenerationTarget(body.workspaceTarget))
               db.prepare(`UPDATE workspace_execution_state SET operation_claim_id=NULL

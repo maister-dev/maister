@@ -887,6 +887,8 @@ export const getRunDetail = cache(async function getRunDetail(
     ...gitFacts.policy,
     addressedWorkspace: true,
     hasWorkspace: true,
+    promotionState: row.promotionState,
+    updateSupported: gitFacts.policy.updateSupported && !gitFacts.hasActiveAssignment,
     worktreePresent: Boolean(row.workspaceHandle),
     workspaceRemoved: row.removedAt !== null,
     busy: gitFacts.hasLiveSharedSibling || (row.lifecycleOperationName !== "archive" && workbenchClaimHoldsTree(row)),

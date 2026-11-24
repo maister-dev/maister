@@ -9050,6 +9050,13 @@ paths:
         member. Mutually exclusive with promotion and every other lifecycle op
         (double fence).
 
+        An owned checkout on a selected supervisor supports human mechanical
+        merge and rebase onto the approved origin ref. The manager records
+        the exact HEAD and target SHA, then waits for the original host's
+        receipt. An advanced target or a conflict is a typed 409. Explicit
+        resolver and push requests require an execution profile supporting
+        those effects.
+
         **(ADR-181 — Implemented) Update.** The `status='Review'` arm is replaced
         by the workbench git policy (`update`): every parked status
         (`Review | Crashed | Failed | Done | Abandoned`, and `HumanWorking` for

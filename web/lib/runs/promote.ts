@@ -20,7 +20,10 @@ import {
   readAddressedWorkspacePublicationTarget,
   readAddressedWorkspaceStatus,
 } from "@/lib/execution-host/workspace-preparation";
-import { settleRetainedWorkspaceCommand } from "@/lib/execution-host/workspace-retained-operation";
+import {
+  nextRetainedWorkspaceFence,
+  settleRetainedWorkspaceCommand,
+} from "@/lib/execution-host/workspace-retained-operation";
 import { WorkspacePublishPayloadSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import { readAddressedReviewFingerprint } from "@/lib/runs/review-source";
 import { isWorkspaceSourceRef } from "../../../runtime/workspace-prepare";
@@ -2038,16 +2041,7 @@ async function reserveAddressedPromotion(
       branchDelivery: { target, error: null },
     })
     .where(eq(schemaModule.workspaces.id, workspace.id));
-  const previousFence = previous ? previous.payload.fence : 0;
-  if (
-    typeof previousFence !== "number" ||
-    !Number.isSafeInteger(previousFence + 1) ||
-    previousFence < 0
-  )
-    throw new MaisterError(
-      "ACP_PROTOCOL",
-      "Retained publication fence is invalid",
-    );
+  const fence = await nextRetainedWorkspaceFence(tx, executionHostId, handle);
   const command = await insertCommand(tx, {
     runId: run.id,
     assignmentId: assignment.id,
@@ -2060,7 +2054,7 @@ async function reserveAddressedPromotion(
     payload: {
       claimId: attemptId,
       generation,
-      fence: previousFence + 1,
+      fence,
       publication: "promote",
       expected: { head, remoteId: run.projectId, targetRef, priorTarget },
     },

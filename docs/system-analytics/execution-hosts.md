@@ -1169,8 +1169,15 @@ claiming publication. Web reserves the dedicated branch, returns the verified
 delivery on retry and changes Review to Done once. Manual archive retains the
 same owning supervisor for preservation and release. Migration 0381 prevents
 an early release and keeps the Web claim until the physical release receipt
-applies. Sync and automatic retention remain part of the Stage C lifecycle
-work.
+applies. Human mechanical sync uses the same retained workspace fence.
+The supervisor checks the exact advertised target again at fetch, computes
+merge or rebase against a detached private checkout, and records the
+candidate ref before changing the live checkout. A crash between that change
+and durable receipt is reconciled against the candidate. The canonical
+terminal projection settles the existing sync timeline and releases its
+claim in one transaction. A stale target or content conflict leaves the
+live checkout untouched. Automatic retention remains part of the Stage C
+lifecycle work.
 
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable

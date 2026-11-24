@@ -265,7 +265,12 @@ export function deriveWorkbenchGitActions(
   const usable = !input.workspaceRemoved && input.worktreePresent !== false;
 
   return allOrdered((id) => {
-    if (input.addressedWorkspace && id !== "archive" && id !== "stop")
+    if (
+      input.addressedWorkspace &&
+      id !== "archive" &&
+      id !== "stop" &&
+      id !== "update"
+    )
       return "unsupported-run";
     if (owner && OWNER_FORBIDDEN.has(id)) return "human-owned";
     if (!input.hasWorkspace) return "missing-workspace";

@@ -5143,6 +5143,8 @@
       "public_branch_template_invalid": "The project's branch-name template renders no valid name — enter one.",
       "clean_worktree": "The worktree is clean — there is nothing to do.",
       "dirty_worktree": "Commit or discard the changes first.",
+      "sync_conflict": "The target conflicts with your checkout. Your work is preserved.",
+      "target_ref_changed": "The approved branch advanced during the update. Refresh and try again.",
       "not_published": "Publish the branch first.",
       "published_remote_not_origin": "Publish the branch to origin first.",
       "publish_stale": "The published branch is behind the worktree — publish first.",

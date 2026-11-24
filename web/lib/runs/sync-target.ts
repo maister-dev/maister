@@ -26,6 +26,7 @@ import {
 } from "@/lib/runs/flow-pr-conflict";
 import { flowConflictSyncAttemptId } from "@/lib/flows/graph/finish-continuation";
 import { syncShapeRefusal } from "@/lib/runs/sync-shape";
+import { syncAddressedWorkspace } from "@/lib/runs/sync-addressed-workspace";
 import {
   resolveSyncRef,
   type SyncOnto,
@@ -889,6 +890,17 @@ export async function syncRunTarget(
     workspace,
     admission,
   );
+
+  if (workspace.ownershipKind === "host_owned") {
+    const project = await loadProject(db, run.projectId ?? null);
+    return syncAddressedWorkspace({
+      db,
+      operation: input,
+      expectedStatus: run.status,
+      strategy: input.strategy ?? project?.syncStrategyDefault ?? "rebase",
+      target: resolveSyncRef(input.onto ?? "target", runId, workspace, project),
+    });
+  }
 
   if (admission === "workbench") {
     await requireUpdateAllowed(db, run, workspace, input.actor);

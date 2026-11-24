@@ -73,7 +73,7 @@ function observedPublication(
   };
 }
 
-async function ownedPublicationGit(
+export async function ownedWorkspaceSourceGit(
   input: PublicationTargetInput,
 ): Promise<{ workspace: WorkspaceRow; git: readonly string[] }> {
   const { state, source, handle, generation, remoteId } = input;
@@ -131,7 +131,7 @@ export async function readOwnedPublicationTarget(
   input: PublicationTargetInput,
 ): Promise<WorkspacePublicationTarget> {
   const { generation, remoteId, source, targetRef } = input;
-  const { git } = await ownedPublicationGit(input);
+  const { git } = await ownedWorkspaceSourceGit(input);
 
   return {
     generation,
@@ -163,7 +163,7 @@ export async function publishOwnedWorkspace(
         details: { reason: "stale_workspace_claim" },
       },
     );
-  const { workspace, git } = await ownedPublicationGit({
+  const { workspace, git } = await ownedWorkspaceSourceGit({
     ...input,
     handle,
     generation,

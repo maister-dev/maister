@@ -207,18 +207,39 @@ export type WorkspaceOperationOwner = Readonly<{
   fence: number;
 }>;
 
+export type CheckoutExpectation = Readonly<{
+  head: string;
+  remoteId: string;
+  targetRef: string;
+  priorTarget: string | null;
+}>;
+
+export type WorkspaceSyncRequest = Readonly<{
+  workspaceProtocol: 1;
+  command: Readonly<{ id: string; kind: "workspace.sync"; issuedAt: string }>;
+  owner: WorkspaceOperationOwner;
+  payload: Readonly<{
+    generation: number;
+    expected: CheckoutExpectation;
+    strategy: "fastForward" | "merge" | "rebase";
+  }>;
+}>;
+
+export type WorkspaceSyncResult = Readonly<{
+  generation: number;
+  head: string;
+  priorTarget: string;
+  observedTarget: string;
+  behind: number;
+}>;
+
 export type WorkspacePublishRequest = Readonly<{
   workspaceProtocol: 1;
   command: Readonly<{ id: string; kind: "workspace.publish"; issuedAt: string }>;
   owner: WorkspaceOperationOwner;
   payload: Readonly<{
     generation: number;
-    expected: Readonly<{
-      head: string;
-      remoteId: string;
-      targetRef: string;
-      priorTarget: string | null;
-    }>;
+    expected: CheckoutExpectation;
     publication: "push" | "promote";
   }>;
 }>;
@@ -287,6 +308,7 @@ export const WORKSPACE_CANCEL_OPERATION = "stageCCancelWorkload";
 export const WORKSPACE_CHECKPOINT_OPERATION = "stageCCheckpoint";
 export const WORKSPACE_RESTORE_OPERATION = "stageCRestore";
 export const WORKSPACE_PUBLISH_OPERATION = "stageCPublish";
+export const WORKSPACE_SYNC_OPERATION = "stageCSync";
 export const WORKSPACE_PRESERVE_OPERATION = "stageCPreserve";
 export const WORKSPACE_RELEASE_OPERATION = "stageCRelease";
 export const WORKSPACE_TERMINAL_EVENT = "workspace.command.terminal";
@@ -335,11 +357,15 @@ export type WorkspacePublishBinding = Readonly<{
   operationId: typeof WORKSPACE_PUBLISH_OPERATION;
   target: WorkspaceGenerationTarget;
 }>;
+export type WorkspaceSyncBinding = Readonly<{
+  operationId: typeof WORKSPACE_SYNC_OPERATION;
+  target: WorkspaceGenerationTarget;
+}>;
 export type WorkspaceDispositionBinding =
   | Readonly<{ operationId: typeof WORKSPACE_PRESERVE_OPERATION; target: WorkspaceGenerationTarget }>
   | Readonly<{ operationId: typeof WORKSPACE_RELEASE_OPERATION; target: WorkspaceGenerationTarget }>;
-export type WorkspaceRetainedBinding = WorkspacePublishBinding | WorkspaceDispositionBinding;
-export type WorkspaceRetainedRequest = WorkspacePublishRequest | WorkspacePreserveRequest | WorkspaceReleaseRequest;
+export type WorkspaceRetainedBinding = WorkspaceSyncBinding | WorkspacePublishBinding | WorkspaceDispositionBinding;
+export type WorkspaceRetainedRequest = WorkspaceSyncRequest | WorkspacePublishRequest | WorkspacePreserveRequest | WorkspaceReleaseRequest;
 
 export type WorkspaceTerminalPayload = (
   | (WorkspaceCommandBinding & { owner: WorkspaceAssignmentOwner })
@@ -438,11 +464,17 @@ export type WorkspaceCommandReceipt =
   | WorkspaceReceipt<Extract<WorkspaceCommandBinding, { operationId: typeof WORKSPACE_CHECKPOINT_OPERATION }>, WorkspaceGitCheckpointResult>
   | WorkspaceReceipt<Extract<WorkspaceCommandBinding, { operationId: typeof WORKSPACE_RESTORE_OPERATION }>, WorkspaceGitCheckpointResult>
   | WorkspacePublishReceipt
+  | WorkspaceSyncReceipt
   | WorkspacePreserveReceipt
   | WorkspaceReleaseReceipt;
 export type WorkspacePublishReceipt = WorkspaceReceipt<
   WorkspacePublishBinding,
   WorkspacePublishResult,
+  WorkspaceOperationOwner
+>;
+export type WorkspaceSyncReceipt = WorkspaceReceipt<
+  WorkspaceSyncBinding,
+  WorkspaceSyncResult,
   WorkspaceOperationOwner
 >;
 export type WorkspacePreserveReceipt = WorkspaceReceipt<
@@ -580,6 +612,7 @@ export function isWorkspaceRetainedOperation(
   operationId: unknown,
 ): operationId is WorkspaceRetainedBinding["operationId"] {
   return operationId === WORKSPACE_PUBLISH_OPERATION ||
+    operationId === WORKSPACE_SYNC_OPERATION ||
     operationId === WORKSPACE_PRESERVE_OPERATION ||
     operationId === WORKSPACE_RELEASE_OPERATION;
 }

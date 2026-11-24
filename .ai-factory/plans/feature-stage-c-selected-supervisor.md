@@ -619,6 +619,18 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   snapshot succeeded, replay returned the first response, and the archive
   still preserved subsequent untracked work.
 
+  Human mechanical sync now follows the retained workspace on the original
+  supervisor. The RED host test refused the missing route. GREEN rejected an
+  advanced target, applied the pinned update, interrupted its terminal write
+  and used the same Git candidate to reconcile one reflog update after host
+  restart. The Web route produced a two-parent merge from an actual divergent
+  checkout; a conflicting rebase left that checkout clean at the same HEAD.
+  PostgreSQL 0382 fences sync, publication and archive with one increasing
+  workspace sequence. Projection settles the sync timeline and lifecycle
+  claim in one transaction. Passed 93 Web integrations, seven supervisor
+  integrations, 87 UI and policy checks, both typechecks and API contracts.
+  Resolver-assisted sync and publication after sync still need coverage.
+
   Manual archive now reserves a preservation and release under the original
   host, handle, generation and claim. RED reproduced the missing host route
   and the path-only Web archive refusal. GREEN retained dirty tracked and
