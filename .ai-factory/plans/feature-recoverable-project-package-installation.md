@@ -3,7 +3,7 @@
 Branch: `feature/recoverable-project-package-installation`  
 Created: 2026-11-23  
 Baseline: `22df665aa`  
-Status: contracts specified; implementation in progress. Post-registration installation is approved for all three manifest sections.
+Status: implemented and locally qualified on 2026-11-24. All 12 tasks and all 11 acceptance criteria passed.
 
 ## Outcome
 
@@ -118,7 +118,7 @@ Each ID has one primary executable proof. Reuse the same real project/package fi
   - For an unresolved local pin already present, compare to the exact reviewed source blob and preserve the unmodified entry verbatim during unrelated edits. For a new or changed local pin require verifiable directory content and bind its digest at review and publication; missing bytes are a typed refusal. Never carry forward credential-bearing content into a new export through this exception. Keep credential and unsupported-source validation.
   - Use one per-pin export decision for status, preview, confirmation and recovery. Today status and preview both call `assertExportablePackages`, then publication calls it again. Give all four paths the same reviewed source-blob basis for an unchanged unresolved local entry. A different manifest blob requires fresh review. Preserve immutable v1 snapshot bytes/digests and replay terminal receipts. Version new local witnesses, and settle an old unaccepted preview by its original verification rules or a typed stale response. Already accepted v1 work is drained/recovered under its original contract at cutover.
   - A coordinate edit stales an earlier preview; an already accepted publication keeps its existing mutation fence. Status-only retry cannot invalidate a review, advance the export revision or change Git. Test new, removed and unchanged pins, existing attachments, an old receipt and two actors racing a review. **Depends on T4 and T6.**
-- [ ] **T12. Verify the user journey and update operating guidance.** Extend the nearest existing Playwright coverage in `web/e2e/{project-registration,package-management}.spec.ts` and Git persistence integration suites. In the browser register a clone with a bad dependency and a valid sibling. Open the project, reload, inspect the failure, retry once on the still-bad input, then correct the coordinates and observe successful automatic installation. Open Settings → Git and inspect the proposed diff. AC03 owns process restart, AC06 owns duplicate submissions, and AC08–AC09 own saving a corrected but unresolved pin and proving Git effects. Use the existing Git integration test for the bare-remote receipt. Reuse AC01 for local-repo parity and AC11 for the original cached-capability path. Update `docs/screens/projects/{add-project,project-settings-git}.md`, EN/RU public registration/package and save-configuration guides, and `docs/system-analytics/project-config-persistence-traceability.md`. In `docs/deployment.md` recommend building a separate release directory and switching to its completed output, retaining old assets until the old process drains. In-place cleanup of `web/.next` is a plausible trigger; incident timing remains unverified. **Depends on T3, T9–T11.**
+- [x] **T12. Verify the user journey and update operating guidance.** Extend the nearest existing Playwright coverage in `web/e2e/{project-registration,package-management}.spec.ts` and Git persistence integration suites. In the browser register a clone with a bad dependency and a valid sibling. Open the project, reload, inspect the failure, retry once on the still-bad input, then correct the coordinates and observe successful automatic installation. Open Settings → Git and inspect the proposed diff. AC03 owns process restart, AC06 owns duplicate submissions, and AC08–AC09 own saving a corrected but unresolved pin and proving Git effects. Use the existing Git integration test for the bare-remote receipt. Reuse AC01 for local-repo parity and AC11 for the original cached-capability path. Update `docs/screens/projects/{add-project,project-settings-git}.md`, EN/RU public registration/package and save-configuration guides, and `docs/system-analytics/project-config-persistence-traceability.md`. In `docs/deployment.md` recommend building a separate release directory and switching to its completed output, retaining old assets until the old process drains. In-place cleanup of `web/.next` is a plausible trigger; incident timing remains unverified. **Depends on T3, T9–T11.**
 
 ## TDD execution rule
 
@@ -170,3 +170,52 @@ Run focused files through the repository's `pnpm --filter maister-web test:integ
 - T12 browser — Chromium, production web, real clone and PostgreSQL: 4/4 including auth setup, local/empty project onboarding and AC10 failed sibling → retry → RU edit → installed → reviewed Git diff. Invocation `9de12e37-1d21-4755-88b8-896292347f66`.
 
 - AC03 production restart — macOS arm64 / Node 24.22.3, invocation `1114da30-dadb-4d9b-b8a7-80e9581019a1`. The registered worker reclaimed a pre-effect lease after process death, recorded the failed dependency and realized its independent sibling without a new HTTP request. All 10 durable worker boot tests passed.
+
+- AC02 upgrade and management read — actual 0368 rows with a sparse stored manifest return HTTP 200 and preserve project-scoped member IDs and a null attempt both in GET and the server-rendered settings. Migration 0371 reconciles application and database source validation. PostgreSQL tests cover fresh and populated databases, rollback and repair from 0369/0370, 19 pairs of source coordinates, the canonical SQL check and the migration journal.
+- AC03/AC04 independent work — a real blocked setup script allows another Flow in the same project to install while the first is still running. The suite covers standalone and package members, revocation before a subsequent script and failed replacement with the original attachment intact.
+- AC05 admission compatibility — the existing 11 HTTP capability-reference cases and the mixed-manifest admission case pass together. Unavailable declared imports preserve their recoverable status. Mistyped or disabled ordinary capability references keep their original CONFIG diagnostic. The runner creates no launch intent for either refusal.
+- Local release gates at application revision `ba26ae073` (macOS arm64, Node 24.22.3) — 901 unit suites / 9,316 tests passed, web typecheck passed, ESLint reported 0 errors and 580 warnings. `pnpm validate:contracts` and `pnpm validate:docs:all` passed, including the 233-table canonical ERD.
+
+
+- Full production isolation on the final worker design: `pnpm --filter maister-web test:integration:isolation` passed 55/55 in eight files, invocation `968c1cc1-3248-4311-9d89-71acb950cebe`. Following the cache-root correction on `a4ad4b484`, the production restart and finalize suites passed again (11/11), the three Chromium specs passed 12/12, and web unit passed 9,316/9,316. The later commits affect integration fixtures only.
+- The separately registered supervisor-backed web A/B lane passed 726/726 in 46 files, invocation `b18af7c3-6a0c-4ad7-9a8b-39b40916d8b8`. The runner reported zero leaked processes.
+- The optional installed reference package used a clean local clone of `maister-plugins` at `b716f9bcc07651961b9b15d273e87c8bf21c66d9`. All seven integration cases passed on `e85928782`. An additional run combining this external Docker scenario with the platform suite exceeded the 180-second case limit after a successful 167-second first E2E step. The separately executed result covers the conditional file in the ordinary CI remainder.
+
+## Acceptance receipts
+
+The following tests exercise the approved contract through its normal entry points. Paths are relative to `web/`.
+
+| ID | Local executable evidence |
+| --- | --- |
+| AC01 | `app/api/__tests__/projects-register{,-clone,-packages}.integration.test.ts` — owner, inline configuration and three typed requests committed before any install, plus clone cleanup and lost acknowledgement. |
+| AC02 | `lib/db/__tests__/project-dependencies-upgrade.integration.test.ts` — populated upgrade, rollback and repair, migrated GET and server settings read, cross-project constraints, no synthetic attempts. |
+| AC03 | `test-support/__tests__/durable-workers-boot.integration.test.ts` and `lib/project-dependencies/__tests__/worker-scheduling.integration.test.ts` — SIGKILL before the first effect, fresh boot, independent success, fair bounded requeue and shutdown. |
+| AC04 | `lib/packages/__tests__/dependency-material.integration.test.ts`, `lib/project-dependencies/__tests__/{worker,setup-concurrency}.integration.test.ts` — physical collision and content witnesses, post-commit link repair, uncertain shell and single authorized replay while siblings progress. |
+| AC05 | `lib/project-dependencies/__tests__/{catalog,launch-admission}.integration.test.ts` and `app/api/runs/__tests__/route.capability-refs.integration.test.ts` — current readiness, frozen bindings, dependent and independent launches, preserved HTTP diagnostics. |
+| AC06 | `app/api/__tests__/projects-packages-routes.integration.test.ts` and the revoked-actor case in `worker.integration.test.ts` — exact command receipts, global and project authority, archived or foreign resources, safe diagnostics. |
+| AC07 | `lib/packages/__tests__/attach.integration.test.ts` plus the Studio cut and real CLI integration cases — alias identity, replacement, run-pinned detach, sibling selections and a stale manifest. |
+| AC08 | `lib/project-config-persistence/__tests__/git-publication.integration.test.ts` and `lib/db/__tests__/project-config-persistence.integration.test.ts` — unresolved-pin projection, exact source preservation, stale local content, publication fences and immutable v1 receipts. |
+| AC09 | `lib/project-config-persistence/__tests__/push.integration.test.ts` — desired edit is inert in Git, confirmed save creates one manifest commit, separate push advances the bare remote to the reviewed SHA. |
+| AC10 | `e2e/{project-registration,project-onboarding,package-management}.spec.ts` — 12 Chromium cases including failed sibling, reload, failed retry, RU repair, successful installation and the Git diff. |
+| AC11 | `test-support/__tests__/capability-finalize.integration.test.ts` — two correct persisted digests in a production build. The disposable baseline failed on the withheld lazy crypto chunk from module 70729. |
+
+## Final local qualification
+
+Application and test revision `18b691666a23df6c76928c6e2ef57c071155eb31`. Platform: macOS arm64, Node 24.22.3, PostgreSQL 16 and local Git origins. All 11 acceptance IDs have passing executable evidence in the table above. The three Chromium files passed 12/12 and the production restart/finalization rerun passed 11/11 on the same application sources. Later commits changed test fixtures only.
+
+The full web integration inventory passed **6,682/6,682** tests: 5,901 in the remainder, 726 in the supervisor-backed web A/B lane and 55 in production isolation. The remainder used the files selected by `webRemainderFiles` in `scripts/run-web-integration-remainder.mjs`. Each group ran through the repository's `runStageAbLane` and `validateLaneReport`. The union was checked against all 684 files with no duplicates, missing suites or skipped cases. The optional reference package ran in its own group with `MAISTER_FLOW_WAIT_REFERENCE_REPO` set to the verified local clone. The two company context files and the production scheduler boot file ran serially. The other six groups ran one at a time with up to three Vitest workers each. Earlier whole-suite attempts exposed timing and fixture-isolation issues. The final receipts below are all from one revision.
+
+| Group | Files | Passed tests | Invocation |
+| --- | ---: | ---: | --- |
+| 1 | 1 | 7 | `b8752b82-04d0-4382-9536-41a978abad7d` |
+| 2 | 3 | 121 | `474adfe6-9ef1-4411-ad7a-8795fd581b32` |
+| 3 | 114 | 933 | `76e5ea1d-154f-4658-aa3f-16ef64bc0569` |
+| 4 | 114 | 957 | `2449d769-a2a9-4e10-9680-db6e85136d5d` |
+| 5 | 113 | 1007 | `b75ecce9-4b12-40fe-bc2b-869361e564bd` |
+| 6 | 113 | 892 | `1c54fe7a-41b1-4871-8fd7-3892aa0d3b3a` |
+| 7 | 113 | 918 | `2c7018e0-a111-4d8b-86eb-b49b9af792a6` |
+| 8 | 113 | 1066 | `3afed503-d734-4208-877a-996b41fa9d8c` |
+
+At the tested revision, `pnpm --filter maister-web test:unit` passed 9,316/9,316 tests in 901 files. Web typecheck and ESLint completed (zero errors, 580 warnings). `pnpm validate:contracts`, `pnpm validate:docs:all`, public Mintlify validation and the public broken-link/anchor check all passed.
+
+The incident reproduction used a disposable local release. The deployment-time cause of the missing chunk on the original stand remains unverified.
