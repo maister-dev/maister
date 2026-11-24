@@ -2628,82 +2628,93 @@ async function markRunStoppedAndCloseAssignments(args: {
   reason: string;
   expectedRunStatus?: "Pending";
 }): Promise<void> {
-  await db().transaction(async (tx) => {
-    const rows = await tx
-      .update(runs)
-      .set({
-        status: "Review",
-        currentStepId: null,
-        endedAt: args.endedAt,
-        // ADR-126 T8: a manual-takeover return is a fresh Review entry — restart
-        // the auto-promotion grace window.
-        reviewEnteredAt: args.endedAt,
-      })
-      .where(
-        and(
-          eq(runs.id, args.runId),
-          args.expectedRunStatus === "Pending"
-            ? and(
-                eq(runs.status, args.expectedRunStatus),
-                eq(runs.runKind, "flow"),
-                queuedConditionResumeExists(runs.id),
-              )
-            : inArray(runs.status, STOP_STATUSES),
-        ),
-      )
-      .returning({
-        id: runs.id,
-        projectId: runs.projectId,
-        taskId: runs.taskId,
-        flowId: runs.flowId,
-        runKind: runs.runKind,
-        parentRunId: runs.parentRunId,
-      });
+  await db().transaction((tx) => recordProjectRunStopped(tx, args));
+}
 
-    if (rows.length === 0) {
-      throw new MaisterError(
-        "CONFLICT",
-        `run ${args.runId} was not in a stoppable state`,
-      );
-    }
+/** Apply the shared project Flow stop-to-Review transition in the caller's owner transaction. */
+export async function recordProjectRunStopped(
+  tx: NodePgDatabase<typeof schema>,
+  args: Readonly<{
+    runId: string;
+    endedAt: Date;
+    reason: string;
+    expectedRunStatus?: "Pending";
+  }>,
+): Promise<void> {
+  const rows = await tx
+    .update(runs)
+    .set({
+      status: "Review",
+      currentStepId: null,
+      endedAt: args.endedAt,
+      // ADR-126 T8: a manual-takeover return is a fresh Review entry — restart
+      // the auto-promotion grace window.
+      reviewEnteredAt: args.endedAt,
+    })
+    .where(
+      and(
+        eq(runs.id, args.runId),
+        args.expectedRunStatus === "Pending"
+          ? and(
+              eq(runs.status, args.expectedRunStatus),
+              eq(runs.runKind, "flow"),
+              queuedConditionResumeExists(runs.id),
+            )
+          : inArray(runs.status, STOP_STATUSES),
+      ),
+    )
+    .returning({
+      id: runs.id,
+      projectId: runs.projectId,
+      taskId: runs.taskId,
+      flowId: runs.flowId,
+      runKind: runs.runKind,
+      parentRunId: runs.parentRunId,
+    });
 
-    // ADR-166 D7: the stop ends the run's driver generation.
-    if (rows[0].runKind === "flow" && rows[0].projectId) {
-      const { closeConditionWaitsForRun } = await import("@/lib/waits/close");
-
-      await closeConditionWaitsForRun(tx, args.runId, "run_stopped");
-    }
-    await releaseAssignmentForRun(
-      tx as unknown as ExecutionDb,
-      args.runId,
-      "stopped",
+  if (rows.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      `run ${args.runId} was not in a stoppable state`,
     );
+  }
 
-    await systemCloseActiveAssignmentsForRun({
-      db: tx,
-      runId: args.runId,
-      reason: args.reason,
-    });
+  // ADR-166 D7: the stop ends the run's driver generation.
+  if (rows[0].runKind === "flow" && rows[0].projectId) {
+    const { closeConditionWaitsForRun } = await import("@/lib/waits/close");
 
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.review",
-      projectId: requireRunProjectId(rows[0].projectId, args.runId),
-      runId: args.runId,
-      data: { source: "workbench" },
-    });
-    // ADR-163: an operator stop parks a delegated child in Review too, and a
-    // Review nothing announces leaves its parent waiting forever. The cause
-    // keeps the as-plan auto-promote from reading the stop as a completion.
-    await emitDelegatedReviewIfChild(tx, {
-      runId: args.runId,
-      projectId: requireRunProjectId(rows[0].projectId, args.runId),
-      taskId: rows[0].taskId,
-      flowId: rows[0].flowId,
-      runKind: rows[0].runKind,
-      parentRunId: rows[0].parentRunId,
-      cause: "operator_stop",
-    });
+    await closeConditionWaitsForRun(tx, args.runId, "run_stopped");
+  }
+  await releaseAssignmentForRun(
+    tx as unknown as ExecutionDb,
+    args.runId,
+    "stopped",
+  );
+
+  await systemCloseActiveAssignmentsForRun({
+    db: tx,
+    runId: args.runId,
+    reason: args.reason,
+  });
+
+  await emitWebhookEvent({
+    db: tx,
+    type: "run.review",
+    projectId: requireRunProjectId(rows[0].projectId, args.runId),
+    runId: args.runId,
+    data: { source: "workbench" },
+  });
+  // ADR-163: an operator stop parks a delegated child in Review too, and a
+  // Review nothing announces leaves its parent waiting forever. The cause
+  // keeps the as-plan auto-promote from reading the stop as a completion.
+  await emitDelegatedReviewIfChild(tx, {
+    runId: args.runId,
+    projectId: requireRunProjectId(rows[0].projectId, args.runId),
+    taskId: rows[0].taskId,
+    flowId: rows[0].flowId,
+    runKind: rows[0].runKind,
+    parentRunId: rows[0].parentRunId,
+    cause: "operator_stop",
   });
 }
 

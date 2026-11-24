@@ -60,6 +60,7 @@ export async function reserveWorkspaceWorkload(
       !permittedStatus ||
       run?.assignmentId !== input.assignmentId ||
       assignment?.state !== "active" ||
+      assignment.addressedStopRequestedAt !== null ||
       !assignment.executionWorkspaceId ||
       assignment.runId !== input.runId
     )

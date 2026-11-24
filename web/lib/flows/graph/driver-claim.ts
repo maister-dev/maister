@@ -101,7 +101,8 @@ async function currentPlacedAssignment(
     // The fence guards active state, while prompt evidence needs FK key-share.
     .for("no key update");
 
-  return assignment?.state === "active" ? assignment : null;
+  return assignment?.state === "active" && assignment.addressedStopRequestedAt === null
+    ? assignment : null;
 }
 
 async function hasAssignmentHistory(tx: Db, runId: string): Promise<boolean> {

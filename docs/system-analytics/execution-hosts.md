@@ -1091,6 +1091,19 @@ identity refuses without registration, including after supervisor restart or
 compaction of the cancellation receipt. If the host has seen the workload,
 stop still requires retirement evidence from the original process group.
 
+For a running addressed project Flow, Web locks the Run and assignment,
+checks current `recoverRun`, stores the first operator and timestamp, and
+invalidates the Flow driver lease. PostgreSQL `0377` blocks new execution
+commands under that assignment and preserves its immutable Stop witness.
+Existing workload commands each get a stable, exact cancellation command.
+Never claim retirement from a missing session or a request timeout. Once
+canonical workload and ACP retirement are verified, reuse project Flow
+stop-to-Review and release the assignment in one transaction. A repeated
+request or the normal recovery sweep can resume the retained Stop while the
+operator's current authority still holds. This path covers `Running` and
+`NeedsInput` with no live child. Shared and dependent work needs coordinated
+retirement before the parent can stop.
+
 JSON commands are limited to 1 MiB and each strict variant explicitly
 accepts its input fields. IDs use the existing bounded host key, Run ID
 and UUID validators. A commit is a complete lowercase Git object ID for

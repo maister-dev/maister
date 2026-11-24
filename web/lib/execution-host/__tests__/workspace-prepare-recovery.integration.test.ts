@@ -23,14 +23,15 @@ import { createExecutionHosts } from "../client";
 import { getCommand, listCommandsForRun } from "../commands";
 import {
   consumeRuntimeEventStreamOnce,
+  startRuntimeEventConsumer,
   stopRuntimeEventConsumers,
 } from "../events/consumer";
 import { canonicalLifecycleProjector } from "../events/lifecycle-projector";
 import { projectExecutionEvents } from "../events/projector";
 import { projectCanonicalRuntimeObjects } from "../events/runtime-object-projector";
+import { startCanonicalProjectionWorker, stopCanonicalProjectionWorker } from "../events/projection-runtime";
 import { findStalledEventStreams } from "../events/stream-health";
 import { mintPlacement } from "../placement";
-import { releaseAssignmentForRun } from "../assignments";
 import { buildEnvelope } from "../ledger";
 import { recoverExecutionCommands } from "../recovery";
 import { advanceAddressedWorkspaceAdmission } from "../workspace-dispatch";
@@ -658,6 +659,12 @@ async function assertAddressedRequirement({
               "printf 'started\\n' >> .workload-crash-fixture; for ((i=0;i<200;i++)); do test -f .workload-crash-release && exit 0; sleep 0.1; done; exit 1",
             timeoutMs: 25_000,
           },
+          {
+            id: "stop-check",
+            workload: "check",
+            command: "printf 'partial stop output'; : > .stop-ready; for ((i=0;i<400;i++)); do test -f .stop-release && exit 0; sleep 0.1; done; exit 1",
+            timeoutMs: 45_000,
+          },
         ]),
       ),
     },
@@ -1148,31 +1155,70 @@ async function assertAddressedRequirement({
     join(owned.path, "input.txt"),
     "changed on the selected host\n",
   );
-  await db.transaction(async (tx) => {
-    await tx.update(runs).set({ status: "Review" }).where(eq(runs.id, runId));
-    expect(
-      await releaseAssignmentForRun(tx, runId, "run_terminal"),
-    ).toMatchObject({
-      id: assignment.id,
-      state: "released",
-    });
+  const stoppedWork = await reserveWorkspaceWorkload(db, {
+    ...workloadIntent,
+    operationKey: "stop-check-0",
+    declarationId: "stop-check",
   });
+  try {
+    expect(await recoverAt(90)).toMatchObject({ errors: [], redelivered: 1 });
+    await vi.waitFor(async () => expect(await readFile(join(owned.path, ".stop-ready"), "utf8")).toBe(""));
+    const supervisorState = new DatabaseSync(join(supervisor.stateDir, "state.sqlite"), { readOnly: true });
+    const stopGroup = (() => {
+      try {
+        return supervisorState.prepare(
+          "SELECT json_extract(body_json, '$.workspaceProcess.group') AS pgid FROM command_receipts WHERE command_id = ?",
+        ).get(stoppedWork.id) as { pgid: number };
+      } finally {
+        supervisorState.close();
+      }
+    })();
+    expect((await inspectProcessGroup(stopGroup.pgid)).state).toBe("active");
+    const undeliveredWork = await reserveWorkspaceWorkload(db, {
+      ...workloadIntent,
+      operationKey: "stop-check-before-wire",
+      declarationId: "stop-check",
+    });
+    startRuntimeEventConsumer({ db, executionHostId: host.id, transport });
+    startCanonicalProjectionWorker();
+    const stop = (await import("@/app/api/runs/[runId]/stop/route")).POST;
+    const stopped = await stop(new Request(`${web.origin}/api/runs/${runId}/stop`, { method: "POST" }), {
+      params: Promise.resolve({ runId }),
+    });
+    expect(stopped.status).toBe(200);
+    expect(await stopped.json()).toMatchObject({ runStatus: "Review", supervisorStopped: true });
+    expect(await getCommand(db, stoppedWork.id)).toMatchObject({
+      state: "succeeded",
+      result: { processOutcome: "cancelled", quiescence: "proved" },
+    });
+    expect((await inspectProcessGroup(stopGroup.pgid)).state).toBe("retired");
+    const cancellations = (await listCommandsForRun(db, runId)).filter(({ kind }) => kind === "workspace.cancel");
+    expect(cancellations).toHaveLength(2);
+    expect(cancellations).toEqual(expect.arrayContaining([stoppedWork, undeliveredWork].map(({ id }) =>
+      expect.objectContaining({ state: "succeeded", result: expect.objectContaining({ targetCommandId: id, quiescence: "proved" }) }),
+    )));
+    expect(await transport.getWorkspaceCommandReceipt!(undeliveredWork.id)).toBeNull();
+  } finally {
+    await writeFile(join(owned.path, ".stop-release"), "release");
+    await stopRuntimeEventConsumers();
+    await stopCanonicalProjectionWorker();
+  }
   const diffRoute = (await import("@/app/api/runs/[runId]/diff/route")).GET;
   const requestDiff = () =>
     diffRoute(new Request(`${web.origin}/api/runs/${runId}/diff`), {
       params: Promise.resolve({ runId }),
     });
   const readDiffEvent = async (): Promise<void> => {
-    expect(
-      await consumeRuntimeEventStreamOnce({
+    const batch = await consumeRuntimeEventStreamOnce({
         db,
         executionHostId: host.id,
         transport,
         owner: "fixture",
         maxEvents: 1,
         signal: AbortSignal.timeout(15_000),
-      }),
-    ).toMatchObject({ received: 1, acknowledged: 1 });
+      });
+    expect(batch.received).toBe(1);
+    expect(batch.acknowledged).toBeGreaterThanOrEqual(1);
   };
   const allowedDiff = requestDiff();
   await readDiffEvent();

@@ -1640,6 +1640,8 @@ table execution_assignments {
   lease_expires_at "timestamp with time zone"
   superseded_by_id text
   released_reason text
+  addressed_stop_requested_at "timestamp with time zone"
+  addressed_stop_requested_by text
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
   ended_at "timestamp with time zone"
@@ -1649,6 +1651,7 @@ table execution_assignments {
     (run_id, epoch) [name: 'execution_assignments_run_epoch_uq', unique]
     run_id [name: 'execution_assignments_run_active_uq', unique]
     (execution_host_id, state) [name: 'execution_assignments_host_state_idx']
+
 
 
 

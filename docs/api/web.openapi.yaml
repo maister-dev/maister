@@ -11992,6 +11992,13 @@ paths:
 
         - **flow** (Implemented) → `runs.status = Review`, active assignments
           closed.
+          For an addressed project Flow in `Running` or `NeedsInput`, Stop
+          first persists the requesting operator on the current assignment.
+          The supervisor cancels each exact workload and returns a canonical
+          retirement witness. Web retains the worktree and assignment until
+          workload and ACP quiescence are proved. An unavailable or unfinished
+          witness returns 503 with `addressed_stop_pending`. A repeated Stop
+          on the already parked assignment returns its Review state.
         - **scratch** → `Review` when the run still has a live
           worktree, otherwise `Abandoned` (shared scratch-stop primitive; the
           dedicated `POST /api/scratch-runs/{runId}/stop` route delegates to the

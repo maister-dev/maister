@@ -426,4 +426,31 @@ describe("C-02 workspace ownership", () => {
     });
     expect(await selectIntent()).toEqual(original);
   });
+
+  it("upgrades active assignment history and seals the first addressed Stop owner", async () => {
+    const active = await createRun(hostId, "Running");
+    const workspaceId = await reserveWorkspace({ ...active, host: hostId });
+    const handle = `ws_${randomUUID().replaceAll("-", "")}`;
+    await database.pool.query("UPDATE runs SET run_kind='flow' WHERE id=$1", [active.runId]);
+    await database.pool.query("UPDATE workspaces SET execution_workspace_id=$2 WHERE id=$1", [workspaceId, handle]);
+    await database.pool.query("UPDATE execution_assignments SET execution_workspace_id=$2 WHERE id=$1", [active.assignmentId, handle]);
+    await database.db.transaction((tx) => applyMainMigration(tx, "0377_stage_c_addressed_stop"));
+    const read = async () => (await database.pool.query(
+      "SELECT state, run_id, execution_workspace_id, addressed_stop_requested_at, addressed_stop_requested_by FROM execution_assignments WHERE id=$1",
+      [active.assignmentId],
+    )).rows[0];
+    expect(await read()).toEqual({
+      state: "active", run_id: active.runId, execution_workspace_id: handle,
+      addressed_stop_requested_at: null, addressed_stop_requested_by: null,
+    });
+    await database.pool.query(
+      "UPDATE execution_assignments SET addressed_stop_requested_at=clock_timestamp(), addressed_stop_requested_by=$2 WHERE id=$1",
+      [active.assignmentId, userId],
+    );
+    await expect(database.pool.query(
+      "UPDATE execution_assignments SET addressed_stop_requested_by=$2 WHERE id=$1",
+      [active.assignmentId, randomUUID()],
+    )).rejects.toMatchObject({ code: "23514", constraint: "addressed_stop_immutable" });
+    expect((await read()).addressed_stop_requested_by).toBe(userId);
+  });
 });

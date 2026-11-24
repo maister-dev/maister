@@ -2612,6 +2612,13 @@
       "when": 1795486640734,
       "tag": "0376_stage_c_addressed_launch_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 377,
+      "version": "7",
+      "when": 1795494366957,
+      "tag": "0377_stage_c_addressed_stop",
+      "breakpoints": true
     }
   ]
 }

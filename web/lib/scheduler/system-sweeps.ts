@@ -573,6 +573,8 @@ export async function runSystemSweep(
   try {
     executionHost = await executionCommandReconcilePass();
     errors.push(...executionHost.commands.errors);
+    const { recoverAddressedFlowStop } = await import("@/lib/runs/stop");
+    await recoverAddressedFlowStop(getDb());
   } catch (err) {
     const message = errorMessage(err);
 

@@ -372,8 +372,19 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   marker, then repeated that refusal after receipt compaction and supervisor
   restart. The same fixture still covers cancellation after process acceptance.
   Passed 53 supervisor integrations including populated migration and retained
-  command cases, plus supervisor typecheck. Web operator Stop still needs
-  the matching intent and settlement path.
+  command cases, plus supervisor typecheck.
+
+  **C-08 Web Stop checkpoint.** RED returned 503 from the pathless Run's
+  operator action while a real workload group was active. PostgreSQL 0377
+  retains the operator and exact assignment and fences subsequent execution.
+  GREEN cancelled that live group, fenced a second undelivered workload and
+  entered Review after canonical retirement. The supervisor ledger had no
+  receipt or process for the undelivered command. A populated migration
+  fixture retained the prior assignments and held the first Stop actor
+  immutable. Passed 14 Web integrations across the workspace and driver
+  suites, a focused accepted/undelivered rerun, six migration cases and Web
+  typecheck. Coordinated child retirement and a production Chrome Stop are
+  still required for the full delivery scope.
 
   The selected supervisor also captures a declared `MAISTER_OUTPUT_FILE`
   as a bounded, digest-verified runtime object. The real Web/host fixture
@@ -571,6 +582,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   ownership require their own cutover.
 
 - [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.
+
+  The exact archived image and Chrome fixture at `7b588d409` repeated the
+  two pinned Next builds and retained the original patch. Image digest
+  `sha256:288907e48ddae4215308511cf171f010cf7308874ec131649e5044261bcfa982`.
+  Linux arm64, Node 24.22.2 and Chrome 158.0.8127.38. Web had no access to
+  the host SQLite. Both Runs used the selected supervisor. An earlier
+  attempt used the live checkout's newer 0377 migration and was refused at
+  image boot before any Run. Re-running the
+  fixture from the exact image revision resolved that mismatch.
 
   **C-12 addressed board-to-Review evidence.** Production image built from
   `9806f69ed` with two Next build workers. The split-user harness passed

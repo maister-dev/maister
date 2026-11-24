@@ -3079,6 +3079,11 @@ export const executionAssignments = pgTable(
       { onDelete: "set null" },
     ),
     releasedReason: text("released_reason"),
+    addressedStopRequestedAt: timestamp("addressed_stop_requested_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    addressedStopRequestedBy: text("addressed_stop_requested_by"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -3109,6 +3114,10 @@ export const executionAssignments = pgTable(
     epochCheck: check(
       "execution_assignments_epoch_check",
       sql`${t.epoch} >= 1`,
+    ),
+    addressedStopCheck: check(
+      "execution_assignments_addressed_stop_check",
+      sql`((${t.addressedStopRequestedAt} IS NULL AND ${t.addressedStopRequestedBy} IS NULL) OR (${t.addressedStopRequestedAt} IS NOT NULL AND char_length(${t.addressedStopRequestedBy}) BETWEEN 1 AND 128 AND ${t.executionWorkspaceId} IS NOT NULL)) IS TRUE`,
     ),
     stateCheck: check(
       "execution_assignments_state_check",
