@@ -4,7 +4,7 @@ import type { InstallResult } from "@/lib/flows";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 
 import {
   flowRunnerRemaps,
@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/schema";
 import { syncFlowRunnerReconfigurationRequirements } from "@/lib/acp-runners/flow-reconfiguration";
 import { MaisterError } from "@/lib/errors";
+import { requiresExplicitNativeFindingsEnablement } from "@/lib/flows/enablement-states";
 export async function prepareDependencyFlow(
   tx: Db,
   projectId: string,
@@ -105,5 +106,13 @@ export async function prepareDependencyFlow(
     await tx
       .update(flows)
       .set({ enablementState: "Disabled", updatedAt: new Date() })
-      .where(eq(flows.id, flow.flowRowId));
+      .where(
+        and(
+          eq(flows.id, flow.flowRowId),
+          // Native findings stay Installed until an explicit enable action.
+          requiresExplicitNativeFindingsEnablement(flow.manifest)
+            ? ne(flows.enablementState, "Installed")
+            : undefined,
+        ),
+      );
 }

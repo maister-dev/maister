@@ -775,8 +775,9 @@ separate authorization model.
    enablement/launch.
 2. Every `flows[].runner`, when not `inherit`, must reference a platform runner
    or have a ready per-Flow replacement configured in the project. Otherwise
-   the worker disables the attachment, ordinary Enable refuses it, and new
-   launch admission excludes it even when a general project runner is ready.
+   the attachment cannot be enabled or launched, even when a general project
+   runner is ready. Native findings Flows retain their initial `Installed`
+   state until their explicit enable action.
 3. No duplicate flow IDs; no duplicate `capability_imports[].id`.
 4. **(Implemented)** Every Flow node settings capability reference
    (`mcps[]`, `skills[]`, `restrictions[]`, `settingsProfile`, `tools.{claude|codex}`)
