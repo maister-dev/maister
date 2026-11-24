@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { inspectProcessGroup } from "../../runtime/process-group";
 
@@ -20,6 +21,7 @@ type WorkloadProcessResult = Readonly<{
 }>;
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
+const GROUP_RETIREMENT_GRACE_MS = 1_000;
 const HOST_ENVIRONMENT =
   /^(?:HOME|LANG|LC_[A-Z_]+|LOGNAME|PATH|SHELL|TERM|TMPDIR|TZ|USER|NODE_ENV|SSH_AUTH_SOCK|MAISTER_(?:MAX_CONCURRENT_HEAVY_CHECKS|HEAVY_CHECK_DIR|BUILD_PROFILE|BUILD_MAX_WORKERS|TEST_MAX_WORKERS))$/u;
 
@@ -32,6 +34,22 @@ function selectWorkloadEnvironment(): Record<string, string> {
         HOST_ENVIRONMENT.test(entry[0]),
     ),
   );
+}
+
+/** Child close can precede the kernel retiring other members of the same group. */
+async function workloadGroupRetired(group: number): Promise<boolean> {
+  const deadline = performance.now() + GROUP_RETIREMENT_GRACE_MS;
+  let remaining = GROUP_RETIREMENT_GRACE_MS;
+  while (remaining > 0) {
+    if ((await inspectProcessGroup(group, Math.ceil(remaining))).state === "retired")
+      return true;
+    remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+    await delay(Math.min(25, Math.ceil(remaining)));
+    remaining = deadline - performance.now();
+  }
+
+  return (await inspectProcessGroup(group, 0)).state === "retired";
 }
 
 /** Start a shell only after the process-group owner is durably recorded. */
@@ -166,7 +184,7 @@ export async function executeWorkspaceWorkloadProcess(
 
   const retired =
     child.pid === undefined ||
-    (await inspectProcessGroup(child.pid)).state === "retired";
+    (await workloadGroupRetired(child.pid));
   if (processFailure instanceof SupervisorError && retired)
     throw processFailure;
 

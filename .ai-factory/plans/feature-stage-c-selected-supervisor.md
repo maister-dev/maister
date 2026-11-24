@@ -344,6 +344,11 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   both typechecks, the contract suite and docs/ERD validation. The main
   Flow drivers remain open.
 
+  A later supervisor regression run caught the child `close` arriving
+  before the descendant group retired on Darwin. The workload now waits
+  for bounded OS proof and retains the uncertain fence if proof is still
+  missing. Passed 12 real supervisor workspace and process ownership cases.
+
   The selected supervisor also captures a declared `MAISTER_OUTPUT_FILE`
   as a bounded, digest-verified runtime object. The real Web/host fixture
   read the result through the graph output parser and verified the separate
