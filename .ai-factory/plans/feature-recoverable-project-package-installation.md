@@ -243,3 +243,31 @@ The full web unit suite passed 9,320 cases across 902 files at `ac5cd0b5c`. Its 
 The ordinary integration inventory covered 5,926 distinct cases across 685 files. The local reference package at `b716f9bcc07651961b9b15d273e87c8bf21c66d9` passed its seven cases. Two groups were repeated after application edits. For the orchestration timing regression, the complete 27-case file passed after waiting for both the parked state and release of the recovering driver's claim. The repaired file replaces its earlier result once in the inventory. The A/B web lane passed 726 cases in 46 files during the review fixes. These broad results were collected across local phase commits.
 
 The final `test:integration:isolation` invocation at `ebaf239f1` passed all 56 cases across eight files, validated the exact case inventory and completed cleanup (invocation `4402b51a-51b4-4fee-898a-8f063b7c2c75`). The SIGTERM scenario observed the real service release its held claim during shutdown. Both expected capability digests were stored through production registration. The three non-overlapping web integration lanes cover 6,708 passing cases in total. All eleven acceptance criteria have local executable evidence. Qualification ran on macOS arm64 with Node 24.22.3, PostgreSQL and local Git. Hosted CI and the original stand are outside these receipts.
+
+## Second review corrections
+
+| Accepted | Criterion | Additional regression evidence |
+| --- | --- | --- |
+| [x] | AC01 | Register and install valid long capability IDs and versions through both the manifest and native import paths. The two original registration/import regressions failed before the shared coordinate fix. Flow IDs keep their existing limit. |
+| [x] | AC02 | Migrations 0374 and 0375 preserve existing attachments and preferences and support durable per-member link repair and skill eligibility. Populated upgrades cover mixed legacy inventories. A skill with an unproven provider stays disabled until verified member metadata is available. |
+| [x] | AC03 | A fresh worker resumes a committed installation without re-fetching a removed source or moved tag. Production boot exercises actual process termination, re-claim and graceful shutdown. |
+| [x] | AC04 | Recover a lost commit acknowledgement from the persisted checkpoint. Validate authority and setup material at dispatch. A missing setup file or revoked actor cannot start the shell. Previously dispatched work retains its explicit recovery path. |
+| [x] | AC05 | Check the picker, task launch, standalone agent materialization and actual runtime skill IDs against current eligible members. Preserve explicit executable trust across projects. A missing declared runner can be repaired through Settings and the originally blocked task can then launch. |
+| [x] | AC06 | Recheck authority on trust and detach. After an ambiguous PATCH, Settings re-reads the desired coordinates and generation. A saved edit and a competing edit produce distinct outcomes. The API documents accepted mutations awaiting filesystem repair. |
+| [x] | AC07 | Manual, Studio and CLI changes record per-member link repairs even after detach. A conflicting user file survives, and other members progress. Studio returns the cut version and outstanding repair, while a failed launch compensates only its own still-current adoption. |
+| [x] | AC08 | Local material and Git previews account for executable modes, directories and confined links, including agent-only packages. Confirming a mode-stale preview fails. Existing historical witnesses remain readable. |
+| [x] | AC09 | Real Git worktree, index and bare remote tests verify that a repaired desired pin is published only through the separate confirmed save and push operations. |
+| [x] | AC10 | Exercise project registration, onboarding and the package repair journey in Chromium. EN/RU component cases cover a lost PATCH response, actionable pending link repair and the Studio result after a committed cut. |
+| [x] | AC11 | A production Next.js server stores the expected hashes of both a standalone capability and an installed package member. |
+
+The final local run used application commit `fabd63c3ec4c6b7ae08875f8a149de7341d505bb` on macOS arm64 with Node 24.22.3 and isolated PostgreSQL databases.
+
+| Check | Result |
+| --- | --- |
+| Full web unit suite | 9,328 passed across 902 files. |
+| Selected web integration suites | 271 passed across 29 files covering registration, migrations, workers, trust, actual launch and Git publication. |
+| Production worker boot and capability finalization | 11 passed across two files. Invocation `844ed7c5-6129-4a28-8465-19a2372fabeb` exited cleanly. |
+| Chromium registration, onboarding and package management | 13 scenarios and one authentication setup passed. Invocation `759de686-359d-46b5-ad1a-d52a0634f50d` exited cleanly. |
+| Static and documentation checks | Web typecheck, API contract validation, internal and public docs and public links passed. The ERD matches 234 tables. ESLint on changed web TypeScript files reported zero errors and 139 warnings. |
+
+The full integration counts earlier in this plan refer to earlier revisions. The final run used local Git remotes. The original GitVerse deployment and hosted CI were outside this verification.
