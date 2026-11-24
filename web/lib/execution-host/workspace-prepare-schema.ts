@@ -24,6 +24,32 @@ const mode = z.enum([
   "emptyDirectory",
 ]);
 
+const WorkspaceRecordSchema = z
+  .object({
+    handle,
+    generation,
+    mode,
+    observedCommit: gitObject.nullable(),
+  })
+  .strict();
+
+export const WorkspaceStatusSchema = z
+  .object({
+    workspace: WorkspaceRecordSchema,
+    workingTree: z.enum(["clean", "dirty", "nonGit"]),
+    headState: z.enum(["branch", "detached", "nonGit"]),
+  })
+  .strict()
+  .refine(({ workspace, workingTree, headState }) =>
+    workspace.mode === "directory" || workspace.mode === "emptyDirectory"
+      ? workspace.observedCommit === null &&
+        workingTree === "nonGit" &&
+        headState === "nonGit"
+      : workspace.observedCommit !== null &&
+        workingTree !== "nonGit" &&
+        headState !== "nonGit",
+  );
+
 export const WorkspacePreparePayloadSchema = z.union([
   z
     .object({
@@ -106,14 +132,7 @@ export const WorkspacePrepareReceiptSchema = z.discriminatedUnion("phase", [
       phase: z.literal("completed"),
       result: z
         .object({
-          workspace: z
-            .object({
-              handle,
-              generation,
-              mode,
-              observedCommit: gitObject.nullable(),
-            })
-            .strict(),
+          workspace: WorkspaceRecordSchema,
           inputDigest: digest,
         })
         .strict(),

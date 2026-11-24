@@ -551,6 +551,11 @@ Compare a physical writer by host and canonical root, including aliases.
 Different hosts may use the same path string. Validate both cases with
 independent real stores in C-02, C-06 and C-13.
 
+The addressed status operation checks the retained generation on the owner.
+For Git it verifies the worktree identity and current HEAD around a bounded
+status read. The result exposes the observed commit, branch versus detached
+state and clean versus dirty state without exposing the private path.
+
 ## Expectations
 
 - Exactly one worktree per run, rooted at

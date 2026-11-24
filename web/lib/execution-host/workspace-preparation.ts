@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { WorkspacePrepareInput } from "../../../runtime/workspace-prepare";
+import type {
+  WorkspacePrepareInput,
+  WorkspaceStatus,
+} from "../../../runtime/workspace-prepare";
 import type { Db } from "./db";
 import type { ExecutionHostTransport } from "./contracts";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
@@ -15,6 +18,7 @@ import { defaultTransport } from "./default-transport";
 import { issueCommand } from "./ledger";
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { encodeWorkspaceInputCapture } from "./workspace-input-capture";
+import { hostForAssignment } from "./resolver";
 
 import { runs, workspaceInputCaptures, workspaces } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -62,6 +66,58 @@ export async function observeSelectedWorkspaceRevision(
   return transport.observeWorkspaceRevision(repositoryId, ref);
 }
 
+/** Call after the Run's project authorization. The retained owner remains valid after assignment release. */
+export async function readAddressedWorkspaceStatus(
+  db: Db,
+  workspace: Pick<
+    typeof workspaces.$inferSelect,
+    | "ownershipKind"
+    | "executionHostId"
+    | "executionWorkspaceId"
+    | "workspaceGeneration"
+    | "preparationAssignmentId"
+    | "removedAt"
+  >,
+  transport: ExecutionHostTransport = defaultTransport(),
+): Promise<WorkspaceStatus> {
+  if (
+    workspace.ownershipKind !== "host_owned" ||
+    workspace.removedAt ||
+    !workspace.executionHostId ||
+    !workspace.executionWorkspaceId ||
+    !workspace.workspaceGeneration ||
+    !workspace.preparationAssignmentId
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Run has no retained addressed workspace",
+      {
+        details: { reason: "workspace_preparation_pending" },
+      },
+    );
+  const host = await hostForAssignment(
+    db,
+    {
+      id: workspace.preparationAssignmentId,
+      executionHostId: workspace.executionHostId,
+    },
+    { transport },
+  );
+  if (!usesHostWorkspacePreparation(host) || !transport.getWorkspaceStatus)
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Assigned host cannot inspect workspaces",
+      {
+        details: { reason: "workspace_protocol_unsupported" },
+      },
+    );
+
+  return transport.getWorkspaceStatus(
+    workspace.executionWorkspaceId,
+    workspace.workspaceGeneration,
+  );
+}
+
 /** Reserve the logical workspace and command in the transaction that places the Run. */
 export async function reserveHostWorkspace(
   tx: Db,
@@ -73,12 +129,18 @@ export async function reserveHostWorkspace(
   const { host, assignment } = placement;
   const workspaceId = randomUUID();
   const capture = encodeWorkspaceInputCapture(files);
-  const [run] = await tx.select({ userId: runs.createdByUserId }).from(runs)
+  const [run] = await tx
+    .select({ userId: runs.createdByUserId })
+    .from(runs)
     .where(eq(runs.id, assignment.runId));
   if (!run)
-    throw new MaisterError("CONFLICT", "Workspace reservation requires its admitted Run", {
-      details: { reason: "workspace_preparation_changed" },
-    });
+    throw new MaisterError(
+      "CONFLICT",
+      "Workspace reservation requires its admitted Run",
+      {
+        details: { reason: "workspace_preparation_changed" },
+      },
+    );
 
   await tx.insert(workspaces).values({
     ...metadata,

@@ -27,7 +27,10 @@ import { buildEnvelope } from "../ledger";
 import { recoverExecutionCommands } from "../recovery";
 import { ensureLocalExecutionHost } from "../registrar";
 import { createLocalDirectTransport } from "../transports/local-direct";
-import { reserveHostWorkspace } from "../workspace-preparation";
+import {
+  readAddressedWorkspaceStatus,
+  reserveHostWorkspace,
+} from "../workspace-preparation";
 import { readRuntimeObjectContent } from "../runtime-objects";
 import { WorkspaceMaterializationPayloadSchema } from "../workspace-prepare-schema";
 import { asExecutionWorkspaceId } from "../types";
@@ -329,6 +332,16 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
   expect(
     (await getAssignmentById(db, assignment.id))?.executionWorkspaceId,
   ).toBe(workspace.executionWorkspaceId);
+  expect(await readAddressedWorkspaceStatus(db, workspace, transport)).toEqual({
+    workspace: {
+      handle: workspace.executionWorkspaceId,
+      generation: workspace.workspaceGeneration,
+      mode: "ownWorktree",
+      observedCommit: commit,
+    },
+    workingTree: "clean",
+    headState: "detached",
+  });
 
   expect(workspace.workspaceMaterializationGeneration).toBeNull();
   await writeFile(instructions, "# updated after acceptance");

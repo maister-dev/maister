@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
-import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
+import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
   WorkspacePublicationSnapshot,
@@ -59,7 +59,7 @@ import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
-import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
@@ -1958,6 +1958,22 @@ export async function observeWorkspaceRevision(repositoryId: string, ref: string
     throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid Git revision witness");
 
   return received.data.commit;
+}
+
+export async function getWorkspaceStatus(handle: string, generation: number): Promise<WorkspaceStatus> {
+  const res = await request<unknown>({
+    method: "GET",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/status?generation=${generation}`,
+    ctx: "getWorkspaceStatus",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const status = WorkspaceStatusSchema.safeParse(res.body);
+  if (res.status !== 200 || !status.success || status.data.workspace.handle !== handle ||
+      status.data.workspace.generation !== generation)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned a different workspace status");
+
+  return status.data;
 }
 
 export async function getWorkspaceCommandReceipt(

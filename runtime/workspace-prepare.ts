@@ -110,13 +110,21 @@ export type WorkspaceCancelWorkloadResult = Readonly<{
   objects: readonly WorkspaceInputObject[];
 }>;
 
+export type WorkspaceRecord = Readonly<{
+  handle: string;
+  generation: number;
+  mode: WorkspacePrepareInput["mode"];
+  observedCommit: string | null;
+}>;
+
+export type WorkspaceStatus = Readonly<{
+  workspace: WorkspaceRecord;
+  workingTree: "clean" | "dirty" | "nonGit";
+  headState: "branch" | "detached" | "nonGit";
+}>;
+
 export type PreparedWorkspace = Readonly<{
-  workspace: Readonly<{
-    handle: string;
-    generation: number;
-    mode: WorkspacePrepareInput["mode"];
-    observedCommit: string | null;
-  }>;
+  workspace: WorkspaceRecord;
   inputDigest: string;
 }>;
 

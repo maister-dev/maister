@@ -39,6 +39,7 @@ import { applyFence } from "./execution-fence";
 import { prepareOwnedWorkspace } from "./prepare-owned-workspace";
 import { isSupervisorError, SupervisorError } from "./types";
 import { materializeWorkspaceInputs } from "./workspace-input-materialization";
+import { inspectWorkspace } from "./workspace-status";
 import {
   recoverWorkspaceWorkload,
   runWorkspaceWorkload,
@@ -100,6 +101,9 @@ const requestSchema = z
   .strict();
 
 const workspaceHandle = z.string().regex(/^ws_[a-f0-9]{32}$/);
+const workspaceQuery = z.object({
+  generation: z.string().regex(/^[1-9][0-9]{0,15}$/).transform(Number).pipe(generation),
+}).strict();
 const materializeSchema = z
   .object({
     workspaceProtocol: z.literal(1),
@@ -486,6 +490,31 @@ export function registerWorkspacePreparation(args: {
 
     return accept();
   }
+
+  type StatusRequest = { Params: { id: string }; Querystring: unknown };
+  async function readWorkspaceStatus(id: string, query: unknown) {
+    const handle = workspaceHandle.safeParse(id);
+    const parsed = workspaceQuery.safeParse(query);
+    if (!handle.success || !parsed.success)
+      throw new SupervisorError("PRECONDITION", "Workspace handle and generation are required", {
+        details: { reason: "invalid_request" },
+      });
+
+    return inspectWorkspace(state, handle.data, parsed.data.generation);
+  }
+
+  const missingWorkspace = refusal("NOT_FOUND", "resource_not_found", "Workspace is unavailable");
+
+  app.get<StatusRequest>("/v1/workspaces/:id", async (req, reply) => {
+    const result = await readWorkspaceStatus(req.params.id, req.query);
+
+    return result?.workspace ?? reply.status(404).send(missingWorkspace);
+  });
+  app.get<StatusRequest>("/v1/workspaces/:id/status", async (req, reply) => {
+    const result = await readWorkspaceStatus(req.params.id, req.query);
+
+    return result ?? reply.status(404).send(missingWorkspace);
+  });
 
   app.post("/v1/workspaces/prepare", async (req, reply) => {
     if (

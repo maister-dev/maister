@@ -307,6 +307,12 @@ New workspaces receive the same initial state. The migration preserves the
 host key, run fences, handles, stream position, receipts and tombstones. A
 newer unsupported schema refuses before changing SQLite journal mode.
 
+SQLite schema 20 retains the preparation mode in the private workspace row so
+status reads survive checkout receipt retirement. For an existing v19 handle,
+the migration uses a retained terminal receipt only if its host, Run, handle,
+generation, input digest and workspace kind match. A missing or conflicting
+witness leaves the mode unset and addressed status refuses the handle.
+
 The addressed command writer will persist the accepted request digest before
 physical effects and seal its terminal receipt with the corresponding outbox
 event in one SQLite transaction. The legacy receipt and event formats continue

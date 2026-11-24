@@ -451,6 +451,7 @@ describe("execution-host identity", () => {
     const executionState = {
       generation: 1,
       inputDigest: null,
+      preparationMode: null,
       materializationGeneration: 0,
       materializationDigest: null,
       operationFence: 0,
@@ -507,7 +508,7 @@ describe("execution-host identity", () => {
     }
     const upgradedFile = new DatabaseSync(file);
     expect(upgradedFile.prepare("PRAGMA user_version").get()).toEqual({
-      user_version: 19,
+      user_version: HOST_STATE_SCHEMA_VERSION,
     });
     upgradedFile.close();
   });

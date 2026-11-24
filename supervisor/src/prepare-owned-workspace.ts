@@ -281,7 +281,7 @@ export async function prepareOwnedWorkspace(args: {
         ...(repositoryPath === undefined ? {} : { repoPath: repositoryPath }),
       });
       assertOwner();
-      state.recordWorkspaceInput(handle.id, 1, payload.inputDigest);
+      state.recordWorkspaceInput(handle.id, 1, payload.inputDigest, payload.mode);
 
       return {
         workspace: {

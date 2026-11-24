@@ -317,6 +317,16 @@ and its real HTTP command outcomes are qualified in T04–T05H.
 ### C3–C4 — review, board and single-host qualification
 
 - [ ] **T08 · Git / review (after T07 provides sealed evidence and T05H provides owned handles).** Move status/diff/log, mutation detection, Git checkpoint and restore behind the handle. Cover `flows/graph/workspace-checkpoint.ts`, `artifact-content.ts`, board diff readers and human takeover. Scope read authorization to the content returned. Verify dirty and detached states, bounded diff ranges, authorized read and denied cross-project read. Preserve ACP checkpoint separately. Log expected/actual commit and evidence ID.
+
+  **C-09 status checkpoint.** RED returned 404 for the addressed status
+  route. GREEN observed clean and dirty detached checkouts on the same
+  retained handle, rejected a stale generation and preserved the dirty
+  checkout through a populated SQLite v19 to v20 upgrade. The manager
+  read the pathless Run's status through its configured transport. Passed
+  26 supervisor and one PostgreSQL/Web integration case, both typechecks,
+  and docs/ERD validation. Diff, log, review and checkpoint/restore still
+  require evidence.
+
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 - [ ] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
 - [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.

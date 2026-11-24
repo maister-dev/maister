@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -21,6 +22,8 @@ import type {
   WorkspacePrepareInput,
   WorkspacePrepareReceipt,
 } from "../../../runtime/workspace-prepare";
+
+import { HOST_STATE_FILE } from "../host-state";
 
 import {
   bootHost,
@@ -686,10 +689,29 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
   if (!workspace) throw new Error("receipt has no owned workspace");
   const path = join(workspace.realPath, "input.txt");
   expect(await readFile(path, "utf8")).toBe("first\n");
+  const workspaceQuery = `/v1/workspaces/${workspace.id}`;
+  const inspect = (supervisor: BootedHost) =>
+    addressedRequest(supervisor, `${workspaceQuery}/status?generation=1`);
+  const clean = await inspect(host);
+  expect(clean.status).toBe(200);
+  expect(await clean.json()).toEqual({
+    workspace: receipt.result.workspace,
+    workingTree: "clean",
+    headState: "detached",
+  });
   await writeFile(path, "dirty first workspace\n");
 
   await host.stop();
   hosts.pop();
+  const priorStore = new DatabaseSync(join(host.stateDir, HOST_STATE_FILE));
+  try {
+    priorStore.exec(`
+      ALTER TABLE workspace_execution_state DROP COLUMN preparation_mode;
+      PRAGMA user_version = 19;
+    `);
+  } finally {
+    priorStore.close();
+  }
   const rebooted = await bootHost({ runtimeRoot: root });
   hosts.push(rebooted);
   expect(rebooted.hostState.bootId).not.toBe(host.hostState.bootId);
@@ -707,6 +729,21 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
     receipt,
   );
   expect(await readFile(path, "utf8")).toBe("dirty first workspace\n");
+  const dirty = await inspect(rebooted);
+  expect(dirty.status).toBe(200);
+  expect(await dirty.json()).toEqual({
+    workspace: receipt.result.workspace,
+    workingTree: "dirty",
+    headState: "detached",
+  });
+  const stale = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/status?generation=2`,
+  );
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({
+    details: { reason: "stale_workspace_generation" },
+  });
 
   const conflicting = await addressedRequest(
     rebooted,

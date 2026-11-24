@@ -11,7 +11,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { EXECUTION_HOST_KEY_PATTERN } from "../../runtime/execution-host-address";
-import type { WorkspaceTerminalPayload } from "../../runtime/workspace-prepare";
+import type { WorkspacePrepareInput, WorkspaceTerminalPayload } from "../../runtime/workspace-prepare";
 
 import { reuseSqliteStatements } from "./sqlite-statements";
 import {
@@ -128,7 +128,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 19;
+export const HOST_STATE_SCHEMA_VERSION = 20;
 
 /** Native retirement survives registry loss. Released identities share the receipt tombstone's permanent retention and cannot reactivate. */
 export type SessionProcessObligation = Readonly<{
@@ -266,6 +266,7 @@ export type WorkspaceWaitWitness = {
 export type WorkspaceExecutionState = Readonly<{
   generation: number;
   inputDigest: string | null;
+  preparationMode: WorkspacePrepareInput["mode"] | null;
   materializationGeneration: number;
   materializationDigest: string | null;
   operationFence: number;
@@ -508,7 +509,7 @@ export type HostState = {
   activeWorkspacePathOwner(realPath: string): { runId: string } | null;
   getWorkspace(id: string): WorkspaceRow | null;
   getWorkspaceExecutionState(id: string): WorkspaceExecutionState | null;
-  recordWorkspaceInput(id: string, generation: number, digest: string): void;
+  recordWorkspaceInput(id: string, generation: number, digest: string, mode: WorkspacePrepareInput["mode"]): void;
   recordWorkspaceMaterialization(id: string, generation: number, digest: string): void;
   recordWorkspaceWorkloadProcess(commandId: string, group: number, physicalKey: string): boolean;
   insertWorkspace(row: WorkspaceRow): void;
@@ -711,6 +712,29 @@ CREATE TRIGGER seed_workspace_execution_state AFTER INSERT ON workspaces
   BEGIN INSERT INTO workspace_execution_state(workspace_id) VALUES (NEW.id); END;
 `;
 
+const WORKSPACE_PREPARATION_MODE_SCHEMA = `
+ALTER TABLE workspace_execution_state ADD COLUMN preparation_mode TEXT CHECK (
+  preparation_mode IN ('ownWorktree', 'sharedWorktree', 'readOnlyCheckout', 'directory', 'emptyDirectory'));
+WITH verified AS (
+  SELECT w.id, min(json_extract(r.body_json, '$.result.workspace.mode')) AS mode
+  FROM command_receipts r
+  JOIN workspaces w ON w.run_id = r.run_id AND w.id = json_extract(r.body_json, '$.result.workspace.handle')
+  JOIN workspace_execution_state x ON x.workspace_id = w.id
+  JOIN host_identity h ON h.host_key = r.host_key
+  WHERE r.kind = 'workspace.prepare' AND r.phase = 'completed' AND r.retired_at IS NULL
+    AND r.request_schema = 'maister.workspace.command.request.v1'
+    AND json_extract(r.body_json, '$.result.workspace.generation') = x.generation
+    AND json_extract(r.body_json, '$.result.inputDigest') = x.input_digest
+    AND ((w.kind = 'git_worktree' AND json_extract(r.body_json, '$.result.workspace.mode') IN
+      ('ownWorktree', 'sharedWorktree', 'readOnlyCheckout'))
+      OR (w.kind = 'directory' AND json_extract(r.body_json, '$.result.workspace.mode') IN
+      ('directory', 'emptyDirectory')))
+  GROUP BY w.id HAVING count(DISTINCT json_extract(r.body_json, '$.result.workspace.mode')) = 1
+)
+UPDATE workspace_execution_state AS x SET preparation_mode = verified.mode
+  FROM verified WHERE verified.id = x.workspace_id;
+`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_identity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -750,6 +774,7 @@ CREATE TABLE IF NOT EXISTS command_receipts (
   retired_at TEXT
 );
 CREATE INDEX IF NOT EXISTS command_receipts_received_idx ON command_receipts (received_at);
+${WORKSPACE_PREPARATION_MODE_SCHEMA}
 ${SESSION_PROCESS_SCHEMA}
 CREATE TABLE IF NOT EXISTS runtime_objects (
   id TEXT PRIMARY KEY,
@@ -1138,6 +1163,11 @@ function applySchema(
   if (userVersion < 19) {
     db.exec(
       `BEGIN IMMEDIATE; ${WORKSPACE_EXECUTION_SCHEMA} PRAGMA user_version = 19; COMMIT;`,
+    );
+  }
+  if (userVersion < 20) {
+    db.exec(
+      `BEGIN IMMEDIATE; ${WORKSPACE_PREPARATION_MODE_SCHEMA} PRAGMA user_version = 20; COMMIT;`,
     );
   }
 }
@@ -2321,7 +2351,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     getWorkspaceExecutionState(id) {
       const row = db
         .prepare(
-          `SELECT generation, input_digest AS inputDigest,
+          `SELECT generation, input_digest AS inputDigest, preparation_mode AS preparationMode,
           materialization_generation AS materializationGeneration,
           materialization_digest AS materializationDigest,
           operation_fence AS operationFence, operation_claim_id AS operationClaimId
@@ -2331,13 +2361,14 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
       return row ?? null;
     },
-    recordWorkspaceInput(id, generation, digest) {
+    recordWorkspaceInput(id, generation, digest, mode) {
       storage.write(() => {
         const changed = db.prepare(
-          `UPDATE workspace_execution_state SET input_digest = ?
+          `UPDATE workspace_execution_state SET input_digest = ?, preparation_mode = ?
              WHERE workspace_id = ? AND generation = ?
-               AND (input_digest IS NULL OR input_digest = ?)`,
-        ).run(digest, id, generation, digest);
+               AND (input_digest IS NULL OR input_digest = ?)
+               AND (preparation_mode IS NULL OR preparation_mode = ?)`,
+        ).run(digest, mode, id, generation, digest, mode);
         if (changed.changes !== 1)
           throw new HostRuntimeEventError(
             "command_invariant_conflict",
