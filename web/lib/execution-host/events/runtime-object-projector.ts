@@ -323,6 +323,10 @@ async function applyRuntimeObjectEvent(
         .string()
         .uuid()
         .safeParse(event.payload.workspaceWorkloadCommandId);
+      const workloadMimeType =
+        event.payload.logicalName === "workload-result.json"
+          ? "application/json"
+          : "text/plain";
       if (
         !commandId.success ||
         event.hostSessionId ||
@@ -330,10 +334,12 @@ async function applyRuntimeObjectEvent(
         !event.executionAssignmentId ||
         event.assignmentEpoch === null ||
         event.payload.kind !== "diagnostic" ||
-        event.payload.mimeType !== "text/plain" ||
-        !["workload-stdout.txt", "workload-stderr.txt"].includes(
-          String(event.payload.logicalName),
-        )
+        event.payload.mimeType !== workloadMimeType ||
+        ![
+          "workload-stdout.txt",
+          "workload-stderr.txt",
+          "workload-result.json",
+        ].includes(String(event.payload.logicalName))
       )
         throw permanent("Workspace workload output has invalid identity");
       const [source] = await tx

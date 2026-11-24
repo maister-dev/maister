@@ -38,6 +38,7 @@ import { stageProjectFlowMemory } from "@/lib/agent-memory-vault/injection";
 import { agentFacadeMcpServerForRun } from "@/lib/agents/launch";
 import { issueProjectVaultNodeToken } from "@/lib/agents/tokens";
 import { closeDb } from "@/lib/db/client";
+import { readSealedCliOutput } from "@/lib/flows/graph/node-output";
 import { workspaces } from "@/lib/db/schema";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { initRepo } from "@/test-support/git-fixture";
@@ -203,9 +204,10 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
           {
             id: "fixture-check",
             workload: "check",
-            command: "printf '%s' '{\"verified\":true}'",
+            command:
+              "printf 'check diagnostic'; printf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"",
             timeoutMs: 5000,
-            structuredOutput: "json",
+            structuredOutput: "jsonFile",
           },
         ]),
       ),
@@ -432,10 +434,10 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
     executionHostId: host.id,
     transport,
     owner: "fixture",
-    maxEvents: 3,
+    maxEvents: 4,
     signal: AbortSignal.timeout(15_000),
   });
-  expect(workEvents).toMatchObject({ received: 3, reconnectRequired: false });
+  expect(workEvents).toMatchObject({ received: 4, reconnectRequired: false });
   await projectExecutionEvents({
     db,
     projector: canonicalLifecycleProjector,
@@ -464,8 +466,15 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
     transportForHost: async () => transport,
   });
   expect(Buffer.from(workOutput.content.bytes).toString("utf8")).toBe(
-    '{"verified":true}',
+    "check diagnostic",
   );
+  const checkResult = await readSealedCliOutput({
+    db,
+    runId,
+    ...objects[2],
+    transportForHost: async () => transport,
+  });
+  expect(checkResult).toEqual({ kind: "value", value: { verified: true } });
 
   const agentId = "fixture-vault:reader";
   await database.pool.query(

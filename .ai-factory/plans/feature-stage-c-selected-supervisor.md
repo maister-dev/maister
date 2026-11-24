@@ -306,8 +306,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Tested with Darwin arm64, Node 24.15.0, real PostgreSQL, SQLite and a
   local supervisor. Passed 19 Web and 51 supervisor integration tests,
   both typechecks, the contract suite and docs/ERD validation. The main
-  Flow drivers, package-local output file
-  transport, and supervisor death and stale epoch witnesses remain open.
+  Flow drivers and supervisor death and stale epoch witnesses remain open.
+
+  The selected supervisor also captures a declared `MAISTER_OUTPUT_FILE`
+  as a bounded, digest-verified runtime object. The real Web/host fixture
+  read the result through the graph output parser and verified the separate
+  stdout object. That integration and three focused supervisor cases passed
+  with both workspace typechecks.
 
 ### C3–C4 — review, board and single-host qualification
 

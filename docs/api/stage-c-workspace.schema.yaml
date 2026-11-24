@@ -511,7 +511,9 @@ definitions:
         workload: { enum: [ setup, cli, check, requirementProbe ] }
         command: { type: string, minLength: 1, maxLength: 32768 }
         timeoutMs: { type: integer, minimum: 1, maximum: 3600000 }
-        structuredOutput: { const: json }
+        structuredOutput:
+          enum: [ json, jsonFile ]
+          description: Inspect stdout JSON or use the supervisor's private MAISTER_OUTPUT_FILE with a 262144 byte limit.
   ActiveGeneration:
     type: object
     additionalProperties: false

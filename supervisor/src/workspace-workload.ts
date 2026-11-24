@@ -9,7 +9,8 @@ import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { Logger } from "pino";
 
 import { createHash, randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { z } from "zod";
@@ -37,7 +38,7 @@ const declarationsSchema = z
           .max(32768)
           .refine((command) => !command.includes("\0")),
         timeoutMs: z.number().int().min(1).max(3_600_000),
-        structuredOutput: z.literal("json").optional(),
+        structuredOutput: z.enum(["json", "jsonFile"]).optional(),
       })
       .strict(),
   )
@@ -66,7 +67,7 @@ async function sealOutput(
       objectId,
       kind: "diagnostic",
       logicalName: name,
-      mimeType: "text/plain",
+      mimeType: name.endsWith(".json") ? "application/json" : "text/plain",
       retentionClass: "run",
       generation,
       sizeBytes: bytes.byteLength,
@@ -102,6 +103,61 @@ async function sealOutput(
   });
 
   return { objectId, sha256 };
+}
+
+async function readDeclaredResult(
+  path: string,
+): Promise<
+  { kind: "absent" | "invalid" } | { kind: "present"; bytes: Buffer }
+> {
+  let file: Awaited<ReturnType<typeof open>>;
+  try {
+    file = await open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return { kind: "absent" };
+    if ((error as NodeJS.ErrnoException).code === "ELOOP")
+      return { kind: "invalid" };
+    throw error;
+  }
+  const buffer = Buffer.alloc(262_145);
+  try {
+    if (!(await file.stat()).isFile()) return { kind: "invalid" };
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(
+        buffer,
+        length,
+        buffer.length - length,
+        length,
+      );
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+
+    return length > 262_144
+      ? { kind: "invalid" }
+      : { kind: "present", bytes: buffer.subarray(0, length) };
+  } finally {
+    await file.close();
+  }
+}
+
+function jsonValidity(bytes: Uint8Array): "valid" | "invalid" {
+  try {
+    JSON.parse(
+      Buffer.from(bytes)
+        .toString("utf8")
+        .replace(/^\uFEFF/u, ""),
+    );
+
+    return "valid";
+  } catch {
+    return "invalid";
+  }
 }
 
 export async function runWorkspaceWorkload(
@@ -144,15 +200,14 @@ export async function runWorkspaceWorkload(
         details: { reason: "workspace_rejected" },
       },
     );
-  const inputDirectory = join(
+  const runDirectory = join(
     await realpath(runtimeRoot),
     ".maister",
     workspace.projectSlug,
     "runs",
     workspace.runId,
-    "inputs",
-    payload.inputDigest,
   );
+  const inputDirectory = join(runDirectory, "inputs", payload.inputDigest);
   const bytes = await readRetainedWorkspaceInput(
     inputDirectory,
     payload.inputDigest,
@@ -185,33 +240,62 @@ export async function runWorkspaceWorkload(
   const [declaration] = matches;
   assertOwner();
   let processGroup: number | undefined;
-  const result = await executeWorkspaceWorkloadProcess({
-    cwd: workspace.realPath,
-    command: declaration.command,
-    timeoutMs: declaration.timeoutMs,
-    signal: input.signal,
-    register: (pid) => {
-      assertOwner();
-      const physicalKey = createHash("sha256")
-        .update(workspace.realPath)
-        .digest("hex");
-      if (
-        !state.recordWorkspaceWorkloadProcess(
-          request.command.id,
-          pid,
-          physicalKey,
+  let outputDirectory: string | undefined;
+  if (declaration.structuredOutput === "jsonFile") {
+    const outputRoot = join(runDirectory, "workload-results");
+    await mkdir(outputRoot, { recursive: true, mode: 0o700 });
+    if ((await realpath(outputRoot)) !== outputRoot)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "Workload result root is not canonical",
+      );
+    outputDirectory = await mkdtemp(join(outputRoot, ".result-"));
+  }
+  const outputFile = outputDirectory
+    ? join(outputDirectory, "output.json")
+    : undefined;
+  let result: Awaited<ReturnType<typeof executeWorkspaceWorkloadProcess>>;
+  let declaredOutput:
+    Awaited<ReturnType<typeof readDeclaredResult>> | undefined;
+  let canRemoveOutput = true;
+
+  try {
+    result = await executeWorkspaceWorkloadProcess({
+      cwd: workspace.realPath,
+      command: declaration.command,
+      timeoutMs: declaration.timeoutMs,
+      signal: input.signal,
+      outputFile,
+      register: (pid) => {
+        assertOwner();
+        const physicalKey = createHash("sha256")
+          .update(workspace.realPath)
+          .digest("hex");
+        if (
+          !state.recordWorkspaceWorkloadProcess(
+            request.command.id,
+            pid,
+            physicalKey,
+          )
         )
-      )
-        throw new SupervisorError(
-          "CONFLICT",
-          "The workload lost its assignment or another group owns the workspace",
-          {
-            details: { reason: "workspace_in_use" },
-          },
-        );
-      processGroup = pid;
-    },
-  });
+          throw new SupervisorError(
+            "CONFLICT",
+            "The workload lost its assignment or another group owns the workspace",
+            {
+              details: { reason: "workspace_in_use" },
+            },
+          );
+        processGroup = pid;
+        canRemoveOutput = false;
+      },
+    });
+    canRemoveOutput = result.retired;
+    if (outputFile && result.retired)
+      declaredOutput = await readDeclaredResult(outputFile);
+  } finally {
+    if (outputDirectory && canRemoveOutput)
+      await rm(outputDirectory, { recursive: true, force: true });
+  }
   const objects = [
     await sealOutput(
       input,
@@ -230,14 +314,24 @@ export async function runWorkspaceWorkload(
   ];
   let checkValidity: WorkspaceWorkloadResult["checkValidity"] = "notRequested";
   if (declaration.structuredOutput === "json") {
-    checkValidity = "unavailable";
-    if (!result.truncated && result.processOutcome === "exited") {
-      try {
-        JSON.parse(result.stdout.toString("utf8"));
-        checkValidity = "valid";
-      } catch {
-        checkValidity = "invalid";
-      }
+    checkValidity =
+      !result.truncated && result.processOutcome === "exited"
+        ? jsonValidity(result.stdout)
+        : "unavailable";
+  } else if (declaration.structuredOutput === "jsonFile") {
+    checkValidity =
+      declaredOutput?.kind === "invalid" ? "invalid" : "unavailable";
+    if (declaredOutput?.kind === "present") {
+      checkValidity = jsonValidity(declaredOutput.bytes);
+      objects.push(
+        await sealOutput(
+          input,
+          owner,
+          request.command.id,
+          "workload-result.json",
+          declaredOutput.bytes,
+        ),
+      );
     }
   }
 

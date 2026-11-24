@@ -42,6 +42,7 @@ export async function executeWorkspaceWorkloadProcess(
     timeoutMs: number;
     signal: AbortSignal;
     register: (group: number) => void;
+    outputFile?: string;
   }>,
 ): Promise<WorkloadProcessResult> {
   input.signal.throwIfAborted();
@@ -129,7 +130,12 @@ export async function executeWorkspaceWorkloadProcess(
           kind: "execute",
           binary: "bash",
           arguments: ["-c", input.command],
-          environment: selectWorkloadEnvironment(),
+          environment: {
+            ...selectWorkloadEnvironment(),
+            ...(input.outputFile
+              ? { MAISTER_OUTPUT_FILE: input.outputFile }
+              : {}),
+          },
         },
         (error) => {
           if (!error) return;
