@@ -95,6 +95,36 @@ export type PackageDeliveryCapture = (
   input: PackageDeliveryInput,
 ) => Promise<FlowDeliverySnapshot | undefined>;
 
+function projectPackagePins(input: PackageDeliveryInput) {
+  return sql`
+    FROM project_package_attachments a
+    LEFT JOIN package_installs selected ON selected.id=${input.flowPackageInstallId} AND selected.name=a.package_name
+    JOIN package_installs i ON i.id=COALESCE(selected.id,a.package_install_id)
+    WHERE a.project_id=${input.projectId} ORDER BY a.package_name
+  `;
+}
+
+async function lockPackageDeliverySource(
+  db: SqlTransaction,
+  input: PackageDeliveryInput,
+  delivery: FlowDeliverySnapshot,
+): Promise<void> {
+  await db.execute(
+    sql`SELECT a.id ${projectPackagePins(input)} FOR SHARE OF a, i`,
+  );
+  const agentIds = [
+    ...new Set(
+      Object.values(delivery.bindings).map((binding) => binding.agentId),
+    ),
+  ];
+
+  if (agentIds.length)
+    await db.execute(sql`
+      SELECT l.id FROM agent_project_links l WHERE l.project_id=${input.projectId}
+       AND l.agent_id=ANY(${sql.param(agentIds)}::text[]) ORDER BY l.agent_id FOR SHARE OF l
+    `);
+}
+
 async function readPackageDeliverySource(
   db: SqlTransaction,
   input: PackageDeliveryInput,
@@ -108,9 +138,7 @@ async function readPackageDeliverySource(
            i.installed_path AS root,COALESCE(i.manifest->'spec'->'capabilities','[]'::jsonb) AS declarations,
            ARRAY(SELECT b.id FROM capability_imports b WHERE b.project_id=a.project_id
                   AND b.package_install_id=i.id AND b.package_status='Installed' ORDER BY b.id) AS "bundleIds"
-      FROM project_package_attachments a LEFT JOIN package_installs selected ON selected.id=${input.flowPackageInstallId} AND selected.name=a.package_name
-      JOIN package_installs i ON i.id=COALESCE(selected.id,a.package_install_id)
-     WHERE a.project_id=${input.projectId} ORDER BY a.package_name FOR SHARE OF a, i
+      ${projectPackagePins(input)}
   `);
 
   if (!rows.length) return null;
@@ -136,7 +164,7 @@ async function readPackageDeliverySource(
         `Node ${node.id} requires unattached agent ${agentId}`,
       );
     const { rows: links } = await db.execute(
-      sql`SELECT l.enabled FROM agent_project_links l WHERE l.project_id=${input.projectId} AND l.agent_id=${agentId} FOR SHARE OF l`,
+      sql`SELECT l.enabled FROM agent_project_links l WHERE l.project_id=${input.projectId} AND l.agent_id=${agentId}`,
     );
 
     if (links[0]?.enabled === false)
@@ -192,6 +220,7 @@ export async function capturePackageDelivery(
 export function preparePackageDeliveryCapture(): {
   prepare: PackageDeliveryCapture;
   recheck: PackageDeliveryCapture;
+  recheckPreview: PackageDeliveryCapture;
 } {
   const captured = new Map<
     string,
@@ -218,6 +247,18 @@ export function preparePackageDeliveryCapture(): {
         },
       },
     );
+  const recheckPreview: PackageDeliveryCapture = async (db, input) => {
+    const existing = captured.get(digest(input));
+
+    if (
+      !existing ||
+      retryDigest(await readPackageDeliverySource(db, input)) !==
+        existing.fingerprint
+    )
+      throw changed(input);
+
+    return existing.delivery;
+  };
 
   return {
     prepare: async (db, input) => {
@@ -245,17 +286,13 @@ export function preparePackageDeliveryCapture(): {
       return delivery;
     },
     recheck: async (db, input) => {
-      const existing = captured.get(digest(input));
+      const delivery = captured.get(digest(input))?.delivery;
 
-      if (
-        !existing ||
-        retryDigest(await readPackageDeliverySource(db, input)) !==
-          existing.fingerprint
-      )
-        throw changed(input);
+      if (delivery) await lockPackageDeliverySource(db, input, delivery);
 
-      return existing.delivery;
+      return recheckPreview(db, input);
     },
+    recheckPreview,
   };
 }
 
