@@ -93,6 +93,9 @@ async function sealInput(
 }
 
 it("C-07/C-08 materializes sealed inputs and executes bounded addressed workloads", async () => {
+  const verifyNativeWrites =
+    process.platform === "darwin" ||
+    process.env.MAISTER_TEST_ADDRESSED_READ_ONLY === "1";
   const root = await mkdtemp(join(tmpdir(), "stage-c-workspace-inputs-"));
   roots.push(root);
   const contextSource = join(root, "context-source");
@@ -338,6 +341,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
       "session.create",
       prepared.owner,
       createBody(handle, {
+        stepId: verifyNativeWrites ? "step-1" : "no-sibling",
         executor: {
           agent: "claude",
           model: "claude-sonnet-4-6",
@@ -345,6 +349,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
             MOCK_ACP_NEWSESSION_RECORD_PATH: record,
             MOCK_ACP_PROMPT_RECORD_PATH: recordedPrompt,
             MOCK_ACP_ENV_PROBE: "UNRELATED_MCP_TOKEN",
+            ...(verifyNativeWrites ? { MOCK_ACP_PROBE_CONTEXT_WRITE: "1" } : {}),
           },
         },
         mcpServers: [
@@ -366,21 +371,27 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     ),
   );
   expect(spawned.status).toBe(201);
-  const mounts = host.registry.get(String(spawned.body.sessionId))?.record
-    .contextMounts;
-  expect(mounts).toMatchObject([{ slug: "sibling", commit: contextRevision }]);
-  const mounted = mounts?.[0]?.path;
-  if (!mounted)
-    throw new Error("addressed session did not receive its declared sibling");
-  expect(await readFile(join(mounted, "context.md"), "utf8")).toBe(
-    "# pinned context",
-  );
-  expect((await stat(join(mounted, "context.md"))).mode & 0o222).toBe(0);
+  if (verifyNativeWrites) {
+    const mounts = host.registry.get(String(spawned.body.sessionId))?.record
+      .contextMounts;
+    expect(mounts).toMatchObject([{ slug: "sibling", commit: contextRevision }]);
+    const mounted = mounts?.[0]?.path;
+    if (!mounted)
+      throw new Error("addressed session did not receive its declared sibling");
+    const denied = process.platform === "darwin" ? "EPERM" : "EROFS";
+    expect(JSON.parse(await readFile(record, "utf8"))).toMatchObject({
+      nativeContextWrites: { checkout: denied, git: denied },
+    });
+    expect(await readFile(join(mounted, "context.md"), "utf8")).toBe(
+      "# pinned context",
+    );
+    expect((await stat(join(mounted, "context.md"))).mode & 0o222).toBe(0);
+  }
   const prompt = await completePrompt(
     host,
     String(spawned.body.sessionId),
     envelope("session.prompt", prepared.owner, {
-      stepId: "step-1",
+      stepId: verifyNativeWrites ? "step-1" : "no-sibling",
       prompt: "Follow the packaged skill.",
     }),
   );

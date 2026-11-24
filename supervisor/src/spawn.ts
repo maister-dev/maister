@@ -3,6 +3,7 @@ import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { Logger } from "pino";
 import type { WorkspaceResolution } from "./workspace-registry";
 import { workspaceAdapterEnvironment } from "./workspace-adapter-environment";
+import { protectWorkspaceProcess } from "./workspace-read-only-process";
 import type { Readable } from "node:stream";
 import type { SessionRegistry } from "./registry";
 
@@ -204,6 +205,10 @@ export async function spawnSession(
         opts.runtimeObjectEnv?.capabilityInstructionsPath,
       outputPaths: opts.runtimeObjectEnv?.outputPaths,
     });
+    const nativeLaunch = await protectWorkspaceProcess(workspace, {
+      binary,
+      arguments: args,
+    });
 
     logger.info(
       {
@@ -309,7 +314,7 @@ export async function spawnSession(
             detached: true,
             stdio: ["pipe", "pipe", "inherit", "ipc"],
           })
-        : spawn(binary, args, {
+        : spawn(nativeLaunch.binary, nativeLaunch.arguments, {
             cwd: workspace.cwd,
             env: childEnv,
             stdio: ["pipe", "pipe", "inherit"],
@@ -543,8 +548,8 @@ export async function spawnSession(
           record,
           state: opts.hostState,
           registry: opts.registry,
-          binary,
-          arguments: args,
+          binary: nativeLaunch.binary,
+          arguments: nativeLaunch.arguments,
           environment: childEnv,
         });
       } catch (cause) {

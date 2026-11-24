@@ -30,6 +30,7 @@ export type WorkspaceResolution = {
   logPath: string;
   contextMounts?: ContextMount[];
   ownershipKind?: "host_owned";
+  readOnlyCheckout?: true;
   packageInstructions?: string;
 };
 

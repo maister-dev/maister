@@ -9,6 +9,7 @@
 //                                    newSession params (single JSON object).
 //                                    Required — without it the fixture just
 //                                    behaves like a hanging stub.
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
@@ -35,11 +36,45 @@ class RecordingAgent {
 
   async newSession(params) {
     if (RECORD_PATH) {
+      const nativeContextWrites =
+        process.env.MOCK_ACP_PROBE_CONTEXT_WRITE === "1"
+          ? JSON.parse(
+              execFileSync(
+                process.execPath,
+                [
+                  "-e",
+                  `const fs = require("node:fs");
+             const { execFileSync } = require("node:child_process");
+             const { join } = require("node:path");
+             const cwd = process.argv[1];
+             const common = execFileSync("git", [
+               "rev-parse", "--path-format=absolute", "--git-common-dir",
+             ], { cwd, encoding: "utf8" }).trim();
+             function write(path, changeMode) {
+               try {
+                 if (changeMode) fs.chmodSync(path, 0o644);
+                 fs.writeFileSync(path, "changed outside ACP");
+                 return "write_allowed";
+               } catch (error) {
+                 return error.code;
+               }
+             }
+             console.log(JSON.stringify({
+               checkout: write(join(cwd, "context.md"), true),
+               git: write(join(common, "maister-write-probe"), false),
+             }));`,
+                  JSON.parse(process.env.MAISTER_CONTEXT_REPOS)[0].path,
+                ],
+                { encoding: "utf8" },
+              ),
+            )
+          : undefined;
       writeFileSync(
         RECORD_PATH,
         JSON.stringify({
           cwd: params.cwd,
           mcpServers: params.mcpServers,
+          nativeContextWrites,
           ...(ENV_PROBE
             ? { probePresent: Object.hasOwn(process.env, ENV_PROBE) }
             : {}),

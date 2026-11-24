@@ -22,6 +22,7 @@ ENV UV_PYTHON_PREFERENCE=only-managed
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
+      bubblewrap \
       curl \
       git \
       procps \

@@ -1391,6 +1391,19 @@ SSE, never embedded in `session/update` payloads visible to the browser.
 `.env.example` in the repo root documents the full set with safe placeholder
 values.
 
+### Addressed read-only checkouts
+
+Addressed ACP sessions with a read-only primary or sibling checkout require the
+supervisor's native write guard. Darwin uses `/usr/bin/sandbox-exec`. On Linux,
+install `/usr/bin/bwrap` in the supervisor's environment and enable its
+unprivileged user and mount namespace prerequisites. The image includes
+Bubblewrap. Container policy must permit namespaced mounts and Bubblewrap's
+write to the user namespace limit under `/proc/sys/user/`. The supervisor
+applies the write restriction before the adapter runs. A missing driver
+refuses session creation with `read_only_process_unavailable`. The Linux
+integration fixture uses `MAISTER_TEST_ADDRESSED_READ_ONLY=1` on a configured
+environment to exercise the native wrapper.
+
 ## Authentication & RBAC
 
 MAIster uses **Auth.js v5** (formerly NextAuth.js) with a **credentials

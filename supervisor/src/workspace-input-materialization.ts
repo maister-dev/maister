@@ -254,6 +254,7 @@ export async function materializeWorkspaceFlowAssets(input: {
 /** Apply the same generation verification at the final local side-effect boundary. */
 type WorkspaceSessionInputs = Readonly<{
   ownershipKind: "host_owned";
+  readOnlyCheckout?: true;
   contextMounts: ContextMount[];
   packageInstructions?: string;
 }>;
@@ -334,6 +335,8 @@ export async function verifyWorkspaceSessionInputs(
 
     return {
       ownershipKind: "host_owned",
+      ...(retained.preparationMode === "readOnlyCheckout"
+        ? { readOnlyCheckout: true as const } : {}),
       contextMounts,
       packageInstructions: packagedSkillInstructions(directory, manifest.files),
     };
