@@ -153,6 +153,7 @@ import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence"
 import { localHost, mintPlacement } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import { assertProjectExecutionHost } from "@/lib/execution-host/project-preference";
 import { captureWorkspaceBundles } from "@/lib/execution-host/workspace-input-capture";
 import { captureAddressedFlowContexts } from "@/lib/context-mounts/addressed-capture";
 import { captureAddressedFlowWorkloads } from "@/lib/flows/addressed-workload-input";
@@ -978,6 +979,7 @@ async function* executeFlowLaunch(
     db: _db as unknown as ExecutionDb,
     force: configuredSelectedExecutionEndpoint() !== null,
   });
+  if (!accepted) assertProjectExecutionHost(project, placementHost);
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
   const hostPreparesWorkspace = usesHostWorkspacePreparation(placementHost);
 

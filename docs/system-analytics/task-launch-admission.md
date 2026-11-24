@@ -398,6 +398,13 @@ the preference revision. Missing, malformed or stale revision returns
 409 `PRECONDITION` with `host_ineligible`. Neither refusal updates settings.
 The panel never receives peer URLs, host keys or transport credentials.
 
+The project default API is implemented for the single configured addressed
+supervisor. The manager calculates the eligibility revision from the eligible
+host IDs for the project. Transient liveness alone does not change that
+revision. Direct project Flow launch checks the stored preference and
+configured project eligibility. The board launch selection below remains
+designed.
+
 Task and Flow previews expose authorized choices. Bind the settings token
 to the actor, project, task and target revision, current input/settings
 digests, default preference revision, eligibility revision and effective host.
