@@ -984,6 +984,10 @@ validity and group retirement independently. Web holds unresolved
 quiescence in the command ledger for reconciliation.
 
 An addressed Flow records its workspace assignment on each node attempt.
+The standard Codex action opens its ACP session through the same assignment
+and prepared workspace handle. The supervisor supplies the retained package
+instructions. Adapter-specific settings and repository role installation
+still require addressed materialization support.
 The graph driver uses that attempt ID for the CLI operation and the persisted
 evaluation ID for a command-check gate. A new driver for the same assignment
 can resume either operation with its existing receipt. Web applies the action

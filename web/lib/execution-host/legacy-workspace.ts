@@ -5,6 +5,16 @@ export type LegacyWorkspacePaths = {
   parentRepoPath: string;
 };
 
+export function requireFlowWorktree(worktreePath: string | undefined): string {
+  if (worktreePath) return worktreePath;
+
+  throw new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    "This Flow operation needs an addressed workspace implementation",
+    { details: { reason: "workspace_protocol_unsupported" } },
+  );
+}
+
 export function hasLegacyWorkspacePaths<
   T extends {
     worktreePath: string | null;

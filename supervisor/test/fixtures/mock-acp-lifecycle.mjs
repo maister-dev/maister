@@ -679,6 +679,8 @@ class LifecycleAgent {
         return { stopReason: "end_turn" };
       }
       const glyph = spec.multibyte ? "é" : "x";
+      if (spec.writeWorkspaceMarker === true)
+        await writeFile("acp-marker", "written by addressed ACP\n", { flag: "wx" });
       let responseText = spec.text ?? "";
       if (spec.textFile) {
         const responseBytes = await readFile(spec.textFile);

@@ -63,6 +63,7 @@ import {
 } from "./graph/prompt-permission";
 
 import { isProjectionTransactionUnavailable } from "@/lib/execution-host/events/projection-transaction";
+import { requireFlowWorktree } from "@/lib/execution-host/legacy-workspace";
 import {
   assertMemorySessionSources,
   stageProjectFlowMemory,
@@ -186,7 +187,7 @@ export type RunAgentStepCtx = {
   coordinatorChildLaunchReceipts?: readonly ChildLaunchReceipt[];
   flowDriverClaim?: FlowDriverClaim;
   signal?: AbortSignal;
-  worktreePath: string;
+  worktreePath: string | undefined;
   // ADR-166: the caller's once-per-driver-generation binding, resolved lazily
   // at the first agent dispatch (so a mocked step never binds and a failed
   // binding surfaces as THIS step's failure, with its attempt in the ledger).
@@ -1371,7 +1372,7 @@ async function resolveFlowRolePrompt(
       runId: ctx.runId,
       nodeAttemptId: ctx.nodeAttemptId,
       executorAgent: ctx.executor.agent,
-      worktreePath: ctx.worktreePath,
+      worktreePath: requireFlowWorktree(ctx.worktreePath),
       db: ctx.db,
     });
 
@@ -1391,7 +1392,7 @@ async function resolveFlowRolePrompt(
       runId: ctx.runId,
       nodeAttemptId: ctx.nodeAttemptId,
       executorAgent: ctx.executor.agent,
-      worktreePath: ctx.worktreePath,
+      worktreePath: requireFlowWorktree(ctx.worktreePath),
       db: ctx.db,
       requireFlowTrigger: false,
     });
@@ -1456,7 +1457,7 @@ async function dispatchAgentStep(
   }
 
   const skillPrompt =
-    "owner" in ctx.context.run
+    "owner" in ctx.context.run || !ctx.worktreePath
       ? ""
       : await workspacePackageSkillsPrompt(ctx.worktreePath, ctx.runId);
   const ordinaryPrompt = appendScheduledRequest(

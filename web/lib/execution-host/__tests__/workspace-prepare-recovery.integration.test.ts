@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -175,12 +175,18 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
     repo: source,
   } = await seedTaskLaunchFixture(database, root);
   const commit = (await git(source, "rev-parse", "HEAD")).trim();
-  const command = "printf 'from owning host' > graph-marker; cat graph-marker";
+  const command = "test \"$(cat acp-marker)\" = 'written by addressed ACP' && printf 'from owning host' > graph-marker && cat graph-marker";
   const manifest = {
     schemaVersion: 1,
     name: "addressed-graph",
     compat: { engine_min: "1.1.0" },
     nodes: [
+      {
+        id: "edit",
+        type: "ai_coding",
+        action: { prompt: 'fixture-output:{"bytes":0,"text":"addressed edit complete","writeWorkspaceMarker":true}' },
+        transitions: { success: "work" },
+      },
       {
         id: "work",
         type: "cli",
@@ -224,7 +230,8 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
   vi.stubEnv("MAISTER_RUNTIME_ROOT", join(root, "web"));
   vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "web-worktrees"));
   supervisor = await startRealSupervisor({
-    fixture: "mock-acp-librarian.mjs",
+    fixture: "mock-acp-lifecycle.mjs",
+    fixtureAdapters: ["codex"],
     env: {
       MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: source }),
     },
@@ -378,8 +385,11 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
     await db
       .select({ status: nodeAttempts.status, stdout: nodeAttempts.stdout })
       .from(nodeAttempts)
-      .where(eq(nodeAttempts.runId, runId)),
+      .where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "work"))),
   ).toEqual([{ status: "Succeeded", stdout: "from owning host" }]);
+  const [editAttempt] = await db.select({ status: nodeAttempts.status, acpSessionId: nodeAttempts.acpSessionId })
+    .from(nodeAttempts).where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "edit")));
+  expect(editAttempt).toMatchObject({ status: "Succeeded", acpSessionId: expect.stringMatching(/^mock-/) });
   expect(
     await db
       .select({ status: gateResults.status, verdict: gateResults.verdict })

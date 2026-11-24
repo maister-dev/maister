@@ -29,7 +29,6 @@ import {
 import { gateWorkloadDeclarationId } from "../addressed-workload-input";
 
 import { isFlowDriverClaimLost } from "./driver-claim";
-import { requireFlowWorktree } from "./runner-core";
 import { loadGateCrashRecoveryWitness } from "./gate-crash-recovery";
 import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
 import { hasPendingFlowPermission } from "./prompt-permission";
@@ -69,6 +68,7 @@ import {
 } from "@/lib/acp-runners/spawn-intent";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { requireFlowWorktree } from "@/lib/execution-host/legacy-workspace";
 import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
 import { gateResults } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
@@ -647,7 +647,7 @@ async function runOneGate(
           { id: gate.id, type: "agent", mode: "new-session", prompt },
           {
             ...common,
-            worktreePath: requireFlowWorktree(ctx.worktreePath),
+            worktreePath: ctx.worktreePath,
             scheduledRequestSnapshot: loaded.run.scheduledRequestSnapshot,
             nodeAttemptId,
             promptOwner: {

@@ -181,16 +181,6 @@ export function requireProjectFlowRun(loaded: LoadedRun): LoadedProjectRun {
   return { ...project, workspace: requireLegacyWorkspacePaths(project.workspace) };
 }
 
-export function requireFlowWorktree(worktreePath: string | undefined): string {
-  if (worktreePath) return worktreePath;
-
-  throw new MaisterError(
-    "EXECUTOR_UNAVAILABLE",
-    "This Flow operation needs an addressed workspace implementation",
-    { details: { reason: "workspace_protocol_unsupported" } },
-  );
-}
-
 export async function loadProjectRun(
   db: Db,
   runId: string,
