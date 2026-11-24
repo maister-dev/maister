@@ -11,6 +11,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { EXECUTION_HOST_KEY_PATTERN } from "../../runtime/execution-host-address";
+import { isWorkspaceCancelTarget } from "../../runtime/workspace-prepare";
 import type { WorkspacePrepareInput, WorkspaceTerminalPayload } from "../../runtime/workspace-prepare";
 
 import { reuseSqliteStatements } from "./sqlite-statements";
@@ -128,7 +129,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 20;
+export const HOST_STATE_SCHEMA_VERSION = 21;
 
 /** Native retirement survives registry loss. Released identities share the receipt tombstone's permanent retention and cannot reactivate. */
 export type SessionProcessObligation = Readonly<{
@@ -512,6 +513,14 @@ export type HostState = {
   recordWorkspaceInput(id: string, generation: number, digest: string, mode: WorkspacePrepareInput["mode"]): void;
   recordWorkspaceMaterialization(id: string, generation: number, digest: string): void;
   recordWorkspaceWorkloadProcess(commandId: string, group: number, physicalKey: string): boolean;
+  isWorkspaceWorkloadCancelled(input: Readonly<{
+    commandId: string;
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    handle: string;
+    generation: number;
+  }>): boolean;
   insertWorkspace(row: WorkspaceRow): void;
   releaseWorkspace(id: string, releasedAt: string): boolean;
   getWorkspaceWait(waitId: string): WorkspaceWaitWitness | null;
@@ -735,6 +744,18 @@ UPDATE workspace_execution_state AS x SET preparation_mode = verified.mode
   FROM verified WHERE verified.id = x.workspace_id;
 `;
 
+const WORKSPACE_CANCEL_FENCE_SCHEMA = `
+CREATE TABLE IF NOT EXISTS workspace_workload_cancel_fences (
+  target_command_id TEXT PRIMARY KEY,
+  cancellation_command_id TEXT NOT NULL UNIQUE REFERENCES command_receipts(command_id),
+  run_id TEXT NOT NULL,
+  assignment_id TEXT NOT NULL,
+  assignment_epoch INTEGER NOT NULL CHECK (assignment_epoch > 0),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  generation INTEGER NOT NULL CHECK (generation > 0)
+);
+`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_identity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -775,6 +796,7 @@ CREATE TABLE IF NOT EXISTS command_receipts (
 );
 CREATE INDEX IF NOT EXISTS command_receipts_received_idx ON command_receipts (received_at);
 ${WORKSPACE_PREPARATION_MODE_SCHEMA}
+${WORKSPACE_CANCEL_FENCE_SCHEMA}
 ${SESSION_PROCESS_SCHEMA}
 CREATE TABLE IF NOT EXISTS runtime_objects (
   id TEXT PRIMARY KEY,
@@ -1170,6 +1192,8 @@ function applySchema(
       `BEGIN IMMEDIATE; ${WORKSPACE_PREPARATION_MODE_SCHEMA} PRAGMA user_version = 20; COMMIT;`,
     );
   }
+  if (userVersion < 21)
+    db.exec(`BEGIN IMMEDIATE; ${WORKSPACE_CANCEL_FENCE_SCHEMA} PRAGMA user_version = 21; COMMIT;`);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -1979,6 +2003,20 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           db.exec("BEGIN IMMEDIATE");
           admitRuntimeReceipt(row, admission);
           writeReceiptRow(db, row);
+          if (row.kind === "workspace.cancel" && row.phase === "accepted") {
+            const target = (row.body as { workspaceTarget?: unknown }).workspaceTarget;
+            if (!row.assignmentId || !isWorkspaceCancelTarget(target))
+              throw new HostRuntimeEventError("command_invariant_conflict", "Invalid workspace cancellation owner");
+            db.prepare(`
+              INSERT INTO workspace_workload_cancel_fences (
+                target_command_id, cancellation_command_id, run_id, assignment_id,
+                assignment_epoch, workspace_id, generation
+              ) SELECT ?, ?, ?, ?, ?, ?, ?
+                WHERE NOT EXISTS (SELECT 1 FROM command_receipts WHERE command_id = ?)
+              ON CONFLICT(target_command_id) DO NOTHING
+            `).run(target.commandId, row.commandId, row.runId, row.assignmentId, row.epoch,
+              target.handle, target.generation, target.commandId);
+          }
           settleReceiptBudget(db, row);
           db.exec("COMMIT");
         } catch (error) {
@@ -2401,6 +2439,14 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
         return updated.changes === 1;
       });
+    },
+    isWorkspaceWorkloadCancelled(input) {
+      return db.prepare(`
+        SELECT 1 FROM workspace_workload_cancel_fences
+        WHERE target_command_id = ? AND run_id = ? AND assignment_id = ?
+          AND assignment_epoch = ? AND workspace_id = ? AND generation = ?
+      `).get(input.commandId, input.runId, input.assignmentId, input.assignmentEpoch,
+        input.handle, input.generation) !== undefined;
     },
     recordWorkspaceMaterialization(id, generation, digest) {
       storage.write(() => {

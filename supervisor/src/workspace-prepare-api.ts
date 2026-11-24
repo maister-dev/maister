@@ -655,6 +655,13 @@ export function registerWorkspacePreparation(args: {
           );
       const request = parsed.data;
 
+      if (request.owner.hostKey === state.hostKey && state.isWorkspaceWorkloadCancelled({
+        ...request.owner,
+        commandId: request.command.id,
+        handle: handle.data,
+        generation: request.payload.generation,
+      })) return reply.status(409).send(refusal("CONFLICT", "workspace_workload_cancelled", "The retained cancellation forbids admitting this workload"));
+
       return admit(reply, {
         request,
         binding: {
@@ -715,15 +722,19 @@ export function registerWorkspacePreparation(args: {
       const originalTarget = (
         original?.body as { workspaceTarget?: unknown } | undefined
       )?.workspaceTarget;
-      if (
-        original?.kind !== "workspace.run" ||
-        original.runId !== request.owner.runId ||
-        original.assignmentId !== request.owner.assignmentId ||
-        original.epoch !== request.owner.assignmentEpoch ||
-        !isWorkspaceGenerationTarget(originalTarget) ||
-        originalTarget.handle !== handle.data ||
-        originalTarget.generation !== request.payload.generation
-      )
+      const workspace = state.getWorkspace(handle.data);
+      const matchingOriginal = original &&
+        original.kind === "workspace.run" &&
+        original.runId === request.owner.runId &&
+        original.assignmentId === request.owner.assignmentId &&
+        original.epoch === request.owner.assignmentEpoch &&
+        isWorkspaceGenerationTarget(originalTarget) &&
+        originalTarget.handle === handle.data &&
+        originalTarget.generation === request.payload.generation;
+      const pendingTarget = !original && workspace?.runId === request.owner.runId &&
+        workspace.releasedAt === null &&
+        state.getWorkspaceExecutionState(handle.data)?.generation === request.payload.generation;
+      if (!state.getReceipt(request.command.id) && !matchingOriginal && !pendingTarget)
         return reply
           .status(409)
           .send(
@@ -748,9 +759,26 @@ export function registerWorkspacePreparation(args: {
         sourceDigest: null,
         async run(assertOwner) {
           assertOwner();
-          workloads.get(original.commandId)?.abort();
-          await inflight.get(original.commandId);
-          const receipt = state.getReceipt(original.commandId);
+          const targetCommandId = targetId.data;
+          if (!original) {
+            if (!state.isWorkspaceWorkloadCancelled({
+              ...request.owner,
+              commandId: targetCommandId,
+              handle: handle.data,
+              generation: request.payload.generation,
+            })) throw new SupervisorError("FENCED", "Cancellation no longer owns the missing workload", {
+              details: { reason: "stale_workspace_generation" },
+            });
+
+            return { targetCommandId, quiescence: "proved", objects: [] };
+          }
+          if (!matchingOriginal)
+            throw new SupervisorError("FENCED", "Cancellation no longer owns its workload", {
+              details: { reason: "stale_workspace_generation" },
+            });
+          workloads.get(targetCommandId)?.abort();
+          await inflight.get(targetCommandId);
+          const receipt = state.getReceipt(targetCommandId);
           const retained =
             receipt?.phase === "completed"
               ? (receipt.body as { result?: WorkspaceWorkloadResult }).result
@@ -762,7 +790,7 @@ export function registerWorkspacePreparation(args: {
                 : undefined;
 
           return {
-            targetCommandId: original.commandId,
+            targetCommandId,
             quiescence: retained?.quiescence ?? "uncertain",
             objects: retained?.objects ?? [],
           };
@@ -777,6 +805,7 @@ export function registerWorkspacePreparation(args: {
       const row = state.getReceipt(req.params.commandId);
       if (
         !row ||
+        (row.body as { retired?: unknown }).retired === true ||
         row.requestSchema !== requestSchemaTag ||
         row.hostKey !== state.hostKey
       )

@@ -236,6 +236,7 @@ paths:
       tags: [execution-host]
       operationId: stageCCancelWorkload
       summary: Cancel the exact workload and observe its group retirement
+      description: A cancellation can arrive first for the exact active workspace generation. Acceptance atomically persists a fence against late delivery of the same owned workload. Replay returns the original acceptance.
       x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCCancelWorkloadRequest
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
@@ -253,7 +254,7 @@ paths:
             Location:
               schema: { type: string }
         "400": { description: Invalid cancellation request. }
-        "409": { description: Retained workload or assignment does not match this cancellation. }
+        "409": { description: Retained workload or workspace owner does not match this cancellation. }
   /v1/workspaces/{id}/log:
     get:
       tags: [execution-host]

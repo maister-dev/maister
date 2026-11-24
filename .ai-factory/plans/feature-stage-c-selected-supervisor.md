@@ -366,6 +366,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   integrations, 44 template/context tests, both typechecks, contracts and
   docs/ERD.
 
+  **C-08 pre-delivery cancellation checkpoint.** RED refused Stop before
+  the target workload reached its host. SQLite 21 now commits the cancellation
+  fence and acceptance together. GREEN refused late delivery with no shell
+  marker, then repeated that refusal after receipt compaction and supervisor
+  restart. The same fixture still covers cancellation after process acceptance.
+  Passed 53 supervisor integrations including populated migration and retained
+  command cases, plus supervisor typecheck. Web operator Stop still needs
+  the matching intent and settlement path.
+
   The selected supervisor also captures a declared `MAISTER_OUTPUT_FILE`
   as a bounded, digest-verified runtime object. The real Web/host fixture
   read the result through the graph output parser and verified the separate

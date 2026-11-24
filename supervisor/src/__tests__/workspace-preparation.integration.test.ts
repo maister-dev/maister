@@ -476,6 +476,43 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     inputGeneration: 1,
     inputDigest: manifest.sha256,
   };
+  const fencedTarget = randomUUID();
+  const stopBeforeDelivery = {
+    workspaceProtocol: 1,
+    command: {
+      id: randomUUID(),
+      kind: "workspace.cancel",
+      issuedAt: new Date().toISOString(),
+    },
+    owner: prepared.owner,
+    payload: { generation },
+  };
+  const cancellationPath = `/v1/workspaces/${handle}/commands/${fencedTarget}/cancel`;
+  expect((await addressedRequest(host, cancellationPath, stopBeforeDelivery)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const receipt = await addressedRequest(host, `/v1/commands/${stopBeforeDelivery.command.id}`);
+    expect(await receipt.json()).toMatchObject({
+      phase: "completed",
+      result: { targetCommandId: fencedTarget, quiescence: "proved", objects: [] },
+    });
+  });
+  expect(host.hostState.retireReceipt(stopBeforeDelivery.command.id, {
+    expectedRequestSha256: null,
+    expectedPhase: "completed",
+    assignmentEpoch: prepared.owner.assignmentEpoch,
+  })).toMatchObject({ outcome: "retired" });
+  const lateWorkRequest = {
+    workspaceProtocol: 1,
+    command: { id: fencedTarget, kind: "workspace.run", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: runPayload,
+  };
+  const lateWork = await addressedRequest(host, `/v1/workspaces/${handle}/commands`, lateWorkRequest);
+  expect(lateWork.status).toBe(409);
+  expect(await lateWork.json()).toMatchObject({ details: { reason: "workspace_workload_cancelled" } });
+  await expect(stat(join(workspace.path, ".fixture-ready"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await addressedRequest(host, cancellationPath, stopBeforeDelivery)).status).toBe(202);
+
   const longRun = await addressedRequest(
     host,
     `/v1/workspaces/${handle}/commands`,
@@ -617,7 +654,15 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     code: "FENCED",
     details: { reason: "assignment_fenced" },
   });
-  expect(host.hostState.getReceipt(staleCommandId)).toBeNull();
+  await host.stop();
+  hosts.pop();
+  const rebooted = await bootHost({ runtimeRoot: root });
+  hosts.push(rebooted);
+  expect(rebooted.hostState.bootId).not.toBe(host.hostState.bootId);
+  const replayedLateWork = await addressedRequest(rebooted, `/v1/workspaces/${handle}/commands`, lateWorkRequest);
+  expect(replayedLateWork.status).toBe(409);
+  expect(await replayedLateWork.json()).toMatchObject({ details: { reason: "workspace_workload_cancelled" } });
+  expect(rebooted.hostState.getReceipt(staleCommandId)).toBeNull();
 }, 30_000);
 
 afterEach(async () => {
@@ -806,6 +851,7 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
   const priorStore = new DatabaseSync(join(host.stateDir, HOST_STATE_FILE));
   try {
     priorStore.exec(`
+      DROP TABLE workspace_workload_cancel_fences;
       ALTER TABLE workspace_execution_state DROP COLUMN preparation_mode;
       PRAGMA user_version = 19;
     `);

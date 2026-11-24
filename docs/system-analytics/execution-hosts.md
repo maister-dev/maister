@@ -1084,6 +1084,13 @@ its own allow-listed environment and bounds rendering before spawning Bash.
 Retries reuse the original context from the command ledger. Missing, invalid
 and oversized template inputs refuse before process registration.
 
+SQLite version 21 records a pre-delivery cancellation and its target fence in
+the same transaction. The fence identifies the Run, assignment epoch,
+workspace generation and exact target command. A later delivery with that
+identity refuses without registration, including after supervisor restart or
+compaction of the cancellation receipt. If the host has seen the workload,
+stop still requires retirement evidence from the original process group.
+
 JSON commands are limited to 1 MiB and each strict variant explicitly
 accepts its input fields. IDs use the existing bounded host key, Run ID
 and UUID validators. A commit is a complete lowercase Git object ID for
