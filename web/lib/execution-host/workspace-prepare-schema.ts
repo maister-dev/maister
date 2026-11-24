@@ -16,6 +16,12 @@ const handle = z.string().regex(/^ws_[a-f0-9]{32}$/);
 const opaqueId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
 const generation = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const gitObject = z.string().regex(GIT_OBJECT_ID);
+export const WorkspaceEvidenceObjectSchema = z
+  .object({
+    generation,
+    object: z.object({ objectId: z.string().uuid(), sha256: digest }).strict(),
+  })
+  .strict();
 const mode = z.enum([
   "ownWorktree",
   "readOnlyCheckout",

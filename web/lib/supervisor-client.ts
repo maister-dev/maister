@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
-import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
+import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
   WorkspacePublicationSnapshot,
@@ -59,7 +59,7 @@ import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
-import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceEvidenceObjectSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
@@ -1974,6 +1974,26 @@ export async function getWorkspaceStatus(handle: string, generation: number): Pr
     throw new MaisterError("ACP_PROTOCOL", "Selected host returned a different workspace status");
 
   return status.data;
+}
+
+export async function getWorkspaceDiff(handle: string, input: WorkspaceDiffQuery): Promise<WorkspaceEvidenceObject> {
+  const query = new URLSearchParams({
+    generation: String(input.generation),
+    ...(input.base ? { base: input.base } : {}),
+    ...(input.head ? { head: input.head } : {}),
+  });
+  const res = await request<unknown>({
+    method: "GET",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/diff?${query}`,
+    ctx: "getWorkspaceDiff",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const evidence = WorkspaceEvidenceObjectSchema.safeParse(res.body);
+  if (res.status !== 200 || !evidence.success || evidence.data.generation !== input.generation)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace diff reference");
+
+  return evidence.data;
 }
 
 export async function getWorkspaceCommandReceipt(

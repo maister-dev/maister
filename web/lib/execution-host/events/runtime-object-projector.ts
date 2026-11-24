@@ -5,6 +5,8 @@ import type { Db } from "@/lib/execution-host/db";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { GIT_OBJECT_ID } from "../../../../runtime/wait-head";
+
 import {
   SessionContentReferenceSchema,
   StdoutSegmentMetadataSchema,
@@ -18,6 +20,7 @@ import {
 import { hasNativeOutputCommand } from "../runtime-object-intent";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
+import { runEventWakeBus } from "./run-wake";
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
@@ -27,8 +30,10 @@ import {
 
 import {
   executionCommands,
+  executionAssignments,
   executionRuntimeObjects,
   runs,
+  workspaces,
   type ExecutionEvent,
 } from "@/lib/db/schema";
 import {
@@ -40,11 +45,24 @@ import {
 export const canonicalRuntimeObjectProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.runtimeObject,
   project: projectRuntimeObject,
+  afterCommit(events) {
+    for (const event of events)
+      if (event.payload?.workspaceGitDiff !== undefined)
+        runEventWakeBus.wake(event.runId);
+  },
 };
 const kinds = new Set<string>(RUNTIME_OBJECT_KINDS);
 const retentionClasses = new Set<string>(RUNTIME_OBJECT_RETENTION_CLASSES);
 const states = new Set<string>(RUNTIME_OBJECT_STATES);
 const sha256 = /^[a-f0-9]{64}$/;
+const workspaceDiffSchema = z
+  .object({
+    handle: z.string().regex(/^ws_[a-f0-9]{32}$/),
+    generation: z.number().int().positive(),
+    base: z.string().regex(GIT_OBJECT_ID),
+    head: z.string().regex(GIT_OBJECT_ID).nullable(),
+  })
+  .strict();
 
 function permanent(message: string): ExecutionEventProjectionError {
   return new ExecutionEventProjectionError(message, true);
@@ -318,6 +336,49 @@ async function applyRuntimeObjectEvent(
     return;
   }
   if (event.eventType === "runtime_object.available") {
+    if (event.payload?.workspaceGitDiff !== undefined) {
+      const diff = workspaceDiffSchema.safeParse(
+        event.payload.workspaceGitDiff,
+      );
+      const binding = sealForEvent(event);
+      if (
+        !diff.success ||
+        event.hostSessionId ||
+        !event.executionHostId ||
+        !event.executionAssignmentId ||
+        event.assignmentEpoch === null ||
+        binding.kind !== "diagnostic" ||
+        binding.logicalName !== "workspace-diff.patch" ||
+        binding.mimeType !== "text/x-diff" ||
+        binding.sizeBytes === null ||
+        binding.sizeBytes > 64 * 1024
+      )
+        throw permanent("Workspace diff output has invalid identity");
+      const [owned] = await tx
+        .select({ id: workspaces.id })
+        .from(workspaces)
+        .innerJoin(
+          executionAssignments,
+          eq(workspaces.runId, executionAssignments.runId),
+        )
+        .where(
+          and(
+            eq(workspaces.runId, event.runId),
+            eq(workspaces.ownershipKind, "host_owned"),
+            eq(workspaces.workspaceGeneration, diff.data.generation),
+            eq(workspaces.executionHostId, event.executionHostId),
+            eq(executionAssignments.executionHostId, event.executionHostId),
+            eq(executionAssignments.id, event.executionAssignmentId),
+            eq(executionAssignments.epoch, event.assignmentEpoch),
+            eq(executionAssignments.executionWorkspaceId, diff.data.handle),
+          ),
+        );
+      if (!owned)
+        throw permanent(
+          "Workspace diff output has no matching workspace and assignment",
+        );
+      await catalogueContentIntent(tx, event);
+    }
     if (event.payload?.workspaceWorkloadCommandId !== undefined) {
       const commandId = z
         .string()

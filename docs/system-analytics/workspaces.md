@@ -558,6 +558,14 @@ state and clean versus dirty state without exposing the private path.
 The Run Git panel reads those fields through the existing project-authorized
 Git state endpoint. A host-owned workspace has no manager Git path to inspect.
 
+The host produces review patches from the prepared handle and a reachable
+base and head. A working tree patch uses a temporary index to include
+non-ignored untracked files. The host seals at most 64 KiB through the
+runtime object plane. The Run diff route verifies the catalogue, checks
+current `readRepoFiles` before capture and before response, and renders the
+same bounded bytes. Review-source and checkpoint scopes require their own
+owner evidence.
+
 ## Expectations
 
 - Exactly one worktree per run, rooted at

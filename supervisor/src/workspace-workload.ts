@@ -1,5 +1,4 @@
 import type {
-  WorkspaceInputObject,
   WorkspaceWorkloadRequest,
   WorkspaceWorkloadResult,
 } from "../../runtime/workspace-prepare";
@@ -8,7 +7,7 @@ import type { RuntimeObjectRegistry } from "./runtime-objects";
 import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { Logger } from "pino";
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,6 +28,7 @@ import { SupervisorError } from "./types";
 import { readHostProcessContext } from "./session-process-context";
 import { readRetainedWorkspaceInput } from "./workspace-input-materialization";
 import { executeWorkspaceWorkloadProcess } from "./workspace-workload-process";
+import { sealWorkspaceOutput } from "./workspace-output-object";
 
 const declarationsSchema = z
   .array(
@@ -51,67 +51,6 @@ const declarationsSchema = z
       .strict(),
   )
   .max(WORKSPACE_WORKLOAD_MAX_DECLARATIONS);
-
-async function sealOutput(
-  args: Readonly<{
-    objects: RuntimeObjectRegistry;
-    events: RuntimeEventPublisher;
-    state: HostState;
-  }>,
-  owner: WorkspaceWorkloadRequest["owner"],
-  commandId: string,
-  name: string,
-  bytes: Buffer,
-): Promise<WorkspaceInputObject> {
-  const objectId = randomUUID();
-  const generation = 1;
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const { runId, assignmentId, assignmentEpoch } = owner;
-  await args.objects.reserve({
-    runId,
-    assignmentId,
-    assignmentEpoch,
-    payload: {
-      objectId,
-      kind: "diagnostic",
-      logicalName: name,
-      mimeType: name.endsWith(".json") ? "application/json" : "text/plain",
-      retentionClass: "run",
-      generation,
-      sizeBytes: bytes.byteLength,
-      sha256,
-    },
-  });
-  const metadata = await args.objects.upload({
-    objectId,
-    assignmentId,
-    assignmentEpoch,
-    generation,
-    sha256,
-    sizeBytes: bytes.byteLength,
-    chunks: (async function* () {
-      yield bytes;
-    })(),
-  });
-  const available = args.events.runtimeObjectInput({
-    runId,
-    assignmentId,
-    assignmentEpoch,
-    metadata,
-  });
-  args.state.appendRuntimeEvent({
-    ...available,
-    draft: {
-      ...available.draft,
-      payload: {
-        ...available.draft.payload,
-        workspaceWorkloadCommandId: commandId,
-      },
-    },
-  });
-
-  return { objectId, sha256 };
-}
 
 async function readDeclaredResult(
   path: string,
@@ -304,21 +243,20 @@ export async function runWorkspaceWorkload(
     if (outputDirectory && canRemoveOutput)
       await rm(outputDirectory, { recursive: true, force: true });
   }
+  const source = { workspaceWorkloadCommandId: request.command.id };
   const objects = [
-    await sealOutput(
-      input,
-      owner,
-      request.command.id,
-      "workload-stdout.txt",
-      result.stdout,
-    ),
-    await sealOutput(
-      input,
-      owner,
-      request.command.id,
-      "workload-stderr.txt",
-      result.stderr,
-    ),
+    await sealWorkspaceOutput(input, owner, {
+      logicalName: "workload-stdout.txt",
+      mimeType: "text/plain",
+      bytes: result.stdout,
+      source,
+    }),
+    await sealWorkspaceOutput(input, owner, {
+      logicalName: "workload-stderr.txt",
+      mimeType: "text/plain",
+      bytes: result.stderr,
+      source,
+    }),
   ];
   let checkValidity: WorkspaceWorkloadResult["checkValidity"] = "notRequested";
   if (declaration.structuredOutput === "json") {
@@ -332,13 +270,12 @@ export async function runWorkspaceWorkload(
     if (declaredOutput?.kind === "present") {
       checkValidity = jsonValidity(declaredOutput.bytes);
       objects.push(
-        await sealOutput(
-          input,
-          owner,
-          request.command.id,
-          "workload-result.json",
-          declaredOutput.bytes,
-        ),
+        await sealWorkspaceOutput(input, owner, {
+          logicalName: "workload-result.json",
+          mimeType: "application/json",
+          bytes: declaredOutput.bytes,
+          source,
+        }),
       );
     }
   }

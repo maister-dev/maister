@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { workspaces as workspaceTable } from "@/lib/db/schema";
+
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
@@ -15,6 +17,8 @@ import {
   type DiffPrepResult,
 } from "@/lib/diff/prepare";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
+import { readAddressedWorkspacePatch } from "@/lib/execution-host/workspace-review";
 import {
   filterReviewableChangeEntries,
   isReviewableChangeEntry,
@@ -62,6 +66,8 @@ function httpStatusForCode(code: string): number {
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
+    case "EXECUTOR_UNAVAILABLE":
+      return 503;
     default:
       return 500;
   }
@@ -228,6 +234,91 @@ async function loadLastNodeCheckpointRef(
   return rows[0]?.checkpointRef ?? null;
 }
 
+async function addressedDiffResponse(
+  input: Readonly<{
+    workspace: typeof workspaceTable.$inferSelect;
+    runId: string;
+    scope: DiffScope;
+    targetBranch: string;
+    priorReviewTipSha: string | null;
+    userId: string;
+    signal: AbortSignal;
+  }>,
+): Promise<NextResponse> {
+  const { runId, workspace, scope, priorReviewTipSha, signal } = input;
+  const { projectId } = workspace;
+  await requireProjectAction(projectId, "readRepoFiles");
+  const scopes: ScopeAvailability = {
+    run: { available: workspace.baseCommit !== null },
+    uncommitted: { available: true },
+    "since-last-review": { available: priorReviewTipSha !== null },
+    review: { available: false, reason: "workspace_review_source_unavailable" },
+    "last-node": {
+      available: false,
+      reason: "workspace_checkpoint_unavailable",
+    },
+  };
+  if (!scopes[scope].available)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The requested diff scope is unavailable on this workspace",
+      {
+        details: {
+          reason: scopes[scope].reason ?? "workspace_diff_range_invalid",
+        },
+      },
+    );
+  const db = getDb();
+  const baseCommit =
+    scope === "uncommitted"
+      ? (await readAddressedWorkspaceStatus(db, workspace)).workspace
+          .observedCommit
+      : scope === "since-last-review"
+        ? priorReviewTipSha
+        : workspace.baseCommit;
+  if (!baseCommit)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected supervisor has no verified base commit",
+    );
+  const patch = await readAddressedWorkspacePatch({
+    db,
+    workspace,
+    range: { base: baseCommit },
+    signal,
+  });
+  const diff = filterDiffByPath(patch, (path, oldPath) =>
+    isReviewableChangeEntry({ path, oldPath }),
+  );
+  const { prepared, renderUnavailableReason } = await prepareDiffForResponse({
+    runId,
+    scope,
+    diff,
+    truncated: false,
+  });
+  await requireProjectAction(projectId, "readRepoFiles");
+  await assertRunKnowledgeDisclosure(
+    db,
+    { kind: "user", userId: input.userId },
+    runId,
+  );
+
+  return NextResponse.json({
+    runId,
+    scope,
+    scopes,
+    baseCommit,
+    sourceBranch: workspace.branch,
+    targetBranch: input.targetBranch,
+    reviewSourceFingerprint: null,
+    diff,
+    truncated: prepared.truncated,
+    files: prepared.files,
+    perFile: prepared.perFile,
+    renderUnavailableReason,
+  });
+}
+
 // M37 (ADR-102): resolve the shared TREE workspace for a writable shared child
 // (READ path). A shared writable tree is ONE git worktree owned by the ALLOCATOR
 // child's `workspaces` row; a REUSER child of the same tree (`root_run_id`)
@@ -351,6 +442,16 @@ export async function GET(
       await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
       const targetBranch = scratch.targetBranch ?? scratch.baseBranch;
+      if (workspace.ownershipKind === "host_owned")
+        return await addressedDiffResponse({
+          runId,
+          workspace,
+          targetBranch,
+          scope: "run",
+          priorReviewTipSha: null,
+          userId: user.id,
+          signal: req.signal,
+        });
       // The scratch agent edits files without committing, so the diff must be
       // base commit → WORKING TREE (committed + uncommitted + untracked), not
       // the commit-range `base..branch` (which is empty until a commit lands).
@@ -403,6 +504,17 @@ export async function GET(
     // Availability map (graceful degrade, ADR-082): resolve each scope's base
     // precondition once; the UI disables unavailable scopes with the reason.
     const priorReviewTipSha = await loadPriorReviewTipSha(db, runId);
+    if (workspace.ownershipKind === "host_owned")
+      return await addressedDiffResponse({
+        runId,
+        workspace,
+        priorReviewTipSha,
+        scope,
+        userId: user.id,
+        signal: req.signal,
+        targetBranch:
+          workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch,
+      });
     const lastNodeRef = await loadLastNodeCheckpointRef(db, runId);
     let lastNodeBaseSha: string | null = null;
 

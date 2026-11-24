@@ -777,6 +777,52 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
   expect(await stale.json()).toMatchObject({
     details: { reason: "stale_workspace_generation" },
   });
+  await writeFile(
+    join(workspace.realPath, "new-file.txt"),
+    "new untracked work\n",
+  );
+  const response = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/diff?generation=1&base=${commit}`,
+  );
+  expect(response.status).toBe(200);
+  const reference = (await response.json()) as {
+    generation: number;
+    object: { objectId: string; sha256: string };
+  };
+  expect(reference.generation).toBe(1);
+  const patch = await addressedRequest(
+    rebooted,
+    `/runtime-objects/${reference.object.objectId}/content`,
+  );
+  const bytes = Buffer.from(await patch.arrayBuffer());
+  expect(patch.status).toBe(200);
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+    reference.object.sha256,
+  );
+  expect(bytes.toString()).toContain("+dirty first workspace\n");
+  expect(bytes.toString()).toContain("+new untracked work\n");
+  expect(git(workspace.realPath, "ls-files", "--", "new-file.txt")).toBe("");
+  expect(bytes.toString()).not.toContain(root);
+  const newer = git(repository, "rev-parse", "HEAD");
+  const unrelated = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/diff?generation=1&base=${newer}`,
+  );
+  expect(unrelated.status).toBe(409);
+  expect(await unrelated.json()).toMatchObject({
+    details: { reason: "workspace_diff_range_invalid" },
+  });
+  await writeFile(path, "oversized\n".repeat(15_000));
+  const oversized = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/diff?generation=1&base=${commit}`,
+  );
+  expect(oversized.status).toBe(409);
+  expect(await oversized.json()).toMatchObject({
+    details: { reason: "workspace_diff_too_large" },
+  });
+  await writeFile(path, "dirty first workspace\n");
 
   const conflicting = await addressedRequest(
     rebooted,

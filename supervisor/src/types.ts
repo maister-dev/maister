@@ -720,6 +720,8 @@ export const REASON_TOKENS = [
   "stale_workspace_generation",
   "workspace_preparation_pending",
   "workspace_input_changed",
+  "workspace_diff_range_invalid",
+  "workspace_diff_too_large",
   "tool_not_declared",
   "workspace_protocol_unsupported",
   "legacy_field",

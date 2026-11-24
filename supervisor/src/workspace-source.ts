@@ -44,7 +44,17 @@ export async function executeWorkspaceGit(
   args: readonly string[],
   timeout = WORKSPACE_GIT_TIMEOUT_MS,
 ): Promise<string> {
+  return (await executeWorkspaceGitBytes(args, { timeout }))
+    .toString("utf8")
+    .trim();
+}
+
+export async function executeWorkspaceGitBytes(
+  args: readonly string[],
+  options: Readonly<{ timeout?: number; indexFile?: string }> = {},
+): Promise<Buffer> {
   const env: NodeJS.ProcessEnv = { GIT_TERMINAL_PROMPT: "0" };
+  if (options.indexFile !== undefined) env.GIT_INDEX_FILE = options.indexFile;
   for (const name of GIT_ENVIRONMENT) {
     const value = process.env[name];
     if (value !== undefined) env[name] = value;
@@ -62,10 +72,15 @@ export async function executeWorkspaceGit(
       "core.fsmonitor=false",
       ...args,
     ],
-    { env, timeout, maxBuffer: 64 * 1024, encoding: "utf8" },
+    {
+      env,
+      timeout: options.timeout ?? WORKSPACE_GIT_TIMEOUT_MS,
+      maxBuffer: 64 * 1024,
+      encoding: "buffer",
+    },
   );
 
-  return result.stdout.trim();
+  return result.stdout;
 }
 
 function isApprovedSourceAddress(value: string): boolean {

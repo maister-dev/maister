@@ -9,7 +9,7 @@ import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 import { SupervisorError } from "./types";
 import { executeWorkspaceGit } from "./workspace-source";
 
-async function readGitHead(workspace: WorkspaceRow): Promise<{
+export async function observePreparedGitHead(workspace: WorkspaceRow): Promise<{
   commit: string;
   ref: string;
 }> {
@@ -32,6 +32,7 @@ async function readGitHead(workspace: WorkspaceRow): Promise<{
     workspace.repoPath === null ||
     topLevel !== workspace.realPath ||
     commonDirectory !== join(workspace.repoPath, ".git") ||
+    (await realpath(commonDirectory)) !== commonDirectory ||
     !GIT_OBJECT_ID.test(commit) ||
     (ref !== "HEAD" && !ref.startsWith("refs/heads/"))
   )
@@ -40,12 +41,14 @@ async function readGitHead(workspace: WorkspaceRow): Promise<{
   return { commit, ref };
 }
 
-/** Inspect only the retained generation owned by this supervisor. */
-export async function inspectWorkspace(
+export function loadPreparedWorkspace(
   state: HostState,
   handle: string,
   generation: number,
-): Promise<WorkspaceStatus | null> {
+): {
+  workspace: WorkspaceRow;
+  mode: WorkspaceStatus["workspace"]["mode"];
+} | null {
   const workspace = state.getWorkspace(handle);
   const execution = state.getWorkspaceExecutionState(handle);
   if (!workspace || workspace.releasedAt) return null;
@@ -63,6 +66,18 @@ export async function inspectWorkspace(
       },
     );
 
+  return { workspace, mode };
+}
+
+/** Inspect only the retained generation owned by this supervisor. */
+export async function inspectWorkspace(
+  state: HostState,
+  handle: string,
+  generation: number,
+): Promise<WorkspaceStatus | null> {
+  const prepared = loadPreparedWorkspace(state, handle, generation);
+  if (!prepared) return null;
+  const { workspace, mode } = prepared;
   const record = { handle, generation, mode };
   try {
     if ((await realpath(workspace.realPath)) !== workspace.realPath)
@@ -74,7 +89,7 @@ export async function inspectWorkspace(
         headState: "nonGit",
       };
 
-    const head = await readGitHead(workspace);
+    const head = await observePreparedGitHead(workspace);
     const status = await executeWorkspaceGit([
       "--no-optional-locks",
       "-C",
@@ -85,7 +100,7 @@ export async function inspectWorkspace(
       "--ignore-submodules=none",
       "-z",
     ]);
-    const verified = await readGitHead(workspace);
+    const verified = await observePreparedGitHead(workspace);
     if (head.commit !== verified.commit || head.ref !== verified.ref)
       throw new SupervisorError(
         "PRECONDITION",

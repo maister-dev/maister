@@ -46,6 +46,15 @@ export type WorkspaceInputObject = Readonly<{
   objectId: string;
   sha256: string;
 }>;
+export type WorkspaceDiffQuery = Readonly<{
+  generation: number;
+  base?: string;
+  head?: string;
+}>;
+export type WorkspaceEvidenceObject = Readonly<{
+  generation: number;
+  object: WorkspaceInputObject;
+}>;
 export type WorkspaceMaterializeRequest = Readonly<{
   workspaceProtocol: 1;
   command: Readonly<{

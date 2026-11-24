@@ -40,6 +40,7 @@ import { prepareOwnedWorkspace } from "./prepare-owned-workspace";
 import { isSupervisorError, SupervisorError } from "./types";
 import { materializeWorkspaceInputs } from "./workspace-input-materialization";
 import { inspectWorkspace } from "./workspace-status";
+import { sealWorkspaceDiff } from "./workspace-diff";
 import {
   recoverWorkspaceWorkload,
   runWorkspaceWorkload,
@@ -104,6 +105,10 @@ const workspaceHandle = z.string().regex(/^ws_[a-f0-9]{32}$/);
 const workspaceQuery = z.object({
   generation: z.string().regex(/^[1-9][0-9]{0,15}$/).transform(Number).pipe(generation),
 }).strict();
+const diffQuery = workspaceQuery.extend({
+  base: z.string().regex(GIT_OBJECT_ID).optional(),
+  head: z.string().regex(GIT_OBJECT_ID).optional(),
+});
 const materializeSchema = z
   .object({
     workspaceProtocol: z.literal(1),
@@ -513,6 +518,17 @@ export function registerWorkspacePreparation(args: {
   });
   app.get<StatusRequest>("/v1/workspaces/:id/status", async (req, reply) => {
     const result = await readWorkspaceStatus(req.params.id, req.query);
+
+    return result ?? reply.status(404).send(missingWorkspace);
+  });
+  app.get<StatusRequest>("/v1/workspaces/:id/diff", async (req, reply) => {
+    const handle = workspaceHandle.safeParse(req.params.id);
+    const parsed = diffQuery.safeParse(req.query);
+    if (!handle.success || !parsed.success)
+      throw new SupervisorError("PRECONDITION", "Workspace diff requires a handle, generation and exact commit IDs", {
+        details: { reason: "invalid_request" },
+      });
+    const result = await sealWorkspaceDiff({ state, objects, events }, { ...parsed.data, handle: handle.data });
 
     return result ?? reply.status(404).send(missingWorkspace);
   });

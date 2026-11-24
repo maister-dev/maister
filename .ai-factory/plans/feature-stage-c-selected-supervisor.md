@@ -30,6 +30,14 @@ network namespace and private filesystem. Disconnecting B's network
 left A reachable. Reconnecting B returned the same host and boot IDs.
 Evidence: `/private/tmp/maister-stage-c-isolated-endpoints-chrome.log`.
 
+The compatibility smoke also passed on production image `810010f2c` with
+Linux arm64, Node 24.22.2 and Chrome 158. Both supervisors were live before
+launch. A handled the Run while B retained zero receipts. Web received
+`EACCES` on A's SQLite store. Partitioning B preserved A's board, permission,
+checkpoint/resume, cancellation and retained binary content cases. The
+smoke uses the legacy assignment topology. Evidence is in
+`/private/tmp/maister-stage-c-810010f2c-chrome.log`.
+
 Use one production Web and two real supervisor processes on the development
 machine for G2. Give each supervisor a separate network namespace, store,
 process identity and private repository/workspace/runtime volumes. Web reaches
@@ -364,6 +372,19 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   paths. The 14 Web cases include the real supervisor and existing legacy
   route coverage. Web typecheck and OpenAPI validation passed. Browser
   display qualification is part of G1.
+
+  **C-09 diff checkpoint.** The supervisor seals the exact bytes of a
+  bounded patch for the prepared handle and reachable commit range. Working
+  tree diffs include untracked files through a temporary index. RED returned
+  404 before the host route existed. GREEN verified the exact SHA-256,
+  preserved the live index, refused a different range and rejected a patch
+  above 64 KiB. The existing Web route projected the sealed object and
+  returned the patch after current repository authorization. A foreign Run
+  could not address the object. Revoking membership while the second request
+  awaited projection caused a 403 with zero diff bytes returned. Log,
+  checkpoint/restore and the review/promotion source witness remain open.
+  Passed 38 Web integrations, 16 route cases, 24 supervisor integrations,
+  both typechecks, contracts and docs/ERD validation.
 
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 - [ ] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.

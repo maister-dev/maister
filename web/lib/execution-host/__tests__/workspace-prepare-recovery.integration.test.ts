@@ -48,7 +48,7 @@ import { readSealedCliOutput } from "@/lib/flows/graph/node-output";
 import { loadGitState } from "@/lib/workbench-git/read-model";
 import { workspaces } from "@/lib/db/schema";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
-import { initRepo } from "@/test-support/git-fixture";
+import { git, initRepo } from "@/test-support/git-fixture";
 import {
   addProjectMember,
   removeProjectMember,
@@ -61,6 +61,11 @@ let root: string | undefined;
 let supervisor: RealSupervisor | undefined;
 let database: StartedPostgresTestDb | undefined;
 let webServer: Server | undefined;
+const session = vi.hoisted(() => ({ userId: "" }));
+
+vi.mock("@/auth", () => ({
+  auth: async () => ({ user: { id: session.userId } }),
+}));
 
 afterEach(async () => {
   await supervisor?.kill();
@@ -143,6 +148,9 @@ async function assertAddressedRequirement({
 }): Promise<void> {
   root = await mkdtemp(join(tmpdir(), "stage-c-preparation-recovery-"));
   const source = await initRepo(join(root, "origin"));
+  await writeFile(join(source, "input.txt"), "original source\n");
+  await git(source, "add", "--", "input.txt");
+  await git(source, "commit", "-m", "tracked source for revision fixture");
   const commit = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], {
     encoding: "utf8",
   }).trim();
@@ -158,6 +166,7 @@ async function assertAddressedRequirement({
   });
   const siblingSource = await initRepo(join(root, "sibling-origin"));
   const userId = await seedActiveUser(database.db);
+  session.userId = userId;
   const siblingGrant = {
     userId,
     projectId: sibling.id,
@@ -692,6 +701,67 @@ async function assertAddressedRequirement({
     await writeFile(releasePath, "release");
     await vi.waitFor(async () =>
       expect((await inspectProcessGroup(group)).state).toBe("retired"),
+    );
+  }
+
+  await writeFile(
+    join(owned.path, "input.txt"),
+    "changed on the selected host\n",
+  );
+  const diffRoute = (await import("@/app/api/runs/[runId]/diff/route")).GET;
+  const requestDiff = () =>
+    diffRoute(new Request(`${web.origin}/api/runs/${runId}/diff`), {
+      params: Promise.resolve({ runId }),
+    });
+  const readDiffEvent = async (): Promise<void> => {
+    expect(
+      await consumeRuntimeEventStreamOnce({
+        db,
+        executionHostId: host.id,
+        transport,
+        owner: "fixture",
+        maxEvents: 1,
+        signal: AbortSignal.timeout(15_000),
+      }),
+    ).toMatchObject({ received: 1, acknowledged: 1 });
+  };
+  const allowedDiff = requestDiff();
+  await readDiffEvent();
+  await projectCanonicalRuntimeObjects({ db, runId });
+  const patchResponse = await allowedDiff;
+  expect(patchResponse.status).toBe(200);
+  expect(await patchResponse.json()).toMatchObject({
+    baseCommit: commit,
+    diff: expect.stringContaining("+changed on the selected host\n"),
+  });
+  const [{ objectId }] = (
+    await database.pool.query<{ objectId: string }>(
+      `SELECT id AS "objectId" FROM execution_runtime_objects WHERE run_id=$1 AND logical_name='workspace-diff.patch' AND mime_type='text/x-diff' AND state='available'`,
+      [runId],
+    )
+  ).rows;
+  const foreignRun = await seedRun(database.db, { projectId: sibling.id });
+  await expect(
+    readRuntimeObjectContent({
+      db,
+      runId: foreignRun,
+      objectId,
+      transportForHost: async () => transport,
+    }),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+  const revokedDiff = requestDiff();
+  await readDiffEvent();
+  await database.pool.query(
+    "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+    [project.id, userId],
+  );
+  try {
+    await projectCanonicalRuntimeObjects({ db, runId });
+    expect((await revokedDiff).status).toBe(403);
+  } finally {
+    await database.pool.query(
+      "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+      [project.id, userId],
     );
   }
 

@@ -3,6 +3,8 @@ import "server-only";
 import type {
   WorkspacePrepareInput,
   WorkspaceStatus,
+  WorkspaceDiffQuery,
+  WorkspaceEvidenceObject,
 } from "../../../runtime/workspace-prepare";
 import type { Db } from "./db";
 import type { ExecutionHostTransport } from "./contracts";
@@ -66,20 +68,21 @@ export async function observeSelectedWorkspaceRevision(
   return transport.observeWorkspaceRevision(repositoryId, ref);
 }
 
-/** Call after the Run's project authorization. The retained owner remains valid after assignment release. */
-export async function readAddressedWorkspaceStatus(
+type RetainedWorkspaceRead = Pick<
+  typeof workspaces.$inferSelect,
+  | "ownershipKind"
+  | "executionHostId"
+  | "executionWorkspaceId"
+  | "workspaceGeneration"
+  | "preparationAssignmentId"
+  | "removedAt"
+>;
+
+async function resolveAddressedWorkspaceRead(
   db: Db,
-  workspace: Pick<
-    typeof workspaces.$inferSelect,
-    | "ownershipKind"
-    | "executionHostId"
-    | "executionWorkspaceId"
-    | "workspaceGeneration"
-    | "preparationAssignmentId"
-    | "removedAt"
-  >,
-  transport: ExecutionHostTransport = defaultTransport(),
-): Promise<WorkspaceStatus> {
+  workspace: RetainedWorkspaceRead,
+  transport: ExecutionHostTransport,
+): Promise<{ handle: string; generation: number }> {
   if (
     workspace.ownershipKind !== "host_owned" ||
     workspace.removedAt ||
@@ -103,7 +106,7 @@ export async function readAddressedWorkspaceStatus(
     },
     { transport },
   );
-  if (!usesHostWorkspacePreparation(host) || !transport.getWorkspaceStatus)
+  if (!usesHostWorkspacePreparation(host))
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
       "Assigned host cannot inspect workspaces",
@@ -112,10 +115,53 @@ export async function readAddressedWorkspaceStatus(
       },
     );
 
-  return transport.getWorkspaceStatus(
-    workspace.executionWorkspaceId,
-    workspace.workspaceGeneration,
+  return {
+    handle: workspace.executionWorkspaceId,
+    generation: workspace.workspaceGeneration,
+  };
+}
+
+/** Call after the Run's project authorization. The retained owner remains valid after assignment release. */
+export async function readAddressedWorkspaceStatus(
+  db: Db,
+  workspace: RetainedWorkspaceRead,
+  transport = defaultTransport(),
+): Promise<WorkspaceStatus> {
+  if (!transport.getWorkspaceStatus)
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Transport cannot inspect workspaces",
+      { details: { reason: "workspace_protocol_unsupported" } },
+    );
+  const { handle, generation } = await resolveAddressedWorkspaceRead(
+    db,
+    workspace,
+    transport,
   );
+
+  return transport.getWorkspaceStatus(handle, generation);
+}
+
+/** The caller authorizes `readRepoFiles` for the Run before requesting its diff. */
+export async function readAddressedWorkspaceDiff(
+  db: Db,
+  workspace: RetainedWorkspaceRead,
+  range: Omit<WorkspaceDiffQuery, "generation">,
+  transport = defaultTransport(),
+): Promise<WorkspaceEvidenceObject> {
+  if (!transport.getWorkspaceDiff)
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Transport cannot capture workspace diffs",
+      { details: { reason: "workspace_protocol_unsupported" } },
+    );
+  const { handle, generation } = await resolveAddressedWorkspaceRead(
+    db,
+    workspace,
+    transport,
+  );
+
+  return transport.getWorkspaceDiff(handle, { ...range, generation });
 }
 
 /** Reserve the logical workspace and command in the transaction that places the Run. */
