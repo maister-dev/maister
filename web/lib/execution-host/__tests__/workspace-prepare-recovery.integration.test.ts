@@ -65,6 +65,7 @@ import {
   flowRevisions,
   gateResults,
   nodeAttempts,
+  packageInstalls,
   platformAcpRunners,
   projects,
   runs,
@@ -87,7 +88,7 @@ import {
   seedActiveUser,
 } from "@/test-support/librarian-seed";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
-import { startRealSupervisor } from "@/test-support/real-supervisor";
+import { freePort, startRealSupervisor } from "@/test-support/real-supervisor";
 
 let root: string | undefined;
 let supervisor: RealSupervisor | undefined;
@@ -315,7 +316,8 @@ it.each([
     vi.stubEnv("LANG", "en_US.UTF-8");
     supervisor = await startRealSupervisor({
       fixture: "mock-acp-lifecycle.mjs",
-      fixtureAdapters: [adapter],
+      fixtureAdapters: refusedRoot ? [adapter] : ["claude", "codex"],
+      fixtureArgsByAdapter: { codex: [] },
       fixtureArgs: adapter === "claude" && runner.model
         ? ["--expect-native-model", runner.model, "--expect-claude-native"]
         : [],
@@ -490,6 +492,122 @@ it.each([
     if (!probe) throw new Error("Addressed launch did not reserve its requirement probe");
     await applyCommand(probe.id);
     expect(await tryStartRun(runId, { db })).toMatchObject({ started: true });
+    const childAgent = await seedTaskAgentFlowFacadeFixture(database, { root, projectId, flowId });
+    const childRunnerId = randomUUID();
+    await db.insert(platformAcpRunners).values(testPlatformRunnerRow(childRunnerId, "codex"));
+    await writeFile(join(childAgent.installedPath, "maister-agents", "facade.md"),
+      "---\nname: Shared check\ndescription: Shared addressed child\nkind: code_delivery\nworkspace: worktree\nmode: session\ntriggers: [domain_event]\nrisk_tier: read_only\nplatform_mcp: false\n---\nCheck the retained parent worktree.\n");
+    const skillPath = "skills/shared-check/SKILL.md";
+    const skillContent = "---\nname: shared-check\ndescription: Verify the shared checkout\n---\nInspect the owning checkout.\n";
+    await mkdir(join(childAgent.installedPath, "assets", "skills", "shared-check"), { recursive: true });
+    await writeFile(join(childAgent.installedPath, "assets", skillPath), skillContent);
+    await db.update(packageInstalls)
+      .set({ manifest: { spec: { capabilities: [{ id: "shared-check", path: "assets" }] } } })
+      .where(eq(packageInstalls.id, childAgent.packageInstallId));
+    await db.update(agents).set({ triggers: ["domain_event"] }).where(eq(agents.id, childAgent.agentId));
+    const childTaskId = randomUUID();
+    await db.insert(tasks).values({
+      id: childTaskId,
+      projectId,
+      number: 2,
+      title: "Check the retained parent worktree",
+      prompt: "Run within the original root",
+      flowId,
+    });
+    const { addTaskRelation } = await import("@/lib/social/relations");
+    const { establishExecutionChildAdmission } = await import("@/lib/tasks/qualification-admission");
+    const { launchAgentRun, startAgentSession } = await import("@/lib/agents/launch");
+    await addTaskRelation({
+      projectId, fromTaskId: taskId, toTaskId: childTaskId,
+      kind: "parent_of", actor: { type: "system", id: null },
+    }, db);
+    await db.transaction((tx) => establishExecutionChildAdmission(tx, {
+      projectId, parentRunId: runId, childTaskId, planRevision: "addressed-root-v1",
+    }));
+    const child = await launchAgentRun({
+      agentId: childAgent.agentId,
+      projectId,
+      taskId: childTaskId,
+      workspace: "worktree",
+      workspaceMode: "shared",
+      launchOverrideRunnerId: childRunnerId,
+      parentRunId: runId,
+      rootRunId: runId,
+      trigger: { source: "domain_event" },
+      db,
+    });
+    if (!("queued" in child)) throw new Error("Shared child bypassed launch admission");
+    expect(child.receipt.executionHostSelection).toMatchObject({
+      effectiveExecutionHostId: host.id, provenance: "sharedRoot",
+    });
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", `http://127.0.0.1:${await freePort()}`);
+    try {
+      const offline = await prepareTaskLaunchIntent(db, child.receipt.intentId);
+      expect(offline).toMatchObject({
+        state: "queued", runId: null, reason: "launch_execution_host_unavailable",
+        executionHostSelection: child.receipt.executionHostSelection,
+      });
+    } finally {
+      vi.stubEnv("MAISTER_SUPERVISOR_URL", supervisor.url);
+    }
+    const childIntent = await vi.waitFor(async () => {
+      const receipt = await prepareTaskLaunchIntent(db, child.receipt.intentId);
+      expect(receipt.state, JSON.stringify(receipt)).toBe("run_bound");
+      return receipt;
+    }, { timeout: 8_000 });
+    expect(childIntent.state, JSON.stringify(childIntent)).toBe("run_bound");
+    if (!childIntent.runId) throw new Error("Shared child has no reserved Run");
+    const childRunId = childIntent.runId;
+    const [preparedChild] = await db.select().from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, childIntent.intentId));
+    expect(preparedChild.preparationIdentity).toMatchObject({
+      version: 4, executionHostId: host.id,
+      parentRepoPath: null, worktreePath: null, runtimePath: null,
+    });
+    for (const kind of ["workspace.prepare", "workspace.materialize"]) {
+      await advanceAddressedWorkspaceAdmission(db, childRunId);
+      await vi.waitFor(async () => {
+        await projectCanonicalRuntimeObjects({ db, runId: childRunId });
+        await projectExecutionEvents({ db, projector: canonicalLifecycleProjector, runId: childRunId });
+        expect((await listCommandsForRun(db, childRunId)).find((command) => command.kind === kind))
+          .toMatchObject({ state: "succeeded" });
+      }, { timeout: 8_000 });
+    }
+    expect(await tryStartRun(childRunId, { db })).toMatchObject({ started: true });
+    const childDriver = startAgentSession(childRunId, { db, signal: AbortSignal.timeout(12_000) });
+    await expect(childDriver).resolves.toBeUndefined();
+    const childCommands = await listCommandsForRun(db, childRunId);
+    expect(childCommands.filter(({ kind }) => kind === "session.create")).toHaveLength(1);
+    expect(childCommands.filter(({ kind }) => kind === "session.prompt")).toHaveLength(1);
+    const preparedWorkspace = childCommands.find(({ kind }) => kind === "workspace.prepare");
+    const materializedWorkspace = childCommands.find(({ kind }) => kind === "workspace.materialize");
+    const manifestDigest = materializedWorkspace?.payload.manifestDigest;
+    expect(manifestDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(await readFile(join(
+      supervisor.runtimeRoot, ".maister", projectId, "runs", childRunId, "inputs",
+      String(manifestDigest), "bundles", "0", skillPath,
+    ), "utf8")).toBe(skillContent);
+    const [childWorkspace] = await db.select().from(workspaces).where(eq(workspaces.runId, childRunId));
+    const [rootWorkspace] = await db.select().from(workspaces).where(eq(workspaces.runId, runId));
+    expect(childWorkspace).toMatchObject({
+      rootWorkspaceId: rootWorkspace.id,
+      baseCommit: commit,
+      worktreePath: null,
+      executionHostId: host.id,
+    });
+    const [dispatchedChild] = await db.select().from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, childIntent.intentId));
+    expect(dispatchedChild.dispatchReceipt?.addressedPreparation).toMatchObject({
+      workspaceId: childWorkspace.id,
+      handle: expect.stringMatching(/^ws_[a-f0-9]{32}$/),
+      generation: 1,
+      materializationGeneration: 1,
+    });
+    expect(preparedWorkspace?.result).toMatchObject({
+      workspace: { handle: dispatchedChild.dispatchReceipt?.addressedPreparation?.handle },
+    });
+    expect(dispatchedChild.dispatchReceipt?.addressedPreparation?.handle)
+      .not.toBe(rootWorkspace.executionWorkspaceId);
     const runtimeRoot = join(root, "web");
     const firstDriver = new AbortController();
     const startDriver = (signal: AbortSignal) =>

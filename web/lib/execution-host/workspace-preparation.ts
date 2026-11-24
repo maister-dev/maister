@@ -16,7 +16,7 @@ import type { WorkspaceInputFile } from "./workspace-inputs";
 
 import { randomUUID } from "node:crypto";
 
-import { eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 
 import { COMMAND_POLICY } from "./deliverer";
 import { defaultTransport } from "./default-transport";
@@ -39,6 +39,22 @@ type WorkspaceMetadata = Pick<
   | "branchDelivery"
   | "rootWorkspaceId"
 >;
+
+/** Read affinity for an existing shared root without opening or probing its checkout. */
+export async function readAddressedSharedRoot(
+  db: Db,
+  rootRunId: string,
+): Promise<typeof workspaces.$inferSelect | null> {
+  const [root] = await db
+    .select()
+    .from(workspaces)
+    .where(and(
+      eq(workspaces.runId, rootRunId),
+      eq(workspaces.ownershipKind, "host_owned"),
+      isNull(workspaces.removedAt),
+    ));
+  return root ?? null;
+}
 
 export function usesHostWorkspacePreparation(host: ExecutionHost): boolean {
   const protocol = host.capabilities.workspaceProtocol;

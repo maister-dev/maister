@@ -41,6 +41,7 @@ import { MaisterError } from "@/lib/errors";
 import {
   projectHostSettingsEtag,
   readProjectHostSettings,
+  resolveTaskLaunchPlacement,
   updateProjectHostSettings,
 } from "@/lib/execution-host/project-preference";
 import { assertTaskLaunchDispatchAuthority } from "@/lib/tasks/launch-dispatch-authority";
@@ -376,6 +377,15 @@ it("C-11 freezes a default or explicit placement across preview and replay", asy
       effectiveExecutionHostId: hostId,
       provenance: "explicit",
     });
+    const [currentProject] = await database.db.select().from(projects).where(eq(projects.id, projectId));
+    expect(await resolveTaskLaunchPlacement(database.db, currentProject, hostId, hostId))
+      .toMatchObject({ selection: {
+        requestedExecutionHostId: hostId,
+        effectiveExecutionHostId: hostId,
+        provenance: "sharedRoot",
+      } });
+    await expect(resolveTaskLaunchPlacement(database.db, currentProject, randomUUID(), hostId))
+      .rejects.toMatchObject({ details: { reason: "shared_root_host_conflict" } });
     await expect(
       acceptInteractiveTaskLaunch(
         database.db,

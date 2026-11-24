@@ -10,6 +10,7 @@ import pino from "pino";
 import {
   acceptedTaskAgentLaunchExecution,
   taskAgentPreparationWorkspace,
+  assertBoundAddressedTaskAgentWorkspace,
 } from "./launch-agent-execution";
 import {
   claimTaskLaunchIntent,
@@ -72,7 +73,7 @@ async function settlePreparationFailure(
   claim: TaskLaunchClaim,
   error: unknown,
 ): Promise<void> {
-  const reason =
+  const causeReason =
     isMaisterError(error) && typeof error.details?.reason === "string"
       ? error.details.reason
       : "launch_preparation_failed";
@@ -85,7 +86,7 @@ async function settlePreparationFailure(
       "timeout",
       "http",
       "launch_runner_unavailable",
-    ].includes(reason);
+    ].includes(causeReason);
   const transient =
     !isMaisterError(error) ||
     error.code === "EXECUTOR_UNAVAILABLE" ||
@@ -108,6 +109,10 @@ async function settlePreparationFailure(
       .for("update");
 
     if (!current) return;
+    const reason = current.effectiveExecutionHostId &&
+      ["network", "timeout", "http", "host_missing", "host_not_ready"].includes(causeReason)
+      ? "launch_execution_host_unavailable"
+      : causeReason;
     const attempts = current.attempts + (busy || !transient ? 0 : 1);
     const retry = busy || (transient && attempts < 3);
     const [next] = await tx
@@ -144,6 +149,7 @@ async function settlePreparationFailure(
         state: next.state,
         attempts,
         reason,
+        causeReason,
         integrityLimit,
         causeChain: operationalCauseChain(error),
         ...queryErrorDiagnostics(error),
@@ -514,7 +520,13 @@ async function prepareClaimedTaskLaunchIntent(
             .where(eq(runs.id, execution.intent.runId));
 
           if (!bound) throw launchRefusal("launch_worker_fenced");
-          await taskAgentPreparationWorkspace(db, bound);
+          if (claim.identity.version === 4) {
+            if (!bound.executionAssignmentId)
+              throw launchRefusal("launch_worker_fenced");
+            await assertBoundAddressedTaskAgentWorkspace(
+              db, execution.intent, bound.executionAssignmentId,
+            );
+          } else await taskAgentPreparationWorkspace(db, bound);
           await db.transaction(async (tx) => {
             await execution.beginBinding(tx);
             await execution.bindRun(tx);

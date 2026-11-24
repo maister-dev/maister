@@ -121,17 +121,22 @@ export async function resolveTaskLaunchPlacement(
   db: Db,
   project: ProjectPreference & { id: string },
   requested: string | undefined,
+  sharedRootHostId?: string,
 ): Promise<TaskLaunchPlacement | null> {
+  if (sharedRootHostId && requested && requested !== sharedRootHostId)
+    throw new MaisterError("PRECONDITION", "A shared child must use its root workspace's supervisor", {
+      details: { reason: "shared_root_host_conflict" },
+    });
   if (
     !configuredSelectedExecutionEndpoint() &&
     !project.defaultExecutionHostId &&
-    !requested
+    !requested && !sharedRootHostId
   )
     return null;
   const candidates = (await selectedEndpointHosts(db)) ?? [];
   const eligible = candidates.filter((host) => eligibleForProject(project.id, host));
   const eligibleIds = eligible.map(({ id }) => id);
-  const defaultExecutionHostId = project.defaultExecutionHostId ?? eligibleIds[0] ?? null;
+  const defaultExecutionHostId = sharedRootHostId ?? project.defaultExecutionHostId ?? eligibleIds[0] ?? null;
   const effective = requested ?? defaultExecutionHostId;
   if (!effective || !eligibleIds.includes(effective)) throw ineligibleHost();
 
@@ -139,12 +144,15 @@ export async function resolveTaskLaunchPlacement(
     preferenceRevision: project.executionHostPreferenceRevision,
     hostOptions: {
       defaultExecutionHostId,
-      hosts: eligible.map(({ id, displayName }) => ({ id, displayName })),
+      hosts: eligible.filter(({ id }) => !sharedRootHostId || id === sharedRootHostId)
+        .map(({ id, displayName }) => ({ id, displayName })),
     },
     selection: {
       requestedExecutionHostId: requested ?? null,
       effectiveExecutionHostId: effective,
-      provenance: requested
+      provenance: sharedRootHostId
+        ? "sharedRoot"
+        : requested
         ? "explicit"
         : project.defaultExecutionHostId
           ? "projectDefault"

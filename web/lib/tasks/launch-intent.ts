@@ -406,6 +406,7 @@ export async function serverTaskLaunchRequest(
     db,
     current.project,
     parsed.data.executionHostId,
+    settings.kind === "agent" ? settings.agentSnapshot?.sharedRoot?.address?.hostId : undefined,
   );
 
   return {
@@ -618,6 +619,7 @@ export async function prepareTaskLaunchRequest(
     db,
     initial.project,
     request.executionHostId,
+    resolved.kind === "agent" ? resolved.agentSnapshot?.sharedRoot?.address?.hostId : undefined,
   );
   if (
     bindTaskLaunchPlacementToken(resolved.resolutionToken, placement) !==
@@ -630,9 +632,7 @@ export async function prepareTaskLaunchRequest(
       initial.project,
       resolved,
       request,
-      resolved.kind === "flow"
-        ? placement?.selection.effectiveExecutionHostId
-        : undefined,
+      placement?.selection.effectiveExecutionHostId,
     );
   const currentBaseCommit =
     acceptanceAuthority.basisKind === "automatic" &&
@@ -642,6 +642,7 @@ export async function prepareTaskLaunchRequest(
           db,
           initial.project,
           request.taskId,
+          placement?.selection.effectiveExecutionHostId,
         )
       : resourceCommit;
 
@@ -829,6 +830,7 @@ export async function applyPreparedTaskLaunch(
     tx,
     beforeConfiguration.project,
     request.executionHostId,
+    resolved.kind === "agent" ? resolved.agentSnapshot?.sharedRoot?.address?.hostId : undefined,
   );
   if (retryDigest(placement) !== retryDigest(prepared.placement))
     throw launchRefusal("launch_settings_changed");

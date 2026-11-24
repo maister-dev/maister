@@ -3643,8 +3643,10 @@ export const taskLaunchIntents = pgTable(
           AND ${t.executionHostEligibilityRevision} ~ '^[0-9a-f]{64}$'
           AND ((${t.executionHostProvenance} = 'explicit'
               AND ${t.requestedExecutionHostId} = ${t.effectiveExecutionHostId})
-            OR (${t.executionHostProvenance} IN ('projectDefault', 'instanceDefault', 'sharedRoot')
-              AND ${t.requestedExecutionHostId} IS NULL)))
+            OR (${t.executionHostProvenance} IN ('projectDefault', 'instanceDefault')
+              AND ${t.requestedExecutionHostId} IS NULL)
+            OR (${t.executionHostProvenance} = 'sharedRoot'
+              AND (${t.requestedExecutionHostId} IS NULL OR ${t.requestedExecutionHostId} = ${t.effectiveExecutionHostId}))))
       ) IS TRUE`,
     ),
     requestKeyUnique: unique("task_launch_intents_request_key_uq").on(
@@ -3721,7 +3723,7 @@ export const taskLaunchIntents = pgTable(
         AND jsonb_typeof(${t.preparationIdentity}->'taskAttemptNumber')='number' AND (${t.preparationIdentity}->>'taskAttemptNumber')::numeric>0 AND (${t.preparationIdentity}->>'taskAttemptNumber')::numeric=trunc((${t.preparationIdentity}->>'taskAttemptNumber')::numeric)
         AND ${t.preparationIdentity}->>'resourceId' ~ '^[0-9a-f]{64}$' AND length(${t.preparationIdentity}->>'incarnationId') BETWEEN 1 AND 256
         AND (
-          ${t.preparationIdentity}->'version'='3'::jsonb AND ${t.preparationIdentity}->'worktreePath'='null'::jsonb
+          ${t.preparationIdentity}->'version' IN ('3'::jsonb,'4'::jsonb) AND ${t.preparationIdentity}->'worktreePath'='null'::jsonb
           OR jsonb_typeof(${t.preparationIdentity}->'worktreePath')='string' AND length(${t.preparationIdentity}->>'worktreePath') BETWEEN 1 AND 4096
         )
         AND (${t.preparationIdentity}->>'baseCommit' IS NOT DISTINCT FROM ${t.settingsSnapshot}->>'baseCommit')
@@ -3741,7 +3743,16 @@ export const taskLaunchIntents = pgTable(
           AND jsonb_typeof(${t.preparationIdentity}->'executionHostId')='string'
           AND ${t.preparationIdentity}->>'executionHostId'=${t.effectiveExecutionHostId}
           AND jsonb_typeof(${t.preparationIdentity}->'branch')='string' AND length(${t.preparationIdentity}->>'branch') BETWEEN 1 AND 256
-          AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$')
+          AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+          OR ${t.preparationIdentity}->'version'='4'::jsonb AND ${t.preparationIdentity}->>'kind'='agent' AND ${t.settingsSnapshot}->>'kind'='agent'
+          AND ${t.preparationIdentity}->>'workspace'=${t.settingsSnapshot}->>'workspace'
+          AND ${t.preparationIdentity}->'parentRepoPath'='null'::jsonb AND ${t.preparationIdentity}->'worktreePath'='null'::jsonb AND ${t.preparationIdentity}->'runtimePath'='null'::jsonb
+          AND jsonb_typeof(${t.preparationIdentity}->'executionHostId')='string'
+          AND ${t.preparationIdentity}->>'executionHostId'=${t.effectiveExecutionHostId}
+          AND (${t.preparationIdentity}->>'workspace'='none' AND ${t.preparationIdentity}->'baseCommit'='null'::jsonb AND ${t.preparationIdentity}->'branch'='null'::jsonb
+            OR ${t.preparationIdentity}->>'workspace' IN ('repo_read','worktree') AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+              AND (${t.preparationIdentity}->>'workspace'='repo_read' AND ${t.preparationIdentity}->'branch'='null'::jsonb
+                OR ${t.preparationIdentity}->>'workspace'='worktree' AND jsonb_typeof(${t.preparationIdentity}->'branch')='string' AND length(${t.preparationIdentity}->>'branch') BETWEEN 1 AND 256)))
         AND ${t.preparationPhase} IN ('reserved','checkout_ready','materializing','materialized','run_bound') AND octet_length(${t.preparationIdentity}::text)<=16384
       )) IS TRUE AND (${t.cleanupState} IS NULL OR ${t.cleanupState} IN ('pending','removed','retained'))`,
     ),

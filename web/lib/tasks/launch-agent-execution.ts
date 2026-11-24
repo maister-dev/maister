@@ -12,7 +12,7 @@ import type { TaskLaunchSettingsV2Snapshot } from "./launch-types";
 import type { Run } from "@/lib/db/schema";
 import type { OperationalResourceKind } from "@/lib/run-results/operational-types";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { taskLaunchAllowsTaskStatus } from "./launch-task-status";
 import {
@@ -54,6 +54,7 @@ import {
   projects,
   workspaces,
   runs,
+  executionAssignments,
 } from "@/lib/db/schema";
 import { resolveAgentConfig } from "@/lib/agents/config";
 import { retryDigest } from "@/lib/agents/retry-guards";
@@ -295,6 +296,18 @@ export async function assertFrozenTaskAgentRepository(
     .where(eq(projects.id, intent.projectId));
 
   if (!project) throw launchRefusal("launch_task_missing", "PRECONDITION");
+  if (intent.preparationIdentity?.version === 4) {
+    await assertTaskAgentSharedRootCurrent(db, settings, intent.runId);
+    if (
+      intent.preparationIdentity.executionHostId !== intent.effectiveExecutionHostId ||
+      (intent.basis.kind === "automatic" &&
+        (await resolveTaskLaunchAutomaticEvidenceCommit(
+          db, project, intent.taskId, intent.effectiveExecutionHostId,
+        )) !== intent.basis.evidenceSha)
+    )
+      throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+    return;
+  }
   const [bound] = intent.runId
     ? await db.select().from(runs).where(eq(runs.id, intent.runId))
     : [];
@@ -355,6 +368,57 @@ export async function assertFrozenTaskAgentRepository(
     )) !== intent.basis.evidenceSha
   )
     throw launchRefusal("qualification_evidence_stale", "PRECONDITION");
+}
+
+/** The host row and current assignment witness replace path and inode proof for addressed agents. */
+export async function assertBoundAddressedTaskAgentWorkspace(
+  db: Db,
+  intent: Intent,
+  assignmentId: string,
+): Promise<typeof workspaces.$inferSelect> {
+  const identity = intent.preparationIdentity;
+  const settings = intent.settingsSnapshot;
+  if (
+    identity?.version !== 4 ||
+    identity.runId !== intent.runId ||
+    identity.executionHostId !== intent.effectiveExecutionHostId ||
+    settings.version !== 2 ||
+    settings.kind !== "agent"
+  )
+    throw launchRefusal("launch_worker_fenced");
+
+  const [row] = await db
+    .select()
+    .from(workspaces)
+    .where(and(
+      eq(workspaces.runId, identity.runId),
+      eq(workspaces.projectId, intent.projectId),
+      eq(workspaces.executionHostId, identity.executionHostId),
+      eq(workspaces.ownershipKind, "host_owned"),
+      isNull(workspaces.removedAt),
+    ))
+    .for("share");
+  const [assignment] = await db
+    .select()
+    .from(executionAssignments)
+    .where(and(
+      eq(executionAssignments.id, assignmentId),
+      eq(executionAssignments.runId, identity.runId),
+      eq(executionAssignments.executionHostId, identity.executionHostId),
+      eq(executionAssignments.state, "active"),
+    ));
+  const root = settings.agentSnapshot?.sharedRoot;
+  if (
+    !assignment ||
+    assignment.addressedStopRequestedAt ||
+    !row ||
+    row.baseCommit !== identity.baseCommit ||
+    (identity.branch !== null && row.branch !== identity.branch) ||
+    row.rootWorkspaceId !== (root?.workspaceId ?? null)
+  )
+    throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+  await assertTaskAgentSharedRootCurrent(db, settings, intent.runId);
+  return row;
 }
 
 /** The physical preparation owner validates the accepted source before freezing its first baseline. */

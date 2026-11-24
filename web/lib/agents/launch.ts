@@ -182,9 +182,13 @@ import {
 import {
   frozenTaskAgentDefinition,
   captureTaskAgentPackage,
+  captureTaskAgentDefinition,
   releaseTaskAgentCaptureAfterFailure,
 } from "@/lib/tasks/launch-agent-definition";
-import { commitTaskAgentLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
+import {
+  commitAddressedTaskAgentLaunchFirstDispatch,
+  commitTaskAgentLaunchFirstDispatch,
+} from "@/lib/tasks/launch-first-dispatch";
 import { isTaskLaunchContention } from "@/lib/tasks/launch-contention";
 import {
   assertPreparedConsensusDraftAdmission,
@@ -365,8 +369,12 @@ import {
   type SupervisorEvent,
 } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
-import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import {
+  configuredSelectedExecutionEndpoint,
+  selectedEndpointAllowsProject,
+} from "@/lib/execution-host/selected-endpoint";
 import { captureWorkspaceBundles } from "@/lib/execution-host/workspace-input-capture";
+import { taskAgentPackageContentDigest } from "@/lib/tasks/launch-agent-resolution";
 import { captureAddressedAgentContexts } from "@/lib/context-mounts/addressed-capture";
 import {
   observeSelectedWorkspaceRevision,
@@ -1810,10 +1818,14 @@ async function launchAgentRunWithAdmission(
     }
   }
 
-  const selectedHost = configuredSelectedExecutionEndpoint()
+  const selectedHost = configuredSelectedExecutionEndpoint() && selectedEndpointAllowsProject(input.projectId)
     ? await localHost({ db: _db as unknown as ExecutionDb, force: true })
     : null;
   const hostPreparesWorkspace = selectedHost !== null && usesHostWorkspacePreparation(selectedHost);
+  if (hostPreparesWorkspace && ctx.effective.parsed.kind === "operational")
+    throw new MaisterError("PRECONDITION", "The selected supervisor cannot verify operational workspace integrity", {
+      details: { reason: "workspace_protocol_unsupported" },
+    });
   // ADR-090: a repo_read run against the PARENT checkout is only verifiable
   // from a clean baseline. With workspace_ref the run gets an EPHEMERAL
   // detached checkout instead — clean by construction, so the baseline check
@@ -1896,16 +1908,38 @@ async function launchAgentRunWithAdmission(
   // Git still runs before the PostgreSQL transaction.
   let initialAssignmentId: string | null = null;
   const allocateAndPersist = async (): Promise<boolean> => {
-    const workspaceInputs = hostPreparesWorkspace
-      ? [
+    const captureInputs = async () => {
+      const definition = ctx.effective;
+      const snapshot = acceptedExecution?.settings.agentSnapshot;
+      const capture = definition.manifest?.spec?.capabilities?.length
+        ? await captureTaskAgentDefinition({
+            runId,
+            agentId: input.agentId,
+            definition,
+            definitionSha256: snapshot?.definitionSha256 ??
+              buildAgentActivitySnapshot(input.agentId, definition).definitionSha256,
+            packageContentDigest: snapshot?.packageContentDigest ??
+              await taskAgentPackageContentDigest(definition.installedPath),
+          })
+        : null;
+      try {
+        return [
           ...await captureAddressedAgentContexts(_db as ExecutionDb, input.projectId, input.agentId),
           ...await captureWorkspaceBundles(_db as ExecutionDb, {
             projectId: input.projectId,
             runId,
             intentId: acceptedExecution?.intent.id,
+            acceptedBundles: acceptedExecution?.settings.capabilityBundles,
+            agentPackageRoots: capture
+              ? await packageSkillMaterializationRoots(capture.definition)
+              : [],
           }),
-        ]
-      : [];
+        ];
+      } finally {
+        await capture?.release();
+      }
+    };
+    const workspaceInputs = hostPreparesWorkspace ? await captureInputs() : [];
     let worktreePath: string | null = null;
     let branch: string | null = null;
     let baseCommit: string | null = null;
@@ -4976,6 +5010,17 @@ async function driveAgentSession(
   const companyWorkspace = companyContext
     ? await operationalWorkspace(_db, run)
     : null;
+  const [addressedWorkspace] = run.projectId
+    ? await _db.select({ id: workspaces.id }).from(workspaces).where(and(
+        eq(workspaces.runId, runId),
+        eq(workspaces.ownershipKind, "host_owned"),
+        isNull(workspaces.removedAt),
+      ))
+    : [];
+  if (addressedWorkspace && run.agentKind === "operational")
+    throw new MaisterError("PRECONDITION", "The selected supervisor cannot verify operational workspace integrity", {
+      details: { reason: "workspace_protocol_unsupported" },
+    });
   let preparation: Awaited<ReturnType<typeof openAgentPreparation>> | null =
     null;
   let continuation: Awaited<ReturnType<typeof claimAgentContinuation>> = null;
@@ -4997,6 +5042,7 @@ async function driveAgentSession(
 
   try {
     if (
+      !addressedWorkspace &&
       (run.agentKind === "operational" || run.taskLaunchIntentId) &&
       assignmentId
     ) {
@@ -5138,7 +5184,7 @@ async function driveAgentSession(
       packageCapture.current = await captureTaskAgentPackage(_db, run);
       effective = packageCapture.current.definition;
     }
-    let cwd: string;
+    let cwd: string | null;
 
     if (
       replacementReadOnly &&
@@ -5155,7 +5201,9 @@ async function driveAgentSession(
         },
       );
 
-    if (companyWorkspace) {
+    if (addressedWorkspace) {
+      cwd = null;
+    } else if (companyWorkspace) {
       cwd = companyWorkspace.cwd;
       await mkdir(cwd, { recursive: true });
     } else if (workspace === "repo_read" && effective.parsed.workspaceRef) {
@@ -5284,6 +5332,10 @@ async function driveAgentSession(
     } else if (workspace === "repo_read") {
       cwd = preparationWorkspace?.cwd ?? project.repoPath;
       if (replacementReadOnly) {
+        if (!cwd)
+          throw new MaisterError("PRECONDITION", "The replacement checkout has no local owner", {
+            details: { reason: "launch_workspace_changed" },
+          });
         preparationCommit = replacementReadOnly.commit;
         assertPreparationCommit(
           preparationCommit,
@@ -5329,6 +5381,7 @@ async function driveAgentSession(
         : undefined;
 
     if (
+      cwd !== null &&
       (run.taskLaunchIntentId || replacementWorktree) &&
       workspace === "worktree"
     ) {
@@ -5492,7 +5545,7 @@ async function driveAgentSession(
       };
       let contextMounts = run.contextMounts ?? [];
 
-      if (run.agentKind === "operational" && !integrityBaseline) {
+      if (cwd && run.agentKind === "operational" && !integrityBaseline) {
         if (contextMounts.length > 0)
           throw new MaisterError(
             "PRECONDITION",
@@ -5503,8 +5556,9 @@ async function driveAgentSession(
       }
 
       if (
-        run.agentKind === "operational" ||
-        (run.taskLaunchIntentId && !integrityBaseline)
+        cwd &&
+        (run.agentKind === "operational" ||
+          (run.taskLaunchIntentId && !integrityBaseline))
       ) {
         if (integrityBaseline) {
           assertPreparationCommit(preparationCommit, integrityBaseline.head);
@@ -5584,7 +5638,7 @@ async function driveAgentSession(
       }
       // ADR-090 L2 (materialize-only): instructed deny rules in the session
       // cwd; manifest-tracked and restored at the terminal choke point.
-      if (workspace !== "worktree") {
+      if (cwd && workspace !== "worktree") {
         await materializeAgentReadOnlySettings(
           cwd,
           snapshot.adapter,
@@ -5715,8 +5769,9 @@ async function driveAgentSession(
 
       operationalSpawnStage = "capability_materialization";
       await packageCapture.current?.assertCurrentPath();
-      const packageSkillRoots =
-        await packageSkillMaterializationRoots(effective);
+      const packageSkillRoots = cwd
+        ? await packageSkillMaterializationRoots(effective)
+        : [];
 
       log.debug(
         {
@@ -5742,7 +5797,7 @@ async function driveAgentSession(
           operationalAgentRuntimePath(project.slug, runId))
         : cwd;
 
-      if (packageSkillRoots.length > 0 && redirectsHome)
+      if (capabilityRoot && packageSkillRoots.length > 0 && redirectsHome)
         await mkdir(capabilityRoot, { recursive: true });
       const capabilityHomeInput = {
         agent: snapshot.adapter as AdapterId,
@@ -5751,15 +5806,16 @@ async function driveAgentSession(
         installedPaths: packageSkillRoots,
       };
       const packageSkillHome =
-        packageSkillRoots.length === 0
+        !cwd || !capabilityRoot || packageSkillRoots.length === 0
           ? null
           : run.agentKind === "operational"
             ? await materializeOperationalAdapterCapabilityHome({
                 ...capabilityHomeInput,
+                worktreePath: cwd,
                 runtimePath: capabilityRoot,
               })
-            : await materializeAdapterCapabilityHome(capabilityHomeInput);
-      const skillPrompt = packageSkillHome
+            : await materializeAdapterCapabilityHome({ ...capabilityHomeInput, worktreePath: cwd });
+      const skillPrompt = packageSkillHome && cwd
         ? await workspacePackageSkillsPrompt(cwd, runId)
         : "";
       const prompt =
@@ -5820,13 +5876,13 @@ async function driveAgentSession(
               ).secret,
             );
 
-      if (run.agentKind !== "operational") await prepareAttachedContextMounts();
+      if (cwd && run.agentKind !== "operational") await prepareAttachedContextMounts();
       if (usesStructuredKnowledgeContext(run))
         await assertNativeRunKnowledgeInputs(_db, runId);
 
       operationalSpawnStage = "materialization_witness";
       if (
-        (run.agentKind === "operational" || run.taskLaunchIntentId) &&
+        cwd && (run.agentKind === "operational" || run.taskLaunchIntentId) &&
         integrityBaseline
       ) {
         const next = await captureOperationalGeneration(
@@ -5842,7 +5898,14 @@ async function driveAgentSession(
         );
       }
 
-      if (run.taskLaunchIntentId) {
+      if (addressedWorkspace && run.taskLaunchIntentId && assignmentId) {
+        operationalSpawnStage = "addressed_dispatch_commit";
+        await commitAddressedTaskAgentLaunchFirstDispatch(_db as ExecutionDb, {
+          runId,
+          assignmentId,
+          intentId: run.taskLaunchIntentId,
+        });
+      } else if (run.taskLaunchIntentId) {
         if (!assignmentId || !preparation)
           throw new MaisterError(
             "CONFLICT",
@@ -6066,6 +6129,11 @@ async function driveAgentSession(
         log.error(
           {
             runId,
+            ...(addressedWorkspace ? {
+              stage: operationalSpawnStage,
+              sqlState: pgErrorOf(err)?.code,
+              constraint: pgErrorOf(err)?.constraint,
+            } : {}),
             ...(run.agentKind === "operational"
               ? {
                   operationalSpawnStage,

@@ -154,6 +154,7 @@ export async function captureWorkspaceBundles(
     projectId: string;
     runId: string;
     intentId?: string;
+    agentPackageRoots?: readonly string[];
     acceptedBundles?: Extract<
       TaskLaunchSettingsV2Snapshot,
       { kind: "flow" }
@@ -164,6 +165,20 @@ export async function captureWorkspaceBundles(
   const bundles =
     input.acceptedBundles ??
     (await captureTaskLaunchCapabilityBundles(db, input.projectId));
+  const agentRoots = input.agentPackageRoots ?? [];
+  const collectRoot = async (installedPath: string, index: number): Promise<void> => {
+    for (const tree of ["skills", "agents"] as const) {
+      const source = path.join(installedPath, tree);
+      try {
+        await lstat(source);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      await collect(installedPath, source, `bundles/${index}/${tree}`, new Set());
+    }
+  };
+  for (const [index, root] of agentRoots.entries()) await collectRoot(root, index);
 
   await withTaskLaunchCapabilityBundles(
     db,
@@ -175,24 +190,8 @@ export async function captureWorkspaceBundles(
       bundles,
     },
     async (sources) => {
-      for (const [index, { installedPath }] of sources.entries()) {
-        for (const tree of ["skills", "agents"] as const) {
-          const source = path.join(installedPath, tree);
-
-          try {
-            await lstat(source);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-            throw error;
-          }
-          await collect(
-            installedPath,
-            source,
-            `bundles/${index}/${tree}`,
-            new Set(),
-          );
-        }
-      }
+      for (const [index, { installedPath }] of sources.entries())
+        await collectRoot(installedPath, index + agentRoots.length);
     },
   );
 

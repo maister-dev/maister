@@ -141,7 +141,20 @@ export type TaskLaunchAddressedFlowPreparationIdentity = Omit<
 export type TaskLaunchPreparationIdentity =
   | TaskLaunchFlowPreparationIdentity
   | TaskLaunchAgentPreparationIdentity
-  | TaskLaunchAddressedFlowPreparationIdentity;
+  | TaskLaunchAddressedFlowPreparationIdentity
+  | TaskLaunchAddressedAgentPreparationIdentity;
+
+export type TaskLaunchAddressedAgentPreparationIdentity = Omit<
+  TaskLaunchAgentPreparationIdentity,
+  "version" | "parentRepoPath" | "worktreePath" | "runtimePath"
+> &
+  Readonly<{
+    version: 4;
+    executionHostId: string;
+    parentRepoPath: null;
+    worktreePath: null;
+    runtimePath: null;
+  }>;
 
 export type TaskLaunchDispatchReceipt = Readonly<{
   version: 1;
@@ -151,6 +164,12 @@ export type TaskLaunchDispatchReceipt = Readonly<{
   inputDigest: string;
   settingsDigest: string;
   committedAt: string;
+  addressedPreparation?: Readonly<{
+    workspaceId: string;
+    handle: string;
+    generation: number;
+    materializationGeneration: number;
+  }>;
   preparation?: Readonly<{
     id: string;
     resourceId: string;

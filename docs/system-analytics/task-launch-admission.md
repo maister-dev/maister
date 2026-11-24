@@ -416,8 +416,27 @@ the scheduling form returns to the default choice. Existing launch SSE shows
 the requested host separately from the first persisted dispatch. The
 administrator's host list identifies the active registration bound to the
 configured stable key. A different registration does not satisfy the
-selection, even if its row is healthy. Shared-root inheritance remains
-designed.
+selection, even if its row is healthy.
+
+A shared Agent child inherits the ready root witness from its authorized
+server source. The stored selection uses `sharedRoot` provenance. A requested
+ID can equal the root owner, and a different ID fails with
+`shared_root_host_conflict`. A root with no materialized addressed checkout
+fails with `shared_root_host_unavailable`. Admission freezes the root row ID,
+host, handle, generation, branch and base commit. Changes to those values
+require a fresh decision.
+
+An addressed Agent reserves preparation identity version 4 with the
+selected host, resource incarnation and pinned revision. Its manager paths
+are null. Migration 0386 keeps version 2 receipts readable and validates new
+Agent dispatch receipts against the applied preparation, owning assignment,
+child handle and materialization generation. For a shared child it also
+checks the parent handle and generation in the retained preparation request.
+The supervisor gives each Run its own handle even when two handles refer
+to the same checkout. Per-Run input generations stay independent.
+An unavailable addressed endpoint leaves the queued intent on its saved
+identity with reason `launch_execution_host_unavailable`. The next eligible
+attempt keeps the same request and preparation identity.
 
 When the selected supervisor returns a terminal preparation refusal for the
 current assignment, the worker holds the bound intent with the localized

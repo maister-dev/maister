@@ -1,8 +1,13 @@
 import "server-only";
 import {
+  readAddressedSharedRoot,
   resolveAddressedWorkspaceRevision,
   observeSelectedWorkspaceRevision,
 } from "@/lib/execution-host/workspace-preparation";
+import {
+  configuredSelectedExecutionEndpoint,
+  selectedEndpointAllowsProject,
+} from "@/lib/execution-host/selected-endpoint";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { Run } from "@/lib/db/schema";
@@ -99,6 +104,7 @@ export type TaskAgentLaunchSnapshot = Readonly<{
     baseCommit: string;
     branch: string;
     targetBranch: string;
+    address?: Readonly<{ hostId: string; handle: string; generation: number }>;
   }>;
   project: Readonly<{ mainBranch: string; branchPrefix: string | null }>;
 }>;
@@ -327,6 +333,22 @@ export async function assertTaskAgentSharedRootCurrent(
 
     return;
   }
+  if (witness.address) {
+    const row = await readAddressedSharedRoot(db, witness.rootRunId);
+    if (
+      !row ||
+      row.id !== witness.workspaceId ||
+      row.projectId !== settings.serverExecution?.projectId ||
+      row.executionHostId !== witness.address.hostId ||
+      row.executionWorkspaceId !== witness.address.handle ||
+      row.workspaceGeneration !== witness.address.generation ||
+      row.baseCommit !== witness.baseCommit ||
+      row.branch !== witness.branch ||
+      row.targetBranch !== witness.targetBranch
+    )
+      throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+    return;
+  }
   const shared = await findSharedTreeWorkspace(db, witness.rootRunId);
   const [row] = shared
     ? await db.select().from(workspaces).where(eq(workspaces.id, shared.id))
@@ -451,6 +473,44 @@ export async function resolveServerAgentTaskLaunchSettings(
 
   if (!rootRunId || !source.execution.parentRunId)
     throw launchRefusal("launch_source_snapshot_incomplete", "PRECONDITION");
+  const addressed = await readAddressedSharedRoot(db, rootRunId);
+  if (
+    addressed ||
+    (configuredSelectedExecutionEndpoint() && selectedEndpointAllowsProject(project.id))
+  ) {
+    if (
+      addressed?.projectId !== project.id ||
+      !addressed.executionHostId ||
+      !addressed.executionWorkspaceId ||
+      !addressed.workspaceGeneration ||
+      !addressed.workspaceMaterializationGeneration ||
+      !addressed.baseCommit ||
+      !addressed.targetBranch
+    )
+      throw launchRefusal("shared_root_host_unavailable", "PRECONDITION");
+    const agentSnapshot: TaskAgentLaunchSnapshot = {
+      ...settings.agentSnapshot,
+      sharedRoot: {
+        rootRunId,
+        workspaceId: addressed.id,
+        baseCommit: addressed.baseCommit,
+        branch: addressed.branch,
+        targetBranch: addressed.targetBranch,
+        address: {
+          hostId: addressed.executionHostId,
+          handle: addressed.executionWorkspaceId,
+          generation: addressed.workspaceGeneration,
+        },
+      },
+    };
+    return {
+      ...settings,
+      agentSnapshot,
+      baseBranch: addressed.targetBranch,
+      serverExecution: source,
+      resolutionToken: agentResolutionToken(agentSnapshot.metadataDigest, agentSnapshot),
+    };
+  }
   const shared = await findSharedTreeWorkspace(db, rootRunId);
   const [row] = shared
     ? await db.select().from(workspaces).where(eq(workspaces.id, shared.id))
@@ -722,13 +782,14 @@ export async function agentTaskLaunchSettingsToken(
 
 /** None has no repository requirement; automatic qualification evidence remains a separate real repository fact. */
 export async function resolveTaskLaunchBase(
-  _db: Db,
+  db: Db,
   project: typeof projects.$inferSelect,
   settings: {
     workspace: "none" | "repo_read" | "worktree";
     baseBranch: string;
     targetBranch: string;
     agentSnapshot?: TaskAgentLaunchSnapshot;
+    serverExecution?: TaskLaunchServerSourceSnapshot;
   },
   request: Partial<TaskLaunchRequest>,
   addressedHostId?: string,
@@ -740,23 +801,40 @@ export async function resolveTaskLaunchBase(
     return { baseCommit: null, currentBaseCommit: null };
   }
   if (addressedHostId) {
-    const base = await resolveAddressedWorkspaceRevision(
-      project.id,
-      settings.baseBranch,
-      request.baseCommit,
-    );
+    const shared = settings.agentSnapshot?.sharedRoot;
+    if (shared?.address) {
+      if (addressedHostId !== shared.address.hostId)
+        throw launchRefusal("shared_root_host_conflict", "PRECONDITION");
+      if (request.baseCommit && request.baseCommit !== shared.baseCommit)
+        throw launchRefusal("launch_settings_changed");
+      return { baseCommit: shared.baseCommit, currentBaseCommit: shared.baseCommit };
+    }
+    const observeBase = async (ref: string) => {
+      const base = await resolveAddressedWorkspaceRevision(project.id, ref, request.baseCommit);
+      if (request.baseCommit && !base.pinnedCommit)
+        throw new MaisterError("ACP_PROTOCOL", "The supervisor did not verify the requested base commit");
+      return { baseCommit: base.pinnedCommit ?? base.commit, currentBaseCommit: base.commit };
+    };
     if (settings.targetBranch !== settings.baseBranch)
       await observeSelectedWorkspaceRevision(project.id, settings.targetBranch);
-    if (request.baseCommit && !base.pinnedCommit)
-      throw new MaisterError(
-        "ACP_PROTOCOL",
-        "The supervisor did not verify the requested base commit",
-      );
-
-    return {
-      baseCommit: base.pinnedCommit ?? base.commit,
-      currentBaseCommit: base.commit,
-    };
+    const workspaceRef = settings.workspace === "repo_read" && settings.agentSnapshot?.workspaceRef;
+    if (!workspaceRef) return observeBase(settings.baseBranch);
+    const { resolveWorkspaceRefCommittish } = await import("@/lib/agents/launch");
+    let observed: Awaited<ReturnType<typeof observeBase>> | undefined;
+    await resolveWorkspaceRefCommittish(db, {
+      agentId: request.agentId ?? "",
+      workspaceRef,
+      repoPath: project.repoPath,
+      trigger: settings.serverExecution
+        ? storedTaskAgentLaunchTrigger(settings.serverExecution)
+        : { source: "manual" },
+      observeRevision: async (ref) => {
+        observed = await observeBase(ref);
+        return observed.baseCommit;
+      },
+    });
+    if (!observed) throw launchRefusal("launch_target_unavailable", "PRECONDITION");
+    return observed;
   }
   const branches = new Set(
     await listBranches(project.repoPath, { includeRemotes: true }),
@@ -797,12 +875,16 @@ export async function resolveTaskLaunchAutomaticEvidenceCommit(
   db: Db,
   project: typeof projects.$inferSelect,
   taskId: string,
+  addressedHostId?: string | null,
 ): Promise<string> {
   const qualification = await loadTaskQualificationInput(
     db,
     project.id,
     taskId,
   );
+
+  if (addressedHostId)
+    return observeSelectedWorkspaceRevision(project.id, qualification.target);
 
   return resolveBaseCommit({
     projectRepoPath: project.repoPath,

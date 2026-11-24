@@ -27795,6 +27795,7 @@ components:
     TaskLaunchHostSelection:
       type: object
       additionalProperties: false
+      description: Shared children inherit the parent workspace's saved host. A request may omit the host or name the same host. A different override returns PRECONDITION with reason shared_root_host_conflict. A root that has yet to materialize returns shared_root_host_unavailable.
       required: [requestedExecutionHostId, effectiveExecutionHostId, provenance, eligibilityRevision]
       properties:
         requestedExecutionHostId: { type: string, minLength: 1, maxLength: 256, nullable: true }

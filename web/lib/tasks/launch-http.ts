@@ -26,6 +26,10 @@ const PUBLIC_LAUNCH_MESSAGES: Readonly<Record<string, string>> = {
     "Send a stable Idempotency-Key and reuse the same key and payload when retrying an uncertain response.",
   host_ineligible:
     "Choose a supervisor eligible for this project, then refresh launch options.",
+  shared_root_host_conflict:
+    "Use the supervisor that owns the parent workspace.",
+  shared_root_host_unavailable:
+    "Wait for the parent workspace on its original supervisor, then retry.",
   launch_request_setup_required:
     "Complete the selected setup or use the source run's supported retry action, then refresh launch options.",
   flow_runner_unresolved:

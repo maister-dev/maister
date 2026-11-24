@@ -2675,6 +2675,13 @@
       "when": 1795520737469,
       "tag": "0385_stage_c_addressed_tree_stop",
       "breakpoints": true
+    },
+    {
+      "idx": 386,
+      "version": "7",
+      "when": 1795521440717,
+      "tag": "0386_stage_c_addressed_agent_launch",
+      "breakpoints": true
     }
   ]
 }

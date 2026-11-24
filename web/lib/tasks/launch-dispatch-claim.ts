@@ -5,6 +5,7 @@ import type {
   TaskLaunchPreparationIdentity,
   TaskLaunchFlowPreparationIdentity,
   TaskLaunchAddressedFlowPreparationIdentity,
+  TaskLaunchAddressedAgentPreparationIdentity,
   TaskLaunchAgentPreparationIdentity,
   TaskLaunchPreparationPhase,
 } from "./launch-types";
@@ -81,7 +82,9 @@ export type TaskLaunchFlowPreparationClaim = Omit<TaskLaunchClaim, "identity"> &
       | TaskLaunchAddressedFlowPreparationIdentity;
   }>;
 export type TaskLaunchAgentClaim = Omit<TaskLaunchClaim, "identity"> &
-  Readonly<{ identity: TaskLaunchAgentPreparationIdentity }>;
+  Readonly<{
+    identity: TaskLaunchAgentPreparationIdentity | TaskLaunchAddressedAgentPreparationIdentity;
+  }>;
 export function assertTaskLaunchFlowClaim(
   claim: TaskLaunchClaim,
 ): asserts claim is TaskLaunchFlowClaim {
@@ -100,7 +103,7 @@ export function assertTaskLaunchAgentClaim(
   claim: TaskLaunchClaim,
 ): asserts claim is TaskLaunchAgentClaim {
   assertClaim(claim);
-  if (claim.identity.version !== 2 || claim.identity.kind !== "agent")
+  if (claim.identity.version !== 2 && claim.identity.version !== 4)
     throw launchRefusal("launch_target_unsupported", "PRECONDITION");
 }
 
@@ -355,7 +358,6 @@ export async function claimTaskLaunchIntent(
             "launch_agent_snapshot_incomplete",
             "PRECONDITION",
           );
-        const runtimePath = agentWorkdirPath(project.slug, runId);
         const sharedRootRunId =
           settings.workspace === "worktree" &&
           settings.serverExecution?.execution.workspaceMode === "shared"
@@ -379,59 +381,82 @@ export async function claimTaskLaunchIntent(
             );
           await assertTaskAgentSharedRootCurrent(tx, settings, intent.runId);
         }
-        const sharedPath = sharedRootRunId
-          ? sharedAgentWorktreePath(project.slug, sharedRootRunId)
+        const branch = settings.workspace === "worktree"
+          ? (settings.agentSnapshot.sharedRoot?.branch ??
+            agentWorktreeBranchName({
+              prefix: settings.agentSnapshot.project.branchPrefix ?? "maister/",
+              agentId: settings.agentId,
+              runId,
+            }))
           : null;
-        const sharedOwner = sharedRootRunId
-          ? await findSharedTreeWorkspace(tx, sharedRootRunId)
-          : null;
-        const [sharedWorkspace] = sharedOwner
-          ? await tx
-              .select()
-              .from(workspaces)
-              .where(eq(workspaces.id, sharedOwner.id))
-          : [];
 
-        if (
-          sharedOwner &&
-          (!sharedWorkspace ||
-            sharedWorkspace.removedAt ||
-            sharedWorkspace.worktreePath !== sharedPath)
-        )
-          throw launchRefusal("launch_workspace_changed", "PRECONDITION");
-        const resourcePath =
-          settings.workspace === "repo_read"
-            ? settings.agentSnapshot.workspaceRef
-              ? agentReadOnlyWorkdirPath(project.slug, runId)
-              : parentRepoPath
-            : (sharedPath ?? runtimePath);
-        const repoScope =
-          settings.workspace === "none" ? runtimeRoot() : parentRepoPath;
+        if (intent.effectiveExecutionHostId) {
+          if (fixed || (sharedRootRunId &&
+            settings.agentSnapshot.sharedRoot?.address?.hostId !== intent.effectiveExecutionHostId))
+            throw launchRefusal("launch_target_unsupported", "PRECONDITION");
+          identity = {
+            ...common,
+            version: 4,
+            kind: "agent",
+            workspace: settings.workspace,
+            executionHostId: intent.effectiveExecutionHostId,
+            parentRepoPath: null,
+            worktreePath: null,
+            runtimePath: null,
+            branch,
+            baseCommit: settings.baseCommit,
+            resourceId: workspaceEvidenceDigest([
+              project.id,
+              intent.effectiveExecutionHostId,
+              settings.agentSnapshot.sharedRoot?.address?.handle ?? runId,
+            ]),
+          };
+        } else {
+          const runtimePath = agentWorkdirPath(project.slug, runId);
+          const sharedPath = sharedRootRunId
+            ? sharedAgentWorktreePath(project.slug, sharedRootRunId)
+            : null;
+          const sharedOwner = sharedRootRunId
+            ? await findSharedTreeWorkspace(tx, sharedRootRunId)
+            : null;
+          const [sharedWorkspace] = sharedOwner
+            ? await tx
+                .select()
+                .from(workspaces)
+                .where(eq(workspaces.id, sharedOwner.id))
+            : [];
 
-        identity = {
-          ...common,
-          version: 2,
-          kind: "agent",
-          workspace: settings.workspace,
-          parentRepoPath: settings.workspace === "none" ? null : parentRepoPath,
-          worktreePath: resourcePath,
-          runtimePath,
-          branch:
-            settings.workspace === "worktree"
-              ? sharedRootRunId
-                ? settings.agentSnapshot.sharedRoot!.branch
-                : agentWorktreeBranchName({
-                    prefix:
-                      settings.agentSnapshot.project.branchPrefix ?? "maister/",
-                    agentId: settings.agentId,
-                    runId,
-                  })
-              : null,
-          baseCommit: settings.baseCommit,
-          resourceId: createHash("sha256")
-            .update(`${repoScope}\0${resourcePath}`)
-            .digest("hex"),
-        };
+          if (
+            sharedOwner &&
+            (!sharedWorkspace ||
+              sharedWorkspace.removedAt ||
+              sharedWorkspace.worktreePath !== sharedPath)
+          )
+            throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+          const resourcePath =
+            settings.workspace === "repo_read"
+              ? settings.agentSnapshot.workspaceRef
+                ? agentReadOnlyWorkdirPath(project.slug, runId)
+                : parentRepoPath
+              : (sharedPath ?? runtimePath);
+          const repoScope =
+            settings.workspace === "none" ? runtimeRoot() : parentRepoPath;
+
+          identity = {
+            ...common,
+            version: 2,
+            kind: "agent",
+            workspace: settings.workspace,
+            parentRepoPath: settings.workspace === "none" ? null : parentRepoPath,
+            worktreePath: resourcePath,
+            runtimePath,
+            branch,
+            baseCommit: settings.baseCommit,
+            resourceId: createHash("sha256")
+              .update(`${repoScope}\0${resourcePath}`)
+              .digest("hex"),
+          };
+        }
       } else if (intent.effectiveExecutionHostId) {
         if (fixed)
           throw launchRefusal("launch_target_unsupported", "PRECONDITION");

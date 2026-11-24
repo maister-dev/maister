@@ -618,4 +618,17 @@ describe("C-02 workspace ownership", () => {
       [run.assignmentId],
     )).rejects.toMatchObject({ constraint: "addressed_stop_immutable" });
   });
+
+  it("preserves populated legacy Agent preparation bytes through 0386", async () => {
+    const retained = async () => (await database.pool.query(
+      "SELECT to_jsonb(task_launch_intents) AS document FROM task_launch_intents WHERE id=$1",
+      [retainedIntentId],
+    )).rows[0]?.document;
+    const before = await retained();
+    expect(before.preparation_identity.version).toBe(2);
+    await database.db.transaction((tx) =>
+      applyMainMigration(tx, "0386_stage_c_addressed_agent_launch"),
+    );
+    expect(await retained()).toEqual(before);
+  });
 });
