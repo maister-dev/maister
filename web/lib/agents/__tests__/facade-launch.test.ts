@@ -10,14 +10,13 @@ const existsMock = vi.mocked(existsSync);
 
 describe("resolveFacadeLaunch", () => {
   afterEach(() => {
-    delete process.env.MAISTER_MCP_FACADE_COMMAND;
-    delete process.env.MAISTER_MCP_FACADE_ARGS;
+    vi.unstubAllEnvs();
     existsMock.mockReset();
     existsMock.mockReturnValue(false);
   });
 
   it("uses the env override with default --stdio args", () => {
-    process.env.MAISTER_MCP_FACADE_COMMAND = "/usr/local/bin/maister-mcp";
+    vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", "/usr/local/bin/maister-mcp");
 
     expect(resolveFacadeLaunch()).toEqual({
       command: "/usr/local/bin/maister-mcp",
@@ -26,8 +25,8 @@ describe("resolveFacadeLaunch", () => {
   });
 
   it("splits explicit override args", () => {
-    process.env.MAISTER_MCP_FACADE_COMMAND = "node";
-    process.env.MAISTER_MCP_FACADE_ARGS = "/opt/mcp/main.js --stdio";
+    vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", "node");
+    vi.stubEnv("MAISTER_MCP_FACADE_ARGS", "/opt/mcp/main.js --stdio");
 
     expect(resolveFacadeLaunch()).toEqual({
       command: "node",
@@ -49,5 +48,18 @@ describe("resolveFacadeLaunch", () => {
     existsMock.mockReturnValue(false);
 
     expect(resolveFacadeLaunch()).toBeNull();
+  });
+
+  it("keeps the local facade override when the same Web process also routes to a remote supervisor", () => {
+    vi.stubEnv(
+      "MAISTER_ADDITIONAL_EXECUTION_HOSTS",
+      '[{"hostKey":"eh_supervisor_b","url":"https://supervisor-b.example.invalid"}]',
+    );
+    vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", "/usr/local/bin/maister-mcp");
+
+    expect(resolveFacadeLaunch()).toEqual({
+      command: "/usr/local/bin/maister-mcp",
+      args: ["--stdio"],
+    });
   });
 });

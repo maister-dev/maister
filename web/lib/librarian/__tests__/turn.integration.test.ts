@@ -239,7 +239,11 @@ afterAll(async () => {
 
 // A failed assertion must not leave its successor using the next fake host state.
 afterEach(async () => {
-  await settle();
+  try {
+    await settle();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 }, 30_000);
 
 beforeEach(async () => {
@@ -295,6 +299,11 @@ describe("IT-LCV-04 part 3: a turn round-trips through its own prompt owner", ()
   });
 
   it("IT-LAU-11 (send site): the session is MCP-only, auto-approved, never readOnlySession", async () => {
+    vi.stubEnv(
+      "MAISTER_ADDITIONAL_EXECUTION_HOSTS",
+      '[{"hostKey":"eh_supervisor_b","url":"https://supervisor-b.example.invalid"}]',
+    );
+    vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", "/fixtures/local-maister-mcp");
     const ownerId = await seedActiveUser(db);
 
     await send(ownerId, "hello");
@@ -302,6 +311,7 @@ describe("IT-LCV-04 part 3: a turn round-trips through its own prompt owner", ()
     const payload = creates().at(-1)!;
     const servers = payload.mcpServers as {
       name: string;
+      command: string;
       env: Record<string, string>;
     }[];
 
@@ -318,6 +328,7 @@ describe("IT-LCV-04 part 3: a turn round-trips through its own prompt owner", ()
     ).toContain("mcp__maister__task_search");
     expect(servers).toHaveLength(1);
     expect(servers[0].name).toBe("maister");
+    expect(servers[0].command).toBe("/fixtures/local-maister-mcp");
     expect(servers[0].env.MAISTER_MCP_TOOLSET).toBe("librarian");
     expect(servers[0].env.MAISTER_PROJECT_TOKEN).toMatch(/\S/);
   });

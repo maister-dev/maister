@@ -5994,6 +5994,10 @@ async function driveAgentSession(
         packageCapture.current = null;
       }
 
+      // ADR-166: the bound client selects the facade and adopts the workspace.
+      operationalSpawnStage = "execution_binding";
+      const execution = await bindAgentExecution(hosts, runId, assignmentId);
+
       // ADR-089 D9 + platform_mcp gate: the MAIster facade is the agent's
       // sanctioned domain-write channel. Inject it only when the agent declares
       // `platform_mcp` (default true). If it is required but not runnable in this
@@ -6084,11 +6088,6 @@ async function driveAgentSession(
           preparationId: preparation.operation.id,
         });
       }
-
-      // ADR-166: the create is handle-form — the workspace (and its context
-      // mounts, snapshotted on the run above) is adopted by the bound client.
-      operationalSpawnStage = "execution_binding";
-      const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
       // S2.12: a resume that reaches here resolved NO turn above, so its
       // generation is named by the placement its claim minted. A turn resolved
