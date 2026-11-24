@@ -57,10 +57,10 @@ test("combined isolation validates three independent preflights and the exact ca
 
   assert.equal(combined.outcome, "passed");
   assert.equal(combined.files.length, 8);
-  assert.equal(combined.cases, 55);
+  assert.equal(combined.cases, 56);
   assert.equal(combined.preflights, 3);
   assert.equal(combined.stages.length, 6);
-  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [20, 24, 11]);
+  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [21, 24, 11]);
   assert.deepEqual(JSON.parse(await readFile(join(directory, "combined.json"), "utf8")), combined);
 });
 

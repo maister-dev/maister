@@ -1132,9 +1132,13 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           RE_ENTRY_POLL,
         )
         .toBe(2);
+      // The parked status commits before the recovering driver releases the parent row.
       await expect
-        .poll(async () => (await getRun(runId)).status, RE_ENTRY_POLL)
-        .toBe("WaitingOnChildren");
+        .poll(() => getRun(runId), RE_ENTRY_POLL)
+        .toMatchObject({
+          status: "WaitingOnChildren",
+          flowDriverToken: null,
+        });
       expect(prompts).toHaveLength(1);
       expect(fake.callsOf("createSession")).toHaveLength(1);
       expect(

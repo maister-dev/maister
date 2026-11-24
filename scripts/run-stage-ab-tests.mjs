@@ -224,6 +224,7 @@ export const requiredIsolationCases = {
     "I4: the supervisor and its private root are untouched by the web's death and restart"
   ],
   [processCleanupSuite]: [
+    "O-drain: graceful fixture stop lets an in-flight ownership inspection finish",
     "O-build-lock: a proved dead owner is reclaimed and the verified artifact is reused",
     "O-exit: 'success' retains the exact outcome and finishes cleanup",
     "O-exit: 'assertion failure' retains the exact outcome and finishes cleanup",
