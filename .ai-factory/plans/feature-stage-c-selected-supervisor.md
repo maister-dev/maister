@@ -477,7 +477,8 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   B's token. The real board preview returned the registered host name and
   the existing launch idempotency and project-preference CAS suites stayed
   green. Passed 64 board tests, 31 integrations, Web typecheck, contracts
-  and docs. Browser keyboard and SSE placement evidence remain open.
+  and docs. The T11 Chrome run below verifies keyboard selection. SSE
+  display of requested versus actual placement remains open.
 
   A confirmed preparation refusal now holds the bound intent with an
   actionable EN/RU reason and keeps the original receipt and host identity.
@@ -526,6 +527,21 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   ownership require their own cutover.
 
 - [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.
+
+  **C-12 addressed board-to-Review evidence.** Production image built from
+  `9806f69ed` with two Next build workers. The split-user harness passed
+  `--chrome --second-supervisor --addressed-build` and the legacy S5.3
+  journey without `--addressed-build` on the same image. Linux arm64,
+  Node 24.22.2, Chrome 158.0.8127.38, Web UID 1001, selected host UID 1002,
+  peer UID 1003. Web received `EACCES` on the private repository and host
+  runtime directory. Keyboard selection, permission approval, fixture ACP
+  editing, real `tsc --noEmit` and `next build --webpack`, sealed JSON and
+  the browser diff reached Review at both source SHAs. The two host
+  process groups were 294 and 553 with proved retirement. The first Run's
+  patch was unchanged after the second checkout. The peer stayed healthy
+  in its separate network namespace. Both addressed Runs used the single
+  configured host. Addressed cancel, checkpoint/restore, promotion and
+  disposal remain open for G1.
 
 ### C5–C7 — separately shippable two-host pilot
 

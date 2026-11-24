@@ -15,16 +15,19 @@ const image = process.argv[2];
 
 assert(
   image,
-  "usage: smoke-production-split-users.ts IMAGE [--chrome] [--second-supervisor]",
+  "usage: smoke-production-split-users.ts IMAGE [--chrome] [--second-supervisor] [--addressed-build]",
 );
 
 const useChrome = process.argv.includes("--chrome");
 const useSecondSupervisor = process.argv.includes("--second-supervisor");
+const addressedBuild = process.argv.includes("--addressed-build");
 
 type SeededTarget = {
   projectId: string;
   slug: string;
   taskId: string;
+  repoPath: string;
+  baseCommit?: string;
 };
 
 function fixtureOutput(stdout: string, marker: string): string {
@@ -97,7 +100,11 @@ try {
     target = appContainer,
   ): Promise<string> =>
     docker(["exec", "--user", uid, ...options, target, ...args]);
-  const adapterScript = `#!/bin/sh
+  const adapterScript = addressedBuild
+    ? `#!/bin/sh
+exec node /app/supervisor/test/fixtures/mock-acp-lifecycle.mjs "$@"
+`
+    : `#!/bin/sh
 while [ -n "${"$"}MOCK_ACP_S53_START_GATE" ] && [ ! -f "${"$"}MOCK_ACP_S53_START_GATE" ]; do sleep 0.1; done
 exec node /app/supervisor/test/fixtures/mock-acp-adapter-resumable.mjs "$@"
 `;
@@ -124,25 +131,66 @@ ${adapterScript}EOF
     DB_URL: url.toString(),
   };
   const seed = `
+    import {execFileSync} from "node:child_process";
+    import {mkdir,writeFile} from "node:fs/promises";
+    import {join} from "node:path";
+    import {eq} from "drizzle-orm";
     import {closeDb,getDb} from "./lib/db/client.ts";
+    import {flowRevisions,platformAcpRunners} from "./lib/db/schema.ts";
+    import {testPlatformRunnerRow} from "./lib/__tests__/runner-fixtures.ts";
     import {seedAdmin,seedPlatformRunner,seedProjectRepo,seedFlowTask} from "./test-support/durable-workers-seed.ts";
     const db = getDb();
     await seedAdmin(db);
-    await seedPlatformRunner(db);
-    const project = await seedProjectRepo(db,"/s53/shared");
-    const task = await seedFlowTask(db,{projectId:project.projectId,installedPath:"/s53/shared",terminalDelayMs:0});
-    console.log("S53_SEED:"+JSON.stringify({...project,...task}));
+    const runnerId = await seedPlatformRunner(db);
+    const project = await seedProjectRepo(db,${JSON.stringify(addressedBuild ? "/s53/host" : "/s53/shared")});
+    let baseCommit;
+    let manifest;
+    if (${addressedBuild}) {
+      await db.update(platformAcpRunners).set(testPlatformRunnerRow(runnerId,"codex")).where(eq(platformAcpRunners.id,runnerId));
+      const git = (...args) => execFileSync("git", ["-C",project.repoPath,...args],{encoding:"utf8"}).trim();
+      await mkdir(join(project.repoPath,"app"),{recursive:true});
+      const files = {
+        ".gitignore": "node_modules/\\n.next/\\nnext-env.d.ts\\n*.tsbuildinfo\\n",
+        "package.json": JSON.stringify({name:"addressed-next-smoke",private:true}),
+        "next.config.mjs": "export default {experimental:{cpus:1}};\\n",
+        "tsconfig.json": JSON.stringify({compilerOptions:{target:"ES2022",module:"esnext",moduleResolution:"bundler",jsx:"react-jsx",strict:true,skipLibCheck:true,noEmit:true},include:["app/**/*.tsx"]}),
+        "app/layout.tsx": "import type {ReactNode} from 'react'; export default function Layout({children}:{children:ReactNode}){return <html><body>{children}</body></html>}\\n",
+        "app/page.tsx": "export default function Page(){return <main>Stage C hosted checkout</main>}\\n",
+      };
+      for (const [name,value] of Object.entries(files)) await writeFile(join(project.repoPath,name),value);
+      git("add","--all");
+      git("-c","user.name=Stage C","-c","user.email=stage-c@maister.local","commit","-m","Add private Next.js fixture");
+      baseCommit=git("rev-parse","HEAD");
+      manifest={schemaVersion:1,name:"addressed-next-build",nodes:[
+        {id:"edit",type:"ai_coding",settings:{permissionMode:"ask"},action:{prompt:'fixture-output:{"bytes":0,"text":"addressed edit complete","permission":true,"writeWorkspaceMarker":true,"expectedCapabilityAgent":"codex"}'},transitions:{success:"build"}},
+        {id:"build",type:"cli",settings:{timeoutMs:180000},action:{command:${JSON.stringify(`set -eu
+test "$(cat acp-marker)" = 'written by addressed ACP'
+ln -s /app/web/node_modules node_modules
+node /app/web/node_modules/typescript/bin/tsc --noEmit
+NEXT_TELEMETRY_DISABLED=1 node /app/web/node_modules/next/dist/bin/next build --webpack
+test -s .next/BUILD_ID
+printf '%s\\n' '{"build":"passed","typecheck":"passed"}' > "$MAISTER_OUTPUT_FILE"`)}},
+         output:{result:{schema:"./schemas/build.json",required:true}},transitions:{success:"done"}}
+      ]};
+    }
+    const task = await seedFlowTask(db,{projectId:project.projectId,installedPath:"/s53/shared",terminalDelayMs:0,manifest});
+    if (manifest) {
+      const [revision]=await db.select({path:flowRevisions.installedPath}).from(flowRevisions).where(eq(flowRevisions.id,task.flowRevisionId));
+      await mkdir(join(revision.path,"schemas"),{recursive:true});
+      await writeFile(join(revision.path,"schemas","build.json"),JSON.stringify({schemaVersion:1,fields:[{name:"build",type:"string",required:true},{name:"typecheck",type:"string",required:true}]}));
+    }
+    console.log("S53_SEED:"+JSON.stringify({...project,...task,baseCommit}));
     await closeDb();
   `;
   const seedOut = await docker(
     [
       "exec",
       "--user",
-      "1001:1001",
+      addressedBuild ? "1002:1001" : "1001:1001",
       "--env",
       "DB_URL",
       "--env",
-      "HOME=/app",
+      addressedBuild ? "HOME=/s53/host/home" : "HOME=/app",
       "--workdir",
       "/app/web",
       appContainer,
@@ -183,10 +231,17 @@ ${adapterScript}EOF
         "MAISTER_WORKTREES_ROOT=/s53/shared/worktrees",
         "--env",
         "MAISTER_SUPERVISOR_URL=http://127.0.0.1:7777",
+        ...(addressedBuild
+          ? [
+              "--env",
+              "MAISTER_SELECTED_EXECUTION_HOST_KEY=" + initialHost.hostKey,
+            ]
+          : []),
         "--env",
         "MAISTER_API_BASE_URL=" + origin,
         "--env",
-        "MAISTER_SCHEDULER_TIMER_ENABLED=false",
+        "MAISTER_SCHEDULER_TIMER_ENABLED=" +
+          (addressedBuild ? "true" : "false"),
         "--env",
         "MAISTER_DEFAULT_PACKAGE_SOURCES=",
         "--env",
@@ -269,7 +324,7 @@ ${adapterScript}EOF
     root: "/s53/host",
     port: 7777,
     user: "1002:1001",
-    workspaceRoot: "/s53/shared",
+    workspaceRoot: addressedBuild ? "/s53/host" : "/s53/shared",
     target: appContainer,
   };
   if (useSecondSupervisor) {
@@ -300,12 +355,20 @@ ${adapterScript}EOF
   const peerEndpoint = "http://s53-host-b:7778";
   const gate = primary.root + "/release-adapter";
   await startSupervisor(
-    [
-      "--env",
-      "MOCK_ACP_REQUEST_PERMISSION=1",
-      "--env",
-      "MOCK_ACP_S53_START_GATE=" + gate,
-    ],
+    addressedBuild
+      ? [
+          "--env",
+          "MAISTER_WORKSPACE_REPOSITORIES=" +
+            JSON.stringify({ [witness.projectId]: witness.repoPath }),
+          "--env",
+          "MAISTER_ADAPTER_BINARY_CODEX=/s53/fixture",
+        ]
+      : [
+          "--env",
+          "MOCK_ACP_REQUEST_PERMISSION=1",
+          "--env",
+          "MOCK_ACP_S53_START_GATE=" + gate,
+        ],
     primary,
   );
   const initialHost = await poll(
@@ -474,24 +537,66 @@ ${adapterScript}EOF
       headers: { ...init.headers, cookie },
     });
   };
-  const launchFromBoard = async (taskId: string): Promise<string> => {
+  const launchFromBoard = async (
+    taskId: string,
+    selectedHost?: { id: string; displayName: string },
+    title = "Durable worker flow task",
+  ): Promise<string> => {
     await page.goto("/projects/" + witness.slug);
     const board = page.getByRole("region", { name: "Task board", exact: true });
+    const expectedPreview = selectedHost
+      ? page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === "/api/runs/launch-options",
+        )
+      : undefined;
     await board
       .getByRole("article")
-      .filter({ hasText: "Durable worker flow task" })
+      .filter({ hasText: title })
       .getByRole("button", { name: "Launch", exact: true })
       .click({ timeout: 30_000 });
+    const dialog = page.getByTestId("task-launch-dialog");
+    if (selectedHost) {
+      assert(expectedPreview);
+      const preview = await expectedPreview;
+      assert.equal(preview.status(), 200, await preview.text());
+      const options = (await preview.json()) as {
+        executionHostOptions?: { hosts: Array<{ id: string }> };
+      };
+      assert(
+        options.executionHostOptions?.hosts.some(
+          ({ id }) => id === selectedHost.id,
+        ),
+      );
+      const picker = dialog
+        .locator('button[aria-haspopup="listbox"]')
+        .filter({ hasText: selectedHost.displayName });
+      await expect(picker).toBeVisible();
+      await picker.focus();
+      await page.keyboard.press("ArrowDown");
+      await expect(
+        page.getByRole("option", {
+          name: selectedHost.displayName,
+          exact: true,
+        }),
+      ).toBeVisible();
+      await page.keyboard.press("End");
+      await page.keyboard.press("Enter");
+      await expect(picker).toContainText(selectedHost.displayName);
+    }
     const accepted = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/api/task-launch-intents" &&
         response.request().method() === "POST",
     );
-    await page
-      .getByTestId("task-launch-dialog")
-      .getByRole("button", { name: "Launch", exact: true })
-      .click();
-    const receipt = await readTaskLaunchReceipt(await accepted);
+    await dialog.getByRole("button", { name: "Launch", exact: true }).click();
+    const response = await accepted;
+    if (selectedHost)
+      assert.equal(
+        response.request().postDataJSON().executionHostId,
+        selectedHost.id,
+      );
+    const receipt = await readTaskLaunchReceipt(response);
     assert.equal(receipt.taskId, taskId);
 
     return poll(
@@ -508,334 +613,519 @@ ${adapterScript}EOF
       "browser intent bound to its Run",
     );
   };
-  const runStatus = page.getByRole("main").getByTestId("run-header-status");
-  const allow = page
-    .getByTestId("pending-input-card")
-    .getByRole("button", { name: /^allow$/i });
-
-  const runId = await launchFromBoard(witness.taskId);
-  await page.goto("/runs/" + runId);
-  await expect(runStatus).toBeVisible();
-  await expect(runStatus).not.toContainText("NeedsInput");
-
-  // Keep the adapter at its start gate until a browser connection has received
-  // the stream's initial marker. The permission event must arrive live.
-  const livePermission = page.evaluate(
-    (id) =>
-      new Promise<string>((resolve, reject) => {
-        const stream = new EventSource(
-          "/api/runs/" + id + "/stream?replay=live",
-        );
-        const timeout = window.setTimeout(() => {
-          stream.close();
-          reject(
-            new Error("the live stream did not deliver a permission event"),
-          );
-        }, 30_000);
-        stream.onmessage = (message) => {
-          const event = JSON.parse(message.data) as {
-            type: string;
-            runSequence?: string;
-          };
-          if (event.type === "session.stream_ready")
-            document.documentElement.dataset.s53Stream = "ready";
-          if (event.type !== "session.permission_request") return;
-          window.clearTimeout(timeout);
-          stream.close();
-          resolve(event.runSequence ?? "");
-        };
-      }),
-    runId,
-  );
-  const [permissionSequence] = await Promise.all([
-    livePermission,
-    (async () => {
-      await page.waitForFunction(
-        () => document.documentElement.dataset.s53Stream === "ready",
-      );
-      await inContainer("1002:1001", ["touch", gate]);
-    })(),
-  ]);
-  assert.match(permissionSequence, /^\d+$/);
-  await expect(runStatus).toContainText(/NeedsInput$/, { timeout: 30_000 });
-  await expect(allow).toBeVisible();
-  note("board-launch-and-live-permission", { runId });
-
-  if (secondHost && secondary) {
-    const { rows: active } = await db.pool.query<{ host_key: string }>(
-      `select h.host_key from execution_assignments a
-       join execution_hosts h on h.id=a.execution_host_id
-       where a.run_id=$1 and a.state='active'`,
-      [runId],
-    );
-    assert.deepEqual(active, [{ host_key: initialHost.hostKey }]);
-    const { rows: registered } = await db.pool.query<{ host_key: string }>(
-      "select host_key from execution_hosts where retired_at is null",
-    );
-    assert.deepEqual(registered, [{ host_key: initialHost.hostKey }]);
-    const receiptCount = ({
-      root,
-      user,
-      target,
-    }: {
-      root: string;
-      user: string;
-      target: string;
-    }) =>
-      inContainer(
-        user,
-        [
-          "node",
-          "--disable-warning=ExperimentalWarning",
-          "--input-type=module",
-          "-e",
-          `import {DatabaseSync} from "node:sqlite";
-       const db = new DatabaseSync(process.argv[1] + "/state/state.sqlite", {readOnly:true});
-       console.log(db.prepare("select count(*) AS n from command_receipts where run_id=?").get(process.argv[2]).n);`,
-          root,
-          runId,
-        ],
-        [],
-        target,
-      );
-    const primaryReceipts = Number(await receiptCount(primary));
-    assert(primaryReceipts > 0);
-    assert.equal(await receiptCount(secondary), "0");
-    assert.deepEqual(await readHost(peerEndpoint), secondHost);
-    const admin = await context.newPage();
-    try {
-      await admin.goto("/admin/execution-host");
-      await expect(
-        admin.getByText(initialHost.hostKey, { exact: true }).first(),
-      ).toBeVisible();
-      await expect(
-        admin.getByText(secondHost.hostKey, { exact: true }),
-      ).toHaveCount(0);
-      if (process.env.MAISTER_S53_SCREENSHOT) {
-        await admin.screenshot({ path: process.env.MAISTER_S53_SCREENSHOT });
-      }
-    } finally {
-      await admin.close();
-    }
-    note("board-placement-with-two-live-supervisors", {
-      runId,
-      assignedHost: initialHost.hostKey,
-      primaryReceipts,
-      secondaryReceipts: 0,
-    });
-    await docker(["network", "disconnect", network, secondary.target]);
-    assert.equal(await readHost(peerEndpoint), null);
-    assert.deepEqual(await readHost(), initialHost);
-    await docker([
-      "network",
-      "connect",
-      "--alias",
-      "s53-host-b",
-      network,
-      secondary.target,
+  if (addressedBuild) {
+    await inContainer("1001:1001", [
+      "node",
+      "--input-type=module",
+      "-e",
+      `import {readdirSync} from "node:fs";
+       for (const path of process.argv.slice(1)) {
+         try { readdirSync(path); throw new Error("read allowed: " + path); }
+         catch (error) { if (error.code !== "EACCES") throw error; }
+       }`,
+      witness.repoPath,
+      primary.root,
     ]);
-    const reconnected = await poll(
-      () => readHost(peerEndpoint),
+    const selectedHost = await poll(
+      async () => {
+        const { rows } = await db.pool.query<{
+          id: string;
+          displayName: string;
+        }>(
+          'select id, display_name as "displayName" from execution_hosts where host_key=$1 and retired_at is null',
+          [initialHost.hostKey],
+        );
+        return rows[0] ?? null;
+      },
       30_000,
-      "second supervisor reconnect",
+      "registered private supervisor",
     );
-    assert.deepEqual(reconnected, secondHost);
-    note("independent-supervisor-network-partition", {
-      retainedPeer: secondHost,
+    note("addressed-board-launch", {
+      ...initialHost,
+      hostId: selectedHost.id,
+      baseCommit: witness.baseCommit,
     });
-  }
-  await db.pool.query(
-    "update runs set keepalive_until=clock_timestamp()-interval '1 second' where id=$1",
-    [runId],
-  );
-  const sweep = await api("/api/cron/gc", {
-    method: "POST",
-    headers: { "X-Maister-Cron-Token": cronToken },
-  });
-  assert([200, 207].includes(sweep.status));
-  await expect(runStatus).toContainText("NeedsInputIdle", { timeout: 60_000 });
-  await restartWeb();
-  await page.reload();
-  await expect(runStatus).toContainText("NeedsInputIdle");
-  const responded = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname.startsWith(
-        "/api/runs/" + runId + "/hitl/",
-      ) &&
-      new URL(response.url()).pathname.endsWith("/respond") &&
-      response.request().method() === "POST",
-  );
-  await allow.click();
-  assert.equal((await responded).status(), 202);
-  await expect(runStatus).toContainText("Review", { timeout: 90_000 });
-  const { rows: epochs } = await db.pool.query<{
-    epoch: number;
-    state: string;
-    execution_workspace_id: string;
-  }>(
-    "select epoch,state,execution_workspace_id from execution_assignments where run_id=$1 order by epoch",
-    [runId],
-  );
-  assert.deepEqual(
-    epochs.map((x) => x.epoch),
-    [1, 2],
-  );
-  assert.equal(
-    epochs[0].execution_workspace_id,
-    epochs[1].execution_workspace_id,
-  );
-  note("checkpoint-web-restart-and-resume", {
-    epochs: epochs.map((x) => x.epoch),
-    status: await runStatus.textContent(),
-  });
-  const secondProject = await docker(
-    [
-      "exec",
-      "--user",
-      "1001:1001",
-      "--env",
-      "DB_URL",
-      "--env",
-      "HOME=/app",
-      "--workdir",
-      "/app/web",
-      appContainer,
+    const verifyBuild = async (
+      taskId: string,
+      expectedCommit: string,
+      title?: string,
+    ): Promise<{ runId: string; patch: string }> => {
+      const runId = await launchFromBoard(taskId, selectedHost, title);
+      await page.goto("/runs/" + runId);
+      const allow = page
+        .getByTestId("pending-input-card")
+        .getByRole("button", { name: /^allow$/i });
+      await expect(allow).toBeVisible({ timeout: 30_000 });
+      await allow.click();
+      await expect(allow).toBeHidden({ timeout: 30_000 });
+      const completed = await poll(
+        async () => {
+          const { rows } = await db.pool.query<{
+            status: string;
+            base_commit: string;
+            worktree_path: string | null;
+            parent_repo_path: string | null;
+            execution_host_id: string;
+            refused_reason: string | null;
+          }>(
+            `select r.status,w.base_commit,w.worktree_path,w.parent_repo_path,w.execution_host_id,
+            (select c.last_error->'details'->>'reason' from execution_commands c
+              where c.run_id=r.id and c.kind in ('workspace.prepare','workspace.materialize')
+                and c.state='failed' order by c.created_at desc limit 1) as refused_reason
+            from runs r join workspaces w on w.run_id=r.id where r.id=$1`,
+            [runId],
+          );
+          const row = rows[0];
+          assert(
+            !row?.refused_reason,
+            `addressed preparation refused: ${row?.refused_reason}`,
+          );
+          assert(
+            !row || !["Failed", "Crashed", "Abandoned"].includes(row.status),
+            `addressed build ended in ${row?.status}`,
+          );
+          return row?.status === "Review" ? row : null;
+        },
+        180_000,
+        "addressed ACP edit and build reached Review",
+      );
+      assert.equal(completed.execution_host_id, selectedHost.id);
+      assert.equal(completed.base_commit, expectedCommit);
+      assert.equal(completed.worktree_path, null);
+      assert.equal(completed.parent_repo_path, null);
+      await expect(page.getByTestId("run-header-status")).toContainText(
+        /review/i,
+      );
+      const diff = await api(`/api/runs/${runId}/diff?scope=run`);
+      assert.equal(diff.status, 200, await diff.clone().text());
+      const { diff: patch } = (await diff.json()) as { diff: string };
+      assert.match(patch, /\+written by addressed ACP/);
+      await page.goto(`/runs/${runId}?wb=diff&scope=run`);
+      await expect(
+        page
+          .getByTestId("diff-pane")
+          .getByText("acp-marker", { exact: true })
+          .first(),
+      ).toBeVisible();
+      const { rows } = await db.pool.query<{ id: string }>(
+        `select id from execution_runtime_objects where run_id=$1 and execution_host_id=$2
+       and logical_name='workload-result.json' and state='available'`,
+        [runId, selectedHost.id],
+      );
+      assert.equal(rows.length, 1);
+      const response = await api(
+        `/api/runs/${runId}/runtime-objects/${rows[0].id}/content`,
+      );
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        build: "passed",
+        typecheck: "passed",
+      });
+      const logfile = await inContainer(primary.user, [
+        "tail",
+        "-n",
+        "250",
+        primary.root + "/boot.log",
+      ]);
+      const workload = logfile
+        .split("\n")
+        .find(
+          (line) =>
+            line.includes(runId) && line.includes("workspace-workload-settled"),
+        );
+      assert(workload, "missing supervisor workload process evidence");
+      const processWitness = JSON.parse(workload) as {
+        hostKey: string;
+        exitCode: number;
+        quiescence: string;
+        processGroup: number;
+      };
+      assert.equal(processWitness.hostKey, initialHost.hostKey);
+      assert.equal(processWitness.exitCode, 0);
+      assert.equal(processWitness.quiescence, "proved");
+      assert(
+        Number.isInteger(processWitness.processGroup) &&
+          processWitness.processGroup > 0,
+      );
+      note("addressed-build-reached-review", {
+        runId,
+        baseCommit: expectedCommit,
+        hostId: selectedHost.id,
+        ...initialHost,
+        processGroup: processWitness.processGroup,
+        resultObjectId: rows[0].id,
+        webRepositoryAccess: "EACCES",
+      });
+
+      return { runId, patch };
+    };
+    assert(witness.baseCommit);
+    const first = await verifyBuild(witness.taskId, witness.baseCommit);
+    const nextCommit = await inContainer(primary.user, [
       "sh",
       "-ec",
-      'umask 002; exec node --import tsx --import ./scripts/_register-shim.mjs --input-type=module -e "$1"',
+      `printf 'later upstream checkout\n' > "$1/upstream.txt"
+       git -C "$1" add -- upstream.txt
+       git -C "$1" -c user.name='Stage C' -c user.email=stage-c@maister.local commit -qm 'Advance private Next fixture'
+       git -C "$1" rev-parse HEAD`,
       "sh",
-      `
+      witness.repoPath,
+    ]);
+    assert.notEqual(nextCommit, witness.baseCommit);
+    const secondTaskId = randomUUID();
+    const secondTitle = "Private Next task after upstream update";
+    const seeded = await db.pool.query(
+      `insert into tasks (id,project_id,number,title,prompt,flow_id)
+       select $1,project_id,number+1,$2,prompt,flow_id from tasks where id=$3`,
+      [secondTaskId, secondTitle, witness.taskId],
+    );
+    assert.equal(seeded.rowCount, 1);
+    const second = await verifyBuild(secondTaskId, nextCommit, secondTitle);
+    const retained = await api(`/api/runs/${first.runId}/diff?scope=run`);
+    assert.equal(retained.status, 200);
+    assert.equal((await retained.json()).diff, first.patch);
+    note("addressed-upstream-advance", {
+      firstRunId: first.runId,
+      secondRunId: second.runId,
+      nextCommit,
+    });
+  } else {
+    const runStatus = page.getByRole("main").getByTestId("run-header-status");
+    const allow = page
+      .getByTestId("pending-input-card")
+      .getByRole("button", { name: /^allow$/i });
+
+    const runId = await launchFromBoard(witness.taskId);
+    await page.goto("/runs/" + runId);
+    await expect(runStatus).toBeVisible();
+    await expect(runStatus).not.toContainText("NeedsInput");
+
+    // Keep the adapter at its start gate until a browser connection has received
+    // the stream's initial marker. The permission event must arrive live.
+    const livePermission = page.evaluate(
+      (id) =>
+        new Promise<string>((resolve, reject) => {
+          const stream = new EventSource(
+            "/api/runs/" + id + "/stream?replay=live",
+          );
+          const timeout = window.setTimeout(() => {
+            stream.close();
+            reject(
+              new Error("the live stream did not deliver a permission event"),
+            );
+          }, 30_000);
+          stream.onmessage = (message) => {
+            const event = JSON.parse(message.data) as {
+              type: string;
+              runSequence?: string;
+            };
+            if (event.type === "session.stream_ready")
+              document.documentElement.dataset.s53Stream = "ready";
+            if (event.type !== "session.permission_request") return;
+            window.clearTimeout(timeout);
+            stream.close();
+            resolve(event.runSequence ?? "");
+          };
+        }),
+      runId,
+    );
+    const [permissionSequence] = await Promise.all([
+      livePermission,
+      (async () => {
+        await page.waitForFunction(
+          () => document.documentElement.dataset.s53Stream === "ready",
+        );
+        await inContainer("1002:1001", ["touch", gate]);
+      })(),
+    ]);
+    assert.match(permissionSequence, /^\d+$/);
+    await expect(runStatus).toContainText(/NeedsInput$/, { timeout: 30_000 });
+    await expect(allow).toBeVisible();
+    note("board-launch-and-live-permission", { runId });
+
+    if (secondHost && secondary) {
+      const { rows: active } = await db.pool.query<{ host_key: string }>(
+        `select h.host_key from execution_assignments a
+       join execution_hosts h on h.id=a.execution_host_id
+       where a.run_id=$1 and a.state='active'`,
+        [runId],
+      );
+      assert.deepEqual(active, [{ host_key: initialHost.hostKey }]);
+      const { rows: registered } = await db.pool.query<{ host_key: string }>(
+        "select host_key from execution_hosts where retired_at is null",
+      );
+      assert.deepEqual(registered, [{ host_key: initialHost.hostKey }]);
+      const receiptCount = ({
+        root,
+        user,
+        target,
+      }: {
+        root: string;
+        user: string;
+        target: string;
+      }) =>
+        inContainer(
+          user,
+          [
+            "node",
+            "--disable-warning=ExperimentalWarning",
+            "--input-type=module",
+            "-e",
+            `import {DatabaseSync} from "node:sqlite";
+       const db = new DatabaseSync(process.argv[1] + "/state/state.sqlite", {readOnly:true});
+       console.log(db.prepare("select count(*) AS n from command_receipts where run_id=?").get(process.argv[2]).n);`,
+            root,
+            runId,
+          ],
+          [],
+          target,
+        );
+      const primaryReceipts = Number(await receiptCount(primary));
+      assert(primaryReceipts > 0);
+      assert.equal(await receiptCount(secondary), "0");
+      assert.deepEqual(await readHost(peerEndpoint), secondHost);
+      const admin = await context.newPage();
+      try {
+        await admin.goto("/admin/execution-host");
+        await expect(
+          admin.getByText(initialHost.hostKey, { exact: true }).first(),
+        ).toBeVisible();
+        await expect(
+          admin.getByText(secondHost.hostKey, { exact: true }),
+        ).toHaveCount(0);
+        if (process.env.MAISTER_S53_SCREENSHOT) {
+          await admin.screenshot({ path: process.env.MAISTER_S53_SCREENSHOT });
+        }
+      } finally {
+        await admin.close();
+      }
+      note("board-placement-with-two-live-supervisors", {
+        runId,
+        assignedHost: initialHost.hostKey,
+        primaryReceipts,
+        secondaryReceipts: 0,
+      });
+      await docker(["network", "disconnect", network, secondary.target]);
+      assert.equal(await readHost(peerEndpoint), null);
+      assert.deepEqual(await readHost(), initialHost);
+      await docker([
+        "network",
+        "connect",
+        "--alias",
+        "s53-host-b",
+        network,
+        secondary.target,
+      ]);
+      const reconnected = await poll(
+        () => readHost(peerEndpoint),
+        30_000,
+        "second supervisor reconnect",
+      );
+      assert.deepEqual(reconnected, secondHost);
+      note("independent-supervisor-network-partition", {
+        retainedPeer: secondHost,
+      });
+    }
+    await db.pool.query(
+      "update runs set keepalive_until=clock_timestamp()-interval '1 second' where id=$1",
+      [runId],
+    );
+    const sweep = await api("/api/cron/gc", {
+      method: "POST",
+      headers: { "X-Maister-Cron-Token": cronToken },
+    });
+    assert([200, 207].includes(sweep.status));
+    await expect(runStatus).toContainText("NeedsInputIdle", {
+      timeout: 60_000,
+    });
+    await restartWeb();
+    await page.reload();
+    await expect(runStatus).toContainText("NeedsInputIdle");
+    const responded = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.startsWith(
+          "/api/runs/" + runId + "/hitl/",
+        ) &&
+        new URL(response.url()).pathname.endsWith("/respond") &&
+        response.request().method() === "POST",
+    );
+    await allow.click();
+    assert.equal((await responded).status(), 202);
+    await expect(runStatus).toContainText("Review", { timeout: 90_000 });
+    const { rows: epochs } = await db.pool.query<{
+      epoch: number;
+      state: string;
+      execution_workspace_id: string;
+    }>(
+      "select epoch,state,execution_workspace_id from execution_assignments where run_id=$1 order by epoch",
+      [runId],
+    );
+    assert.deepEqual(
+      epochs.map((x) => x.epoch),
+      [1, 2],
+    );
+    assert.equal(
+      epochs[0].execution_workspace_id,
+      epochs[1].execution_workspace_id,
+    );
+    note("checkpoint-web-restart-and-resume", {
+      epochs: epochs.map((x) => x.epoch),
+      status: await runStatus.textContent(),
+    });
+    const secondProject = await docker(
+      [
+        "exec",
+        "--user",
+        "1001:1001",
+        "--env",
+        "DB_URL",
+        "--env",
+        "HOME=/app",
+        "--workdir",
+        "/app/web",
+        appContainer,
+        "sh",
+        "-ec",
+        'umask 002; exec node --import tsx --import ./scripts/_register-shim.mjs --input-type=module -e "$1"',
+        "sh",
+        `
     import {closeDb,getDb} from "./lib/db/client.ts"; import {seedFlowTask} from "./test-support/durable-workers-seed.ts";
     const task=await seedFlowTask(getDb(),{projectId:${JSON.stringify(witness.projectId)},installedPath:"/s53/shared",terminalDelayMs:0}); console.log("S53_TASK:"+task.taskId); await closeDb();
     `,
-    ],
-    fixtureEnvironment,
-  );
-  const secondTask = fixtureOutput(secondProject, "S53_TASK:");
-  const cancelled = await launchFromBoard(secondTask);
-  await page.goto("/runs/" + cancelled);
-  await expect(runStatus).toContainText(/NeedsInput$/, { timeout: 60_000 });
-  await page
-    .getByTestId("workbench-lifecycle-actions")
-    .getByRole("button", { name: "Stop", exact: true })
-    .click();
-  const stopped = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/runs/" + cancelled + "/stop" &&
-      response.request().method() === "POST",
-  );
-  await page
-    .getByRole("dialog", { name: "Stop run" })
-    .getByRole("button", { name: "Confirm", exact: true })
-    .click();
-  const stopReply = await stopped;
-  assert.equal(stopReply.status(), 200);
-  assert.deepEqual(await stopReply.json(), {
-    ok: true,
-    runId: cancelled,
-    runStatus: "Review",
-    supervisorStopped: true,
-  });
-  await expect(runStatus).toContainText("Review", { timeout: 30_000 });
-  await poll(
-    async () => {
-      const { rows } = await db.pool.query<{ active: boolean }>(
-        "select exists(select 1 from execution_assignments where run_id=$1 and state='active') as active",
-        [cancelled],
-      );
+      ],
+      fixtureEnvironment,
+    );
+    const secondTask = fixtureOutput(secondProject, "S53_TASK:");
+    const cancelled = await launchFromBoard(secondTask);
+    await page.goto("/runs/" + cancelled);
+    await expect(runStatus).toContainText(/NeedsInput$/, { timeout: 60_000 });
+    await page
+      .getByTestId("workbench-lifecycle-actions")
+      .getByRole("button", { name: "Stop", exact: true })
+      .click();
+    const stopped = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          "/api/runs/" + cancelled + "/stop" &&
+        response.request().method() === "POST",
+    );
+    await page
+      .getByRole("dialog", { name: "Stop run" })
+      .getByRole("button", { name: "Confirm", exact: true })
+      .click();
+    const stopReply = await stopped;
+    assert.equal(stopReply.status(), 200);
+    assert.deepEqual(await stopReply.json(), {
+      ok: true,
+      runId: cancelled,
+      runStatus: "Review",
+      supervisorStopped: true,
+    });
+    await expect(runStatus).toContainText("Review", { timeout: 30_000 });
+    await poll(
+      async () => {
+        const { rows } = await db.pool.query<{ active: boolean }>(
+          "select exists(select 1 from execution_assignments where run_id=$1 and state='active') as active",
+          [cancelled],
+        );
 
-      return rows[0]?.active === false ? true : null;
-    },
-    20_000,
-    "cancellation releases execution assignment",
-  );
-  note("cancelled-independent-flow");
+        return rows[0]?.active === false ? true : null;
+      },
+      20_000,
+      "cancellation releases execution assignment",
+    );
+    note("cancelled-independent-flow");
 
-  // Reopen the same host state after a real restart. The upload runs against
-  // the ordinary completion fixture mode so its launch stream is bounded.
-  await inContainer("1002:1001", [
-    "sh",
-    "-ec",
-    'kill -TERM "$(cat /s53/host/pid)"',
-  ]);
-  await poll(
-    async () => ((await readHost()) === null ? true : null),
-    30_000,
-    "supervisor shutdown",
-  );
-  await startSupervisor(["--env", "MOCK_ACP_REQUEST_PERMISSION=0"], primary);
-  const restartedHost = await poll(
-    readHost,
-    30_000,
-    "restarted supervisor identity",
-  );
+    // Reopen the same host state after a real restart. The upload runs against
+    // the ordinary completion fixture mode so its launch stream is bounded.
+    await inContainer("1002:1001", [
+      "sh",
+      "-ec",
+      'kill -TERM "$(cat /s53/host/pid)"',
+    ]);
+    await poll(
+      async () => ((await readHost()) === null ? true : null),
+      30_000,
+      "supervisor shutdown",
+    );
+    await startSupervisor(["--env", "MOCK_ACP_REQUEST_PERMISSION=0"], primary);
+    const restartedHost = await poll(
+      readHost,
+      30_000,
+      "restarted supervisor identity",
+    );
 
-  assert.equal(restartedHost.hostKey, initialHost.hostKey);
-  assert.notEqual(restartedHost.bootId, initialHost.bootId);
-  note("supervisor-restart");
+    assert.equal(restartedHost.hostKey, initialHost.hostKey);
+    assert.notEqual(restartedHost.bootId, initialHost.bootId);
+    note("supervisor-restart");
 
-  const html =
-    "<!doctype html><script>throw new Error('must download')</script>";
-  const form = new FormData();
-  form.append(
-    "payload",
-    JSON.stringify({
-      projectId: witness.projectId,
-      baseBranch: "main",
-      name: "s53 artifact",
-      prompt: "Read attachment",
-      reasoningEffort: "high",
-      attachments: [],
-    }),
-  );
-  form.append("files", new Blob([html], { type: "text/html" }), "active.html");
-  const scratch = await api("/api/scratch-runs", {
-    method: "POST",
-    body: form,
-    signal: AbortSignal.timeout(60_000),
-  });
-  assert.equal(scratch.status, 200);
-  const launched = await readLaunchResult(scratch);
-  const object = await poll(
-    async () => {
-      const { rows } = await db.pool.query<{
-        id: string;
-        logical_name: string;
-      }>(
-        "select id,logical_name from execution_runtime_objects where run_id=$1 and state='available' and mime_type='text/html'",
-        [launched.runId],
-      );
-      return rows[0] ?? null;
-    },
-    60_000,
-    "sealed active upload",
-  );
-  const content =
-    "/api/runs/" +
-    launched.runId +
-    "/runtime-objects/" +
-    object.id +
-    "/content";
-  await restartWeb();
-  const response = await api(content);
-  assert.equal(response.status, 200);
-  assert.equal(await response.text(), html);
-  assert.match(
-    response.headers.get("content-disposition") ?? "",
-    /^attachment/,
-  );
-  const [download] = await Promise.all([
-    page.waitForEvent("download", { timeout: 20_000 }),
-    page.goto(content, { timeout: 20_000 }).catch((error) => {
-      if (
-        !(error instanceof Error) ||
-        !error.message.includes("Download is starting")
-      )
-        throw error;
-    }),
-  ]);
-  assert.equal(download.suggestedFilename(), object.logical_name);
-  note("browser-active-content-download", { status: "passed" });
+    const html =
+      "<!doctype html><script>throw new Error('must download')</script>";
+    const form = new FormData();
+    form.append(
+      "payload",
+      JSON.stringify({
+        projectId: witness.projectId,
+        baseBranch: "main",
+        name: "s53 artifact",
+        prompt: "Read attachment",
+        reasoningEffort: "high",
+        attachments: [],
+      }),
+    );
+    form.append(
+      "files",
+      new Blob([html], { type: "text/html" }),
+      "active.html",
+    );
+    const scratch = await api("/api/scratch-runs", {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+    assert.equal(scratch.status, 200);
+    const launched = await readLaunchResult(scratch);
+    const object = await poll(
+      async () => {
+        const { rows } = await db.pool.query<{
+          id: string;
+          logical_name: string;
+        }>(
+          "select id,logical_name from execution_runtime_objects where run_id=$1 and state='available' and mime_type='text/html'",
+          [launched.runId],
+        );
+        return rows[0] ?? null;
+      },
+      60_000,
+      "sealed active upload",
+    );
+    const content =
+      "/api/runs/" +
+      launched.runId +
+      "/runtime-objects/" +
+      object.id +
+      "/content";
+    await restartWeb();
+    const response = await api(content);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), html);
+    assert.match(
+      response.headers.get("content-disposition") ?? "",
+      /^attachment/,
+    );
+    const [download] = await Promise.all([
+      page.waitForEvent("download", { timeout: 20_000 }),
+      page.goto(content, { timeout: 20_000 }).catch((error) => {
+        if (
+          !(error instanceof Error) ||
+          !error.message.includes("Download is starting")
+        )
+          throw error;
+      }),
+    ]);
+    assert.equal(download.suggestedFilename(), object.logical_name);
+    note("browser-active-content-download", { status: "passed" });
+  }
 } catch (error) {
   console.error("fixture stage:", stage, error);
   if (container) {
