@@ -5,30 +5,21 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import {
+  capabilityRefIdSchema,
+  flowIdSchema,
+} from "@/lib/manifest-path-segments";
 import { assertDependencySource } from "@/lib/project-dependencies/source";
 import { MaisterError } from "@/lib/errors";
 
 /** Reserved runtime namespace; project slug validation excludes this identity. */
 export const COMPANY_RUNTIME_NAMESPACE = "_company";
 
-export const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
-
-const notDotRef = (s: string): boolean =>
-  s !== "." && s !== ".." && !s.includes("..");
-
-export const flowIdSchema = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(SAFE_PATH_SEGMENT, "flowId must match /^[A-Za-z0-9._-]+$/")
-  .refine(notDotRef, "flowId must not be '.', '..' or contain '..'");
-
-export const versionTagSchema = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(/^[A-Za-z0-9._+-]+$/, "version must match /^[A-Za-z0-9._+-]+$/")
-  .refine(notDotRef, "version must not be '.', '..' or contain '..'");
+export {
+  flowIdSchema,
+  SAFE_PATH_SEGMENT,
+  versionTagSchema,
+} from "@/lib/manifest-path-segments";
 
 // Git commit SHA — 40 hex chars in canonical form, or the literal
 // "unknown" sentinel for pre-migration rows that have not yet been
@@ -132,7 +123,11 @@ export function systemCapabilityCachePath(
   capabilityRefId: string,
   revision: string,
 ): string {
-  const id = validate(flowIdSchema, capabilityRefId, "capabilityRefId");
+  const id = validate(
+    capabilityRefIdSchema,
+    capabilityRefId,
+    "capabilityRefId",
+  );
   const rev = validate(flowRevisionSchema, revision, "revision");
   const short = rev.slice(0, REVISION_SHORT_LEN);
 

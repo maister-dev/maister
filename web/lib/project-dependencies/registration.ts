@@ -46,7 +46,7 @@ export function registrationDependencies(
   for (const { kind, logicalId, desired } of declarations) {
     assertDependencySource(desired.source);
     if (
-      kind !== "package" &&
+      kind === "flow" &&
       (!flowIdSchema.safeParse(logicalId).success ||
         !versionTagSchema.safeParse(desired.version).success)
     ) {

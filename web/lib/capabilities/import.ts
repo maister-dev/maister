@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { capabilityRefIdSchema } from "@/lib/manifest-path-segments";
 import { localDirectoryPath } from "@/lib/runtime-file-url";
 import { dependencyCloneFailure } from "@/lib/project-dependencies/failure";
 import { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
@@ -39,7 +40,6 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
-  flowIdSchema,
   sourceUrlSchema,
   systemCapabilityCachePath,
   versionTagSchema,
@@ -262,6 +262,9 @@ async function gitRevParseHead(opts: {
   }
 }
 
+// Native package labels can also contain semver build metadata.
+const capabilityVersionSchema = capabilityRefIdSchema.or(versionTagSchema);
+
 // Validate the refId and version fields on the boundary (R-PATH, ADR-042).
 // Throws FLOW_INSTALL on any violation.
 function validateImportBoundary(opts: {
@@ -270,10 +273,10 @@ function validateImportBoundary(opts: {
   source: string;
 }): void {
   const checks: Array<
-    [ReturnType<(typeof flowIdSchema)["safeParse"]>, string]
+    [ReturnType<(typeof capabilityRefIdSchema)["safeParse"]>, string]
   > = [
-    [flowIdSchema.safeParse(opts.capabilityRefId), "capabilityRefId"],
-    [versionTagSchema.safeParse(opts.version), "version"],
+    [capabilityRefIdSchema.safeParse(opts.capabilityRefId), "capabilityRefId"],
+    [capabilityVersionSchema.safeParse(opts.version), "version"],
     [sourceUrlSchema.safeParse(opts.source), "source"],
   ];
 

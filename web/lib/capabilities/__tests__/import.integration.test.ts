@@ -197,16 +197,20 @@ describe("installCapabilityRevision", () => {
     expect(second.installedPath).toBe(first.installedPath);
   });
 
-  it("no-setup source: setupStatus=not_required, sentinel trivially absent", async () => {
+  it("installs a no-setup bundle at the manifest's maximum ID and version lengths", async () => {
+    const capabilityRefId = "c".repeat(128);
     const result = await installCapabilityRevision({
       source: repoNoSetup,
-      version: "v1.0.0",
-      capabilityRefId: "no-setup-cap",
+      version: "v".repeat(128),
+      capabilityRefId,
       projectId,
       db,
     });
 
     expect(result.setupStatus).toBe("not_required");
+    expect(result.installedPath).toBe(
+      systemCapabilityCachePath(capabilityRefId, result.resolvedRevision),
+    );
   });
 
   it("traversal capabilityRefId '../evil' passed to systemCapabilityCachePath throws FLOW_INSTALL, nothing written outside cache", async () => {

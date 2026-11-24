@@ -109,6 +109,7 @@ packages:
 
   it("atomically registers owner, role and immutable inputs for all three kinds, including same-name Flow/import", async () => {
     const missing = join(root, "absent");
+    const capabilityVersion = "v".repeat(128);
     const res = await register(
       "mixed",
       `flow_roles: [{ ref: reviewer }]
@@ -117,7 +118,7 @@ flows:
 packages:
   - { id: alias, source: ${missing}, version: rel/v1, path: subtree }
 capability_imports:
-  - { id: common, source: ${missing}, version: v1, trust: explicit }
+  - { id: common, source: ${missing}, version: ${capabilityVersion}, trust: explicit }
 capabilities:
   skills: [{ id: shown }]`,
     );
@@ -148,7 +149,11 @@ capabilities:
       {
         kind: "capability_import",
         logicalId: "common",
-        desired: { source: missing, version: "v1", trust: "explicit" },
+        desired: {
+          source: missing,
+          version: capabilityVersion,
+          trust: "explicit",
+        },
       },
       {
         kind: "flow",
