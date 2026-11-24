@@ -709,6 +709,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   action through the existing workbench menu. Passed 14 Web and populated
   migration integrations, 29 supervisor integrations with one worker, 129
   legacy-policy and service cases, and the contracts and docs checks.
+  Manual merge and rebase publication now retain the checked source and
+  compute a separate candidate for the exact canonical target. RED
+  reproduced the missing typed integration request and Web route refusal.
+  GREEN produced the expected merge parents and rebase parent, refused a
+  stale reviewed target, and replayed one remote ref update after restart
+  without changing the original checkout. Five C-10 cases passed on each
+  side, with both typechecks and the contract validator. Resolver-assisted
+  sync and addressed PR delivery remain open.
+
   Addressed retention GC now follows the same preservation and release
   receipts. RED found the legacy path probe on a pathless workspace. GREEN
   skipped a future deadline and kept the local reconciler out of the

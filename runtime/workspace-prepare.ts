@@ -246,6 +246,7 @@ export type WorkspacePublishRequest = Readonly<{
     generation: number;
     expected: CheckoutExpectation;
     publication: "push" | "promote";
+    integration?: "merge" | "rebase";
   }>;
 }>;
 

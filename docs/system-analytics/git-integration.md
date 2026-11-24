@@ -457,6 +457,15 @@ journals the clean HEAD and target lease before dispatch. An absent target
 allows creation. The canonical host receipt allows the promotion to settle
 and the same operator to replay the completed decision.
 
+Manual merge and rebase delivery with publication enabled bind both the
+reviewed source and the canonical target SHA. The supervisor builds a Git
+candidate in a temporary checkout and records the candidate in its private
+repository. It advances the approved target once under the expected SHA
+and reads it back. The original checkout remains at the approved source
+commit. A conflict preserves that checkout and leaves the Run in Review.
+The retained receipt stores both the reviewed source SHA and the verified
+target SHA, which may differ.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential

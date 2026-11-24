@@ -124,7 +124,10 @@ import {
 } from "@/lib/authz";
 import { workspaces } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
+import {
+  readAddressedWorkspacePublicationTarget,
+  readAddressedWorkspaceStatus,
+} from "@/lib/execution-host/workspace-preparation";
 import {
   assertRunKnowledgeDisclosure,
   isRunKnowledgeUnavailable,
@@ -260,11 +263,18 @@ async function buildAddressedReviewPanelData(
     db,
     workspace,
   );
-  const source = await readAddressedReviewSource({
-    db,
-    workspace,
-    signal: AbortSignal.timeout(8_000),
-  });
+  const [source, target] = await Promise.all([
+    readAddressedReviewSource({
+      db,
+      workspace,
+      signal: AbortSignal.timeout(8_000),
+    }),
+    deliveryPolicy.strategy === "publish_branch" ? null :
+      readAddressedWorkspacePublicationTarget(db, workspace, {
+        remoteId: workspace.projectId,
+        targetRef: `refs/heads/${targetBranch}`,
+      }),
+  ]);
   const { workspace: after } = await readAddressedWorkspaceStatus(
     db,
     workspace,
@@ -279,7 +289,7 @@ async function buildAddressedReviewPanelData(
     baseBranch: detail.baseBranch,
     baseCommit: source.baseCommit,
     targetBranch,
-    reviewedTargetCommit: null,
+    reviewedTargetCommit: target?.priorTarget ?? null,
     promotionMode: deliveryPolicy.strategy,
     deliveryPolicy,
     diff: await prepareDiff(source.diff, source.truncated),

@@ -77,7 +77,7 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
     const expected = asObject(payload.expected);
 
     return {
-      ...pickScalars(payload, ["generation", "claimId", "fence", "publication"]),
+      ...pickScalars(payload, ["generation", "claimId", "fence", "publication", "integration"]),
       expected: {
         ...pickScalars(expected, ["head", "remoteId", "targetRef", "priorTarget"]),
         ...(expected.priorTarget === null ? { priorTarget: null } : {}),

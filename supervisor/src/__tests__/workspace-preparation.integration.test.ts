@@ -1321,7 +1321,7 @@ async function waitForWorkspaceReceipt(host: BootedHost, id: string): Promise<un
   );
 }
 
-it("C-10 publishes one committed ref from its retained worktree and reconciles the exact receipt after restart", async () => {
+it.each([undefined, "merge", "rebase"] as const)("C-10 publishes one retained ref and reconciles its exact receipt after restart (%s)", async (integration) => {
   const root = await mkdtemp(join(tmpdir(), "stage-c-retained-publish-"));
   roots.push(root);
   const remote = join(root, "approved.git");
@@ -1332,12 +1332,12 @@ it("C-10 publishes one committed ref from its retained worktree and reconciles t
   await writeFile(join(source, "input.txt"), "base\n");
   git(source, "add", "--", "input.txt");
   git(source, "commit", "-m", "base");
-  const priorTarget = git(source, "rev-parse", "HEAD");
+  const base = git(source, "rev-parse", "HEAD");
   git(source, "push", "--", remote, "HEAD:refs/heads/main");
   vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: remote }));
   const host = await bootHost({ runtimeRoot: root });
   hosts.push(host);
-  const prepared = await prepareAndRead(host, { mode: "ownWorktree", repositoryId: "fixture", commit: priorTarget, inputDigest: "a".repeat(64) });
+  const prepared = await prepareAndRead(host, { mode: "ownWorktree", repositoryId: "fixture", commit: base, inputDigest: "a".repeat(64) });
   if (prepared.phase !== "completed") throw new Error("publication fixture did not prepare");
   const { handle, generation } = prepared.result.workspace;
   const workspace = host.hostState.getWorkspace(handle);
@@ -1346,11 +1346,18 @@ it("C-10 publishes one committed ref from its retained worktree and reconciles t
   git(workspace.realPath, "add", "--", "input.txt");
   git(workspace.realPath, "commit", "-m", "approved promotion");
   const head = git(workspace.realPath, "rev-parse", "HEAD");
+  if (integration) {
+    await writeFile(join(source, "upstream.txt"), "approved target avance\n");
+    git(source, "add", "--", "upstream.txt");
+    git(source, "commit", "-m", "advance target independently");
+    git(source, "push", "--", remote, "HEAD:refs/heads/main");
+  }
+  const priorTarget = git(source, "rev-parse", "HEAD");
   const command = {
     workspaceProtocol: 1,
     command: { id: randomUUID(), kind: "workspace.publish", issuedAt: new Date().toISOString() },
     owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle, workspaceGeneration: generation, claimId: randomUUID(), fence: 1 },
-    payload: { generation, expected: { head, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget }, publication: "promote" },
+    payload: { generation, expected: { head, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget }, publication: "promote", ...(integration ? { integration } : {}) },
   };
   const route = `/v1/workspaces/${handle}/publication`;
   vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
@@ -1359,7 +1366,19 @@ it("C-10 publishes one committed ref from its retained worktree and reconciles t
   const first = await addressedRequest(host, route, command);
   expect(first.status).toBe(202);
   await first.body?.cancel();
-  await vi.waitFor(() => expect(git(remote, "rev-parse", "refs/heads/main")).toBe(head), { timeout: 5_000 });
+  const observedTarget = await vi.waitFor(() => {
+    const observed = git(remote, "rev-parse", "refs/heads/main");
+    expect(observed).not.toBe(priorTarget);
+    return observed;
+  }, { timeout: 5_000 });
+  if (integration) {
+    expect(git(remote, "show", `${observedTarget}:input.txt`)).toBe("approved promotion");
+    expect(git(remote, "show", `${observedTarget}:upstream.txt`)).toBe("approved target avance");
+    expect(git(remote, "show", "-s", "--format=%P", observedTarget)).toBe(
+      integration === "merge" ? `${priorTarget} ${head}` : priorTarget,
+    );
+    expect(git(workspace.realPath, "rev-parse", "HEAD")).toBe(head);
+  } else expect(observedTarget).toBe(head);
   await host.stop();
   // A successful remote mutation left only the accepted request and the writer fence.
   const persisted = new DatabaseSync(join(host.stateDir, HOST_STATE_FILE), { readOnly: true });
@@ -1375,7 +1394,7 @@ it("C-10 publishes one committed ref from its retained worktree and reconciles t
   await vi.waitFor(async () => {
     const response = await addressedRequest(restarted, `/v1/commands/${command.command.id}`);
     expect(await response.json()).toMatchObject({ operationId: "stageCPublish", phase: "completed", owner: command.owner,
-      result: { publication: "promote", git: { head, priorTarget, observedTarget: head, generation } },
+      result: { publication: "promote", git: { head, priorTarget, observedTarget, generation } },
     });
   }, { timeout: 5_000 });
   const stale = {
@@ -1387,7 +1406,9 @@ it("C-10 publishes one committed ref from its retained worktree and reconciles t
     const response = await addressedRequest(restarted, `/v1/commands/${stale.command.id}`);
     expect(await response.json()).toMatchObject({ phase: "rejected", refusal: { details: { reason: "target_ref_changed" } } });
   }, { timeout: 5_000 });
-  expect(git(remote, "reflog", "show", "--format=%H", "refs/heads/main").split("\n")).toEqual([head, priorTarget]);
+  expect(git(remote, "reflog", "show", "--format=%H", "refs/heads/main").split("\n")).toEqual(
+    integration ? [observedTarget, priorTarget, base] : [observedTarget, priorTarget],
+  );
 }, 30_000);
 
 it("C-10 syncs an exact retained target and verifies one checkout update after a lost receipt", async () => {

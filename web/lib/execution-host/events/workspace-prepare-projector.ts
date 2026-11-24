@@ -238,10 +238,11 @@ async function applyRetainedWorkspaceReceipt(
   const { result } = receipt;
   if (receipt.operationId === "stageCPublish") {
     if (!("publication" in request.payload)) throw inconsistent();
-    const { expected, publication } = request.payload;
+    const { expected, publication, integration } = request.payload;
     const observed = receipt.result;
     if (observed.publication !== publication || observed.git.generation !== target.generation ||
-      observed.git.head !== expected.head || observed.git.priorTarget !== expected.priorTarget || observed.git.observedTarget !== expected.head)
+      observed.git.head !== expected.head || observed.git.priorTarget !== expected.priorTarget ||
+      (!integration && observed.git.observedTarget !== expected.head))
       throw inconsistent();
   } else if (receipt.operationId === "stageCSync") {
     if (!("strategy" in request.payload) || !request.payload.expected.priorTarget ||

@@ -28,6 +28,7 @@ export const WorkspacePublishPayloadSchema = z.object({
     priorTarget: gitObject.nullable(),
   }).strict(),
   publication: z.enum(["push", "promote"]),
+  integration: z.enum(["merge", "rebase"]).optional(),
 }).strict();
 export const WorkspacePublicationTargetSchema = WorkspacePublishPayloadSchema.shape.expected
   .omit({ head: true }).extend({ generation });
@@ -37,6 +38,7 @@ export const RetainedWorkspacePublishSchema = WorkspacePublishPayloadSchema.exte
 });
 export const RetainedWorkspaceSyncSchema = RetainedWorkspacePublishSchema.omit({
   publication: true,
+  integration: true,
 }).extend({ strategy: z.enum(["fastForward", "merge", "rebase"]) });
 export const WorkspacePreservePayloadSchema = z.object({
   generation, disposition: z.literal("archive"), quiescenceId: opaqueId,

@@ -418,7 +418,7 @@ paths:
       tags: [execution-host]
       operationId: stageCPublish
       summary: Publish the approved commit from its retained workspace
-      description: The selected-host pilot accepts push and promote with a workspaceOperation owner. A clean owned worktree, configured repository ID and exact prior target are required. The host verifies fast-forward ancestry and reads the target after the push. If receipt persistence was interrupted, replay can settle the proved target without repeating the push.
+      description: The selected-host pilot accepts push and promote with a workspaceOperation owner. A clean owned worktree, configured repository ID and exact prior target are required. A promotion can compute a merge or rebase candidate and keep the reviewed checkout unchanged. The host verifies fast-forward ancestry, records the candidate under a private ref and reads the canonical target after the push. Replay can settle the proved target after interrupted receipt persistence without repeating the push.
       x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCPublishRequest
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }

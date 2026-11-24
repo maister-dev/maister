@@ -228,7 +228,10 @@ const publishSchema = workloadSchema.extend({
       priorTarget: z.string().regex(GIT_OBJECT_ID).nullable(),
     }).strict(),
     publication: z.enum(["push", "promote"]),
-  }).strict(),
+    integration: z.enum(["merge", "rebase"]).optional(),
+  }).strict().refine(({ integration, publication, expected }) =>
+    !integration || (publication === "promote" && expected.priorTarget !== null),
+  ),
 });
 const archiveSchema = publishSchema.extend({
   command: publishSchema.shape.command.extend({ kind: z.literal("workspace.preserve") }),

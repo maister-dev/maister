@@ -779,6 +779,63 @@ it("C-10 publishes and finalizes a host-owned Run through the normal promotion r
   });
 }, 60_000);
 
+it("C-10 integrates the reviewed source to the exact canonical target and replays that result", async () => {
+  const { db, repository, runId, readWorkspace, supervisor: owningHost } =
+    await prepareWorkspaceFixture();
+  const { executionWorkspaceId: handle } = await readWorkspace();
+  if (!handle) throw new Error("The integration fixture has no checkout");
+  const checkout = privateCheckoutPath(owningHost, handle);
+  const target = await git(repository, "rev-parse", "refs/heads/main");
+  const before = await git(repository, "reflog", "show", "--format=%H", "refs/heads/main");
+  await git(repository, "checkout", "--detach", target);
+  await writeFile(join(checkout, "README.md"), "reviewed source\n");
+  await git(checkout, "add", "--", "README.md");
+  await git(checkout, "commit", "-m", "reviewed source");
+  const source = await git(checkout, "rev-parse", "HEAD");
+  await db.transaction(async (tx) => {
+    await tx.update(runs).set({
+      status: "Review",
+      reviewEnteredAt: new Date(),
+      deliveryPolicySnapshot: {
+        strategy: "merge", push: "on_success", trigger: "manual", targetBranch: "main",
+      },
+    }).where(eq(runs.id, runId));
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+  });
+  startCanonicalProjectionWorker();
+  const { readAddressedReviewSource } = await import("@/lib/runs/review-source");
+  const review = await readAddressedReviewSource({
+    db, workspace: await readWorkspace(), signal: AbortSignal.timeout(15_000),
+  });
+  const { POST } = await import("@/app/api/runs/[runId]/promote/route");
+  const submit = (reviewedTargetCommit: string) => POST(
+    new NextRequest(`http://localhost/api/runs/${runId}/promote`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        reviewedSource: { head: source, fingerprint: review.fingerprint },
+        reviewedTargetCommit,
+      }),
+    }),
+    { params: Promise.resolve({ runId }) },
+  );
+  const stale = await submit(source);
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({ details: { reason: "target_drift" } });
+  expect(await git(repository, "rev-parse", "refs/heads/main")).toBe(target);
+  const promoted = await submit(target);
+  const receipt = await promoted.json();
+  if (promoted.status !== 200)
+    throw new Error(`Canonical integration failed with ${JSON.stringify(receipt)}\n${await owningHost.logTail()}`);
+  const observed = await git(repository, "rev-parse", "refs/heads/main");
+  expect(receipt).toMatchObject({ mode: "merge", commit: observed });
+  expect(await git(repository, "show", "-s", "--format=%P", observed)).toBe(`${target} ${source}`);
+  expect(await git(checkout, "rev-parse", "HEAD")).toBe(source);
+  expect(await (await submit(target)).json()).toEqual(receipt);
+  expect(await git(repository, "reflog", "show", "--format=%H", "refs/heads/main"))
+    .toBe(`${observed}\n${before}`);
+}, 60_000);
+
 it("C-10 retention GC preserves an overdue addressed worktree on its owning host", async () => {
   const {
     db,

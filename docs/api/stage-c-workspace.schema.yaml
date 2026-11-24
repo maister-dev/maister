@@ -107,6 +107,7 @@ x-operations:
     implementedProfile:
       owner: workspaceOperation
       publication: [push, promote]
+      integration: [merge, rebase]
   stageCGetPublicationTarget: { method: GET, path: "/v1/workspaces/{id}/publication-target", request: PublicationTargetQuery, response: PublicationTarget, status: 200 }
   stageCPreserve:
     method: POST
@@ -635,6 +636,17 @@ definitions:
       expected: { $ref: "#/definitions/CheckoutExpectation" }
       publication:
         enum: [ push, openPullRequest, promote ]
+      integration:
+        description: For promotion to an existing approved target, compute and retain the candidate on the host before updating the target under its exact prior SHA.
+        enum: [ merge, rebase ]
+    allOf:
+      - if: { required: [integration] }
+        then:
+          properties:
+            publication: { enum: [promote] }
+            expected:
+              properties:
+                priorTarget: { $ref: "#/definitions/GitObjectId" }
   PreservePayload:
     type: object
     additionalProperties: false

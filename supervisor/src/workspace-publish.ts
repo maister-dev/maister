@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
 
 import { SupervisorError } from "./types";
+import { commitAt, makeSyncCandidate } from "./workspace-git-candidate";
 import { WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
 import {
   executeWorkspaceGit,
@@ -150,7 +151,7 @@ export async function publishOwnedWorkspace(
   const {
     owner,
     command,
-    payload: { generation, expected },
+    payload: { generation, expected, integration },
   } = request;
   const handle = owner.workspaceHandle;
   const current = state.getWorkspaceExecutionState(handle);
@@ -181,8 +182,10 @@ export async function publishOwnedWorkspace(
     expected.targetRef,
     git,
   );
+  const candidateRef = `refs/maister/retained-publish/${handle}/${generation}/${command.id}`;
   if (replaying) {
-    if (observed === expected.head)
+    const candidate = integration ? await commitAt(git, candidateRef) : expected.head;
+    if (candidate && observed === candidate)
       return observedPublication(request, observed);
     throw new WorkspaceGitEffectUnconfirmed(
       "The retained publication could not prove its resulting remote ref",
@@ -204,6 +207,26 @@ export async function publishOwnedWorkspace(
       "workspace_rejected",
       "The retained checkout contains unpublished changes",
     );
+  let candidate = expected.head;
+  if (integration) {
+    const target = expected.priorTarget;
+    if (!target)
+      throw publicationRefused("target_ref_changed", "Integration requires an existing exact target");
+    const targetRef = candidateRef + "-target";
+    await executeWorkspaceGit([
+      ...git, "fetch", "--no-tags", "--no-write-fetch-head", "--",
+      source, `+${expected.targetRef}:${targetRef}`,
+    ]);
+    if (await commitAt(git, targetRef) !== target)
+      throw publicationRefused("target_ref_changed", "The reviewed target advanced before integration");
+    candidate = await commitAt(git, candidateRef) ?? await makeSyncCandidate(
+      input.runtimeRoot, git,
+      integration === "merge" ? target : expected.head,
+      integration === "merge" ? expected.head : target,
+      integration,
+    );
+    await executeWorkspaceGit([...git, "update-ref", candidateRef, candidate]);
+  }
   if (expected.priorTarget !== null) {
     try {
       await executeWorkspaceGit([
@@ -211,7 +234,7 @@ export async function publishOwnedWorkspace(
         "merge-base",
         "--is-ancestor",
         expected.priorTarget,
-        expected.head,
+        candidate,
       ]);
     } catch (error) {
       if ((error as { code?: unknown }).code !== 1) throw error;
@@ -240,8 +263,8 @@ export async function publishOwnedWorkspace(
       "The checkout has a newer operation fence or a live writer",
     );
 
-  if (expected.head === expected.priorTarget)
-    return observedPublication(request, expected.head);
+  if (candidate === expected.priorTarget)
+    return observedPublication(request, candidate);
 
   // The claim remains durable until the terminal outcome and event commit together.
   try {
@@ -253,7 +276,7 @@ export async function publishOwnedWorkspace(
       `--force-with-lease=${expected.targetRef}:${expected.priorTarget ?? ""}`,
       "--",
       source,
-      `${expected.head}:${expected.targetRef}`,
+      `${candidate}:${expected.targetRef}`,
     ]);
   } catch (cause) {
     // The connection can end after Git advances the remote ref.
@@ -263,7 +286,7 @@ export async function publishOwnedWorkspace(
         expected.targetRef,
         git,
       );
-      if (confirmed === expected.head)
+      if (confirmed === candidate)
         return observedPublication(request, confirmed);
     } catch (readError) {
       throw new WorkspaceGitEffectUnconfirmed(
@@ -288,7 +311,7 @@ export async function publishOwnedWorkspace(
       { cause },
     );
   });
-  if (confirmed !== expected.head)
+  if (confirmed !== candidate)
     throw new WorkspaceGitEffectUnconfirmed(
       "Git target does not confirm the accepted publication",
     );
