@@ -21,7 +21,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { getAssignmentById } from "../assignments";
 import { createExecutionHosts } from "../client";
 import { getCommand, listCommandsForRun } from "../commands";
-import { consumeRuntimeEventStreamOnce } from "../events/consumer";
+import {
+  consumeRuntimeEventStreamOnce,
+  stopRuntimeEventConsumers,
+} from "../events/consumer";
 import { canonicalLifecycleProjector } from "../events/lifecycle-projector";
 import { projectExecutionEvents } from "../events/projector";
 import { projectCanonicalRuntimeObjects } from "../events/runtime-object-projector";
@@ -47,16 +50,27 @@ import { agentFacadeMcpServerForRun } from "@/lib/agents/launch";
 import { issueProjectVaultNodeToken } from "@/lib/agents/tokens";
 import { closeDb } from "@/lib/db/client";
 import { cliOutputFilePath } from "@/lib/flows/graph/node-output";
-import { compileManifest } from "@/lib/flows/graph/compile";
-import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
-import { captureAddressedFlowWorkloads } from "@/lib/flows/addressed-workload-input";
 import { runFlow } from "@/lib/flows/runner";
 import { runCliStep } from "@/lib/flows/runner-cli";
 import { loadGitState } from "@/lib/workbench-git/read-model";
-import { gateResults, nodeAttempts, platformRuntimeSettings, runs, workspaces } from "@/lib/db/schema";
+import {
+  flows,
+  flowRevisions,
+  gateResults,
+  nodeAttempts,
+  projects,
+  runs,
+  taskLaunchIntents,
+  tasks,
+  workspaces,
+} from "@/lib/db/schema";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { acceptInteractiveTaskLaunch } from "@/lib/tasks/launch-intent";
+import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
+import { tryStartRun } from "@/lib/scheduler";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
-import { seedGraphRun } from "@/test-support/graph-run-seed";
+import { seedTaskLaunchFixture } from "@/test-support/task-launch-admission";
 import {
   addProjectMember,
   removeProjectMember,
@@ -76,6 +90,7 @@ vi.mock("@/auth", () => ({
 }));
 
 afterEach(async () => {
+  await stopRuntimeEventConsumers();
   await supervisor?.kill();
   if (webServer)
     await new Promise<void>((resolve) => webServer!.close(() => resolve()));
@@ -147,65 +162,67 @@ it.each([
   120_000,
 );
 
-it("C-08 drives a pathless graph action and command gate in the same selected checkout", async () => {
+it("C-05/C-08 accepts a pathless board launch and runs its action and command gate in the selected checkout", async () => {
   root = await mkdtemp(join(tmpdir(), "stage-c-pathless-graph-"));
-  const source = await initRepo(join(root, "origin"));
-  const commit = (await git(source, "rev-parse", "HEAD")).trim();
   database = await startMainPostgresTestDb({
     databaseName: "eh_graph_workload",
   });
   const db = database.db as unknown as Db;
+  const {
+    userId,
+    projectId,
+    flowId,
+    repo: source,
+  } = await seedTaskLaunchFixture(database, root);
+  const commit = (await git(source, "rev-parse", "HEAD")).trim();
   const command = "printf 'from owning host' > graph-marker; cat graph-marker";
-  const manifest = parseExecutableStoredFlowManifest(
-    {
-      schemaVersion: 1,
-      name: "addressed-graph",
-      compat: { engine_min: "1.1.0" },
-      nodes: [
-        {
-          id: "work",
-          type: "cli",
-          action: { command },
-          pre_finish: {
-            gates: [
-              {
-                id: "verify",
-                kind: "command_check",
-                mode: "blocking",
-                command:
-                  "test \"$(cat graph-marker)\" = 'from owning host' && printf 'gate saw host marker'",
-              },
-            ],
-          },
-          transitions: { success: "done" },
+  const manifest = {
+    schemaVersion: 1,
+    name: "addressed-graph",
+    compat: { engine_min: "1.1.0" },
+    nodes: [
+      {
+        id: "work",
+        type: "cli",
+        action: { command },
+        pre_finish: {
+          gates: [
+            {
+              id: "verify",
+              kind: "command_check",
+              mode: "blocking",
+              command:
+                "test \"$(cat graph-marker)\" = 'from owning host' && printf 'gate saw host marker'",
+            },
+          ],
         },
-      ],
-    },
-    {
-      code: "CONFIG",
-      surface: "addressed-graph-fixture",
-      manifestLabel: "addressed graph fixture",
-    },
-  );
-  const userId = await seedActiveUser(database.db);
-    session.userId = userId;
-  const seeded = await seedGraphRun(database.db, manifest, {
-    repoPath: join(root, "no-manager-checkout"),
-    workspace: false,
-    run: { runKind: "flow", status: "Pending", createdByUserId: userId },
+        transitions: { success: "done" },
+      },
+    ],
+  };
+  session.userId = userId;
+  const managerRepoPath = join(root, "no-manager-checkout");
+  await db
+    .update(projects)
+    .set({ repoPath: managerRepoPath })
+    .where(eq(projects.id, projectId));
+  await db.update(flows).set({ manifest }).where(eq(flows.id, flowId));
+  await db
+    .update(flowRevisions)
+    .set({ manifest })
+    .where(eq(flowRevisions.flowRefId, flowId));
+  const taskId = randomUUID();
+  await db.insert(tasks).values({
+    id: taskId,
+    projectId,
+    number: 1,
+    title: "Addressed task",
+    prompt: "Run the approved check",
+    flowId,
   });
-  const { runId, projectId } = seeded;
-    await db.insert(platformRuntimeSettings)
-      .values({ id: "singleton", defaultRunnerId: seeded.executorId })
-      .onConflictDoUpdate({
-        target: platformRuntimeSettings.id,
-        set: { defaultRunnerId: seeded.executorId },
-      });
-  await rm(seeded.worktreePath, { recursive: true, force: true });
-  await rm(seeded.runtimeRoot, { recursive: true, force: true });
-  await addProjectMember(database.db, { userId, projectId, role: "member" });
   vi.stubEnv("DB_URL", database.databaseUrl);
   vi.stubEnv("MAISTER_RUNTIME_ROOT", join(root, "web"));
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "web-worktrees"));
   supervisor = await startRealSupervisor({
     fixture: "mock-acp-librarian.mjs",
     env: {
@@ -222,65 +239,90 @@ it("C-08 drives a pathless graph action and command gate in the same selected ch
   if (registration.status !== "registered")
     throw new Error("graph fixture host failed registration");
   const { host } = registration;
-    const { GET } = await import("@/app/api/runs/launch-options/route");
-    const preview = await GET(new NextRequest(
-      `http://localhost/api/runs/launch-options?taskId=${seeded.taskId}&executionHostId=${host.id}`,
-    ));
-    const previewBody: unknown = await preview.json();
-    expect(preview.status, JSON.stringify(previewBody)).toBe(200);
-    expect(previewBody).toMatchObject({
-      branches: ["main"],
-      executionHostSelection: { effectiveExecutionHostId: host.id, provenance: "explicit" },
-    });
-  await db.transaction(async (tx) => {
-    const assignment = await mintPlacement(tx as unknown as Db, {
-      runId,
-      reason: "launch",
-      host,
-    });
-    await reserveHostWorkspace(
-      tx as unknown as Db,
-      { host, assignment },
-      { projectId, branch: "fixture", baseCommit: commit },
-      {
-        mode: "ownWorktree",
-        repositoryId: projectId,
-        commit,
-        inputDigest: "4".repeat(64),
-      },
-      captureAddressedFlowWorkloads(
-        compileManifest(manifest),
-        manifest.requirements,
-      ),
-      0,
-    );
+  const { GET } = await import("@/app/api/runs/launch-options/route");
+  const preview = await GET(
+    new NextRequest(
+      `http://localhost/api/runs/launch-options?taskId=${taskId}&executionHostId=${host.id}`,
+    ),
+  );
+  const previewBody = (await preview.json()) as {
+    settingsToken: string;
+    task: { revision: number };
+  };
+  expect(preview.status, JSON.stringify(previewBody)).toBe(200);
+  expect(previewBody).toMatchObject({
+    branches: ["main"],
+    executionHostSelection: {
+      effectiveExecutionHostId: host.id,
+      provenance: "explicit",
+    },
   });
-  const applyEvents = async (count: number): Promise<void> => {
-    const result = await consumeRuntimeEventStreamOnce({
-      db,
+  const accepted = await acceptInteractiveTaskLaunch(
+    db,
+    await interactiveTaskLaunchPrincipal(),
+    {
+      taskId,
       executionHostId: host.id,
-      transport,
-      owner: "fixture",
-      maxEvents: count,
-      signal: AbortSignal.timeout(10_000),
-    });
-    expect(result.received).toBe(count);
-    await projectCanonicalRuntimeObjects({ db, runId });
-    await projectExecutionEvents({
-      db,
-      projector: canonicalLifecycleProjector,
-      runId,
-    });
+      expectedTaskRevision: previewBody.task.revision,
+      expectedSettingsToken: previewBody.settingsToken,
+    },
+    randomUUID(),
+  );
+  await writeFile(join(source, "after-acceptance.txt"), "a later upstream commit\n");
+  await git(source, "add", "--", "after-acceptance.txt");
+  await git(source, "commit", "-m", "advance approved branch after acceptance");
+  const bound = await prepareTaskLaunchIntent(db, accepted.intentId);
+  expect(bound).toMatchObject({
+    state: "run_bound",
+    runId: expect.any(String),
+    snapshot: { baseCommit: commit },
+  });
+  if (!bound.runId) throw new Error("board intent did not bind a Run");
+  const { runId } = bound;
+  const [intent] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, bound.intentId));
+  expect(intent.preparationIdentity).toMatchObject({
+    version: 3,
+    executionHostId: host.id,
+    runId,
+    worktreePath: null,
+    parentRepoPath: null,
+  });
+  expect(await tryStartRun(runId, { db })).toMatchObject({ started: false });
+  const applyCommand = async (commandId: string): Promise<void> => {
+    await vi.waitFor(
+      async () => {
+        await projectCanonicalRuntimeObjects({ db, runId });
+        await projectExecutionEvents({
+          db,
+          projector: canonicalLifecycleProjector,
+          runId,
+        });
+        expect(await getCommand(db, commandId)).toMatchObject({
+          state: "succeeded",
+        });
+      },
+      { timeout: 10_000 },
+    );
   };
   expect(
     await recoverExecutionCommands({ db, transport, graceMs: 0 }),
   ).toMatchObject({ errors: [], redelivered: 1 });
-  await applyEvents(1);
+  const [prepare] = await listCommandsForRun(db, runId);
+  expect(prepare.kind).toBe("workspace.prepare");
+  await applyCommand(prepare.id);
   expect(
     await recoverExecutionCommands({ db, transport, graceMs: 0 }),
   ).toMatchObject({ errors: [], redelivered: 1 });
-  await applyEvents(5);
-  await db.update(runs).set({ status: "Running" }).where(eq(runs.id, runId));
+  const materialization = (await listCommandsForRun(db, runId)).find(
+    ({ kind }) => kind === "workspace.materialize",
+  );
+  if (!materialization)
+    throw new Error("launch did not reserve workspace materialization");
+  await applyCommand(materialization.id);
+  expect(await tryStartRun(runId, { db })).toMatchObject({ started: true });
   const runtimeRoot = join(root, "web");
   const firstDriver = new AbortController();
   const startDriver = (signal: AbortSignal) =>
@@ -321,7 +363,7 @@ it("C-08 drives a pathless graph action and command gate in the same selected ch
       expect(
         await recoverExecutionCommands({ db, transport, graceMs: 0 }),
       ).toMatchObject({ errors: [], redelivered: 1 });
-      await applyEvents(3);
+      await applyCommand(queued.id);
     }
   } finally {
     expect(await driving).toEqual({ state: "returned" });

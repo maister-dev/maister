@@ -137,6 +137,7 @@ paths:
       tags: [execution-host]
       operationId: stageCResolveRevision
       summary: Observe a full approved branch ref and exact commit
+      description: An optional pinnedCommit asks the host to expand a commit prefix and verify reachability from the advertised branch tip.
       x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/SourceQuery
       parameters:
         - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
@@ -144,9 +145,16 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, required: [repositoryId, ref], properties: { repositoryId: { type: string }, ref: { type: string } } }
+            schema:
+              type: object
+              additionalProperties: false
+              required: [repositoryId, ref]
+              properties:
+                repositoryId: { type: string }
+                ref: { type: string }
+                pinnedCommit: { type: string, pattern: '^[0-9a-fA-F]{7,64}$' }
       responses:
-        "200": { description: Approved repository ID and branch-to-commit observation. }
+        "200": { description: Approved repository ID and branch tip with the full verified pinnedCommit when requested. }
         "400": { description: Invalid full ref or repository identifier. }
         "404": { description: Approved repository is absent. }
         "409": { description: Ref refusal or addressed host key mismatch. }

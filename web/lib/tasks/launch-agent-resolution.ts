@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  resolveAddressedWorkspaceRevision,
+  observeSelectedWorkspaceRevision,
+} from "@/lib/execution-host/workspace-preparation";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { Run } from "@/lib/db/schema";
@@ -727,12 +731,32 @@ export async function resolveTaskLaunchBase(
     agentSnapshot?: TaskAgentLaunchSnapshot;
   },
   request: Partial<TaskLaunchRequest>,
+  addressedHostId?: string,
 ): Promise<{ baseCommit: string | null; currentBaseCommit: string | null }> {
   if (settings.workspace === "none") {
     if (request.baseCommit)
       throw launchRefusal("launch_agent_target_invalid", "CONFIG");
 
     return { baseCommit: null, currentBaseCommit: null };
+  }
+  if (addressedHostId) {
+    const base = await resolveAddressedWorkspaceRevision(
+      project.id,
+      settings.baseBranch,
+      request.baseCommit,
+    );
+    if (settings.targetBranch !== settings.baseBranch)
+      await observeSelectedWorkspaceRevision(project.id, settings.targetBranch);
+    if (request.baseCommit && !base.pinnedCommit)
+      throw new MaisterError(
+        "ACP_PROTOCOL",
+        "The supervisor did not verify the requested base commit",
+      );
+
+    return {
+      baseCommit: base.pinnedCommit ?? base.commit,
+      currentBaseCommit: base.commit,
+    };
   }
   const branches = new Set(
     await listBranches(project.repoPath, { includeRemotes: true }),

@@ -680,6 +680,17 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
   await writeFile(join(repository, "input.txt"), "second\n");
   git(repository, "add", "--", "input.txt");
   git(repository, "commit", "-m", "second");
+  const current = git(repository, "rev-parse", "HEAD");
+  const pinned = await addressedRequest(host, "/v1/repositories/resolve-revision", {
+    repositoryId: "fixture-repo", ref: "refs/heads/main", pinnedCommit: commit.slice(0, 12),
+  });
+  expect(pinned.status).toBe(200);
+  expect(await pinned.json()).toMatchObject({ commit: current, pinnedCommit: commit });
+  const divergent = await addressedRequest(host, "/v1/repositories/resolve-revision", {
+    repositoryId: "fixture-repo", ref: "refs/heads/fixture-000", pinnedCommit: current,
+  });
+  expect(divergent.status).toBe(409);
+  expect(await divergent.json()).toMatchObject({ details: { reason: "source_commit_unavailable" } });
   const inputDigest = "1".repeat(64);
   const command = {
     workspaceProtocol: 1,

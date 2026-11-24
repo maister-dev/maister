@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
-import type { WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
+import type { WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
@@ -1942,24 +1942,32 @@ export function cancelWorkspaceWorkload(handle: string, targetCommandId: string,
   );
 }
 
-export async function observeWorkspaceRevision(repositoryId: string, ref: string): Promise<string> {
+export async function resolveWorkspaceRevision(repositoryId: string, ref: string, pinnedCommit?: string): Promise<WorkspaceRevisionObservation> {
   const res = await request<unknown>({
     method: "POST",
     path: "/v1/repositories/resolve-revision",
-    body: { repositoryId, ref },
-    ctx: "observeWorkspaceRevision",
+    body: { repositoryId, ref, ...(pinnedCommit === undefined ? {} : { pinnedCommit }) },
+    ctx: "resolveWorkspaceRevision",
     fallbackCode: "PRECONDITION",
-    timeoutMs: 10_000,
+    timeoutMs: pinnedCommit === undefined ? 10_000 : 75_000,
   });
   const received = z.object({
     repositoryId: z.literal(repositoryId),
     ref: z.literal(ref),
     commit: z.string().regex(GIT_OBJECT_ID),
+    pinnedCommit: z.string().regex(GIT_OBJECT_ID).optional(),
   }).strict().safeParse(res.body);
-  if (res.status !== 200 || !received.success)
+  if (res.status !== 200 || !received.success ||
+      (pinnedCommit === undefined
+        ? received.data.pinnedCommit !== undefined
+        : !received.data.pinnedCommit?.startsWith(pinnedCommit.toLowerCase())))
     throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid Git revision witness");
 
-  return received.data.commit;
+  return received.data;
+}
+
+export async function observeWorkspaceRevision(repositoryId: string, ref: string): Promise<string> {
+  return (await resolveWorkspaceRevision(repositoryId, ref)).commit;
 }
 
 const sourceRef = z.string().refine(isWorkspaceSourceRef);

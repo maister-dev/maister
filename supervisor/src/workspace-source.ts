@@ -7,7 +7,10 @@ import { z } from "zod";
 import type { WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
-import { isWorkspaceSourceRef, workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
+import {
+  isWorkspaceSourceRef,
+  workspaceEvidenceDigest,
+} from "../../runtime/workspace-prepare";
 
 import { SupervisorError } from "./types";
 
@@ -25,7 +28,14 @@ const OpaqueId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
 const UpstreamRef = z.string().refine(isWorkspaceSourceRef);
 
 export const WorkspaceSourceQuery = z
-  .object({ repositoryId: OpaqueId, ref: UpstreamRef })
+  .object({
+    repositoryId: OpaqueId,
+    ref: UpstreamRef,
+    pinnedCommit: z
+      .string()
+      .regex(/^[0-9a-fA-F]{7,64}$/)
+      .optional(),
+  })
   .strict();
 export const WorkspaceRefListingQuery = z
   .object({

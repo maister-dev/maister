@@ -4,6 +4,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type {
   TaskLaunchPreparationIdentity,
   TaskLaunchFlowPreparationIdentity,
+  TaskLaunchAddressedFlowPreparationIdentity,
   TaskLaunchAgentPreparationIdentity,
   TaskLaunchPreparationPhase,
 } from "./launch-types";
@@ -57,6 +58,7 @@ import {
   resolveMaxInFlightAuto,
 } from "@/lib/tasks/queue-settings";
 import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
+import { workspaceEvidenceDigest } from "../../../runtime/workspace-prepare";
 
 const claimAuthority = Symbol("claimed task launch");
 const LEASE_SECONDS = 60;
@@ -72,6 +74,12 @@ export type TaskLaunchClaim = Readonly<{
 
 export type TaskLaunchFlowClaim = Omit<TaskLaunchClaim, "identity"> &
   Readonly<{ identity: TaskLaunchFlowPreparationIdentity }>;
+export type TaskLaunchFlowPreparationClaim = Omit<TaskLaunchClaim, "identity"> &
+  Readonly<{
+    identity:
+      | TaskLaunchFlowPreparationIdentity
+      | TaskLaunchAddressedFlowPreparationIdentity;
+  }>;
 export type TaskLaunchAgentClaim = Omit<TaskLaunchClaim, "identity"> &
   Readonly<{ identity: TaskLaunchAgentPreparationIdentity }>;
 export function assertTaskLaunchFlowClaim(
@@ -79,6 +87,13 @@ export function assertTaskLaunchFlowClaim(
 ): asserts claim is TaskLaunchFlowClaim {
   assertClaim(claim);
   if (claim.identity.version !== 1)
+    throw launchRefusal("launch_target_unsupported", "PRECONDITION");
+}
+export function assertTaskLaunchFlowPreparationClaim(
+  claim: TaskLaunchClaim,
+): asserts claim is TaskLaunchFlowPreparationClaim {
+  assertClaim(claim);
+  if (claim.identity.version !== 1 && claim.identity.version !== 3)
     throw launchRefusal("launch_target_unsupported", "PRECONDITION");
 }
 export function assertTaskLaunchAgentClaim(
@@ -416,6 +431,23 @@ export async function claimTaskLaunchIntent(
           resourceId: createHash("sha256")
             .update(`${repoScope}\0${resourcePath}`)
             .digest("hex"),
+        };
+      } else if (intent.effectiveExecutionHostId) {
+        if (fixed)
+          throw launchRefusal("launch_target_unsupported", "PRECONDITION");
+        identity = {
+          ...common,
+          version: 3,
+          executionHostId: intent.effectiveExecutionHostId,
+          parentRepoPath: null,
+          worktreePath: null,
+          branch: `${project.branchPrefix}task-${task.id}/attempt-${attemptNumber}`,
+          baseCommit: settings.baseCommit,
+          resourceId: workspaceEvidenceDigest([
+            project.id,
+            intent.effectiveExecutionHostId,
+            runId,
+          ]),
         };
       } else {
         identity = {

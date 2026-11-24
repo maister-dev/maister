@@ -417,6 +417,15 @@ from the approved source on that supervisor. The response exposes
 The supervisor binds the cursor to its stable identity and repository ID.
 The preview uses the project checkout only for legacy placement.
 
+For a Flow pinned to an addressed supervisor, acceptance verifies the base
+and delivery refs against that supervisor's approved Git source. A historical
+base must be reachable from the advertised branch tip. The version 3
+preparation identity records the Run, source commit and selected host with
+null checkout paths. Migration 0376 checks the identity against the immutable
+intent and verifies host, active assignment and workspace when the Run binds.
+The host prepares that exact checkout. The scheduler waits for applied
+preparation and materialization before first dispatch.
+
 Task and Flow previews expose authorized choices. Bind the settings token
 to the actor, project, task and target revision, current input/settings
 digests, default preference revision, eligibility revision and effective host.

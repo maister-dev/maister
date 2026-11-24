@@ -128,8 +128,20 @@ export type TaskLaunchAgentPreparationIdentity = Readonly<{
   inputDigest: string;
   settingsDigest: string;
 }>;
+export type TaskLaunchAddressedFlowPreparationIdentity = Omit<
+  TaskLaunchFlowPreparationIdentity,
+  "version" | "parentRepoPath" | "worktreePath"
+> &
+  Readonly<{
+    version: 3;
+    executionHostId: string;
+    parentRepoPath: null;
+    worktreePath: null;
+  }>;
 export type TaskLaunchPreparationIdentity =
-  TaskLaunchFlowPreparationIdentity | TaskLaunchAgentPreparationIdentity;
+  | TaskLaunchFlowPreparationIdentity
+  | TaskLaunchAgentPreparationIdentity
+  | TaskLaunchAddressedFlowPreparationIdentity;
 
 export type TaskLaunchDispatchReceipt = Readonly<{
   version: 1;

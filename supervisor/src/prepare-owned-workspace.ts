@@ -46,19 +46,17 @@ async function privateDirectory(parent: string, name: string): Promise<string> {
   return path;
 }
 
-export async function prepareGitWorktree(args: {
-  source: string;
-  managedRoot: string;
-  workspacePath: string;
-  commit: string;
-  assertOwner: () => void;
-}): Promise<{ path: string; repositoryPath: string; observedCommit: string }> {
-  const { source, managedRoot, workspacePath, commit, assertOwner } = args;
+async function withRepositoryCache<T>(
+  source: string,
+  managedRoot: string,
+  use: (repositoryPath: string) => Promise<T>,
+  assertOwner?: () => void,
+): Promise<T> {
   const cacheKey = workspaceEvidenceDigest(source);
   const repositoryRoot = await privateDirectory(managedRoot, "repositories");
 
   return withSqliteFileLock(join(repositoryRoot, cacheKey), async () => {
-    assertOwner();
+    assertOwner?.();
     const repositoryPath = join(repositoryRoot, cacheKey);
     if (!(await realDirectory(repositoryPath))) {
       await mkdir(repositoryPath, { mode: 0o700 });
@@ -85,27 +83,96 @@ export async function prepareGitWorktree(args: {
         "the private Git cache no longer matches its approved source",
       );
 
+    return use(repositoryPath);
+  });
+}
+
+async function fetchWorkspaceCommit(
+  repositoryPath: string,
+  commit: string,
+): Promise<void> {
+  try {
+    await executeWorkspaceGit([
+      "-C",
+      repositoryPath,
+      "fetch",
+      "--no-tags",
+      "--no-recurse-submodules",
+      "--no-write-fetch-head",
+      "--",
+      "origin",
+      commit,
+    ]);
+  } catch {
+    throw new SupervisorError(
+      "PRECONDITION",
+      "The pinned commit could not be fetched from the approved Git source",
+      { details: { reason: "source_commit_unavailable" } },
+    );
+  }
+}
+
+export async function verifyWorkspaceSourcePin(
+  input: Readonly<{
+    runtimeRoot: string;
+    source: string;
+    commit: string;
+    pin: string;
+  }>,
+): Promise<string> {
+  const { runtimeRoot, source, commit, pin } = input;
+  if (pin.toLowerCase() === commit) return commit;
+  const managedRoot = await privateDirectory(
+    await realpath(runtimeRoot),
+    "managed-workspaces",
+  );
+
+  return withRepositoryCache(source, managedRoot, async (repositoryPath) => {
+    await fetchWorkspaceCommit(repositoryPath, commit);
+    try {
+      const resolved = await executeWorkspaceGit([
+        "-C",
+        repositoryPath,
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        `${pin}^{commit}`,
+      ]);
+      if (!GIT_OBJECT_ID.test(resolved))
+        throw workspaceRefused("The pin is not a Git commit");
+      await executeWorkspaceGit([
+        "-C",
+        repositoryPath,
+        "merge-base",
+        "--is-ancestor",
+        resolved,
+        commit,
+      ]);
+
+      return resolved;
+    } catch {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "The pinned commit is unresolved or outside the approved branch history",
+        { details: { reason: "source_commit_unavailable" } },
+      );
+    }
+  });
+}
+
+export async function prepareGitWorktree(args: {
+  source: string;
+  managedRoot: string;
+  workspacePath: string;
+  commit: string;
+  assertOwner: () => void;
+}): Promise<{ path: string; repositoryPath: string; observedCommit: string }> {
+  const { source, managedRoot, workspacePath, commit, assertOwner } = args;
+
+  return withRepositoryCache(source, managedRoot, async (repositoryPath) => {
+    assertOwner();
     if (!(await realDirectory(workspacePath))) {
-      assertOwner();
-      try {
-        await executeWorkspaceGit([
-          "-C",
-          repositoryPath,
-          "fetch",
-          "--no-tags",
-          "--no-recurse-submodules",
-          "--no-write-fetch-head",
-          "--",
-          "origin",
-          commit,
-        ]);
-      } catch {
-        throw new SupervisorError(
-          "PRECONDITION",
-          "The pinned commit could not be fetched from the approved Git source",
-          { details: { reason: "source_commit_unavailable" } },
-        );
-      }
+      await fetchWorkspaceCommit(repositoryPath, commit);
       const kind = await executeWorkspaceGit([
         "-C",
         repositoryPath,
@@ -153,7 +220,7 @@ export async function prepareGitWorktree(args: {
       );
 
     return { path: workspacePath, repositoryPath, observedCommit };
-  });
+  }, assertOwner);
 }
 
 async function reuseSharedRoot(
@@ -281,7 +348,12 @@ export async function prepareOwnedWorkspace(args: {
         ...(repositoryPath === undefined ? {} : { repoPath: repositoryPath }),
       });
       assertOwner();
-      state.recordWorkspaceInput(handle.id, 1, payload.inputDigest, payload.mode);
+      state.recordWorkspaceInput(
+        handle.id,
+        1,
+        payload.inputDigest,
+        payload.mode,
+      );
 
       return {
         workspace: {

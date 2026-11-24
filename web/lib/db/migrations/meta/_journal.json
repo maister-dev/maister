@@ -2605,6 +2605,13 @@
       "when": 1795481517063,
       "tag": "0375_stage_c_workspace_requirement_probes",
       "breakpoints": true
+    },
+    {
+      "idx": 376,
+      "version": "7",
+      "when": 1795486640734,
+      "tag": "0376_stage_c_addressed_launch_identity",
+      "breakpoints": true
     }
   ]
 }

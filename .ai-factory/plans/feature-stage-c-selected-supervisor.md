@@ -431,8 +431,20 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   the response. A separate host integration refused a cursor from another
   repository and returned the second page for the original source. Passed
   3 Web and 3 host integrations, 24 preview regressions, both typechecks and
-  docs/ERD. Acceptance and preparation still require the legacy local Git
-  evidence until the addressed launch identity is in place.
+  docs/ERD.
+
+  Version 3 of the Flow preparation identity carries the selected host and
+  pinned commit without paths. RED failed on Web's missing Git checkout.
+  GREEN accepted a board preview, retained its commit across an upstream
+  advance, applied the host checkout and materialization, and dispatched the
+  actual graph to Review. The scheduler held it Pending until the workspace
+  was ready. A populated 0375 database applied migration 0376 and preserved
+  the retained version 2 preparation byte for byte. The host verified a
+  reachable historical pin and refused a full commit outside the branch.
+  Passed 41 Web regressions, the 8-case migration/board rerun, 3 supervisor
+  integrations, both typechecks and docs/ERD. The addressed identity here
+  covers independent project Flows. Agent preparation and shared-root
+  ownership require their own cutover.
 
 - [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.
 

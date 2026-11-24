@@ -373,6 +373,7 @@ definitions:
     properties:
       repositoryId: *a3
       ref: { $ref: "#/definitions/GitRef" }
+      pinnedCommit: { type: string, pattern: '^[0-9a-fA-F]{7,64}$' }
   SourceRevision:
     type: object
     additionalProperties: false
@@ -381,6 +382,7 @@ definitions:
       repositoryId: *a3
       ref: { $ref: "#/definitions/GitRef" }
       commit: *a4
+      pinnedCommit: *a4
   GitWorktree:
     type: object
     additionalProperties: false

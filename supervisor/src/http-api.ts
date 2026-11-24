@@ -91,6 +91,7 @@ import {
   WorkspaceRepositoryId,
   WorkspaceSourceQuery,
 } from "./workspace-source";
+import { verifyWorkspaceSourcePin } from "./prepare-owned-workspace";
 import { registerWorkspacePreparation } from "./workspace-prepare-api";
 import { workspaceSessionMcpServers } from "./workspace-session-inputs";
 import { verifyWorkspaceSessionInputs } from "./workspace-input-materialization";
@@ -2055,7 +2056,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       });
     const commit = await observeWorkspaceSource(source, query.data.ref);
 
-    return reply.status(200).send({ ...query.data, commit });
+    const { repositoryId, ref, pinnedCommit: pin } = query.data;
+    const pinnedCommit = pin ? await verifyWorkspaceSourcePin({ runtimeRoot, source, commit, pin }) : null;
+    return reply.status(200).send({ repositoryId, ref, commit, ...(pinnedCommit ? { pinnedCommit } : {}) });
   });
 
   function runtimeObjectEvent(

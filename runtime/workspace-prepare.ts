@@ -461,6 +461,13 @@ export type WorkspaceSourceRefPage = Readonly<{
   nextCursor: string | null;
 }>;
 
+export type WorkspaceRevisionObservation = Readonly<{
+  repositoryId: string;
+  ref: string;
+  commit: string;
+  pinnedCommit?: string;
+}>;
+
 export function isWorkspaceSourceRef(value: string): boolean {
   const prefix = "refs/heads/";
 

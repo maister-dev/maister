@@ -380,4 +380,50 @@ describe("C-02 workspace ownership", () => {
       constraint: "task_launch_intents_host_selection_immutable",
     });
   });
+
+  it("upgrades a populated launch preparation through 0376 without rewriting the old identity", async () => {
+    const preparation = {
+      version: 2,
+      kind: "agent",
+      workspace: "none",
+      runId: randomUUID(),
+      taskAttemptNumber: 1,
+      branch: null,
+      parentRepoPath: null,
+      baseCommit: null,
+      worktreePath: "/tmp/stage-c-agent-workdir",
+      runtimePath: "/tmp/stage-c-agent-workdir",
+      resourceId: inputDigest,
+      incarnationId: randomUUID(),
+      inputDigest,
+      settingsDigest: inputDigest,
+    };
+    await database.pool.query(
+      `UPDATE task_launch_intents SET state='preparing', state_version=state_version+1, lease_token=$2,
+        lease_expires_at=clock_timestamp()+interval '1 minute',
+        preparation_phase='reserved', preparation_identity=$3 WHERE id=$1`,
+      [retainedIntentId, randomUUID(), preparation],
+    );
+    const selectIntent = async () =>
+      (
+        await database.pool.query(
+          "SELECT to_jsonb(task_launch_intents) AS document FROM task_launch_intents WHERE id=$1",
+          [retainedIntentId],
+        )
+      ).rows[0]?.document;
+    const original = await selectIntent();
+    expect(original.preparation_identity).toEqual(preparation);
+    await database.db.transaction(async (tx) => {
+      for (const tag of [
+        "0371_stage_c_prepare_command",
+        "0372_stage_c_workspace_events",
+        "0373_stage_c_workspace_inputs",
+        "0374_stage_c_workspace_workloads",
+        "0375_stage_c_workspace_requirement_probes",
+        "0376_stage_c_addressed_launch_identity",
+      ])
+        await applyMainMigration(tx, tag);
+    });
+    expect(await selectIntent()).toEqual(original);
+  });
 });

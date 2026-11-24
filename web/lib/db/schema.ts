@@ -3711,7 +3711,10 @@ export const taskLaunchIntents = pgTable(
         AND length(${t.preparationIdentity}->>'runId') BETWEEN 1 AND 256
         AND jsonb_typeof(${t.preparationIdentity}->'taskAttemptNumber')='number' AND (${t.preparationIdentity}->>'taskAttemptNumber')::numeric>0 AND (${t.preparationIdentity}->>'taskAttemptNumber')::numeric=trunc((${t.preparationIdentity}->>'taskAttemptNumber')::numeric)
         AND ${t.preparationIdentity}->>'resourceId' ~ '^[0-9a-f]{64}$' AND length(${t.preparationIdentity}->>'incarnationId') BETWEEN 1 AND 256
-        AND jsonb_typeof(${t.preparationIdentity}->'worktreePath')='string' AND length(${t.preparationIdentity}->>'worktreePath') BETWEEN 1 AND 4096
+        AND (
+          ${t.preparationIdentity}->'version'='3'::jsonb AND ${t.preparationIdentity}->'worktreePath'='null'::jsonb
+          OR jsonb_typeof(${t.preparationIdentity}->'worktreePath')='string' AND length(${t.preparationIdentity}->>'worktreePath') BETWEEN 1 AND 4096
+        )
         AND (${t.preparationIdentity}->>'baseCommit' IS NOT DISTINCT FROM ${t.settingsSnapshot}->>'baseCommit')
         AND ${t.preparationIdentity}->>'inputDigest'=${t.inputDigest} AND ${t.preparationIdentity}->>'settingsDigest'=${t.settingsDigest}
         AND (${t.preparationIdentity}->'version'='1'::jsonb AND ${t.settingsSnapshot}->>'kind'='flow'
@@ -3723,7 +3726,13 @@ export const taskLaunchIntents = pgTable(
           AND (${t.preparationIdentity}->>'workspace'='none' AND ${t.preparationIdentity}->'parentRepoPath'='null'::jsonb AND ${t.preparationIdentity}->'branch'='null'::jsonb AND ${t.preparationIdentity}->'baseCommit'='null'::jsonb
             OR ${t.preparationIdentity}->>'workspace' IN ('repo_read','worktree') AND jsonb_typeof(${t.preparationIdentity}->'parentRepoPath')='string'
               AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
-              AND (${t.preparationIdentity}->>'workspace'='repo_read' AND ${t.preparationIdentity}->'branch'='null'::jsonb OR ${t.preparationIdentity}->>'workspace'='worktree' AND jsonb_typeof(${t.preparationIdentity}->'branch')='string')))
+              AND (${t.preparationIdentity}->>'workspace'='repo_read' AND ${t.preparationIdentity}->'branch'='null'::jsonb OR ${t.preparationIdentity}->>'workspace'='worktree' AND jsonb_typeof(${t.preparationIdentity}->'branch')='string'))
+          OR ${t.preparationIdentity}->'version'='3'::jsonb AND ${t.settingsSnapshot}->>'kind'='flow'
+          AND ${t.preparationIdentity}->'parentRepoPath'='null'::jsonb AND ${t.preparationIdentity}->'worktreePath'='null'::jsonb
+          AND jsonb_typeof(${t.preparationIdentity}->'executionHostId')='string'
+          AND ${t.preparationIdentity}->>'executionHostId'=${t.effectiveExecutionHostId}
+          AND jsonb_typeof(${t.preparationIdentity}->'branch')='string' AND length(${t.preparationIdentity}->>'branch') BETWEEN 1 AND 256
+          AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$')
         AND ${t.preparationPhase} IN ('reserved','checkout_ready','materializing','materialized','run_bound') AND octet_length(${t.preparationIdentity}::text)<=16384
       )) IS TRUE AND (${t.cleanupState} IS NULL OR ${t.cleanupState} IN ('pending','removed','retained'))`,
     ),

@@ -625,7 +625,15 @@ export async function prepareTaskLaunchRequest(
   )
     throw launchRefusal("launch_settings_changed");
   const { baseCommit, currentBaseCommit: resourceCommit } =
-    await resolveTaskLaunchBase(db, initial.project, resolved, request);
+    await resolveTaskLaunchBase(
+      db,
+      initial.project,
+      resolved,
+      request,
+      resolved.kind === "flow"
+        ? placement?.selection.effectiveExecutionHostId
+        : undefined,
+    );
   const currentBaseCommit =
     acceptanceAuthority.basisKind === "automatic" &&
     initial.task.qualificationMode !== "execution_child" &&

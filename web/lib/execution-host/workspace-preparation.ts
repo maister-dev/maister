@@ -6,6 +6,7 @@ import type {
   WorkspaceDiffQuery,
   WorkspaceEvidenceObject,
   WorkspaceSourceRefPage,
+  WorkspaceRevisionObservation,
 } from "../../../runtime/workspace-prepare";
 import type { Db } from "./db";
 import type { ExecutionHostTransport } from "./contracts";
@@ -80,6 +81,22 @@ export async function listAddressedWorkspaceRefs(
     });
 
   return transport.listWorkspaceSourceRefs(repositoryId, cursor);
+}
+
+/** Observe the advertised tip and optionally verify a historical pin on its branch. */
+export async function resolveAddressedWorkspaceRevision(
+  repositoryId: string,
+  branch: string,
+  pinnedCommit?: string,
+  transport = defaultTransport(),
+): Promise<WorkspaceRevisionObservation> {
+  if (!configuredSelectedExecutionEndpoint() || !transport.resolveWorkspaceRevision)
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "Selected host cannot verify an approved Git revision", {
+      details: { reason: "workspace_protocol_unsupported" },
+    });
+  const ref = branch.startsWith("refs/heads/") ? branch : `refs/heads/${branch}`;
+
+  return transport.resolveWorkspaceRevision(repositoryId, ref, pinnedCommit);
 }
 
 type RetainedWorkspaceRead = Pick<

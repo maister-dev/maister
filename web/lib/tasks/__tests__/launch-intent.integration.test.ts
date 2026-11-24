@@ -45,6 +45,9 @@ import {
 } from "@/lib/execution-host/project-preference";
 import { assertTaskLaunchDispatchAuthority } from "@/lib/tasks/launch-dispatch-authority";
 import { taskLaunchOptionsSnapshot } from "@/lib/tasks/launch-options";
+import { ensureLocalExecutionHost } from "@/lib/execution-host/registrar";
+import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
+import { startRealSupervisor } from "@/test-support/real-supervisor";
 import { updateTask } from "@/lib/services/tasks";
 import {
   prepareTaskQualification,
@@ -260,19 +263,28 @@ it("LA01/02/04 accepts explicit manual intent without changing missing, negative
 });
 
 it("C-11 freezes a default or explicit placement across preview and replay", async () => {
-  const hostId = randomUUID();
-  const hostKey = `eh_${randomUUID()}`;
-  await database.pool.query(
-    `INSERT INTO execution_hosts (id, host_key, kind, display_name, transport, capabilities, readiness)
-      VALUES ($1, $2, 'local_direct', 'Fixture supervisor', '{"kind":"local_direct"}', '{"workspaceProtocol":[1]}', 'ready')`,
-    [hostId, hostKey],
-  );
-  vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://127.0.0.1:1");
-  vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", hostKey);
+  const supervisor = await startRealSupervisor({
+    fixture: "mock-acp-librarian.mjs",
+    env: {
+      MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: repo }),
+    },
+  });
+  vi.stubEnv("MAISTER_SUPERVISOR_URL", supervisor.url);
+  const health = (await (await fetch(supervisor.url + "/health")).json()) as {
+    host: { hostKey: string };
+  };
+  vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", health.host.hostKey);
   vi.stubEnv(
     "MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS",
     JSON.stringify([projectId]),
   );
+  const registration = await ensureLocalExecutionHost({
+    db: database.db,
+    transport: createLocalDirectTransport(),
+  });
+  if (registration.status !== "registered")
+    throw new Error("fixture supervisor cannot register");
+  const hostId = registration.host.id;
   const setDefault = async (
     defaultExecutionHostId: string | null,
   ): Promise<void> => {
@@ -388,6 +400,7 @@ it("C-11 freezes a default or explicit placement across preview and replay", asy
       .set({ defaultExecutionHostId: null, executionHostPreferenceRevision: 1 })
       .where(eq(projects.id, projectId));
     vi.unstubAllEnvs();
+    await supervisor.kill();
   }
 });
 
