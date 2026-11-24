@@ -358,6 +358,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   and docs/ERD validation. Diff, log, review and checkpoint/restore still
   require evidence.
 
+  The existing Run Git panel now reads this status through its member-level
+  API. RED reported no worktree and no HEAD for the prepared remote Run.
+  GREEN returned the exact commit and detached/clean state without private
+  paths. The 14 Web cases include the real supervisor and existing legacy
+  route coverage. Web typecheck and OpenAPI validation passed. Browser
+  display qualification is part of G1.
+
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 - [ ] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
 

@@ -555,6 +555,8 @@ The addressed status operation checks the retained generation on the owner.
 For Git it verifies the worktree identity and current HEAD around a bounded
 status read. The result exposes the observed commit, branch versus detached
 state and clean versus dirty state without exposing the private path.
+The Run Git panel reads those fields through the existing project-authorized
+Git state endpoint. A host-owned workspace has no manager Git path to inspect.
 
 ## Expectations
 

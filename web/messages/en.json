@@ -4944,8 +4944,10 @@
     "membersOnly": "The git state is shown to project members only.",
     "warnings": {
       "note": "Could not read: {facts}. The actions stay available, and each re-checks on the server.",
+      "addressed": "Could not read from the supervisor: {facts}.",
       "fact": {
         "head": "HEAD",
+        "workspaceStatus": "the supervisor workspace status",
         "targetHead": "the target head",
         "dirty": "the worktree changes",
         "upstream": "the upstream",
@@ -4985,6 +4987,12 @@
       "dirty": "{tracked} changed, {untracked} untracked",
       "clean": "Clean — nothing to commit",
       "rescueRefs": "Rescue refs (newest first)"
+    },
+    "addressed": {
+      "clean": "Working tree is clean",
+      "dirty": "Working tree has changes",
+      "nonGit": "Workspace has no Git checkout",
+      "detached": "Detached HEAD"
     },
     "commit": {
       "message": "Commit message",

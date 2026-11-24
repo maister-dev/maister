@@ -34831,9 +34831,9 @@ components:
       type: object
       description: |
         (ADR-181 — Implemented) The lazy git read model of one run worktree,
-        served only by `GET /api/runs/{runId}/git-state`. Every field is always
-        present; a degraded sub-read is `null` (or empty) and named in
-        `warnings`.
+        served only by `GET /api/runs/{runId}/git-state`. A degraded sub-read is
+        `null` (or empty) and named in `warnings`. A host-owned workspace adds
+        `workspaceStatus` and returns the owning supervisor's observed HEAD.
       additionalProperties: false
       required:
         - runId
@@ -34953,6 +34953,15 @@ components:
           properties:
             tracked: { type: integer, minimum: 0 }
             untracked: { type: integer, minimum: 0 }
+        workspaceStatus:
+          type: object
+          nullable: true
+          description: Supervisor-reported status for a host-owned workspace. Null until the status is known.
+          required: [workingTree, headState]
+          additionalProperties: false
+          properties:
+            workingTree: { type: string, enum: [clean, dirty, nonGit] }
+            headState: { type: string, enum: [branch, detached, nonGit] }
         unpushedCommits:
           type: integer
           minimum: 0
@@ -35098,6 +35107,7 @@ components:
             type: string
             enum:
               - head
+              - workspaceStatus
               - targetHead
               - dirty
               - upstream

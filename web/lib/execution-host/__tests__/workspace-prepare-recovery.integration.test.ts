@@ -45,6 +45,7 @@ import { agentFacadeMcpServerForRun } from "@/lib/agents/launch";
 import { issueProjectVaultNodeToken } from "@/lib/agents/tokens";
 import { closeDb } from "@/lib/db/client";
 import { readSealedCliOutput } from "@/lib/flows/graph/node-output";
+import { loadGitState } from "@/lib/workbench-git/read-model";
 import { workspaces } from "@/lib/db/schema";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { initRepo } from "@/test-support/git-fixture";
@@ -374,6 +375,18 @@ async function assertAddressedRequirement({
     workingTree: "clean",
     headState: "detached",
   });
+  const gitPanel = await loadGitState({
+    db,
+    runId,
+    viewerUserId: userId,
+    origin: web.origin,
+  });
+  expect(gitPanel).toMatchObject({
+    head: commit,
+    worktreePresent: true,
+    workspaceStatus: { workingTree: "clean", headState: "detached" },
+  });
+  expect(JSON.stringify(gitPanel)).not.toContain(supervisor.runtimeRoot);
 
   expect(workspace.workspaceMaterializationGeneration).toBeNull();
   await writeFile(instructions, "# updated after acceptance");

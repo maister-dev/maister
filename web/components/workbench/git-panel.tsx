@@ -109,6 +109,7 @@ const KNOWN_REASONS = new Set([
 // reads as "other git facts".
 const KNOWN_WARNINGS = new Set([
   "head",
+  "workspaceStatus",
   "targetHead",
   "dirty",
   "upstream",
@@ -356,6 +357,7 @@ export function WorkbenchGitPanel({
   const usable = state
     ? state.worktreePresent && !state.workspaceRemoved
     : false;
+  const addressed = state?.workspaceStatus !== undefined;
   const sectionProps: GitSectionProps | null = state
     ? { state, busy, dirtyCount, mutate, actionButton }
     : null;
@@ -422,7 +424,7 @@ export function WorkbenchGitPanel({
           data-testid="git-panel-warnings"
           role="status"
         >
-          {t("warnings.note", {
+          {t(addressed ? "warnings.addressed" : "warnings.note", {
             facts: [
               ...new Set(
                 state.warnings.map((warning) =>
@@ -455,7 +457,20 @@ export function WorkbenchGitPanel({
         </p>
       ) : null}
 
-      {sectionProps && usable ? (
+      {state?.workspaceStatus ? (
+        <p
+          className="m-0 flex flex-wrap items-center gap-2 font-mono text-[10px] text-ink-2"
+          role="status"
+        >
+          <span>{t(`addressed.${state.workspaceStatus.workingTree}`)}</span>
+          {state.workspaceStatus.headState === "detached" ? (
+            <span>{t("addressed.detached")}</span>
+          ) : null}
+          {state.head ? <code>{state.head.slice(0, 12)}</code> : null}
+        </p>
+      ) : null}
+
+      {sectionProps && usable && !addressed ? (
         <>
           <GitTreeSection {...sectionProps} />
           <GitPublishSection {...sectionProps} runId={runId} />
@@ -469,7 +484,7 @@ export function WorkbenchGitPanel({
         </>
       ) : null}
 
-      {sectionProps && !usable ? (
+      {sectionProps && !usable && !addressed ? (
         <GitReattachSection {...sectionProps} />
       ) : null}
 
