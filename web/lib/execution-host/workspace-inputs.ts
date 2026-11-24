@@ -33,7 +33,11 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-export type WorkspaceInputFile = Readonly<{ path: string; bytes: Uint8Array }>;
+export type WorkspaceInputFile = Readonly<{
+  path: string;
+  bytes: Uint8Array;
+  executable?: true;
+}>;
 
 function changed(): MaisterError {
   return new MaisterError(
@@ -123,7 +127,9 @@ export async function queueWorkspaceInputs(
     );
   if (!owned?.inputDigest || !owned.generation) throw changed();
 
-  const published: Array<WorkspaceInputObject & { path: string }> = [];
+  const published: Array<
+    WorkspaceInputObject & Pick<WorkspaceInputFile, "path" | "executable">
+  > = [];
   for (const [index, file] of [...files]
     .sort((left, right) => (left.path < right.path ? -1 : 1))
     .entries()) {
@@ -134,7 +140,11 @@ export async function queueWorkspaceInputs(
       `workspace-input-${index}.bin`,
       "capability_instructions",
     );
-    published.push({ ...reference, path: file.path });
+    published.push({
+      ...reference,
+      path: file.path,
+      ...(file.executable ? { executable: true } : {}),
+    });
   }
   const manifest = await publishInput(
     client,

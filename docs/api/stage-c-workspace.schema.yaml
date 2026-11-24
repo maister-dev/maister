@@ -456,6 +456,9 @@ definitions:
               description: Relative UTF-8 file name. Dot segments, .git, .workspace-inputs.json and case-folded or prefix collisions are rejected. The optional context-repositories.json names frozen sibling contexts and uses WorkspaceContextInputs.
             objectId: { type: string, format: uuid }
             sha256: *a6
+            executable:
+              const: true
+              description: Allowed only for captured files below flow/. The retained file and its verified command-local copy are executable.
   WorkspaceContextInputs:
     description: The manager approves each sibling under the current user grant or agent attachment. Paths are resolved on the supervisor after source and SHA verification. At most eight distinct slugs per step.
     type: array
@@ -517,6 +520,9 @@ definitions:
         structuredOutput:
           enum: [ json, jsonFile ]
           description: Inspect stdout JSON or use the supervisor's private MAISTER_OUTPUT_FILE with a 262144 byte limit.
+        flowAssets:
+          const: true
+          description: For CLI and check actions, verify the sealed flow/ files and export the path to their command-local copy as MAISTER_FLOW_DIR.
   ActiveGeneration:
     type: object
     additionalProperties: false

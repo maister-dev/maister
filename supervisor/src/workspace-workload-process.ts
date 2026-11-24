@@ -43,6 +43,7 @@ export async function executeWorkspaceWorkloadProcess(
     signal: AbortSignal;
     register: (group: number) => void;
     outputFile?: string;
+    flowInstallPath?: string;
   }>,
 ): Promise<WorkloadProcessResult> {
   input.signal.throwIfAborted();
@@ -134,6 +135,9 @@ export async function executeWorkspaceWorkloadProcess(
             ...selectWorkloadEnvironment(),
             ...(input.outputFile
               ? { MAISTER_OUTPUT_FILE: input.outputFile }
+              : {}),
+            ...(input.flowInstallPath
+              ? { MAISTER_FLOW_DIR: input.flowInstallPath }
               : {}),
           },
         },

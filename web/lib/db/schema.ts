@@ -6235,7 +6235,7 @@ export const workspaceInputCaptures = pgTable(
     workspaceId: text("workspace_id").primaryKey()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     originUserId: text("origin_user_id"),
-    files: jsonb("files").$type<readonly { path: string; base64: string }[]>().notNull(),
+    files: jsonb("files").$type<readonly { path: string; base64: string; executable?: true }[]>().notNull(),
     contentDigest: text("content_digest").notNull(),
     requirementProbeCount: integer("requirement_probe_count").default(0).notNull(),
   },

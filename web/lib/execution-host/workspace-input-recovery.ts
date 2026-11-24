@@ -87,9 +87,10 @@ export async function recoverWorkspaceInputCaptures(
       const client = await hosts.forAssignment({ id: entry.assignmentId });
       await queueWorkspaceInputs(db, {
         client,
-        files: capture.files.map(({ path, base64 }) => ({
+        files: capture.files.map(({ path, base64, executable }) => ({
           path,
           bytes: Buffer.from(base64, "base64"),
+          ...(executable ? { executable } : {}),
         })),
         assertAuthority: (tx) => assertWorkspaceRunAuthority(tx, entry.runId),
       });

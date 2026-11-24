@@ -26,7 +26,10 @@ import { inspectProcessGroup } from "../../runtime/process-group";
 
 import { SupervisorError } from "./types";
 import { readHostProcessContext } from "./session-process-context";
-import { readRetainedWorkspaceInput } from "./workspace-input-materialization";
+import {
+  materializeWorkspaceFlowAssets,
+  readRetainedWorkspaceInput,
+} from "./workspace-input-materialization";
 import { executeWorkspaceWorkloadProcess } from "./workspace-workload-process";
 import { sealWorkspaceOutput } from "./workspace-output-object";
 
@@ -47,6 +50,7 @@ const declarationsSchema = z
           .min(1)
           .max(WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS),
         structuredOutput: z.enum(["json", "jsonFile"]).optional(),
+        flowAssets: z.literal(true).optional(),
       })
       .strict(),
   )
@@ -185,10 +189,18 @@ export async function runWorkspaceWorkload(
       },
     );
   const [declaration] = matches;
+  if (
+    declaration.flowAssets &&
+    !["cli", "check"].includes(declaration.workload)
+  )
+    throw new SupervisorError(
+      "PRECONDITION",
+      "Flow package assets are scoped to node actions",
+    );
   assertOwner();
   let processGroup: number | undefined;
   let outputDirectory: string | undefined;
-  if (declaration.structuredOutput === "jsonFile") {
+  if (declaration.structuredOutput === "jsonFile" || declaration.flowAssets) {
     const outputRoot = join(runDirectory, "workload-results");
     await mkdir(outputRoot, { recursive: true, mode: 0o700 });
     if ((await realpath(outputRoot)) !== outputRoot)
@@ -198,21 +210,31 @@ export async function runWorkspaceWorkload(
       );
     outputDirectory = await mkdtemp(join(outputRoot, ".result-"));
   }
-  const outputFile = outputDirectory
-    ? join(outputDirectory, "output.json")
-    : undefined;
+  const outputFile =
+    outputDirectory && declaration.structuredOutput === "jsonFile"
+      ? join(outputDirectory, "output.json")
+      : undefined;
   let result: Awaited<ReturnType<typeof executeWorkspaceWorkloadProcess>>;
   let declaredOutput:
     Awaited<ReturnType<typeof readDeclaredResult>> | undefined;
   let canRemoveOutput = true;
 
   try {
+    const flowInstallPath =
+      outputDirectory && declaration.flowAssets
+        ? await materializeWorkspaceFlowAssets({
+            inputDirectory,
+            manifestDigest: payload.inputDigest,
+            commandDirectory: outputDirectory,
+          })
+        : undefined;
     result = await executeWorkspaceWorkloadProcess({
       cwd: workspace.realPath,
       command: declaration.command,
       timeoutMs: declaration.timeoutMs,
       signal: input.signal,
       outputFile,
+      flowInstallPath,
       register: (pid) => {
         assertOwner();
         const physicalKey = createHash("sha256")

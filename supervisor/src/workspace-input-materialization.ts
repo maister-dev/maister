@@ -29,6 +29,7 @@ import { z } from "zod";
 import {
   hasWorkspaceInputPathCollision,
   isWorkspaceInputPath,
+  WORKSPACE_FLOW_ASSET_DIRECTORY,
   WORKSPACE_INPUT_MANIFEST_MAX_BYTES,
   WORKSPACE_INPUT_MANIFEST_NAME,
   WORKSPACE_INPUT_MAX_BYTES,
@@ -56,6 +57,7 @@ const manifestSchema = z
             path: z.string().refine(isWorkspaceInputPath),
             objectId: z.string().uuid(),
             sha256: digest,
+            executable: z.literal(true).optional(),
           })
           .strict(),
       )
@@ -130,6 +132,13 @@ function parseManifest(bytes: Buffer): InputManifest {
     throw rejectInput("workspace input manifest has an invalid schema");
   if (hasWorkspaceInputPathCollision(parsed.data.files.map(({ path }) => path)))
     throw rejectInput("workspace input paths collide");
+  if (
+    parsed.data.files.some(
+      ({ path, executable }) =>
+        executable && !path.startsWith(WORKSPACE_FLOW_ASSET_DIRECTORY + "/"),
+    )
+  )
+    throw rejectInput("only captured Flow package assets may be executable");
 
   return parsed.data;
 }
@@ -166,11 +175,20 @@ export async function readRetainedWorkspaceInput(
   const reference = manifest.files.find((file) => file.path === name);
   if (!reference) return null;
 
+  return readVerifiedInputFile(directory, reference, maxBytes);
+}
+
+async function readVerifiedInputFile(
+  directory: string,
+  reference: InputManifest["files"][number],
+  maxBytes: number,
+): Promise<Buffer> {
   const path = join(directory, reference.path);
   const stat = await lstat(path);
   if (
     !stat.isFile() ||
     (stat.mode & 0o222) !== 0 ||
+    (stat.mode & 0o111) !== (reference.executable ? 0o111 : 0) ||
     stat.size > maxBytes ||
     (await realpath(path)) !== path
   )
@@ -178,7 +196,7 @@ export async function readRetainedWorkspaceInput(
       "Retained declared workspace input has invalid file metadata",
     );
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  const buffer = Buffer.alloc(maxBytes + 1);
+  const buffer = Buffer.alloc(Math.min(stat.size, maxBytes) + 1);
   let length = 0;
   try {
     while (length < buffer.length) {
@@ -196,7 +214,7 @@ export async function readRetainedWorkspaceInput(
   }
   const bytes = buffer.subarray(0, length);
   if (
-    bytes.byteLength > maxBytes ||
+    bytes.byteLength !== stat.size ||
     createHash("sha256").update(bytes).digest("hex") !== reference.sha256
   )
     throw rejectInput(
@@ -204,6 +222,33 @@ export async function readRetainedWorkspaceInput(
     );
 
   return bytes;
+}
+
+/** Build a command-local directory from only the files in the sealed Flow capture. */
+export async function materializeWorkspaceFlowAssets(input: {
+  inputDirectory: string;
+  manifestDigest: string;
+  commandDirectory: string;
+}): Promise<string> {
+  const { inputDirectory, manifestDigest, commandDirectory } = input;
+  await canonicalDirectory(inputDirectory);
+  const manifest = await retainedInputManifest(inputDirectory, manifestDigest);
+  const prefix = WORKSPACE_FLOW_ASSET_DIRECTORY + "/";
+  const assets = manifest.files.filter(({ path }) => path.startsWith(prefix));
+  if (!assets.length)
+    throw rejectInput("the command has no verified Flow package assets");
+  let remaining = WORKSPACE_INPUT_MAX_BYTES;
+  for (const asset of assets) {
+    const bytes = await readVerifiedInputFile(inputDirectory, asset, remaining);
+    remaining -= bytes.length;
+    const destination = join(commandDirectory, asset.path);
+    const mode = asset.executable ? 0o555 : 0o444;
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+    await writeFile(destination, bytes, { flag: "wx", mode });
+    await chmod(destination, mode);
+  }
+
+  return join(commandDirectory, WORKSPACE_FLOW_ASSET_DIRECTORY);
 }
 
 /** Apply the same generation verification at the final local side-effect boundary. */
@@ -320,6 +365,7 @@ async function verifyPublishedInputs(
     if (
       !stat.isFile() ||
       (stat.mode & 0o222) !== 0 ||
+      (stat.mode & 0o111) !== (input.executable ? 0o111 : 0) ||
       (await realpath(candidate)) !== candidate
     )
       throw rejectInput(
@@ -451,11 +497,12 @@ export async function materializeWorkspaceInputs(args: {
           const target = join(staging, file.path);
           await mkdir(dirname(target), { recursive: true, mode: 0o700 });
           const verified = await objects.read(file.objectId);
+          const mode = file.executable ? 0o555 : 0o444;
           await pipeline(
             verified.stream,
-            createWriteStream(target, { flags: "wx", mode: 0o444 }),
+            createWriteStream(target, { flags: "wx", mode }),
           );
-          await chmod(target, 0o444);
+          await chmod(target, mode);
         }
         assertOwner();
         await rename(staging, destination);

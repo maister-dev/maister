@@ -375,8 +375,18 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   withdrawal. GREEN reused the original command after changing drivers,
   executed the gate against the marker in the same checkout, kept one
   admission and one node attempt, and reached Review. Passed 52 Web
-  integrations, the Web typecheck, the full docs validator and ERD. Setup,
-  rendered templates, package scripts and operator cancellation remain open.
+  integrations, the Web typecheck, the full docs validator and ERD.
+
+  A literal action referencing `MAISTER_FLOW_DIR` now runs the executable
+  script captured at workspace reservation. RED reached the previous CLI
+  refusal without a workload command. GREEN replaced the installed script
+  after reservation and still ran the original script on the owning host,
+  using the ACP edit as input and reaching Review after driver recovery.
+  The host verifies each file and mode before copying it into the private
+  command directory. Passed three Web and three supervisor integrations
+  on Darwin arm64 with Node 24.15.0, both workspace typechecks, contracts
+  and the full docs validator. Setup, rendered templates and operator
+  cancellation remain open.
 
 ### C3–C4 — review, board and single-host qualification
 

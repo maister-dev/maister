@@ -96,6 +96,7 @@ export type WorkspaceWorkloadDeclaration = Readonly<{
   command: string;
   timeoutMs: number;
   structuredOutput?: "json" | "jsonFile";
+  flowAssets?: true;
 }>;
 export type WorkspaceWorkloadRequest = Readonly<{
   workspaceProtocol: 1;

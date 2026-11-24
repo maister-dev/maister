@@ -30,6 +30,14 @@ export function gateWorkloadDeclarationId(
   return `gate:${workspaceEvidenceDigest([nodeId, gateId])}`;
 }
 
+export function addressedFlowUsesPackageAssets(graph: FlowGraph): boolean {
+  return [...graph.nodes.values()].some(
+    ({ source: { node } }) =>
+      (node.type === "cli" || node.type === "check") &&
+      node.action.command.includes("MAISTER_FLOW_DIR"),
+  );
+}
+
 /** Freeze declarations from the compiled revision at the same boundary as the Run inputs. */
 export function captureAddressedFlowWorkloads(
   graph: FlowGraph,
@@ -57,6 +65,9 @@ export function captureAddressedFlowWorkloads(
           WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS,
         ),
         ...(definition.output?.result ? { structuredOutput: "jsonFile" } : {}),
+        ...(definition.action.command.includes("MAISTER_FLOW_DIR")
+          ? { flowAssets: true }
+          : {}),
       });
     }
     for (const gate of node.gates) {

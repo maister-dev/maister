@@ -175,7 +175,14 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
     repo: source,
   } = await seedTaskLaunchFixture(database, root);
   const commit = (await git(source, "rev-parse", "HEAD")).trim();
-  const command = "test \"$(cat acp-marker)\" = 'written by addressed ACP' && printf 'from owning host' > graph-marker && cat graph-marker";
+  const installedScript = join(root, "flow", "scripts", "check.sh");
+  await mkdir(join(root, "flow", "scripts"), { recursive: true });
+  await writeFile(
+    installedScript,
+    "#!/bin/sh\ntest \"$(cat acp-marker)\" = 'written by addressed ACP' && printf 'from owning host' > graph-marker && cat graph-marker\n",
+    { mode: 0o755 },
+  );
+  const command = '"$MAISTER_FLOW_DIR/scripts/check.sh"';
   const manifest = {
     schemaVersion: 1,
     name: "addressed-graph",
@@ -184,7 +191,10 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
       {
         id: "edit",
         type: "ai_coding",
-        action: { prompt: 'fixture-output:{"bytes":0,"text":"addressed edit complete","writeWorkspaceMarker":true}' },
+        action: {
+          prompt:
+            'fixture-output:{"bytes":0,"text":"addressed edit complete","writeWorkspaceMarker":true}',
+        },
         transitions: { success: "work" },
       },
       {
@@ -275,7 +285,10 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
     },
     randomUUID(),
   );
-  await writeFile(join(source, "after-acceptance.txt"), "a later upstream commit\n");
+  await writeFile(
+    join(source, "after-acceptance.txt"),
+    "a later upstream commit\n",
+  );
   await git(source, "add", "--", "after-acceptance.txt");
   await git(source, "commit", "-m", "advance approved branch after acceptance");
   const bound = await prepareTaskLaunchIntent(db, accepted.intentId);
@@ -285,6 +298,7 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
     snapshot: { baseCommit: commit },
   });
   if (!bound.runId) throw new Error("board intent did not bind a Run");
+  await writeFile(installedScript, "#!/bin/sh\nexit 73\n");
   const { runId } = bound;
   const [intent] = await db
     .select()
@@ -385,11 +399,21 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
     await db
       .select({ status: nodeAttempts.status, stdout: nodeAttempts.stdout })
       .from(nodeAttempts)
-      .where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "work"))),
+      .where(
+        and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "work")),
+      ),
   ).toEqual([{ status: "Succeeded", stdout: "from owning host" }]);
-  const [editAttempt] = await db.select({ status: nodeAttempts.status, acpSessionId: nodeAttempts.acpSessionId })
-    .from(nodeAttempts).where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "edit")));
-  expect(editAttempt).toMatchObject({ status: "Succeeded", acpSessionId: expect.stringMatching(/^mock-/) });
+  const [editAttempt] = await db
+    .select({
+      status: nodeAttempts.status,
+      acpSessionId: nodeAttempts.acpSessionId,
+    })
+    .from(nodeAttempts)
+    .where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "edit")));
+  expect(editAttempt).toMatchObject({
+    status: "Succeeded",
+    acpSessionId: expect.stringMatching(/^mock-/),
+  });
   expect(
     await db
       .select({ status: gateResults.status, verdict: gateResults.verdict })

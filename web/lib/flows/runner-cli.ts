@@ -251,10 +251,10 @@ export async function runCliStep(
     { traceLog: log },
   );
   if (ctx.workload) {
-    if (resolved !== step.command || resolved.includes("MAISTER_FLOW_DIR"))
+    if (resolved !== step.command)
       throw new MaisterError(
         "CONFIG",
-        "The addressed workload requires a sealed command and package inputs",
+        "The addressed workload requires a sealed rendered command",
         {
           details: { reason: "workspace_command_inputs_unavailable" },
         },

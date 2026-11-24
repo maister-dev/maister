@@ -993,10 +993,12 @@ evaluation ID for a command-check gate. A new driver for the same assignment
 can resume either operation with its existing receipt. Web applies the action
 or gate result after the terminal receipt proves process-group retirement and
 its output references resolve to the same Run and assignment. Both operations
-address the Git checkout by its retained workspace handle. CLI templates
-that render different command bytes and access to `MAISTER_FLOW_DIR` require
-the planned package-input contract. Git mutation assertions and workspace
-rewind policies require the corresponding host-owned Git operations.
+address the Git checkout by its retained workspace handle. If a CLI or
+check action references `MAISTER_FLOW_DIR`, admission freezes the installed
+Flow files and executable bits within the input limits. The supervisor
+verifies the manifest and file digests and gives the process its own copy.
+CLI templates that render different command bytes, Git mutation assertions
+and workspace rewind policies still require their respective host contracts.
 
 The [versioned schema profile](../api/stage-c-workspace.schema.yaml) fixes
 each operation's method, route, operation ID, stage-specific shape and

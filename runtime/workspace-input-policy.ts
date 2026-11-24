@@ -2,6 +2,7 @@ export const WORKSPACE_INPUT_MAX_BYTES = 64 * 1024 * 1024;
 export const WORKSPACE_INPUT_MAX_FILES = 255;
 export const WORKSPACE_INPUT_MANIFEST_MAX_BYTES = 262_144;
 export const WORKSPACE_INPUT_MANIFEST_NAME = ".workspace-inputs.json";
+export const WORKSPACE_FLOW_ASSET_DIRECTORY = "flow";
 
 export function isWorkspaceInputPath(path: string): boolean {
   return (
