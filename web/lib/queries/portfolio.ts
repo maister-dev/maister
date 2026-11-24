@@ -558,6 +558,7 @@ export async function getPortfolio(
   const [onboardingFlowRows, hasReadyRunner] = await Promise.all([
     client
       .select({
+        projectId: flows.projectId,
         enabledRevisionId: flows.enabledRevisionId,
         enablementState: flows.enablementState,
         trustStatus: flows.trustStatus,
@@ -567,6 +568,7 @@ export async function getPortfolio(
         packageStatus: flowRevisions.packageStatus,
         schemaVersion: flowRevisions.schemaVersion,
         setupStatus: flowRevisions.setupStatus,
+        execTrust: flowRevisions.execTrust,
       })
       .from(flows)
       .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
@@ -575,6 +577,7 @@ export async function getPortfolio(
   ]);
   const launchableFlowCount = onboardingFlowRows.filter((flow) =>
     isProjectFlowLaunchable({
+      projectId: flow.projectId,
       enabledRevisionId: flow.enabledRevisionId,
       enablementState: flow.enablementState,
       hasReadyRunner,
@@ -586,6 +589,7 @@ export async function getPortfolio(
             packageStatus: flow.packageStatus ?? "",
             schemaVersion: flow.schemaVersion ?? 0,
             setupStatus: flow.setupStatus ?? "",
+            execTrust: flow.execTrust,
           }
         : null,
       trustStatus: flow.trustStatus,

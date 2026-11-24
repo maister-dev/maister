@@ -6,6 +6,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import { runRevisionSetup } from "@/lib/flows";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
@@ -87,7 +88,7 @@ export async function trustExecutable(args: {
   // Run pending setup.sh if needed.
   let setupStatus: string = rev.setupStatus;
 
-  if (rev.setupStatus === "pending") {
+  if (rev.setupStatus === "pending" && projectFlowSetupOwner(args.projectId) === "manager") {
     setupStatus = await runRevisionSetup({
       db,
       revisionId: rev.id,

@@ -17,6 +17,7 @@ import { getDb } from "@/lib/db/client";
 import { hasCompanyCoordinatorFlowReference } from "@/lib/agents/company-binding-references";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import {
   isEngineCompatible,
   isSchemaVersionSupported,
@@ -268,7 +269,7 @@ export async function enableRevision(args: {
   // Trust is now confirmed (flow.trustStatus != untrusted via assertEnableable).
   // Run the deferred setup.sh for an untrusted-then-trusted revision before
   // enabling. A setup failure marks the revision Failed and refuses enable.
-  if (rev.setupStatus === "pending") {
+  if (rev.setupStatus === "pending" && projectFlowSetupOwner(args.projectId) === "manager") {
     const setupStatus = await runRevisionSetup({
       db,
       revisionId: rev.id,

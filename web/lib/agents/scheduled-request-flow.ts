@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 
 import { flows, flowRevisions } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import { compileManifest, resolveTransition } from "@/lib/flows/graph/compile";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
@@ -85,7 +86,7 @@ export async function resolveScheduledRequestFlowRevision(
         .where(eq(flowRevisions.id, revisionId))
     : [];
 
-  assertFlowLaunchable(flow.flowRefId, flow, revision ?? null);
+  assertFlowLaunchable(flow.flowRefId, flow, revision ?? null, projectFlowSetupOwner(flow.projectId));
   const manifest = parseExecutableStoredFlowManifest(revision!.manifest, {
     code: "CONFIG",
     surface: "scheduled-agent-request",

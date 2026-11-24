@@ -995,6 +995,15 @@ attempt without a successful receipt holds that revision for operator
 inspection, since the shell may already have applied an external effect.
 The prepared tree is bounded to 255 entries and 64 MiB of regular files.
 
+For an addressed project, approving executable trust leaves the Flow's local
+setup status pending. Web binds the approved revision to the workspace
+capture in migration 0384. Preparation order is checkout, materialization,
+required setup, declared requirement probes and first dispatch. A receipt
+must prove zero exit and group retirement before the next phase opens.
+Web checks current executable trust on the pinned revision before sending
+any new effect. Previous captures gain a nullable setup field and preserve
+their original preparation behavior.
+
 An addressed Flow records its workspace assignment on each node attempt.
 The standard Codex action opens its ACP session through the same assignment
 and prepared workspace handle. The supervisor supplies the retained package

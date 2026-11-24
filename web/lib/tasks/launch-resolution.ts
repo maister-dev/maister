@@ -4,6 +4,7 @@ import {
   bindTaskLaunchPlacementToken,
   resolveTaskLaunchPlacement,
 } from "@/lib/execution-host/project-preference";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import type { TaskLaunchServerSourceSnapshot } from "./launch-server-source";
 import type { Db } from "@/lib/execution-host/db";
 import type { FlowRunnerDraft, TaskLaunchRequest } from "./launch-schema";
@@ -399,7 +400,7 @@ async function resolveFlowLaunchSettingsForSource(
 
   if (revision && revision.flowRefId !== flow.flowRefId)
     throw launchRefusal("flow_unavailable", "PRECONDITION");
-  assertFlowLaunchable(flow.flowRefId, flow, revision ?? null);
+  assertFlowLaunchable(flow.flowRefId, flow, revision ?? null, projectFlowSetupOwner(project.id));
   if (!revision) throw launchRefusal("flow_unavailable", "PRECONDITION");
   const manifest = parseExecutableStoredFlowManifest(revision.manifest, {
     code: "CONFIG",

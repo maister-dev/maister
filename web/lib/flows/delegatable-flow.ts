@@ -10,6 +10,7 @@ import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import {
   describeFlowLaunchabilityRefusal,
   evaluateFlowLaunchability,
@@ -160,7 +161,7 @@ export async function resolveDelegatableFlow(
     : [];
   const revision = revisionRows[0];
 
-  const verdict = evaluateFlowLaunchability(flow, revision ?? null);
+  const verdict = evaluateFlowLaunchability(flow, revision ?? null, projectFlowSetupOwner(projectId));
 
   if (!verdict.ok) {
     refuse(

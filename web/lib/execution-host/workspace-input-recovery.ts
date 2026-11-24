@@ -3,14 +3,14 @@ import "server-only";
 import type { Db } from "./db";
 import type { ExecutionHostTransport } from "./contracts";
 
-import { and, asc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 
-import { workspaceEvidenceDigest } from "../../../runtime/workspace-prepare";
+import { WORKSPACE_FLOW_SETUP_ID, workspaceEvidenceDigest } from "../../../runtime/workspace-prepare";
 
 import { createExecutionHosts } from "./client";
 import { assertWorkspaceRunAuthority } from "./workspace-input-authority";
 import { queueWorkspaceInputs } from "./workspace-inputs";
-import { nextWorkspaceRequirementProbeSql } from "./workspace-preparation";
+import { nextWorkspaceRequirementProbeSql, workspaceSetupPendingSql } from "./workspace-preparation";
 import { reserveWorkspaceWorkload } from "./workspace-workloads";
 
 import {
@@ -102,8 +102,8 @@ export async function recoverWorkspaceInputCaptures(
   }
 }
 
-/** Queue the next frozen requirement only after all prior probes are proved successful. */
-export async function recoverWorkspaceRequirementProbes(
+/** Queue frozen setup first, then the next probe only after its predecessors succeed. */
+export async function recoverWorkspacePreflight(
   db: Db,
   reportError: (runId: string, error: unknown) => void,
   onlyRunId?: string,
@@ -112,11 +112,17 @@ export async function recoverWorkspaceRequirementProbes(
     sql`${executionAssignments.id}`,
     sql`${workspaceInputCaptures.requirementProbeCount}`,
   );
+  const pendingSetup = workspaceSetupPendingSql(
+    sql`${executionAssignments.id}`,
+    sql`${workspaceInputCaptures.flowSetupRevisionId}`,
+  );
+  const declaration = sql<string>`CASE WHEN ${pendingSetup} THEN ${WORKSPACE_FLOW_SETUP_ID}
+    ELSE 'probe:' || ${next} END`;
   const candidates = await db
     .select({
       runId: runs.id,
       assignmentId: executionAssignments.id,
-      probeIndex: sql<number>`${next}`,
+      declarationId: declaration,
     })
     .from(workspaces)
     .innerJoin(
@@ -142,26 +148,24 @@ export async function recoverWorkspaceRequirementProbes(
         eq(executionAssignments.state, "active"),
         isNotNull(workspaces.workspaceMaterializationGeneration),
         isNull(workspaces.removedAt),
-        gt(workspaceInputCaptures.requirementProbeCount, 0),
-        sql`${next} IS NOT NULL AND NOT EXISTS (
+        sql`${declaration} IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM execution_commands command
         WHERE command.execution_assignment_id = ${executionAssignments.id}
           AND command.kind = 'workspace.run'
-          AND command.payload->>'workload' = 'requirementProbe'
-          AND command.payload->>'declarationId' = 'probe:' || ${next}
+          AND command.payload->>'workload' IN ('setup', 'requirementProbe')
+          AND command.payload->>'declarationId' = ${declaration}
       )`,
       ),
     )
     .orderBy(asc(workspaces.createdAt), asc(workspaces.id))
     .limit(16);
 
-  for (const { runId, assignmentId, probeIndex } of candidates) {
-    const declarationId = `probe:${probeIndex}`;
+  for (const { runId, assignmentId, declarationId } of candidates) {
     try {
       await reserveWorkspaceWorkload(db, {
         runId,
         assignmentId,
-        workload: "requirementProbe",
+        workload: declarationId === WORKSPACE_FLOW_SETUP_ID ? "setup" : "requirementProbe",
         declarationId,
         operationKey: `preflight:${declarationId}`,
       });

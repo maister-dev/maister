@@ -20,6 +20,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { configuredSelectedExecutionEndpoint, projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import {
   installFlowPlugin,
   installRevision,
@@ -1352,11 +1353,20 @@ export async function trustPackageRevision(opts: {
         ),
       );
 
+    const attachedProjects = await db.selectDistinct({ id: flows.projectId })
+      .from(flows).where(eq(flows.packageInstallId, install.id)) as ReadonlyArray<{ id: string }>;
+    const selectedProjectIds = attachedProjects.filter(({ id }) =>
+      projectFlowSetupOwner(id) === "selectedHost",
+    ).map(({ id }) => id);
+    const needsLocalSetup = attachedProjects.length === 0
+      ? configuredSelectedExecutionEndpoint() === null
+      : attachedProjects.length > selectedProjectIds.length;
     const readyRevisionIds: string[] = [];
+    const deferredRevisionIds: string[] = [];
 
     for (const rev of revRows) {
       const setupStatus =
-        rev.setupStatus === "pending"
+        rev.setupStatus === "pending" && needsLocalSetup
           ? await runRevisionSetup({
               revisionId: rev.id,
               installedPath: rev.installedPath,
@@ -1365,18 +1375,18 @@ export async function trustPackageRevision(opts: {
             })
           : rev.setupStatus;
 
-      if (
-        !requiresExplicitNativeFindingsEnablement(rev.manifest) &&
-        isReadyFlowRevision({
+      if (requiresExplicitNativeFindingsEnablement(rev.manifest)) continue;
+      if (isReadyFlowRevision({
           packageStatus: rev.packageStatus,
           setupStatus,
         })
       ) {
         readyRevisionIds.push(rev.id);
-      }
+      } else if (rev.packageStatus === "Installed" && setupStatus === "pending")
+        deferredRevisionIds.push(rev.id);
     }
 
-    if (readyRevisionIds.length > 0) {
+    if (readyRevisionIds.length > 0 || (deferredRevisionIds.length > 0 && selectedProjectIds.length > 0)) {
       await db
         .update(flows)
         .set({ enablementState: "Enabled", updatedAt: new Date() })
@@ -1385,7 +1395,9 @@ export async function trustPackageRevision(opts: {
             eq(flows.packageInstallId, install.id),
             eq(flows.trustStatus, "trusted"),
             eq(flows.enablementState, "Installed"),
-            inArray(flows.enabledRevisionId, readyRevisionIds),
+            sql`(${inArray(flows.enabledRevisionId, readyRevisionIds)} OR
+              (${inArray(flows.projectId, selectedProjectIds)} AND
+               ${inArray(flows.enabledRevisionId, deferredRevisionIds)}))`,
           ),
         );
     }

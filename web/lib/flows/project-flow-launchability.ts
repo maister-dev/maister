@@ -2,11 +2,13 @@ import "server-only";
 
 import { evaluateFlowLaunchability } from "@/lib/flows/launchability-gate";
 import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 
 export type ProjectFlowLaunchabilityInput = {
   enabledRevisionId: string | null;
   enablementState: string;
   hasReadyRunner: boolean;
+  projectId?: string;
   revision: {
     engineMax: string | null;
     engineMin: string | null;
@@ -14,6 +16,7 @@ export type ProjectFlowLaunchabilityInput = {
     packageStatus: string;
     schemaVersion: number;
     setupStatus: string;
+    execTrust?: string | null;
   } | null;
   trustStatus: string;
 };
@@ -27,12 +30,14 @@ export function isProjectFlowLaunchable({
   enabledRevisionId,
   enablementState,
   hasReadyRunner,
+  projectId,
   revision,
   trustStatus,
 }: ProjectFlowLaunchabilityInput): boolean {
   const verdict = evaluateFlowLaunchability(
     { enabledRevisionId, enablementState, trustStatus },
     revision,
+    projectId ? projectFlowSetupOwner(projectId) : "manager",
   );
 
   if (!verdict.ok || revision === null) return false;

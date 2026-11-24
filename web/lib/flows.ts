@@ -39,6 +39,7 @@ import { OUTPUT_COORDINATOR_ENGINE_MIN } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import { manifestDigest } from "@/lib/flows/digest";
 import {
   collectReferencedSchemaPaths,
@@ -1286,7 +1287,7 @@ async function installFlowPluginImpl(
     );
   } else if (execTrust === "trusted") {
     const setupStatus =
-      rev.setupStatus === "pending"
+      rev.setupStatus === "pending" && projectFlowSetupOwner(projectId) === "manager"
         ? await runRevisionSetup({
             db,
             revisionId: rev.revisionId,

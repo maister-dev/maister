@@ -10,7 +10,7 @@ import { MaisterError } from "@/lib/errors";
 import { defaultTransport } from "./default-transport";
 import {
   recoverWorkspaceInputCaptures,
-  recoverWorkspaceRequirementProbes,
+  recoverWorkspacePreflight,
 } from "./workspace-input-recovery";
 import { recoverWorkspacePreparation } from "./workspace-prepare-delivery";
 
@@ -94,6 +94,6 @@ export async function advanceAddressedWorkspaceAdmission(
     throw error;
   };
   await recoverWorkspaceInputCaptures(db, defaultTransport(), fail, runId);
-  await recoverWorkspaceRequirementProbes(db, fail, runId);
+  await recoverWorkspacePreflight(db, fail, runId);
   await dispatchQueuedWorkspaceCommand(db, { runId });
 }

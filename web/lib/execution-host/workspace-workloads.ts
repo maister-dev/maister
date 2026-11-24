@@ -56,9 +56,8 @@ export async function reserveWorkspaceWorkload(
       .from(executionAssignments)
       .where(eq(executionAssignments.id, input.assignmentId))
       .for("update");
-    const permittedStatus =
-      run?.status === "Running" ||
-      (input.workload === "requirementProbe" && run?.status === "Pending");
+    const isPreflight = input.workload === "setup" || input.workload === "requirementProbe";
+    const permittedStatus = run?.status === (isPreflight ? "Pending" : "Running");
     if (
       !permittedStatus ||
       run?.assignmentId !== input.assignmentId ||

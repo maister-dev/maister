@@ -212,7 +212,12 @@ export async function assertFrozenTaskLaunchCurrent(
 
   if (!flow || !revision || revision.flowRefId !== settings.flowRefId)
     throw launchRefusal("flow_unavailable", "PRECONDITION");
-  assertFlowLaunchable(settings.flowRefId, flow, revision);
+  assertFlowLaunchable(
+    settings.flowRefId,
+    flow,
+    revision,
+    intent.effectiveExecutionHostId ? "selectedHost" : "manager",
+  );
   const catalog = await loadRunnerCatalog(db);
 
   for (const slot of settings.sessions) {

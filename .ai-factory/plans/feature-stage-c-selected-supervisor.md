@@ -383,7 +383,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   returned the generated file through a later action's sealed stdout.
   A second setup command recorded reuse without another shell or another
   write. Refused reuse after changing the prepared file. Web admission and
-  the project trust handoff remain open.
+  the project trust handoff now use PostgreSQL 0384. RED admitted the Run
+  before setup and executed trusted setup from Web. GREEN held the board
+  Run until the pinned setup and the requirement probe had both completed.
+  Revoking executable trust after materialization produced zero setup
+  commands. Replacing the installed scripts after capture still executed
+  the original bytes and reached Review. The legacy trust path still
+  writes its local setup receipt. Passed nine Web/host and trust cases and
+  53 populated migration and package cases. The pre-0384 input capture
+  retained its exact content and acquired no new setup obligation.
 
   **C-08 templated workload checkpoint.** RED refused a board Flow command
   containing task and environment tokens. A first replay attempt also showed

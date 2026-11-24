@@ -393,7 +393,8 @@ export async function applyWorkspaceEvidence(
     if (
       receipt.target.handle !== assignment.executionWorkspaceId ||
       (receipt.operationId === "stageCRunWorkload"
-        ? receipt.result.generation !== receipt.target.generation
+        ? receipt.result.generation !== receipt.target.generation ||
+          (receipt.result.setupReused && command.payload.workload !== "setup")
         : receipt.result.targetCommandId !== receipt.target.commandId)
     )
       throw inconsistent();
@@ -413,17 +414,20 @@ export async function applyWorkspaceEvidence(
     if (!transition.changed) throw inconsistent();
     if (
       receipt.operationId === "stageCRunWorkload" &&
-      command.payload.workload === "requirementProbe" &&
+      (command.payload.workload === "requirementProbe" || command.payload.workload === "setup") &&
       run.status === "Pending" &&
       (receipt.result.processOutcome !== "exited" ||
         receipt.result.exitCode !== 0)
     ) {
       if (!run.projectId) throw inconsistent();
+      const reason = command.payload.workload === "setup"
+        ? "workspace_setup_failed"
+        : "workspace_requirement_failed";
       await tx
         .update(runs)
         .set({ status: "Failed", endedAt: new Date(event.occurredAt) })
         .where(eq(runs.id, run.id));
-      await releaseAssignmentForRun(tx, run.id, "workspace_requirement_failed");
+      await releaseAssignmentForRun(tx, run.id, reason);
       await emitWebhookEvent({
         db: tx,
         type: "run.failed",
@@ -441,7 +445,7 @@ export async function applyWorkspaceEvidence(
         parentRunId: run.parentRunId,
         cause: {
           code: "PRECONDITION",
-          reason: "workspace_requirement_failed",
+          reason,
           source: "reconcile",
         },
         payload: {

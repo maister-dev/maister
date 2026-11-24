@@ -6247,6 +6247,7 @@ export const workspaceInputCaptures = pgTable(
     files: jsonb("files").$type<readonly { path: string; base64: string; executable?: true }[]>().notNull(),
     contentDigest: text("content_digest").notNull(),
     requirementProbeCount: integer("requirement_probe_count").default(0).notNull(),
+    flowSetupRevisionId: text("flow_setup_revision_id"),
   },
   (t) => ({
     boundedFiles: check("workspace_input_captures_files_check", sql`
@@ -6256,6 +6257,7 @@ export const workspaceInputCaptures = pgTable(
       END`),
     digestShape: check("workspace_input_captures_digest_check", sql`${t.contentDigest} ~ '^[a-f0-9]{64}$'`),
     boundedProbes: check("workspace_input_captures_probe_count_check", sql`${t.requirementProbeCount} BETWEEN 0 AND 128`),
+    setupRevisionShape: check("workspace_input_captures_setup_revision_check", sql`${t.flowSetupRevisionId} ~ '^[A-Za-z0-9_-]{1,128}$'`),
   }),
 );
 

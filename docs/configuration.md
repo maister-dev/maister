@@ -1404,6 +1404,13 @@ refuses session creation with `read_only_process_unavailable`. The Linux
 integration fixture uses `MAISTER_TEST_ADDRESSED_READ_ONLY=1` on a configured
 environment to exercise the native wrapper.
 
+For a project managed by an addressed supervisor, executable trust allows
+the supervisor to run the pinned Flow's `setup.sh` on first use. Web can
+show the central installation's setup as pending while the host holds a
+verified setup receipt. Install the package runtime prerequisites under
+the supervisor's account. If a setup stops before a successful receipt,
+inspect the owning host and any effects before retrying the revision.
+
 ## Authentication & RBAC
 
 MAIster uses **Auth.js v5** (formerly NextAuth.js) with a **credentials

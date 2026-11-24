@@ -34,7 +34,7 @@ import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
 import { isAddressedRetainedWorkspaceCommand, recoverWorkspacePreparation } from "./workspace-prepare-delivery";
-import { recoverWorkspaceInputCaptures, recoverWorkspaceRequirementProbes } from "./workspace-input-recovery";
+import { recoverWorkspaceInputCaptures, recoverWorkspacePreflight } from "./workspace-input-recovery";
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { reportLegacyActiveRuns } from "./legacy";
 import {
@@ -509,7 +509,7 @@ export async function recoverExecutionCommands(
     });
   }
   if (configuredSelectedExecutionEndpoint() && transport.sendWorkspaceWorkload) {
-    await recoverWorkspaceRequirementProbes(db, (runId, error) => {
+    await recoverWorkspacePreflight(db, (runId, error) => {
       const reason = error instanceof MaisterError ? error.details?.reason : undefined;
 
       logger.warn({ runId, reason }, "workspace-requirement-recovery-failed");

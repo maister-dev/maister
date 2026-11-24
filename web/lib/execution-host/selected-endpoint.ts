@@ -28,6 +28,13 @@ export function selectedEndpointAllowsProject(projectId: string): boolean {
   }
 }
 
+/** Deferred Flow setup follows the project's addressed execution boundary. */
+export function projectFlowSetupOwner(projectId: string): "manager" | "selectedHost" {
+  return configuredSelectedExecutionEndpoint() && selectedEndpointAllowsProject(projectId)
+    ? "selectedHost"
+    : "manager";
+}
+
 export function configuredSelectedExecutionEndpoint(): SelectedExecutionEndpoint | null {
   const hostKey = process.env.MAISTER_SELECTED_EXECUTION_HOST_KEY;
 

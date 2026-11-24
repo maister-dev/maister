@@ -20,6 +20,7 @@ import {
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 
 export type ProjectCoordinatorProvider = Readonly<{
   snapshot: ProjectCoordinatorFlowSnapshot;
@@ -93,6 +94,7 @@ export async function loadProjectCoordinatorProvider(
     flow.flowRefId,
     flow,
     decoded.success ? decoded.data : null,
+    projectFlowSetupOwner(projectId),
   );
   if (!decoded.success || decoded.data.execTrust !== "trusted")
     throw new MaisterError(

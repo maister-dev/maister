@@ -203,9 +203,12 @@ it.each([
     const commit = (await git(source, "rev-parse", "HEAD")).trim();
     const installedScript = join(root, "flow", "scripts", "check.sh");
     await mkdir(join(root, "flow", "scripts"), { recursive: true });
+    const setupPath = join(root, "flow", "setup.sh");
+    if (!refusedRoot)
+      await writeFile(setupPath, "printf prepared >> setup-output.txt\n");
     await writeFile(
       installedScript,
-      "#!/bin/sh\nset -eu\ntest \"$(cat acp-marker)\" = 'written by addressed ACP'\nprintf 'from owning host' > graph-marker\ngit add -- graph-marker\ngit -c user.name=Fixture -c user.email=fixture@example.test -c commit.gpgSign=false -c core.hooksPath=/dev/null commit -qm 'fixture graph marker'\ncat graph-marker\nprintf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"\n",
+      "#!/bin/sh\nset -eu\ntest \"$(cat \"$MAISTER_FLOW_DIR/setup-output.txt\")\" = prepared\ntest \"$(cat acp-marker)\" = 'written by addressed ACP'\nprintf 'from owning host' > graph-marker\ngit add -- graph-marker\ngit -c user.name=Fixture -c user.email=fixture@example.test -c commit.gpgSign=false -c core.hooksPath=/dev/null commit -qm 'fixture graph marker'\ncat graph-marker\nprintf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"\n",
       { mode: 0o755 },
     );
     await writeFile(
@@ -220,6 +223,9 @@ it.each([
       schemaVersion: 1,
       name: "addressed-graph",
       compat: { engine_min: "1.2.0" },
+      ...(!refusedRoot
+        ? { requirements: [{ name: "Node runtime", probe: "node --version" }] }
+        : {}),
       nodes: [
         {
           id: "edit",
@@ -273,7 +279,10 @@ it.each([
     await db.update(flows).set({ manifest }).where(eq(flows.id, flowId));
     await db
       .update(flowRevisions)
-      .set({ manifest })
+      .set({
+        manifest,
+        ...(!refusedRoot ? { setupStatus: "pending", execTrust: "trusted" } : {}),
+      })
       .where(eq(flowRevisions.flowRefId, flowId));
     const taskId = randomUUID();
     await db.insert(tasks).values({
@@ -362,6 +371,7 @@ it.each([
     });
     if (!bound.runId) throw new Error("board intent did not bind a Run");
     await writeFile(installedScript, "#!/bin/sh\nexit 73\n");
+    if (!refusedRoot) await writeFile(setupPath, "exit 74\n");
     const { runId } = bound;
     const [intent] = await db
       .select()
@@ -425,6 +435,34 @@ it.each([
     if (!materialization)
       throw new Error("launch did not reserve workspace materialization");
     await applyCommand(materialization.id);
+    expect(await tryStartRun(runId, { db })).toMatchObject({ started: false });
+    await db.update(flowRevisions).set({ execTrust: "untrusted" })
+      .where(eq(flowRevisions.flowRefId, flowId));
+    await expect(advanceAddressedWorkspaceAdmission(db, runId)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      details: { reason: "launch_authority_revoked" },
+    });
+    expect((await listCommandsForRun(db, runId))
+      .map(({ kind }) => kind).filter((kind) => kind.startsWith("workspace.")))
+      .toEqual(["workspace.prepare", "workspace.materialize"]);
+    await db.update(flowRevisions).set({ execTrust: "trusted" })
+      .where(eq(flowRevisions.flowRefId, flowId));
+    await advanceAddressedWorkspaceAdmission(db, runId);
+    const setup = (await listCommandsForRun(db, runId)).find(
+      ({ kind, payload }) => kind === "workspace.run" && payload.workload === "setup",
+    );
+    if (!setup) throw new Error("Addressed launch did not reserve its frozen setup");
+    await applyCommand(setup.id);
+    expect(await getCommand(db, setup.id)).toMatchObject({
+      result: { exitCode: 0, quiescence: "proved", processOutcome: "exited" },
+    });
+    expect(await tryStartRun(runId, { db })).toMatchObject({ started: false });
+    await advanceAddressedWorkspaceAdmission(db, runId);
+    const probe = (await listCommandsForRun(db, runId)).find(
+      ({ kind, payload }) => kind === "workspace.run" && payload.workload === "requirementProbe",
+    );
+    if (!probe) throw new Error("Addressed launch did not reserve its requirement probe");
+    await applyCommand(probe.id);
     expect(await tryStartRun(runId, { db })).toMatchObject({ started: true });
     const runtimeRoot = join(root, "web");
     const firstDriver = new AbortController();
@@ -772,7 +810,7 @@ async function assertAddressedRequirement({
         inputDigest: "2".repeat(64),
       },
       capture,
-      1,
+      { requirementProbeCount: 1 },
     );
     return placed;
   });

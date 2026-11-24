@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { buildFlowFixture } from "@/lib/__tests__/_fixtures/build-flow-plugin";
 import * as schemaModule from "@/lib/db/schema";
@@ -43,6 +43,8 @@ let fixturesDir: string;
 let setupOkRepo: string;
 let projectId: string;
 let originalHome: string | undefined;
+
+afterEach(() => vi.unstubAllEnvs());
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -226,5 +228,34 @@ describe("exec_trust two-axis gate (T-B3)", () => {
       .where(eq(schema.flowRevisions.id, install.revisionId));
 
     expect(afterRow.execTrust).toBe("trusted");
+  }, 60_000);
+
+  it("leaves trusted setup pending for the selected supervisor without executing it on Web", async () => {
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://127.0.0.1:17777");
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", "a".repeat(64));
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS", JSON.stringify([projectId]));
+    const install = await installFlowPlugin({
+      source: setupOkRepo,
+      version: "v1.0.0",
+      projectId,
+      projectSlug: "exec-trust-proj",
+      flowId: "setup-on-supervisor",
+      workspaceRoot,
+      db,
+      execTrustOverride: "untrusted",
+    });
+    expect(await trustExecutable({ projectId, flowId: install.flowRowId, db }))
+      .toEqual({ execTrust: "trusted", setupStatus: "pending" });
+    await enableRevision({
+      projectId,
+      flowRefId: "setup-on-supervisor",
+      revisionId: install.revisionId,
+      db,
+    });
+    await expect(stat(join(install.installedPath, ".maister-setup-done")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    const [revision] = await db.select().from(schema.flowRevisions)
+      .where(eq(schema.flowRevisions.id, install.revisionId));
+    expect(revision).toMatchObject({ execTrust: "trusted", setupStatus: "pending" });
   }, 60_000);
 });

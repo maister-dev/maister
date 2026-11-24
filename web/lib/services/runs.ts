@@ -24,6 +24,8 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { WORKSPACE_FLOW_ASSET_DIRECTORY } from "../../../runtime/workspace-input-policy";
+
 import { runnerAdmissionError } from "@/lib/flows/runner-admission-error";
 import { isAutomaticTaskLaunchDrain } from "@/lib/tasks/launch-capacity";
 import {
@@ -1194,7 +1196,7 @@ async function* executeFlowLaunch(
       ? { ...storedRevision, installedPath: accepted.flowAssetsPath }
       : storedRevision;
 
-    assertFlowLaunchable(flow.flowRefId, flow, revision ?? null);
+    assertFlowLaunchable(flow.flowRefId, flow, revision ?? null, hostPreparesWorkspace ? "selectedHost" : "manager");
 
     const manifest = parseExecutableStoredFlowManifest(revision.manifest, {
       code: "CONFIG",
@@ -2014,12 +2016,24 @@ async function* executeFlowLaunch(
           }),
         );
 
+      const setupRevisionId = hostPreparesWorkspace &&
+        (revision.setupStatus === "done" || revision.setupStatus === "pending")
+        ? revision.id : undefined;
+      const flowAssets = hostPreparesWorkspace &&
+        (setupRevisionId || addressedFlowUsesPackageAssets(compiled))
+        ? await captureWorkspaceFlowAssets(revision.installedPath)
+        : [];
+      if (setupRevisionId && (revision.execTrust !== "trusted" ||
+        !flowAssets.some(({ path }) => path === WORKSPACE_FLOW_ASSET_DIRECTORY + "/setup.sh")))
+        throw new MaisterError(
+          "PRECONDITION",
+          "Selected supervisor setup requires a trusted, frozen Flow setup.sh",
+          { details: { reason: "workspace_setup_unavailable" } },
+        );
       const workspaceInputs = hostPreparesWorkspace
         ? [
-            ...captureAddressedFlowWorkloads(compiled, manifest.requirements),
-            ...(addressedFlowUsesPackageAssets(compiled)
-              ? await captureWorkspaceFlowAssets(revision.installedPath)
-              : []),
+            ...captureAddressedFlowWorkloads(compiled, manifest.requirements, setupRevisionId),
+            ...flowAssets,
             ...await captureAddressedFlowContexts(
               _db as ExecutionDb,
               Array.from(compiled.nodes.values(), (node) => ({
@@ -2393,7 +2407,10 @@ async function* executeFlowLaunch(
               }),
             },
             workspaceInputs,
-            manifest.requirements?.length ?? 0,
+            {
+              requirementProbeCount: manifest.requirements?.length ?? 0,
+              ...(setupRevisionId ? { flowSetupRevisionId: setupRevisionId } : {}),
+            },
           );
         } else {
           await tx.insert(workspaces).values({

@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Db } from "./db";
 
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
@@ -13,6 +13,8 @@ import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import {
   agentProjectLinks,
   executionAssignments,
+  flowRevisions,
+  flows,
   projects,
   runs,
   taskLaunchIntents,
@@ -40,6 +42,9 @@ export async function assertWorkspaceRunAuthority(
       originalUserId: workspaceInputCaptures.originUserId,
       agentId: runs.agentId,
       runKind: runs.runKind,
+      flowId: runs.flowId,
+      flowRevisionId: runs.flowRevisionId,
+      flowSetupRevisionId: workspaceInputCaptures.flowSetupRevisionId,
       context: sql<string | null>`(
         SELECT entry->>'base64' FROM jsonb_array_elements(${workspaceInputCaptures.files}) entry
         WHERE entry->>'path' = ${WORKSPACE_CONTEXT_INPUT}
@@ -99,6 +104,29 @@ export async function assertWorkspaceRunAuthority(
         details: { reason: "launch_authority_revoked" },
       },
     );
+  if (run.flowSetupRevisionId) {
+    const [trusted] = await db
+      .select({ id: flowRevisions.id })
+      .from(flowRevisions)
+      .innerJoin(flows, and(
+        eq(flows.id, run.flowId ?? ""),
+        eq(flows.projectId, run.projectId),
+        eq(flows.flowRefId, flowRevisions.flowRefId),
+      ))
+      .where(and(
+        eq(flowRevisions.id, run.flowSetupRevisionId),
+        eq(flowRevisions.execTrust, "trusted"),
+        eq(flowRevisions.packageStatus, "Installed"),
+        inArray(flows.trustStatus, ["trusted", "trusted_by_policy"]),
+      ))
+      .for("share");
+    if (!trusted || trusted.id !== run.flowRevisionId)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Selected supervisor setup requires current executable trust for the pinned Flow revision",
+        { details: { reason: "launch_authority_revoked" } },
+      );
+  }
   if (run.context !== null)
     await assertContextAuthority(db, {
       encoded: run.context,

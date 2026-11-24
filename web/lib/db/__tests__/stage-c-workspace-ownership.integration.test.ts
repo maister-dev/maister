@@ -566,4 +566,34 @@ describe("C-02 workspace ownership", () => {
     expect((await database.pool.query(`UPDATE workspaces SET removed_at=now(),archived_at=now(),
       archived_commit=$2,preservation_outcome='snapshot_created',removal_kind='archive' WHERE id=$1`, [workspaceId, sha])).rowCount).toBe(1);
   });
+
+  it("preserves a pre-0384 queued workspace capture without adding a setup obligation", async () => {
+    await database.db.transaction(async (tx) => {
+      await applyMainMigration(tx, "0382_stage_c_retained_workspace_sync");
+      await applyMainMigration(tx, "0383_stage_c_addressed_retention");
+    });
+    const run = await createRun(hostId, "Pending");
+    const workspaceId = await reserveWorkspace({ ...run, host: hostId });
+    await database.pool.query(
+      `INSERT INTO workspace_input_captures (workspace_id, files, content_digest, requirement_probe_count)
+       VALUES ($1, $2, $3, 1)`,
+      [workspaceId, JSON.stringify([{ path: "frozen", base64: "YQ==" }]), inputDigest],
+    );
+    const read = async () => (
+      await database.pool.query(
+        "SELECT * FROM workspace_input_captures WHERE workspace_id=$1",
+        [workspaceId],
+      )
+    ).rows[0];
+    const original = await read();
+    await database.db.transaction((tx) =>
+      applyMainMigration(tx, "0384_stage_c_flow_setup_preflight"),
+    );
+    expect(await read()).toEqual({ ...original, flow_setup_revision_id: null });
+    expect((await database.pool.query(
+      `SELECT workspace_flow_setup_pending($1, flow_setup_revision_id) AS pending
+       FROM workspace_input_captures WHERE workspace_id=$2`,
+      [run.assignmentId, workspaceId],
+    )).rows[0]).toEqual({ pending: false });
+  });
 });

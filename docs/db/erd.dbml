@@ -4829,6 +4829,7 @@ table workspace_input_captures {
   files jsonb [not null]
   content_digest text [not null]
   requirement_probe_count integer [not null, default: 0]
+  flow_setup_revision_id text
 }
 
 table workspace_reconciliation_findings {

@@ -249,7 +249,10 @@ export async function reserveHostWorkspace(
   metadata: WorkspaceMetadata,
   payload: WorkspacePrepareInput,
   files: readonly WorkspaceInputFile[] = [],
-  requirementProbeCount = 0,
+  preflight: Readonly<{
+    requirementProbeCount?: number;
+    flowSetupRevisionId?: string;
+  }> = {},
 ): Promise<void> {
   const { host, assignment } = placement;
   const workspaceId = randomUUID();
@@ -280,7 +283,7 @@ export async function reserveHostWorkspace(
   await tx.insert(workspaceInputCaptures).values({
     workspaceId,
     originUserId: run.userId,
-    requirementProbeCount,
+    ...preflight,
     ...capture,
   });
 
@@ -302,8 +305,13 @@ export function workspacePreparationReadySql(runId: SQL): SQL {
       AND preparation.ownership_kind = 'host_owned'
       AND preparation.removed_at IS NULL
       AND (preparation.workspace_materialization_generation IS NULL OR
+        ${workspaceSetupPendingSql(sql`preparation.preparation_assignment_id`, sql`capture.flow_setup_revision_id`)} OR
         ${nextWorkspaceRequirementProbeSql(sql`preparation.preparation_assignment_id`, sql`capture.requirement_probe_count`)} IS NOT NULL)
   )`;
+}
+
+export function workspaceSetupPendingSql(assignmentId: SQL, revisionId: SQL): SQL {
+  return sql`workspace_flow_setup_pending(${assignmentId}, ${revisionId})`;
 }
 
 export function nextWorkspaceRequirementProbeSql(
