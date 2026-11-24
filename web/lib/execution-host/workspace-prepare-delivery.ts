@@ -15,6 +15,8 @@ import type {
 import type { Db } from "./db";
 import type { ExecutionHostTransport } from "./contracts";
 
+import { and, eq, isNull, lte, or } from "drizzle-orm";
+
 import { getAssignmentById } from "./assignments";
 import { casTransition, claimDelivering, markAccepted } from "./commands";
 import { hostForAssignment } from "./resolver";
@@ -28,6 +30,7 @@ import {
 } from "./workspace-prepare-schema";
 import { z } from "zod";
 
+import { executionCommands } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 function retainedOwner(
@@ -245,9 +248,36 @@ export async function recoverWorkspacePreparation(
       },
     );
   };
-  if (command.state !== "queued") {
-    const receipt = await transport.getWorkspaceCommandReceipt(command.id);
-    if (receipt && receipt.phase !== "accepted") return false;
+  const retained =
+    command.state === "queued"
+      ? null
+      : await transport.getWorkspaceCommandReceipt(command.id);
+  if (retained && retained.phase !== "accepted") return false;
+
+  if (command.kind === "workspace.run" && retained?.phase === "accepted") {
+    // Delivery is already witnessed. Reconcile the same receipt at a bounded
+    // cadence without charging new admission attempts or repeating the workload.
+    const [retry] = await db
+      .update(executionCommands)
+      .set({ nextAttemptAt: new Date(at.getTime() + 30_000), updatedAt: at })
+      .where(
+        and(
+          eq(executionCommands.id, command.id),
+          eq(executionCommands.state, command.state),
+          eq(executionCommands.attempts, command.attempts),
+          or(
+            isNull(executionCommands.nextAttemptAt),
+            lte(executionCommands.nextAttemptAt, at),
+          ),
+        ),
+      )
+      .returning({ id: executionCommands.id });
+    if (!retry) return false;
+    await deliver();
+    if (command.state === "delivering")
+      await markAccepted(db, command.id, command.attempts, { now: at });
+
+    return true;
   }
   if (
     command.kind === "workspace.materialize" ||

@@ -168,6 +168,7 @@ type WorkspaceEffect = Readonly<{
     | MaterializedWorkspaceInputs
     | WorkspaceWorkloadResult
     | WorkspaceCancelWorkloadResult
+    | null
   >;
 }>;
 
@@ -310,9 +311,9 @@ export function registerWorkspacePreparation(args: {
     let outcome: Record<string, unknown>;
     let phase: "completed" | "rejected" | "indeterminate";
     try {
-      outcome = {
-        result: await effect.run(() => assertCurrent(request)),
-      };
+      const result = await effect.run(() => assertCurrent(request));
+      if (result === null) return;
+      outcome = { result };
       phase = "completed";
     } catch (error) {
       if (isSupervisorError(error)) {

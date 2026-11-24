@@ -950,6 +950,12 @@ owns capacity and lease transitions.
 
 ### Workspace protocol 1
 
+An accepted workload records its native process group before the shell is
+authorized. When a restarted supervisor observes the same group still active,
+it keeps the original receipt accepted. Web rechecks it on the existing
+recovery cadence without consuming another admission attempt. Positive
+retirement settles an interrupted receipt without repeating the command.
+
 The checked-in preparation path negotiates protocol 1 with its selected
 supervisor. Repository discovery uses that host's configured source
 registry. Checkout uses the exact frozen commit, a private cache fenced by

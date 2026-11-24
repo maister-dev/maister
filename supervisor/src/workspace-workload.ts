@@ -41,7 +41,11 @@ const declarationsSchema = z
           .min(1)
           .max(WORKSPACE_WORKLOAD_MAX_COMMAND_LENGTH)
           .refine((command) => !command.includes("\0")),
-        timeoutMs: z.number().int().min(1).max(WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS),
+        timeoutMs: z
+          .number()
+          .int()
+          .min(1)
+          .max(WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS),
         structuredOutput: z.enum(["json", "jsonFile"]).optional(),
       })
       .strict(),
@@ -378,7 +382,7 @@ const persistedProcess = z
 export async function recoverWorkspaceWorkload(
   receipt: CommandReceiptRow,
   generation: number,
-): Promise<WorkspaceWorkloadResult> {
+): Promise<WorkspaceWorkloadResult | null> {
   const witness = (receipt.body as { workspaceProcess?: unknown })
     .workspaceProcess;
   let quiescence: WorkspaceWorkloadResult["quiescence"] = "proved";
@@ -388,11 +392,15 @@ export async function recoverWorkspaceWorkload(
 
     if (!process.success) quiescence = "uncertain";
     else if (process.data.osBootIdentity === current.osBootIdentity) {
-      if (
-        process.data.pidNamespace !== current.pidNamespace ||
-        (await inspectProcessGroup(process.data.group)).state !== "retired"
-      )
+      if (process.data.pidNamespace !== current.pidNamespace) {
         quiescence = "uncertain";
+      } else {
+        const observed = await inspectProcessGroup(process.data.group);
+        // Keep the accepted receipt and its group fence while the same native
+        // group is still visible. Replaying the command can later observe retirement.
+        if (observed.state === "active") return null;
+        if (observed.state === "unavailable") quiescence = "uncertain";
+      }
     }
   }
 

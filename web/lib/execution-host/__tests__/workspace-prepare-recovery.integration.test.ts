@@ -2,6 +2,7 @@ import type { Db } from "../db";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { WorkspacePrepareRequest } from "../../../../runtime/workspace-prepare";
+import { inspectProcessGroup } from "../../../../runtime/process-group";
 import { WORKSPACE_WORKLOAD_FILE } from "../../../../runtime/workspace-prepare";
 
 import { execFileSync } from "node:child_process";
@@ -11,6 +12,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { eq, sql } from "drizzle-orm";
 import { afterEach, expect, it, vi } from "vitest";
@@ -233,6 +235,13 @@ async function assertAddressedRequirement({
               "printf 'check diagnostic'; printf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"",
             timeoutMs: 5000,
             structuredOutput: "jsonFile",
+          },
+          {
+            id: "crash-check",
+            workload: "check",
+            command:
+              "printf 'started\\n' >> .workload-crash-fixture; for ((i=0;i<200;i++)); do test -f .workload-crash-release && exit 0; sleep 0.1; done; exit 1",
+            timeoutMs: 25_000,
           },
         ]),
       ),
@@ -572,6 +581,106 @@ async function assertAddressedRequirement({
     transportForHost: async () => transport,
   });
   expect(checkResult).toEqual({ kind: "value", value: { verified: true } });
+
+  const crashWork = await reserveWorkspaceWorkload(db, {
+    ...workloadIntent,
+    operationKey: "crash-check-0",
+    declarationId: "crash-check",
+  });
+  supervisor = await supervisor.restart();
+  expect(await transport.getWorkspaceCommandReceipt!(crashWork.id)).toBeNull();
+  expect(
+    await recoverExecutionCommands({ db, transport, graceMs: 0 }),
+  ).toMatchObject({ errors: [], redelivered: 1 });
+  const hostDb = new DatabaseSync(join(supervisor.stateDir, "state.sqlite"), {
+    readOnly: true,
+  });
+  const owned = (() => {
+    try {
+      return hostDb
+        .prepare("SELECT real_path AS path FROM workspaces WHERE id = ?")
+        .get(workspace.executionWorkspaceId) as { path: string };
+    } finally {
+      hostDb.close();
+    }
+  })();
+  const markerPath = join(owned.path, ".workload-crash-fixture");
+  const releasePath = join(owned.path, ".workload-crash-release");
+  const group = await vi.waitFor(async () => {
+    expect(await readFile(markerPath, "utf8")).toBe("started\n");
+    const hostDb = new DatabaseSync(
+      join(supervisor!.stateDir, "state.sqlite"),
+      { readOnly: true },
+    );
+    try {
+      const process = hostDb
+        .prepare(
+          "SELECT json_extract(body_json, '$.workspaceProcess.group') AS pgid FROM command_receipts WHERE command_id = ?",
+        )
+        .get(crashWork.id) as { pgid: number };
+      expect(process.pgid).toBeGreaterThan(1);
+      return process.pgid;
+    } finally {
+      hostDb.close();
+    }
+  });
+  const recoverAt = async (seconds: number) =>
+    recoverExecutionCommands({
+      db,
+      transport,
+      graceMs: 0,
+      now: () => new Date(Date.now() + seconds * 1000),
+    });
+  try {
+    supervisor = await supervisor.restart();
+    expect((await inspectProcessGroup(group)).state).toBe("active");
+    expect(await recoverAt(30)).toMatchObject({ errors: [], redelivered: 1 });
+    // The replay observes an active group while the fixture retains the release marker.
+    await new Promise<void>((resolve) => setTimeout(resolve, 400));
+    expect(
+      await transport.getWorkspaceCommandReceipt!(crashWork.id),
+    ).toMatchObject({ phase: "accepted" });
+    await writeFile(releasePath, "release");
+    await vi.waitFor(async () =>
+      expect((await inspectProcessGroup(group)).state).toBe("retired"),
+    );
+    expect(await recoverAt(60)).toMatchObject({ errors: [], redelivered: 1 });
+    await vi.waitFor(async () => {
+      expect(
+        await transport.getWorkspaceCommandReceipt!(crashWork.id),
+      ).toMatchObject({
+        phase: "completed",
+        result: { processOutcome: "interrupted", quiescence: "proved" },
+      });
+    });
+    expect(
+      await consumeRuntimeEventStreamOnce({
+        db,
+        executionHostId: host.id,
+        transport,
+        owner: "fixture",
+        maxEvents: 1,
+        signal: AbortSignal.timeout(15_000),
+      }),
+    ).toMatchObject({ received: 1, acknowledged: 1 });
+    await projectExecutionEvents({
+      db,
+      projector: canonicalLifecycleProjector,
+      runId,
+      now: new Date(projectedAt.getTime() + 150_000),
+    });
+    expect(await getCommand(db, crashWork.id)).toMatchObject({
+      attempts: 1,
+      state: "succeeded",
+      result: { processOutcome: "interrupted", quiescence: "proved" },
+    });
+    expect(await readFile(markerPath, "utf8")).toBe("started\n");
+  } finally {
+    await writeFile(releasePath, "release");
+    await vi.waitFor(async () =>
+      expect((await inspectProcessGroup(group)).state).toBe("retired"),
+    );
+  }
 
   const agentId = "fixture-vault:reader";
   await database.pool.query(

@@ -315,7 +315,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Tested with Darwin arm64, Node 24.15.0, real PostgreSQL, SQLite and a
   local supervisor. Passed 19 Web and 51 supervisor integration tests,
   both typechecks, the contract suite and docs/ERD validation. The main
-  Flow drivers and supervisor death witnesses remain open.
+  Flow drivers remain open.
 
   The selected supervisor also captures a declared `MAISTER_OUTPUT_FILE`
   as a bounded, digest-verified runtime object. The real Web/host fixture
@@ -336,6 +336,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   retained the workspace. The supervisor also refused a stale epoch before
   storing a receipt and truncated a real oversized stream. Passed 16 Web and
   26 supervisor integrations, both typechecks, contracts and docs/ERD.
+
+  In the process-restart fixture a restart before admission left the command
+  queued, and a restart after the shell had written its marker found the
+  original process group still active. RED terminalized the accepted receipt
+  too early. GREEN kept the receipt open, then projected one interrupted
+  result after the native group retired. One marker write and one ledger
+  admission attempt survived both restarts. Passed 16 Web and 26 supervisor
+  integration cases and both typechecks.
 
 ### C3–C4 — review, board and single-host qualification
 
