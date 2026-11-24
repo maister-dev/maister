@@ -39,6 +39,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         getDb(),
         actor.tokenId,
         body.data,
+        request.signal,
       );
 
       if (receipt.state === "checkpoint_pending")

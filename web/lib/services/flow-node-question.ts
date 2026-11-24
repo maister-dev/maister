@@ -3,6 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { HitlRequest } from "@/lib/db/schema";
+import type { FlowQuestionSource } from "@/lib/execution-host/flow-question-source";
 import type { ScopedHumanAskBody } from "./agent-question-contract";
 
 import { randomUUID } from "node:crypto";
@@ -30,8 +31,8 @@ import {
   permissionCheckpointOrder,
 } from "@/lib/execution-host/permission-handoff-evidence";
 import {
-  captureFlowQuestionSource,
   latestFlowQuestionAttempt,
+  readScopedFlowQuestionPrompt,
   recoverEligibleFlowQuestionHeads,
 } from "@/lib/execution-host/flow-question-source";
 import { nodePermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
@@ -69,6 +70,16 @@ type Receipt = {
     | "failed";
 };
 
+type PendingPrompt = Readonly<{
+  state: "prompt_pending";
+  runId: string;
+  commandId: string;
+  incarnationId: string;
+}>;
+
+const PROMPT_ACCEPTANCE_TIMEOUT_MS = 8_000;
+const PROMPT_ACCEPTANCE_RECHECK_MS = 250;
+
 export function nodeQuestionReceipt(question: HitlRequest): Receipt {
   const state = question.supersededAt
     ? "closed"
@@ -90,9 +101,108 @@ export async function requestFlowNodeQuestion(
   db: Db,
   tokenId: string,
   body: ScopedHumanAskBody,
+  signal?: AbortSignal,
 ): Promise<Receipt> {
   const digest = contentDigest(body);
-  const result = await db.transaction(async (tx) => {
+  const request = { tokenId, body, digest, signal };
+  const first = await writeFlowNodeQuestion(db, request);
+  const result =
+    first.state === "prompt_pending"
+      ? await waitForFlowQuestionPrompt(db, request, first)
+      : first;
+
+  log.info(
+    { questionId: result.questionId, state: result.state },
+    "node question persisted",
+  );
+
+  return result;
+}
+
+type FlowQuestionRequest = Readonly<{
+  tokenId: string;
+  body: ScopedHumanAskBody;
+  digest: string;
+  signal?: AbortSignal;
+}>;
+
+function verifyPendingPrompt(
+  expected: PendingPrompt | undefined,
+  runId: string,
+  proof: FlowQuestionSource["flowQuestion"],
+): void {
+  if (
+    expected &&
+    (expected.runId !== runId ||
+      expected.commandId !== proof.commandId ||
+      expected.incarnationId !== proof.incarnationId)
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "The requesting node prompt was replaced",
+    );
+}
+
+async function waitForFlowQuestionPrompt(
+  db: Db,
+  request: FlowQuestionRequest,
+  pending: PendingPrompt,
+): Promise<Receipt> {
+  const deadline = performance.now() + PROMPT_ACCEPTANCE_TIMEOUT_MS;
+  const { runId, commandId, incarnationId } = pending;
+
+  log.debug(
+    { runId, commandId, incarnationId },
+    "waiting for node prompt acceptance",
+  );
+  for (;;) {
+    request.signal?.throwIfAborted();
+    const remaining = deadline - performance.now();
+    const stop = new AbortController();
+    const signal = request.signal
+      ? AbortSignal.any([request.signal, stop.signal])
+      : stop.signal;
+    // Subscribe before rereading. A timed reread also sees commits on another Web process.
+    const wake =
+      remaining > 0
+        ? runEventWakeBus.wait(
+            runId,
+            Math.min(remaining, PROMPT_ACCEPTANCE_RECHECK_MS),
+            signal,
+          )
+        : null;
+
+    try {
+      const result = await writeFlowNodeQuestion(db, request, pending);
+
+      if (result.state !== "prompt_pending") return result;
+      if (!wake) break;
+      // The transaction has ended before waiting for acceptance or lifecycle projection.
+      await wake;
+    } finally {
+      stop.abort();
+    }
+  }
+
+  log.warn(
+    { runId, commandId, incarnationId },
+    "node prompt acceptance did not become durable",
+  );
+  throw new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    "The current Flow node prompt is still being accepted. Retry with the same request key.",
+    { details: { reason: "flow_question_prompt_acceptance_pending" } },
+  );
+}
+
+function writeFlowNodeQuestion(
+  db: Db,
+  { tokenId, body, digest, signal }: FlowQuestionRequest,
+  expected?: PendingPrompt,
+): Promise<Receipt | PendingPrompt> {
+  signal?.throwIfAborted();
+
+  return db.transaction(async (tx) => {
     const [selector] = await tx
       .select({ runId: projectTokens.bound_run_id })
       .from(projectTokens)
@@ -183,9 +293,12 @@ export async function requestFlowNodeQuestion(
       );
 
     if (prior) {
+      const envelope = nodeQuestionEnvelope.parse(prior.schema);
+
+      verifyPendingPrompt(expected, run.id, envelope.flowQuestion);
       if (
         prior.flowRequestKey !== body.requestKey ||
-        nodeQuestionEnvelope.parse(prior.schema).requestDigest !== digest
+        envelope.requestDigest !== digest
       )
         throw new MaisterError(
           "CONFLICT",
@@ -194,7 +307,22 @@ export async function requestFlowNodeQuestion(
 
       return nodeQuestionReceipt(prior);
     }
-    const source = await captureFlowQuestionSource(tx, run.id, attempt.id);
+    const { state, source } = await readScopedFlowQuestionPrompt(
+      tx,
+      run.id,
+      attempt.id,
+    );
+
+    verifyPendingPrompt(expected, run.id, source.flowQuestion);
+    if (state === "pending")
+      return {
+        state: "prompt_pending",
+        runId: run.id,
+        commandId: source.flowQuestion.commandId,
+        incarnationId: source.flowQuestion.incarnationId,
+      };
+
+    signal?.throwIfAborted();
     const questionId = randomUUID();
 
     await createHitlRequest(
@@ -223,15 +351,8 @@ export async function requestFlowNodeQuestion(
       .set({ status: "NeedsInput" })
       .where(eq(nodeAttempts.id, attempt.id));
 
-    return { questionId, state: "checkpoint_pending" as const };
+    return { questionId, state: "checkpoint_pending" };
   });
-
-  log.info(
-    { questionId: result.questionId, state: result.state },
-    "node question persisted",
-  );
-
-  return result;
 }
 
 /** Restore the source owner only with its Run, attempt and pending question already locked and verified. */

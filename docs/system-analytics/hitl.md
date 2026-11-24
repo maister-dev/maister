@@ -1478,6 +1478,19 @@ transitions to `Crashed` and the stored intent is closed with
 The helper exists in `web/lib/runs/state-transitions.ts`; the
 runner-agent enforcement is queued for a follow-up patch.
 
+## Ordinary Flow node question (Implemented)
+
+The scoped `ask_human` route revalidates the attempt token and its exact Run,
+ordinal, assignment epoch, owned prompt command, and session incarnation
+before persisting a checkpoint request. An agent may call the route while
+the prompt is being delivered or the session's activation is being recorded.
+The route releases locks and waits briefly for those same records. Each
+wake or bounded recheck reads durable state, verifies ownership again and
+requires an accepted command and active incarnation before creating a
+question. Revocation, replacement or closure ends the wait. If the exact
+source remains pending at the deadline, the API returns HTTP 503 and the
+caller can retry with the same request key.
+
 ## Agent question — task-bound clarification (Implemented — ADR-136)
 
 `agent_question` is a standalone-agent request for a human clarification on a

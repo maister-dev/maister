@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ActiveRunSession } from "@/lib/runs/active-run-session";
+import type { SQL } from "drizzle-orm";
 import type { Db } from "./db";
 import type { z } from "zod";
 
@@ -20,6 +21,11 @@ import { MaisterError } from "@/lib/errors";
 export type FlowQuestionSource = Readonly<{
   supervisorSessionId: string;
   flowQuestion: z.infer<typeof nodePermissionSourceSchema>;
+}>;
+
+export type FlowQuestionPrompt = Readonly<{
+  state: "ready" | "pending";
+  source: FlowQuestionSource;
 }>;
 
 /** The Run lock serializes transitions, while attempt numbers distinguish visits to the same graph node. */
@@ -57,26 +63,70 @@ export async function captureFlowQuestionSource(
   runId: string,
   credentialAttemptId?: string,
 ): Promise<FlowQuestionSource> {
+  const proof = await readFlowQuestionPrompt(
+    tx,
+    runId,
+    credentialAttemptId === undefined
+      ? sql`attempt.node_id=execution.current_step_id`
+      : sql`attempt.id=${credentialAttemptId}`,
+    credentialAttemptId === undefined
+      ? sql`command.state='accepted'`
+      : sql`command.state='accepted' AND incarnation.state='active'`,
+  );
+
+  return proof.source;
+}
+
+/** An immediate callback can precede the manager's prompt ACK or session activation. */
+export function readScopedFlowQuestionPrompt(
+  tx: Db,
+  runId: string,
+  credentialAttemptId: string,
+): Promise<FlowQuestionPrompt> {
+  return readFlowQuestionPrompt(
+    tx,
+    runId,
+    sql`attempt.id=${credentialAttemptId}`,
+    sql`command.state IN ('delivering','accepted')
+      AND command.completed_at IS NULL AND command.retired_at IS NULL
+      AND command.application_state='pending' AND command.application_error IS NULL
+      AND incarnation.state IN ('created','active') AND incarnation.ended_at IS NULL
+      AND command.execution_host_id=fence.execution_host_id
+      AND command.owner_ref->>'runId'=execution.id
+      AND command.owner_ref->>'assignmentId'=fence.id
+      AND command.owner_ref->'assignmentEpoch'=to_jsonb(fence.epoch)
+      AND command.owner_ref->>'runSessionId'=incarnation.run_session_id
+      AND command.owner_ref->'version'='1'::jsonb`,
+  );
+}
+
+async function readFlowQuestionPrompt(
+  tx: Db,
+  runId: string,
+  attemptScope: SQL,
+  promptEligibility: SQL,
+): Promise<FlowQuestionPrompt> {
   const rows = (
     await tx.execute(sql`
     SELECT command.id AS command_id,command.owner_ref,command.target_session_id,
       attempt.id AS node_attempt_id,attempt.action_prompt_ordinal,
-      fence.id AS assignment_id,incarnation.id AS incarnation_id
+      fence.id AS assignment_id,incarnation.id AS incarnation_id,
+      (command.state='accepted' AND incarnation.state='active') AS ready
     FROM runs execution
-    JOIN node_attempts attempt ON attempt.run_id=execution.id AND ${credentialAttemptId === undefined ? sql`attempt.node_id=execution.current_step_id` : sql`attempt.id=${credentialAttemptId}`}
+    JOIN node_attempts attempt ON attempt.run_id=execution.id AND ${attemptScope}
       AND attempt.status='Running' AND attempt.execution_assignment_id=execution.execution_assignment_id
     JOIN execution_assignments fence ON fence.id=execution.execution_assignment_id AND fence.run_id=execution.id AND fence.state='active'
     JOIN execution_commands command ON command.run_id=execution.id AND command.execution_assignment_id=fence.id
       AND command.assignment_epoch=fence.epoch AND command.kind='session.prompt' AND command.owner_kind='flow_node_attempt'
       AND command.owner_ref->>'nodeAttemptId'=attempt.id AND command.owner_ref->'promptOrdinal'=to_jsonb(attempt.action_prompt_ordinal)
-      AND command.owner_ref->>'variant' IN ('node','permission_resume') AND command.state='accepted'
+      AND command.owner_ref->>'variant' IN ('node','permission_resume')
     JOIN run_session_incarnations incarnation ON incarnation.id=command.owner_ref->>'incarnationId'
       AND incarnation.run_id=execution.id AND incarnation.execution_assignment_id=fence.id
       AND incarnation.execution_host_id=command.execution_host_id AND incarnation.assignment_epoch=fence.epoch
       AND incarnation.host_session_id=command.target_session_id AND incarnation.acp_session_id IS NOT NULL
-      ${credentialAttemptId === undefined ? sql`` : sql`AND incarnation.state='active'`}
     WHERE execution.id=${runId} AND execution.run_kind='flow' AND execution.status='Running'
       AND NOT EXISTS(SELECT 1 FROM node_attempts newer WHERE newer.run_id=execution.id AND newer.node_id=attempt.node_id AND newer.attempt>attempt.attempt)
+      AND ${promptEligibility}
     FOR UPDATE OF attempt
   `)
   ).rows;
@@ -115,8 +165,11 @@ export async function captureFlowQuestionSource(
     );
 
   return {
-    supervisorSessionId: source.target_session_id,
-    flowQuestion: parsed.data,
+    state: source.ready === true ? "ready" : "pending",
+    source: {
+      supervisorSessionId: source.target_session_id,
+      flowQuestion: parsed.data,
+    },
   };
 }
 

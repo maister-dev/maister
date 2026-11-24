@@ -3,7 +3,7 @@ import type { Db } from "@/lib/execution-host/db";
 import { randomUUID } from "node:crypto";
 
 import { sql, eq, and } from "drizzle-orm";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import {
   nodeAttempts,
@@ -15,6 +15,7 @@ import {
   projectTokens,
   executionEvents,
   executionCommands,
+  runSessionIncarnations,
 } from "@/lib/db/schema";
 import {
   requestFlowNodeQuestion,
@@ -35,6 +36,7 @@ import { respondToHitl } from "@/lib/services/hitl";
 import { markResumed } from "@/lib/runs/state-transitions";
 import { issueFlowQuestionNodeToken } from "@/lib/agents/tokens";
 import { captureFlowQuestionSource } from "@/lib/execution-host/flow-question-source";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import {
   seedLocalHost,
   seedProject,
@@ -653,6 +655,175 @@ it("IT-ASK-03 / IT-ASK-04 captures the requesting node's accepted turn when the 
   } finally {
     independent.resolve({ stopReason: "end_turn", meta: null });
     hold.resolve({ stopReason: "end_turn", meta: null });
+    await fake.waitForCanonicalEvents();
+  }
+});
+
+it("waits for the exact node prompt and its live session to become durable", async () => {
+  const fake = createFakeExecutionHost();
+  const projectId = await seedProject(database.db);
+
+  const runId = await seedRun(database.db, {
+    projectId,
+    status: "Running",
+    runKind: "flow",
+    executionDataPlaneMode: "canonical_events_v1",
+  });
+
+  await seedWorkspace(database.db, {
+    runId,
+    projectId,
+    worktreePath: "/tmp/flow-ask-pending/work",
+    parentRepoPath: "/tmp/flow-ask-pending",
+  });
+  const installed = await fakeExecutionHosts(db, { fake, runId });
+  const client = await installed.hosts.forAssignment(installed.assignment!);
+  const stepId = "design";
+
+  fake.holdIngest();
+  const session = await client.createSession({
+    stepId,
+    sessionName: stepId,
+    executor: { agent: "claude", model: "mock" },
+  });
+  const admitOwner = await seedNodePromptOwner(
+    db,
+    client,
+    session.hostSessionId,
+    {
+      stepId,
+    },
+  );
+  const { owner } = await admitOwner(db);
+
+  if (owner.kind !== "flow_node_attempt")
+    throw new Error("Expected a Flow node prompt owner");
+  const { nodeAttemptId } = owner.ref;
+  const issueToken = () =>
+    issueFlowQuestionNodeToken({
+      projectId,
+      runId,
+      nodeAttemptId,
+      agentId: "test-designer",
+      assignmentId: client.assignment.id,
+      promptOrdinal: 0,
+      db,
+    });
+  const token = await issueToken();
+  const input = {
+    requestKey: "path",
+    question: "Which path?",
+    schema: {
+      schemaVersion: 1 as const,
+      fields: [{ name: "path", type: "string" as const, required: true }],
+    },
+  };
+  const deliveryStarted = Promise.withResolvers<void>();
+  const releaseAcceptance = Promise.withResolvers<void>();
+  const completePrompt = Promise.withResolvers<{
+    stopReason: "end_turn";
+    meta: null;
+  }>();
+  const removeHook = fake.onCall("startPrompt", async () => {
+    deliveryStarted.resolve();
+    await releaseAcceptance.promise;
+  });
+  const cancel = new AbortController();
+
+  fake.setPromptBehavior(() => completePrompt.promise);
+  const delivery = client.prompt(
+    session.hostSessionId,
+    { stepId, prompt: "Choose a path" },
+    { admitOwner },
+  );
+
+  try {
+    await Promise.race([deliveryStarted.promise, delivery]);
+    const commandId = fake.callsOf("startPrompt")[0].envelope!.command.id;
+    const readCommand = () =>
+      db
+        .select({ state: executionCommands.state })
+        .from(executionCommands)
+        .where(eq(executionCommands.id, commandId));
+    const questions = () =>
+      db.select().from(hitlRequests).where(eq(hitlRequests.runId, runId));
+
+    expect(await readCommand()).toEqual([{ state: "delivering" }]);
+    const expectWaiting = async (asking: Promise<unknown>): Promise<void> => {
+      await expect(
+        Promise.race([
+          asking.then(() => "settled"),
+          vi
+            .waitFor(() => expect(runEventWakeBus.waiterCount(runId)).toBe(1))
+            .then(() => "waiting"),
+        ]),
+      ).resolves.toBe("waiting");
+    };
+    const revoked = requestFlowNodeQuestion(
+      db,
+      token.tokenId,
+      input,
+      cancel.signal,
+    );
+
+    await expectWaiting(revoked);
+    const current = await issueToken();
+
+    // Credential rotation commits without a process-local Run wake.
+    await expect(revoked).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const asking = requestFlowNodeQuestion(
+      db,
+      current.tokenId,
+      input,
+      cancel.signal,
+    );
+
+    await expectWaiting(asking);
+    expect(await questions()).toEqual([]);
+    releaseAcceptance.resolve();
+    await delivery;
+    expect(await readCommand()).toEqual([{ state: "accepted" }]);
+    expect(
+      await db
+        .select({ state: runSessionIncarnations.state })
+        .from(runSessionIncarnations)
+        .where(eq(runSessionIncarnations.id, owner.ref.incarnationId)),
+    ).toEqual([{ state: "created" }]);
+    await expectWaiting(asking);
+    await expect(asking).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      details: { reason: "flow_question_prompt_acceptance_pending" },
+    });
+    expect(runEventWakeBus.waiterCount(runId)).toBe(0);
+    expect(await questions()).toEqual([]);
+    const retry = requestFlowNodeQuestion(
+      db,
+      current.tokenId,
+      input,
+      cancel.signal,
+    );
+
+    await expectWaiting(retry);
+    await fake.releaseIngest();
+    const receipt = await retry;
+    const [question] = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.id, receipt.questionId));
+
+    expect(receipt.state).toBe("checkpoint_pending");
+    expect(question.schema).toMatchObject({
+      supervisorSessionId: session.hostSessionId,
+      flowQuestion: { commandId, nodeAttemptId, promptOrdinal: 0 },
+    });
+    expect(runEventWakeBus.waiterCount(runId)).toBe(0);
+  } finally {
+    cancel.abort();
+    releaseAcceptance.resolve();
+    completePrompt.resolve({ stopReason: "end_turn", meta: null });
+    removeHook();
+    await delivery;
+    await fake.releaseIngest();
     await fake.waitForCanonicalEvents();
   }
 });
