@@ -630,7 +630,7 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
   const commit = git(repository, "rev-parse", "HEAD");
   vi.stubEnv(
     "MAISTER_WORKSPACE_REPOSITORIES",
-    JSON.stringify({ "fixture-repo": repository }),
+    JSON.stringify({ "fixture-repo": repository, "other-repo": repository }),
   );
   const host = await bootHost({ runtimeRoot: root });
   hosts.push(host);
@@ -657,6 +657,24 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
     refs: ["refs/heads/main"],
     defaultRef: "refs/heads/main",
     nextCursor: null,
+  });
+
+  execFileSync("git", ["-C", repository, "update-ref", "--stdin"], {
+    input: Array.from({ length: 100 }, (_, index) =>
+      `create refs/heads/fixture-${String(index).padStart(3, "0")} ${commit}\n`,
+    ).join(""),
+  });
+  const firstPage = await addressedRequest(host, "/v1/repositories/fixture-repo/refs");
+  const firstBody = (await firstPage.json()) as { refs: string[]; nextCursor: string | null };
+  expect(firstBody.refs).toHaveLength(100);
+  if (!firstBody.nextCursor) throw new Error("expected a second approved ref page");
+  const suffix = `/refs?cursor=${encodeURIComponent(firstBody.nextCursor)}`;
+  const foreignPage = await addressedRequest(host, `/v1/repositories/other-repo${suffix}`);
+  expect(foreignPage.status).toBe(409);
+  const secondPage = await addressedRequest(host, `/v1/repositories/fixture-repo${suffix}`);
+  expect(secondPage.status).toBe(200);
+  expect(await secondPage.json()).toEqual({
+    refs: ["refs/heads/main"], defaultRef: "refs/heads/main", nextCursor: null,
   });
 
   await writeFile(join(repository, "input.txt"), "second\n");

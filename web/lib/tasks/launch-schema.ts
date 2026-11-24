@@ -132,7 +132,7 @@ export const interactiveRunLaunchPreviewSchema = interactiveFields.pick({
   relaunchOfRunId: true,
   packageVersions: true,
   flowRunnerDraft: true,
-});
+}).extend({ branchCursor: z.string().min(1).max(512).optional() });
 
 export type TaskLaunchRequest = z.infer<typeof interactiveTaskLaunchBodySchema>;
 

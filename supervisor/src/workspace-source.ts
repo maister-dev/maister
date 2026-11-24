@@ -4,15 +4,16 @@ import { promisify } from "node:util";
 
 import { z } from "zod";
 
-import { branchNameViolation } from "../../runtime/git-branch";
+import type { WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
+
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
+import { isWorkspaceSourceRef, workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
 
 import { SupervisorError } from "./types";
 
 const exec = promisify(execFile);
 const SOURCE_READ_TIMEOUT_MS = 8_000;
 const WORKSPACE_GIT_TIMEOUT_MS = 60_000;
-const HEAD_PREFIX = "refs/heads/";
 const GIT_ENVIRONMENT = [
   "PATH",
   "HOME",
@@ -21,14 +22,7 @@ const GIT_ENVIRONMENT = [
   "SSL_CERT_DIR",
 ] as const;
 const OpaqueId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
-const UpstreamRef = z
-  .string()
-  .max(256)
-  .refine(
-    (value) =>
-      value.startsWith(HEAD_PREFIX) &&
-      branchNameViolation(value.slice(HEAD_PREFIX.length)) === undefined,
-  );
+const UpstreamRef = z.string().refine(isWorkspaceSourceRef);
 
 export const WorkspaceSourceQuery = z
   .object({ repositoryId: OpaqueId, ref: UpstreamRef })
@@ -150,18 +144,18 @@ export async function observeWorkspaceSource(
 
 export async function listWorkspaceSourceRefs(
   source: string,
-  cursor: string | undefined,
-): Promise<{
-  refs: string[];
-  defaultRef: string | null;
-  nextCursor: string | null;
-}> {
+  scope: Readonly<{ repositoryId: string; hostKey: string; cursor?: string }>,
+): Promise<WorkspaceSourceRefPage> {
+  const { cursor } = scope;
+  const domain = `${workspaceEvidenceDigest([scope.hostKey, scope.repositoryId])}:`;
   let after: string | null = null;
   if (cursor !== undefined) {
     const decoded = Buffer.from(cursor, "base64url");
-    after = decoded.toString("utf8");
+    const position = decoded.toString("utf8");
+    after = position.slice(domain.length);
     if (
       decoded.toString("base64url") !== cursor ||
+      !position.startsWith(domain) ||
       !UpstreamRef.safeParse(after).success
     )
       throw new SupervisorError(
@@ -212,7 +206,7 @@ export async function listWorkspaceSourceRefs(
     defaultRef: defaultRef && all.includes(defaultRef) ? defaultRef : null,
     nextCursor:
       remaining.length > refs.length && last
-        ? Buffer.from(last).toString("base64url")
+        ? Buffer.from(domain + last).toString("base64url")
         : null,
   };
 }

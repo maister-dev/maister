@@ -37,6 +37,7 @@ import type {
   WorkspaceKind,
 } from "./types";
 import type { RuntimeEventWireEnvelope } from "./runtime-events";
+import type { WorkspaceSourceRefPage } from "../../../runtime/workspace-prepare";
 import type { WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceCommandReceipt, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../../runtime/workspace-prepare";
 
 // ADR-166 D10: the typed boundary domain code addresses execution through.
@@ -309,6 +310,7 @@ export interface ExecutionHostTransport {
   getWorkspaceStatus?(handle: string, generation: number): Promise<WorkspaceStatus>;
   getWorkspaceDiff?(handle: string, query: WorkspaceDiffQuery): Promise<WorkspaceEvidenceObject>;
   observeWorkspaceRevision?(repositoryId: string, ref: string): Promise<string>;
+  listWorkspaceSourceRefs?(repositoryId: string, cursor?: string): Promise<WorkspaceSourceRefPage>;
   retireCommand(
     commandId: string,
     request: CommandRetirementRequest,

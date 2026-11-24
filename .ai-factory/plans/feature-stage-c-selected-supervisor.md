@@ -425,6 +425,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   The board picker,
   shared-root inheritance and actual placement over SSE remain open.
 
+  The authenticated board preview uses the selected supervisor's approved
+  repository ref page. RED tried to list branches in Web's missing checkout.
+  GREEN returned `main` from the actual host and the selected identity in
+  the response. A separate host integration refused a cursor from another
+  repository and returned the second page for the original source. Passed
+  3 Web and 3 host integrations, 24 preview regressions, both typechecks and
+  docs/ERD. Acceptance and preparation still require the legacy local Git
+  evidence until the addressed launch identity is in place.
+
 - [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.
 
 ### C5–C7 — separately shippable two-host pilot

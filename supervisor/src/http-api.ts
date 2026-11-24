@@ -2031,7 +2031,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         details: { reason: "resource_not_found" },
       });
 
-    return reply.status(200).send(await listWorkspaceSourceRefs(source, query.data.cursor));
+    return reply.status(200).send(await listWorkspaceSourceRefs(source, {
+      repositoryId: repository.data,
+      hostKey: hostState.hostKey,
+      cursor: query.data.cursor,
+    }));
   });
   app.post("/v1/repositories/resolve-revision", async (req, reply) => {
     const query = WorkspaceSourceQuery.safeParse(req.body);

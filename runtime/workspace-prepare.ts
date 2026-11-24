@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { canonicalCommandJson } from "./command-json";
 import { EXECUTION_HOST_KEY_PATTERN } from "./execution-host-address";
+import { branchNameViolation } from "./git-branch";
 
 export type WorkspacePrepareInput =
   | Readonly<{
@@ -453,4 +454,17 @@ export function workspaceCommandRequestDigest(
     hostKey: request.owner.hostKey,
     ...request,
   });
+}
+export type WorkspaceSourceRefPage = Readonly<{
+  refs: readonly string[];
+  defaultRef: string | null;
+  nextCursor: string | null;
+}>;
+
+export function isWorkspaceSourceRef(value: string): boolean {
+  const prefix = "refs/heads/";
+
+  return value.length <= 256 &&
+    value.startsWith(prefix) &&
+    branchNameViolation(value.slice(prefix.length)) === undefined;
 }

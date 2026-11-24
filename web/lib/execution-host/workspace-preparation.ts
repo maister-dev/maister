@@ -5,6 +5,7 @@ import type {
   WorkspaceStatus,
   WorkspaceDiffQuery,
   WorkspaceEvidenceObject,
+  WorkspaceSourceRefPage,
 } from "../../../runtime/workspace-prepare";
 import type { Db } from "./db";
 import type { ExecutionHostTransport } from "./contracts";
@@ -66,6 +67,19 @@ export async function observeSelectedWorkspaceRevision(
     : `refs/heads/${branch}`;
 
   return transport.observeWorkspaceRevision(repositoryId, ref);
+}
+
+export async function listAddressedWorkspaceRefs(
+  repositoryId: string,
+  cursor?: string,
+  transport = defaultTransport(),
+): Promise<WorkspaceSourceRefPage> {
+  if (!configuredSelectedExecutionEndpoint() || !transport.listWorkspaceSourceRefs)
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "Selected host cannot list approved Git refs", {
+      details: { reason: "workspace_protocol_unsupported" },
+    });
+
+  return transport.listWorkspaceSourceRefs(repositoryId, cursor);
 }
 
 type RetainedWorkspaceRead = Pick<

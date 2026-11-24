@@ -2352,6 +2352,10 @@ paths:
         - name: executionHostId
           in: query
           schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: branchCursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 512 }
+          description: Continuation issued for the same addressed supervisor and project repository.
         - name: relaunchOfRunId
           in: query
           description: Scoped source run included in the immutable settings token; task input and launch authority are captured fresh.
@@ -27282,6 +27286,7 @@ components:
       additionalProperties: false
       required: [taskId]
       properties:
+        branchCursor: { type: string, minLength: 1, maxLength: 512 }
         executionHostId:
           type: string
           minLength: 1
@@ -32997,6 +33002,12 @@ components:
           deliveryPolicyDefault,
         ]
       properties:
+        branchesNextCursor:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 512
+          description: Present for addressed repository pages. Null marks the last page.
         executionHostSelection:
           $ref: "#/components/schemas/TaskLaunchHostSelection"
         canManagePackages:

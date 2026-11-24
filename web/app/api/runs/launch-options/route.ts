@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 import { bindTaskLaunchPlacementToken, resolveTaskLaunchPlacement } from "@/lib/execution-host/project-preference";
+import { listAddressedWorkspaceRefs } from "@/lib/execution-host/workspace-preparation";
 
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import {
@@ -101,6 +102,7 @@ const querySchema = z
     taskId: z.string().min(1).max(256),
     flowId: z.string().min(1).max(256).optional(),
     executionHostId: z.string().min(1).max(256).optional(),
+    branchCursor: z.string().min(1).max(512).optional(),
     runnerId: z.string().min(1).max(256).optional(),
     relaunchOfRunId: z.string().min(1).max(256).optional(),
     packageVersions: z.string().max(32768).optional(),
@@ -354,7 +356,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 async function readLaunchOptions(
   client: Db,
   user: Awaited<ReturnType<typeof requireActiveSession>>,
-  selection: Partial<TaskLaunchRequest> & { taskId: string },
+  selection: Partial<TaskLaunchRequest> & { taskId: string; branchCursor?: string },
   surface?: "interactive",
 ) {
   const db = client as any;
@@ -390,6 +392,8 @@ async function readLaunchOptions(
         )
       : await requireProjectAction(project.id, "launchRun");
   const placement = await resolveTaskLaunchPlacement(client, project, selection.executionHostId);
+  if (selection.branchCursor !== undefined && !placement)
+    throw new MaisterError("CONFIG", "A branch cursor requires an addressed supervisor");
   const canConfigureRunnerBindings = projectRolesForActions([
     "editSettings",
   ]).includes(authorization.role);
@@ -866,6 +870,7 @@ async function readLaunchOptions(
     options,
     previewFence,
     placement,
+    branchCursor: selection.branchCursor,
     projectId: project.id,
     repoPath: project.repoPath,
   };
@@ -877,14 +882,20 @@ async function finalizeLaunchOptions(
     options,
     previewFence,
     placement,
+    branchCursor,
     projectId,
     repoPath,
   }: Awaited<ReturnType<typeof readLaunchOptions>>,
 ) {
   // Only the trusted immutable reference leaves the transaction. Git/asset
   // reads cannot hold a database snapshot open.
-  const [branches, availablePackageVersions, assets] = await Promise.all([
-    listBranches(repoPath, { includeRemotes: true }),
+  const [branchPage, availablePackageVersions, assets] = await Promise.all([
+    placement
+      ? listAddressedWorkspaceRefs(projectId, branchCursor).then((page) => ({
+          branches: page.refs.map((ref) => ref.slice("refs/heads/".length)),
+          branchesNextCursor: page.nextCursor,
+        }))
+      : listBranches(repoPath, { includeRemotes: true }).then((branches) => ({ branches })),
     detectAvailablePackageVersions({ projectId, db: db as never }),
     previewFence?.revision
       ? captureTaskLaunchFlowAssetsFromRevision(previewFence.revision)
@@ -903,7 +914,7 @@ async function finalizeLaunchOptions(
           }
         : {}),
       ...(placement ? { executionHostSelection: placement.selection } : {}),
-      branches,
+      ...branchPage,
       availablePackageVersions,
     },
     selectedFlowRevisionId: options.selectedFlowRevisionId,

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
+import type { WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
@@ -45,6 +46,7 @@ import {
   EXECUTION_HOST_KEY_PATTERN,
 } from "../../runtime/execution-host-address";
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
+import { isWorkspaceSourceRef } from "../../runtime/workspace-prepare";
 import {
   MAX_OBJECT_RESPONSE_BYTES,
   parseObjectContentLength,
@@ -1958,6 +1960,29 @@ export async function observeWorkspaceRevision(repositoryId: string, ref: string
     throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid Git revision witness");
 
   return received.data.commit;
+}
+
+const sourceRef = z.string().refine(isWorkspaceSourceRef);
+const workspaceSourceRefPage = z.object({
+  refs: z.array(sourceRef).max(100),
+  defaultRef: sourceRef.nullable(),
+  nextCursor: z.string().min(1).max(512).nullable(),
+}).strict();
+
+export async function listWorkspaceSourceRefs(repositoryId: string, cursor?: string): Promise<WorkspaceSourceRefPage> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const res = await request<unknown>({
+    method: "GET",
+    path: `/v1/repositories/${encodeURIComponent(repositoryId)}/refs${query}`,
+    ctx: "listWorkspaceSourceRefs",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const received = workspaceSourceRefPage.safeParse(res.body);
+  if (res.status !== 200 || !received.success)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid repository branch page");
+
+  return received.data;
 }
 
 export async function getWorkspaceStatus(handle: string, generation: number): Promise<WorkspaceStatus> {

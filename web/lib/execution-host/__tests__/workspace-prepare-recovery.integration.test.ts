@@ -15,6 +15,7 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { eq, sql } from "drizzle-orm";
+import { NextRequest } from "next/server";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { getAssignmentById } from "../assignments";
@@ -52,7 +53,7 @@ import { captureAddressedFlowWorkloads } from "@/lib/flows/addressed-workload-in
 import { runFlow } from "@/lib/flows/runner";
 import { runCliStep } from "@/lib/flows/runner-cli";
 import { loadGitState } from "@/lib/workbench-git/read-model";
-import { gateResults, nodeAttempts, runs, workspaces } from "@/lib/db/schema";
+import { gateResults, nodeAttempts, platformRuntimeSettings, runs, workspaces } from "@/lib/db/schema";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
@@ -187,12 +188,19 @@ it("C-08 drives a pathless graph action and command gate in the same selected ch
     },
   );
   const userId = await seedActiveUser(database.db);
+    session.userId = userId;
   const seeded = await seedGraphRun(database.db, manifest, {
     repoPath: join(root, "no-manager-checkout"),
     workspace: false,
     run: { runKind: "flow", status: "Pending", createdByUserId: userId },
   });
   const { runId, projectId } = seeded;
+    await db.insert(platformRuntimeSettings)
+      .values({ id: "singleton", defaultRunnerId: seeded.executorId })
+      .onConflictDoUpdate({
+        target: platformRuntimeSettings.id,
+        set: { defaultRunnerId: seeded.executorId },
+      });
   await rm(seeded.worktreePath, { recursive: true, force: true });
   await rm(seeded.runtimeRoot, { recursive: true, force: true });
   await addProjectMember(database.db, { userId, projectId, role: "member" });
@@ -214,6 +222,16 @@ it("C-08 drives a pathless graph action and command gate in the same selected ch
   if (registration.status !== "registered")
     throw new Error("graph fixture host failed registration");
   const { host } = registration;
+    const { GET } = await import("@/app/api/runs/launch-options/route");
+    const preview = await GET(new NextRequest(
+      `http://localhost/api/runs/launch-options?taskId=${seeded.taskId}&executionHostId=${host.id}`,
+    ));
+    const previewBody: unknown = await preview.json();
+    expect(preview.status, JSON.stringify(previewBody)).toBe(200);
+    expect(previewBody).toMatchObject({
+      branches: ["main"],
+      executionHostSelection: { effectiveExecutionHostId: host.id, provenance: "explicit" },
+    });
   await db.transaction(async (tx) => {
     const assignment = await mintPlacement(tx as unknown as Db, {
       runId,

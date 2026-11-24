@@ -411,6 +411,12 @@ current eligibility of the saved host. Direct project Flow launch checks the
 stored preference and configured project eligibility. The board picker,
 shared-root inheritance and actual placement display remain designed.
 
+For an addressed selection the Flow preview reads up to 100 branch names
+from the approved source on that supervisor. The response exposes
+`branchesNextCursor`, and the next preview accepts it as `branchCursor`.
+The supervisor binds the cursor to its stable identity and repository ID.
+The preview uses the project checkout only for legacy placement.
+
 Task and Flow previews expose authorized choices. Bind the settings token
 to the actor, project, task and target revision, current input/settings
 digests, default preference revision, eligibility revision and effective host.

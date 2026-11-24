@@ -278,6 +278,7 @@ export function createLocalDirectTransport(
     getWorkspaceStatus: wire.getWorkspaceStatus,
     getWorkspaceDiff: wire.getWorkspaceDiff,
     observeWorkspaceRevision: wire.observeWorkspaceRevision,
+    listWorkspaceSourceRefs: wire.listWorkspaceSourceRefs,
     retireCommand(commandId, request) {
       return wire.retireCommand(commandId, request);
     },
