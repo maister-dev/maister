@@ -2,11 +2,17 @@
 // stranded across a web-process restart between the /respond 202 and
 // the queueMicrotask driver attaching.
 
-import { describe, expect, it, vi } from "vitest";
+import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Owned continuation is qualified with real Postgres in the Flow suite.
 vi.mock("@/lib/flows/graph/permission-resume", () => ({
   hasFlowPermissionResume: async () => false,
+}));
+
+vi.mock("@/lib/execution-host/flow-question-source", () => ({
+  loadCurrentFlowNodeQuestionSession: async () => null,
 }));
 
 // Stub schema tags so the driver's `schemaModule as ...` cast yields
@@ -52,24 +58,13 @@ vi.mock("@/lib/runs/state-transitions", () => ({
   rollbackResumedRun: () => Promise.resolve({ ok: true }),
 }));
 
-vi.mock("@/lib/supervisor-client", () => ({
-  listSessions: () => Promise.resolve([]),
-}));
+const inventoryForRun =
+  vi.fn<(runId: string) => Promise<SupervisorSessionRecord[]>>();
 
-// ADR-166: the sweep lists sessions through the local execution host; every
-// case injects `loadSessions`, so the hosts factory is an inert stand-in (the
-// real module would pull the full schema this fake db does not model).
+// Host routing is qualified against real supervisor processes in integration.
+// Here the inventory seam proves which Run recovery inspects.
 vi.mock("@/lib/execution-host", () => ({
-  createExecutionHosts: () => ({
-    transport: {},
-    local: () => ({ listSessions: () => Promise.resolve([]) }),
-    forRun: () => {
-      throw new Error("not used");
-    },
-    forAssignment: () => {
-      throw new Error("not used");
-    },
-  }),
+  createExecutionHosts: () => ({ inventoryForRun }),
 }));
 
 type Row = Record<string, unknown>;
@@ -154,6 +149,11 @@ function makeFakeDb(opts: {
 }
 
 describe("runResumeRecoverySweep (Codex fix #2)", () => {
+  beforeEach(() => {
+    inventoryForRun.mockReset();
+    inventoryForRun.mockResolvedValue([]);
+  });
+
   it("returns zero-count result when no NeedsInput rows exist", async () => {
     const { runResumeRecoverySweep } = await import("../resume-recovery");
     const { db } = makeFakeDb({
@@ -167,6 +167,7 @@ describe("runResumeRecoverySweep (Codex fix #2)", () => {
     expect(result.rescheduled).toBe(0);
     expect(result.rolledBack).toBe(0);
     expect(result.skipped).toBe(0);
+    expect(inventoryForRun).not.toHaveBeenCalled();
   });
 
   it("returns zero-candidate result when no HITL rows are claimed-but-undelivered", async () => {
@@ -193,35 +194,30 @@ describe("runResumeRecoverySweep (Codex fix #2)", () => {
     });
 
     const scheduleSpy = vi.fn(() => "drive-1");
-    const loadSessionsSpy = vi.fn(async () => ({
-      ok: true as const,
-      map: new Map([
-        [
-          "acp-1",
-          {
-            sessionId: "sup-live",
-            runId: "run-1",
-            projectSlug: "demo",
-            stepId: "plan",
-            status: "live" as const,
-            pid: 1,
-            startedAt: "2026-05-29T00:00:00Z",
-            monotonicId: 0,
-            acpSessionId: "acp-1",
-          },
-        ],
-      ]),
-    }));
+
+    inventoryForRun.mockResolvedValue([
+      {
+        sessionId: "sup-live",
+        runId: "run-1",
+        projectSlug: "demo",
+        stepId: "plan",
+        status: "live",
+        pid: 1,
+        startedAt: "2026-05-29T00:00:00Z",
+        monotonicId: 0,
+        acpSessionId: "acp-1",
+      },
+    ]);
 
     const result = await runResumeRecoverySweep({
       db,
-      loadSessions: loadSessionsSpy,
       scheduleDriver: scheduleSpy,
     });
 
     expect(result.candidatesFound).toBe(1);
     expect(result.rescheduled).toBe(1);
     expect(result.rolledBack).toBe(0);
+    expect(inventoryForRun).toHaveBeenCalledExactlyOnceWith("run-1");
     expect(scheduleSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: "run-1",
@@ -242,14 +238,8 @@ describe("runResumeRecoverySweep (Codex fix #2)", () => {
     });
 
     const scheduleSpy = vi.fn(() => "drive-1");
-    const loadSessionsSpy = vi.fn(async () => ({
-      ok: true as const,
-      map: new Map(), // supervisor knows nothing about acp-gone
-    }));
-
     const result = await runResumeRecoverySweep({
       db,
-      loadSessions: loadSessionsSpy,
       scheduleDriver: scheduleSpy,
     });
 
@@ -262,7 +252,7 @@ describe("runResumeRecoverySweep (Codex fix #2)", () => {
     expect(rollbackCalls.length).toBe(0);
   });
 
-  it("skips all candidates when supervisor listSessions fails (transient)", async () => {
+  it("retains the candidate when its assigned supervisor inventory fails", async () => {
     const { runResumeRecoverySweep } = await import("../resume-recovery");
     const { db } = makeFakeDb({
       needsInputRuns: [
@@ -272,14 +262,11 @@ describe("runResumeRecoverySweep (Codex fix #2)", () => {
     });
 
     const scheduleSpy = vi.fn(() => "drive-1");
-    const loadSessionsSpy = vi.fn(async () => ({
-      ok: false as const,
-      reason: "supervisor 503",
-    }));
+
+    inventoryForRun.mockRejectedValue(new Error("supervisor 503"));
 
     const result = await runResumeRecoverySweep({
       db,
-      loadSessions: loadSessionsSpy,
       scheduleDriver: scheduleSpy,
     });
 

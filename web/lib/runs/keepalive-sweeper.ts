@@ -480,11 +480,13 @@ export async function runPass2(db: Db): Promise<number> {
       const updated = await tx
         .update(runs)
         .set({ status: "Abandoned", endedAt: new Date() })
-        .where(and(
-          eq(runs.id, row.id),
-          eq(runs.status, "NeedsInputIdle"),
-          isNull(runs.resumeRequestedAt),
-        ))
+        .where(
+          and(
+            eq(runs.id, row.id),
+            eq(runs.status, "NeedsInputIdle"),
+            isNull(runs.resumeRequestedAt),
+          ),
+        )
         .returning({
           id: runs.id,
           projectId: runs.projectId,
@@ -526,7 +528,11 @@ export async function runPass2(db: Db): Promise<number> {
           ),
         );
       if (updated[0].runKind === "flow")
-        await closeFlowNodeQuestions(tx, row.id, "run abandon deadline expired");
+        await closeFlowNodeQuestions(
+          tx,
+          row.id,
+          "run abandon deadline expired",
+        );
 
       // ADR-097: a project-less local-package run has no project to attribute
       // these project-scoped events to — skip the emits (its terminal row is

@@ -3325,7 +3325,10 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers(
     "lib/capabilities/capture-package-delivery.ts",
     "repository-worktree",
-    [["capturePackageDelivery", false], ["preparePackageDeliveryCapture", false]],
+    [
+      ["capturePackageDelivery", false],
+      ["preparePackageDeliveryCapture", false],
+    ],
   ),
   ...wrappers("lib/capabilities/package-skills.ts", "repository-worktree", [
     ["materializePackageSessionSkills", true],

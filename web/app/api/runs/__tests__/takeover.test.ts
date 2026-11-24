@@ -10,6 +10,8 @@
 // assert the wire contract (status codes + bodies), not the two-phase
 // side-effect mechanics (which the integration suite owns).
 
+import type { ExecutionHost } from "@/lib/db/schema";
+
 import { NextRequest } from "next/server";
 import {
   afterEach,
@@ -34,6 +36,21 @@ type Row = Record<string, unknown>;
 
 const TAKEOVER_NODE_ID = "review";
 const REENTRY_NODE_ID = "checks";
+const placementHost: ExecutionHost = {
+  id: "host-1",
+  hostKey: "takeover-supervisor",
+  kind: "remote_direct",
+  transport: { kind: "remote_direct" },
+  displayName: "Takeover supervisor",
+  readiness: "ready",
+  readinessReason: null,
+  capabilities: {},
+  lastBootId: "boot-1",
+  lastSeenAt: null,
+  registeredAt: new Date(0),
+  updatedAt: new Date(0),
+  retiredAt: null,
+};
 
 // Minimal compiled-graph manifest with a human_review node that offers the
 // `takeover` decision routing to `checks` (the validation re-entry).
@@ -226,6 +243,10 @@ function makeDb(): Row {
 
 vi.mock("@/lib/db/client", () => ({
   getDb: () => makeDb(),
+}));
+
+vi.mock("@/lib/execution-host/resolver", () => ({
+  resolveRunPlacementHost: async () => placementHost,
 }));
 
 vi.mock("@/lib/flows/graph/runner-core", () => ({
@@ -495,6 +516,10 @@ describe("POST /api/runs/{runId}/takeover/return — contract", () => {
 
     expect(body.ok).toBe(true);
     expect(body.runStatus).toBe("Running");
+    expect(markReturnedToRunningSpy).toHaveBeenCalledWith("run-1", {
+      db: expect.anything(),
+      placement: { host: placementHost },
+    });
   });
 
   it("401 when unauthenticated", async () => {
@@ -566,5 +591,6 @@ describe("POST /api/runs/{runId}/takeover/return — contract", () => {
 
     expect(res.status).toBe(503);
     expect((await res.json()).code).toBe("EXECUTOR_UNAVAILABLE");
+    expect(markDownstreamStaleSpy).toHaveBeenCalledOnce();
   });
 });

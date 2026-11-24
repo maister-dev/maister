@@ -945,7 +945,10 @@ export async function* launchScratchRunStaged(
 
   await validateLinkedTask(db, args.body.linkedTaskId, project.id);
 
-  const { catalog, mcpBindings } = await loadScratchCapabilityCatalog(project.id, db);
+  const { catalog, mcpBindings } = await loadScratchCapabilityCatalog(
+    project.id,
+    db,
+  );
   const policy = scratchPolicy(args.body);
   // FR-C3: scratch materializes a BROAD skill set (all project skills; the
   // resolver filters to runner-supported). MCP stays selected/defaults.

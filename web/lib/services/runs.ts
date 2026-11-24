@@ -1956,7 +1956,9 @@ async function* executeFlowLaunch(
         : await capturePackageDelivery(_db, {
             projectId: project.id,
             flowPackageInstallId:
-              input.packagePin?.packageInstallId ?? flow.packageInstallId ?? null,
+              input.packagePin?.packageInstallId ??
+              flow.packageInstallId ??
+              null,
             flowManifest: manifest,
             nonPackageMcpRefs: snapshotRecords
               .filter(
@@ -1969,14 +1971,14 @@ async function* executeFlowLaunch(
           });
       const resolvedCapabilitySet =
         accepted?.settings.resolvedCapabilitySet ?? {
-          ...buildResolvedCapabilitySet({
-            records: includeCapturedPlatformMcpTargets(snapshotRecords, delivery),
-            flowRevisionId: revision.id,
-            flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
-            mcpBindings: snapshotMcpBindings,
-          }),
-          ...(delivery ? { delivery } : {}),
-        };
+        ...buildResolvedCapabilitySet({
+          records: includeCapturedPlatformMcpTargets(snapshotRecords, delivery),
+          flowRevisionId: revision.id,
+          flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
+          mcpBindings: snapshotMcpBindings,
+        }),
+        ...(delivery ? { delivery } : {}),
+      };
 
       log.debug(
         {
