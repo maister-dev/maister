@@ -183,6 +183,12 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
         timeoutMs: 5000,
         structuredOutput: "json",
       },
+      {
+        id: "oversized-check",
+        workload: "check",
+        command: "head -c 4194305 /dev/zero",
+        timeoutMs: 5000,
+      },
     ]),
   );
   await writeFile(join(contextSource, "context.md"), "# newer context");
@@ -501,6 +507,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
       "invalid-output-check",
       { processOutcome: "exited", exitCode: 42, checkValidity: "invalid" },
     ],
+    ["oversized-check", { outputState: "truncated" }],
   ] as const) {
     const commandId = randomUUID();
     expect(
@@ -547,6 +554,32 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
       },
     ],
   });
+  host.hostState.setFence(
+    prepared.owner.runId,
+    randomUUID(),
+    prepared.owner.assignmentEpoch + 1,
+  );
+  const staleCommandId = randomUUID();
+  const stale = await addressedRequest(
+    host,
+    `/v1/workspaces/${handle}/commands`,
+    {
+      workspaceProtocol: 1,
+      command: {
+        id: staleCommandId,
+        kind: "workspace.run",
+        issuedAt: new Date().toISOString(),
+      },
+      owner: prepared.owner,
+      payload: runPayload,
+    },
+  );
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({
+    code: "FENCED",
+    details: { reason: "assignment_fenced" },
+  });
+  expect(host.hostState.getReceipt(staleCommandId)).toBeNull();
 }, 30_000);
 
 afterEach(async () => {

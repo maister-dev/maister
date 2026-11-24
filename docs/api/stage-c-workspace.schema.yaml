@@ -499,7 +499,7 @@ definitions:
       inputGeneration: *a1
       inputDigest: *a6
   WorkspaceWorkloadDeclarations:
-    description: Optional sealed workload-declarations.json input. The supervisor uses a declaration only when the request selects its exact generation plus ID and workload. Maximum encoded size is 262144 bytes.
+    description: Optional sealed workload-declarations.json input. The Flow reservation freezes node actions, command-check gates and requirement probes from the admitted revision. The supervisor uses a declaration only when the request selects its exact generation plus ID and workload. Maximum encoded size is 262144 bytes.
     type: array
     maxItems: 128
     items:

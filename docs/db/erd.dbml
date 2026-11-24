@@ -4825,6 +4825,7 @@ table workspace_input_captures {
   origin_user_id text
   files jsonb [not null]
   content_digest text [not null]
+  requirement_probe_count integer [not null, default: 0]
 }
 
 table workspace_reconciliation_findings {

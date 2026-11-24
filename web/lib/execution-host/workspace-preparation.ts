@@ -125,6 +125,7 @@ export async function reserveHostWorkspace(
   metadata: WorkspaceMetadata,
   payload: WorkspacePrepareInput,
   files: readonly WorkspaceInputFile[] = [],
+  requirementProbeCount = 0,
 ): Promise<void> {
   const { host, assignment } = placement;
   const workspaceId = randomUUID();
@@ -155,6 +156,7 @@ export async function reserveHostWorkspace(
   await tx.insert(workspaceInputCaptures).values({
     workspaceId,
     originUserId: run.userId,
+    requirementProbeCount,
     ...capture,
   });
 
@@ -171,9 +173,18 @@ export async function reserveHostWorkspace(
 export function workspacePreparationReadySql(runId: SQL): SQL {
   return sql`NOT EXISTS (
     SELECT 1 FROM ${workspaces} preparation
+    LEFT JOIN ${workspaceInputCaptures} capture ON capture.workspace_id = preparation.id
     WHERE preparation.run_id = ${runId}
       AND preparation.ownership_kind = 'host_owned'
-      AND preparation.workspace_materialization_generation IS NULL
       AND preparation.removed_at IS NULL
+      AND (preparation.workspace_materialization_generation IS NULL OR
+        ${nextWorkspaceRequirementProbeSql(sql`preparation.preparation_assignment_id`, sql`capture.requirement_probe_count`)} IS NOT NULL)
   )`;
+}
+
+export function nextWorkspaceRequirementProbeSql(
+  assignmentId: SQL,
+  count: SQL,
+): SQL {
+  return sql`next_workspace_requirement_probe(${assignmentId}, ${count})`;
 }

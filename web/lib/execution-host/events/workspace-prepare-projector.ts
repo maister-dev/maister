@@ -15,7 +15,10 @@ import {
   type WorkspaceCommandBinding,
 } from "../../../../runtime/workspace-prepare";
 
-import { setAssignmentWorkspace } from "../assignments";
+import {
+  releaseAssignmentForRun,
+  setAssignmentWorkspace,
+} from "../assignments";
 import {
   casTransition,
   getCommand,
@@ -33,6 +36,12 @@ import {
 import { WorkspaceCommandReceiptSchema } from "../workspace-prepare-schema";
 
 import { ExecutionEventProjectionError } from "./projector";
+
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 import {
   executionAssignments,
@@ -254,6 +263,48 @@ export async function applyWorkspaceEvidence(
       outcomeSha256: receipt.outcomeSha256,
     });
     if (!transition.changed) throw inconsistent();
+    if (
+      receipt.operationId === "stageCRunWorkload" &&
+      command.payload.workload === "requirementProbe" &&
+      run.status === "Pending" &&
+      (receipt.result.processOutcome !== "exited" ||
+        receipt.result.exitCode !== 0)
+    ) {
+      if (!run.projectId) throw inconsistent();
+      await tx
+        .update(runs)
+        .set({ status: "Failed", endedAt: new Date(event.occurredAt) })
+        .where(eq(runs.id, run.id));
+      await releaseAssignmentForRun(tx, run.id, "workspace_requirement_failed");
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.failed",
+        projectId: run.projectId,
+        runId: run.id,
+        data: { errorCode: "PRECONDITION" },
+      });
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.failed",
+        ...runDomainEventScope(run),
+        runId: run.id,
+        taskId: run.taskId,
+        actor: { type: "system", id: null },
+        parentRunId: run.parentRunId,
+        cause: {
+          code: "PRECONDITION",
+          reason: "workspace_requirement_failed",
+          source: "reconcile",
+        },
+        payload: {
+          runId: run.id,
+          taskId: run.taskId,
+          flowId: run.flowId,
+          runKind: run.runKind,
+          reason: "PRECONDITION",
+        },
+      });
+    }
 
     return;
   }

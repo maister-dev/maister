@@ -12,7 +12,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { getAssignmentById } from "../assignments";
@@ -30,6 +30,7 @@ import { createLocalDirectTransport } from "../transports/local-direct";
 import {
   readAddressedWorkspaceStatus,
   reserveHostWorkspace,
+  workspacePreparationReadySql,
 } from "../workspace-preparation";
 import { readRuntimeObjectContent } from "../runtime-objects";
 import { WorkspaceMaterializationPayloadSchema } from "../workspace-prepare-schema";
@@ -121,7 +122,22 @@ async function startVaultRoute(): Promise<{
   return { origin: `http://127.0.0.1:${address.port}`, outcomes };
 }
 
-it("C-06 applies one real checkout after a lost acceptance and a rolled-back projection", async () => {
+it.each([
+  { probe: "node --version", probeExit: 0 },
+  { probe: "exit 42", probeExit: 42 },
+])(
+  "C-06/C-08 applies one checkout and the owning host's requirement result ($probeExit)",
+  assertAddressedRequirement,
+  120_000,
+);
+
+async function assertAddressedRequirement({
+  probe,
+  probeExit,
+}: {
+  probe: string;
+  probeExit: number;
+}): Promise<void> {
   root = await mkdtemp(join(tmpdir(), "stage-c-preparation-recovery-"));
   const source = await initRepo(join(root, "origin"));
   const commit = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], {
@@ -205,6 +221,12 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
       bytes: Buffer.from(
         JSON.stringify([
           {
+            id: "probe:0",
+            workload: "requirementProbe",
+            command: probe,
+            timeoutMs: 10_000,
+          },
+          {
             id: "fixture-check",
             workload: "check",
             command:
@@ -233,6 +255,7 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
         inputDigest: "2".repeat(64),
       },
       capture,
+      1,
     );
     return placed;
   });
@@ -421,6 +444,67 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
     workspace.executionWorkspaceId,
   );
 
+  const launchReady = async (): Promise<boolean> => {
+    const readiness = await db.execute<{ ready: boolean }>(
+      sql`SELECT ${workspacePreparationReadySql(sql`${runId}`)} AS ready`,
+    );
+
+    return readiness.rows[0].ready;
+  };
+  expect(await launchReady()).toBe(false);
+  expect(
+    await recoverExecutionCommands({ db, transport, graceMs: 0 }),
+  ).toMatchObject({ errors: [], redelivered: 1 });
+  const probeEvents = await consumeRuntimeEventStreamOnce({
+    db,
+    executionHostId: host.id,
+    transport,
+    owner: "fixture",
+    maxEvents: 3,
+    signal: AbortSignal.timeout(15_000),
+  });
+  expect(probeEvents).toMatchObject({ received: 3, reconnectRequired: false });
+  expect(await launchReady()).toBe(false);
+  await projectExecutionEvents({
+    db,
+    projector: canonicalLifecycleProjector,
+    runId,
+    now: new Date(projectedAt.getTime() + 105_000),
+  });
+  expect(await launchReady()).toBe(probeExit === 0);
+  const admittedProbes = (await listCommandsForRun(db, runId)).filter(
+    ({ kind }) => kind === "workspace.run",
+  );
+  expect(admittedProbes).toEqual([
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        workload: "requirementProbe",
+        declarationId: "probe:0",
+      }),
+      state: "succeeded",
+      result: expect.objectContaining({
+        exitCode: probeExit,
+        quiescence: "proved",
+      }),
+    }),
+  ]);
+  if (probeExit !== 0) {
+    const run = await database.pool.query(
+      "SELECT status FROM runs WHERE id=$1",
+      [runId],
+    );
+    expect(run.rows).toEqual([{ status: "Failed" }]);
+    expect(await getAssignmentById(db, assignment.id)).toMatchObject({
+      state: "released",
+      releasedReason: "workspace_requirement_failed",
+    });
+    expect((await readWorkspace()).executionWorkspaceId).toBe(
+      workspace.executionWorkspaceId,
+    );
+
+    return;
+  }
+
   await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
     runId,
   ]);
@@ -606,4 +690,4 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
       }),
     );
   }
-}, 120_000);
+}

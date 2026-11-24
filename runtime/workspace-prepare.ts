@@ -68,6 +68,11 @@ export type MaterializedWorkspaceInputs = Readonly<{
 }>;
 
 export const WORKSPACE_WORKLOAD_FILE = "workload-declarations.json";
+export const WORKSPACE_WORKLOAD_FILE_MAX_BYTES = 262_144;
+export const WORKSPACE_WORKLOAD_MAX_DECLARATIONS = 128;
+export const WORKSPACE_WORKLOAD_MAX_COMMAND_LENGTH = 32_768;
+export const WORKSPACE_WORKLOAD_DEFAULT_TIMEOUT_MS = 300_000;
+export const WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS = 3_600_000;
 export const WORKSPACE_WORKLOAD_KINDS = [
   "setup",
   "cli",
@@ -75,6 +80,13 @@ export const WORKSPACE_WORKLOAD_KINDS = [
   "requirementProbe",
 ] as const;
 export type WorkspaceWorkloadKind = (typeof WORKSPACE_WORKLOAD_KINDS)[number];
+export type WorkspaceWorkloadDeclaration = Readonly<{
+  id: string;
+  workload: WorkspaceWorkloadKind;
+  command: string;
+  timeoutMs: number;
+  structuredOutput?: "json" | "jsonFile";
+}>;
 export type WorkspaceWorkloadRequest = Readonly<{
   workspaceProtocol: 1;
   command: Readonly<{ id: string; kind: "workspace.run"; issuedAt: string }>;

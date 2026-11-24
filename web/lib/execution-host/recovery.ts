@@ -34,7 +34,7 @@ import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
 import { recoverWorkspacePreparation } from "./workspace-prepare-delivery";
-import { recoverWorkspaceInputCaptures } from "./workspace-input-recovery";
+import { recoverWorkspaceInputCaptures, recoverWorkspaceRequirementProbes } from "./workspace-input-recovery";
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { reportLegacyActiveRuns } from "./legacy";
 import {
@@ -506,6 +506,14 @@ export async function recoverExecutionCommands(
         "workspace-input-recovery-failed",
       );
       summary.errors.push(`workspace inputs ${runId}: ${reason ?? "unexpected_error"}`);
+    });
+  }
+  if (configuredSelectedExecutionEndpoint() && transport.sendWorkspaceWorkload) {
+    await recoverWorkspaceRequirementProbes(db, (runId, error) => {
+      const reason = error instanceof MaisterError ? error.details?.reason : undefined;
+
+      logger.warn({ runId, reason }, "workspace-requirement-recovery-failed");
+      summary.errors.push(`workspace requirements ${runId}: ${reason ?? "unexpected_error"}`);
     });
   }
   const hostFor = async (id: string) => {

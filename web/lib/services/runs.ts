@@ -155,6 +155,7 @@ import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-c
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import { captureWorkspaceBundles } from "@/lib/execution-host/workspace-input-capture";
 import { captureAddressedFlowContexts } from "@/lib/context-mounts/addressed-capture";
+import { captureAddressedFlowWorkloads } from "@/lib/flows/addressed-workload-input";
 import {
   observeSelectedWorkspaceRevision,
   reserveHostWorkspace,
@@ -2012,6 +2013,7 @@ async function* executeFlowLaunch(
 
       const workspaceInputs = hostPreparesWorkspace
         ? [
+            ...captureAddressedFlowWorkloads(compiled, manifest.requirements),
             ...await captureAddressedFlowContexts(
               _db as ExecutionDb,
               Array.from(compiled.nodes.values(), (node) => ({
@@ -2385,6 +2387,7 @@ async function* executeFlowLaunch(
               }),
             },
             workspaceInputs,
+            manifest.requirements?.length ?? 0,
           );
         } else {
           await tx.insert(workspaces).values({

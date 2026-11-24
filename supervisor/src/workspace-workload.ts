@@ -17,7 +17,11 @@ import { z } from "zod";
 
 import {
   WORKSPACE_WORKLOAD_FILE,
+  WORKSPACE_WORKLOAD_FILE_MAX_BYTES,
   WORKSPACE_WORKLOAD_KINDS,
+  WORKSPACE_WORKLOAD_MAX_COMMAND_LENGTH,
+  WORKSPACE_WORKLOAD_MAX_DECLARATIONS,
+  WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS,
 } from "../../runtime/workspace-prepare";
 import { inspectProcessGroup } from "../../runtime/process-group";
 
@@ -35,14 +39,14 @@ const declarationsSchema = z
         command: z
           .string()
           .min(1)
-          .max(32768)
+          .max(WORKSPACE_WORKLOAD_MAX_COMMAND_LENGTH)
           .refine((command) => !command.includes("\0")),
-        timeoutMs: z.number().int().min(1).max(3_600_000),
+        timeoutMs: z.number().int().min(1).max(WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS),
         structuredOutput: z.enum(["json", "jsonFile"]).optional(),
       })
       .strict(),
   )
-  .max(128);
+  .max(WORKSPACE_WORKLOAD_MAX_DECLARATIONS);
 
 async function sealOutput(
   args: Readonly<{
@@ -212,7 +216,7 @@ export async function runWorkspaceWorkload(
     inputDirectory,
     payload.inputDigest,
     WORKSPACE_WORKLOAD_FILE,
-    256 * 1024,
+    WORKSPACE_WORKLOAD_FILE_MAX_BYTES,
   );
   const declarations = (() => {
     if (!bytes) return null;

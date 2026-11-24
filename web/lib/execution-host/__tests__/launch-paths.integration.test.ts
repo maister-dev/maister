@@ -212,7 +212,7 @@ async function until<T>(
   }
 }
 
-async function seedLaunchableTask(): Promise<{ taskId: string }> {
+async function seedLaunchableTask(manifest: unknown = instructManifest): Promise<{ taskId: string }> {
   const projectId = randomUUID();
   const slug = `lp-${projectId.slice(0, 8)}`;
   const revisionId = randomUUID();
@@ -238,7 +238,7 @@ async function seedLaunchableTask(): Promise<{ taskId: string }> {
     versionLabel: "v1.0.0",
     resolvedRevision: projectId.replace(/-/g, "").padEnd(40, "x").slice(0, 40),
     manifestDigest: `digest-${projectId}`,
-    manifest: instructManifest,
+    manifest,
     schemaVersion: 1,
     installedPath: `${repoPath}/.fixture-flow`,
     setupStatus: "not_required",
@@ -251,7 +251,7 @@ async function seedLaunchableTask(): Promise<{ taskId: string }> {
     source: "github.com/x/y",
     version: "v1.0.0",
     installedPath: `${repoPath}/.fixture-flow`,
-    manifest: instructManifest,
+    manifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,
     enablementState: "Enabled",
@@ -741,7 +741,14 @@ describe("ADR-183 amendment — the fence follows the host's new-work signal", (
 
 describe("flow launch + graph driver (ADR-166 T4.1)", () => {
   it("C-05 flow: commits the placed Run and a pathless preparation command before workspace effects", async () => {
-    const { taskId } = await seedLaunchableTask();
+    const { taskId } = await seedLaunchableTask({
+      ...instructManifest,
+      requirements: [{ name: "Node.js", probe: "node --version" }],
+      nodes: instructManifest.nodes.map((node) => ({
+        ...node,
+        pre_finish: { gates: [{ id: "typecheck", kind: "command_check", command: "pnpm typecheck" }] },
+      })),
+    });
 
     workspacePreparation.advertised = true;
     vi.stubEnv(
@@ -792,6 +799,16 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
           executionAssignmentId: assignment?.id,
           executionHostId: assignment?.executionHostId,
         }),
+      ]);
+      const [inputs] = await testDatabase.db
+        .select()
+        .from(schemaModule.workspaceInputCaptures)
+        .where(eq(schemaModule.workspaceInputCaptures.workspaceId, workspace.id));
+      const declaration = inputs.files.find(({ path }) => path === "workload-declarations.json");
+      expect(declaration).toBeDefined();
+      expect(JSON.parse(Buffer.from(declaration!.base64, "base64").toString("utf8"))).toEqual([
+        expect.objectContaining({ workload: "requirementProbe", command: "node --version", timeoutMs: 10_000 }),
+        expect.objectContaining({ workload: "check", command: "pnpm typecheck", timeoutMs: 300_000 }),
       ]);
       expect(await sessionFor(run.id)).toMatchObject({ hostSessionId: null });
       scheduling.real = true;

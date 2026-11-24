@@ -206,6 +206,14 @@ agent-memory and cross-project mount authorities. Retain the original inputs
 across replay and checkpoint resume. The launch-path and materialization
 integration scenarios C-05 and C-07 own the transaction and byte witnesses.
 
+An addressed Flow freezes its requirement checks with the admitted revision.
+The manager admits them in declaration order after workspace materialization.
+Checkout and input receipts alone leave the Run Pending while a required probe
+is outstanding. An applied successful receipt advances preflight. A failed
+probe with confirmed process retirement fails the Run and releases its active
+assignment while retaining the workspace and diagnostic evidence. Unconfirmed
+quiescence keeps the assignment in reconciliation.
+
 ## Expectations
 
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))

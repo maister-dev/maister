@@ -965,5 +965,7 @@ and grants no delivery authority.
 | Reason | Effect |
 | --- | --- |
 | `workspace_preparation_pending` | Session creation returns `PRECONDITION` and leaves the reserved Run without a child until the selected host's input receipt is applied. |
+| `workspace_requirements_pending` | Workload and session admission wait until the selected host's required successful probe receipts have been applied. |
+| `workspace_requirement_failed` | A required probe failed and its process group retired. The Run records `PRECONDITION`, releases the assignment and retains diagnostic objects. |
 | `workspace_input_changed` | The supervisor refuses to spawn when verification of the retained manifest, its files or the authorized context checkout fails. |
 | `workspace_context_authority_required` | Web refuses a context declaration whose launching user or current agent attachment lacks authority. A removed project membership retains the existing `launch_authority_revoked` reason. |

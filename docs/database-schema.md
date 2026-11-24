@@ -227,6 +227,12 @@ and workspace generations must match the prepared handle. A workload also
 requires the applied input manifest receipt. A cancellation names the exact
 original workload. Later delivery updates preserve the admitted command inputs.
 
+Migration `0375` stores the bounded requirement probe count with the immutable
+input capture. A PostgreSQL predicate requires an applied, successful receipt
+for each index before dispatch. Its command admission guard admits only the
+next declared index on the Pending Run and refuses session commands while a
+requirement is outstanding.
+
 ## `users`
 
 (Introduced with the auth layer — migration `0004_petite_gamora.sql`.)

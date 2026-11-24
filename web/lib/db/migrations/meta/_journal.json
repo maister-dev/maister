@@ -2598,6 +2598,13 @@
       "when": 1795479629221,
       "tag": "0374_stage_c_workspace_workloads",
       "breakpoints": true
+    },
+    {
+      "idx": 375,
+      "version": "7",
+      "when": 1795481517063,
+      "tag": "0375_stage_c_workspace_requirement_probes",
+      "breakpoints": true
     }
   ]
 }

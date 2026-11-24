@@ -306,13 +306,27 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Tested with Darwin arm64, Node 24.15.0, real PostgreSQL, SQLite and a
   local supervisor. Passed 19 Web and 51 supervisor integration tests,
   both typechecks, the contract suite and docs/ERD validation. The main
-  Flow drivers and supervisor death and stale epoch witnesses remain open.
+  Flow drivers and supervisor death witnesses remain open.
 
   The selected supervisor also captures a declared `MAISTER_OUTPUT_FILE`
   as a bounded, digest-verified runtime object. The real Web/host fixture
   read the result through the graph output parser and verified the separate
   stdout object. That integration and three focused supervisor cases passed
   with both workspace typechecks.
+
+  The task-to-Run transaction now freezes the compiled Flow's requirement,
+  CLI and command-check declarations alongside the other inputs. The C-05
+  fixture failed on the missing declaration file before the change and
+  passes with the exact probe and gate command bytes captured.
+
+  Migration `0375` holds scheduler and session admission until the frozen
+  requirement probes settle in order. RED showed a materialized Run becoming
+  ready before any probe. GREEN drove a real `node --version` probe and an
+  exit-42 case on the selected supervisor. Applied success opened dispatch.
+  Applied failure released the assignment after proved group retirement and
+  retained the workspace. The supervisor also refused a stale epoch before
+  storing a receipt and truncated a real oversized stream. Passed 16 Web and
+  26 supervisor integrations, both typechecks, contracts and docs/ERD.
 
 ### C3–C4 — review, board and single-host qualification
 

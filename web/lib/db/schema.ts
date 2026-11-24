@@ -6228,6 +6228,7 @@ export const workspaceInputCaptures = pgTable(
     originUserId: text("origin_user_id"),
     files: jsonb("files").$type<readonly { path: string; base64: string }[]>().notNull(),
     contentDigest: text("content_digest").notNull(),
+    requirementProbeCount: integer("requirement_probe_count").default(0).notNull(),
   },
   (t) => ({
     boundedFiles: check("workspace_input_captures_files_check", sql`
@@ -6236,6 +6237,7 @@ export const workspaceInputCaptures = pgTable(
         ELSE false
       END`),
     digestShape: check("workspace_input_captures_digest_check", sql`${t.contentDigest} ~ '^[a-f0-9]{64}$'`),
+    boundedProbes: check("workspace_input_captures_probe_count_check", sql`${t.requirementProbeCount} BETWEEN 0 AND 128`),
   }),
 );
 
