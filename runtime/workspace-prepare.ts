@@ -127,6 +127,9 @@ export const WORKSPACE_WORKLOAD_MAX_DECLARATIONS = 128;
 export const WORKSPACE_WORKLOAD_MAX_COMMAND_LENGTH = 32_768;
 export const WORKSPACE_WORKLOAD_DEFAULT_TIMEOUT_MS = 300_000;
 export const WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS = 3_600_000;
+export const WORKSPACE_FLOW_SETUP_ID = "flow:setup";
+export const WORKSPACE_FLOW_SETUP_COMMAND = "bash ./setup.sh";
+export const WORKSPACE_FLOW_SETUP_TIMEOUT_MS = 60_000;
 export const WORKSPACE_WORKLOAD_KINDS = [
   "setup",
   "cli",
@@ -141,6 +144,7 @@ export type WorkspaceWorkloadDeclaration = Readonly<{
   timeoutMs: number;
   structuredOutput?: "json" | "jsonFile";
   flowAssets?: true;
+  flowSetup?: string;
 }>;
 export type WorkspaceWorkloadRequest = Readonly<{
   workspaceProtocol: 1;
@@ -165,6 +169,7 @@ export type WorkspaceWorkloadResult = Readonly<{
   outputState: "sealed" | "truncated" | "unavailable";
   objects: readonly WorkspaceInputObject[];
   quiescence: "proved" | "uncertain";
+  setupReused?: true;
 }>;
 export type WorkspaceCancelWorkloadRequest = Readonly<{
   workspaceProtocol: 1;

@@ -983,6 +983,18 @@ The terminal workload receipt records process exit, declared output
 validity and group retirement independently. Web holds unresolved
 quiescence in the command ledger for reconciliation.
 
+The supervisor keys sealed Flow setup by stable host key, project,
+revision and original package asset digest. A private filesystem lock
+serializes the first attempt. The host runs the pinned `setup.sh` in
+its package directory with the bounded workload process and environment.
+A successful exit and positive retirement allow publication of the
+prepared asset fingerprint. A later command verifies the fingerprint
+and reports `setupReused` without creating a shell. Dependent actions
+receive verified per-command copies of the prepared assets. A previous
+attempt without a successful receipt holds that revision for operator
+inspection, since the shell may already have applied an external effect.
+The prepared tree is bounded to 255 entries and 64 MiB of regular files.
+
 An addressed Flow records its workspace assignment on each node attempt.
 The standard Codex action opens its ACP session through the same assignment
 and prepared workspace handle. The supervisor supplies the retained package

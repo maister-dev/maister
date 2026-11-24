@@ -214,6 +214,13 @@ paths:
       tags: [execution-host]
       operationId: stageCRunWorkload
       summary: Execute one declaration from the retained workspace input generation
+      description: >
+        A setup declaration runs the frozen package setup.sh in its host-local
+        package directory. Its distinct command can reuse the verified setup
+        for the same project, package revision and asset digest, returning
+        setupReused with no new process or output objects. Dependent actions
+        refuse with workspace_setup_unavailable when successful setup evidence
+        is missing or invalid.
       x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCRunWorkloadRequest
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }

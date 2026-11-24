@@ -290,6 +290,7 @@ export const WorkspaceWorkloadResultSchema = z
       .max(32)
       .nullable(),
     checkValidity: z.enum(["notRequested", "valid", "invalid", "unavailable"]),
+    setupReused: z.literal(true).optional(),
     outputState: z.enum(["sealed", "truncated", "unavailable"]),
     objects: z.array(workloadObject).max(16),
     quiescence: z.enum(["proved", "uncertain"]),

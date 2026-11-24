@@ -4,6 +4,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   stat,
   symlink,
@@ -159,6 +160,22 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     "capability_instructions",
     JSON.stringify([
       {
+        id: "flow:setup",
+        workload: "setup",
+        command: "bash ./setup.sh",
+        timeoutMs: 5000,
+        flowAssets: true,
+        flowSetup: "frozen-revision",
+      },
+      {
+        id: "prepared-asset-check",
+        workload: "check",
+        command: 'cat "$MAISTER_FLOW_DIR/generated.txt"',
+        timeoutMs: 5000,
+        flowAssets: true,
+        flowSetup: "frozen-revision",
+      },
+      {
         id: "project-check",
         workload: "check",
         command:
@@ -199,6 +216,12 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
       },
     ]),
   );
+  const setup = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    "printf ready >> generated.txt\n",
+  );
   await writeFile(join(contextSource, "context.md"), "# newer context");
   git(contextSource, "add", "--", "context.md");
   git(contextSource, "commit", "-m", "advance context");
@@ -213,6 +236,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
         { path: skillPath, ...sealed },
         { path: WORKSPACE_CONTEXT_INPUT, ...context },
         { path: "workload-declarations.json", ...workload },
+        { path: "flow/setup.sh", ...setup },
       ],
     }),
   );
@@ -228,7 +252,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     payload: {
       generation,
       manifestDigest: manifest.sha256,
-      objects: [manifest, sealed, context, workload],
+      objects: [manifest, sealed, context, workload, setup],
     },
   };
   const route = `/v1/workspaces/${handle}/materialization`;
@@ -243,6 +267,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
         { ...sealed, sha256: "0".repeat(64) },
         context,
         workload,
+        setup,
       ],
     },
   };
@@ -446,6 +471,78 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     `/runtime-objects/${checked.objects[0].objectId}/content`,
   );
   expect(await checkOutput.text()).toBe('"local check"');
+  const runAssetWorkload = async (
+    workload: "setup" | "check",
+    declarationId: string,
+  ) => {
+    const id = randomUUID();
+    const response = await addressedRequest(
+      host,
+      `/v1/workspaces/${handle}/commands`,
+      {
+        workspaceProtocol: 1,
+        owner: prepared.owner,
+        command: { id, kind: "workspace.run", issuedAt: new Date().toISOString() },
+        payload: {
+          generation,
+          workload,
+          declarationId,
+          inputGeneration: 1,
+          inputDigest: manifest.sha256,
+        },
+      },
+    );
+    expect(response.status).toBe(202);
+    await response.body?.cancel();
+    await vi.waitFor(() =>
+      expect(["completed", "rejected"]).toContain(host.hostState.getReceipt(id)?.phase),
+    );
+    return host.hostState.getReceipt(id);
+  };
+  const unavailable = await runAssetWorkload("check", "prepared-asset-check");
+  expect(unavailable).toMatchObject({
+    phase: "rejected",
+    body: { refusal: { details: { reason: "workspace_setup_unavailable" } } },
+  });
+  for (const [workload, reused] of [
+    ["setup", false],
+    ["setup", true],
+    ["check", false],
+  ] as const) {
+    const receipt = await runAssetWorkload(
+      workload,
+      workload === "setup" ? "flow:setup" : "prepared-asset-check",
+    );
+    expect(receipt).toMatchObject({
+      phase: "completed",
+      body: {
+        result: {
+          exitCode: 0,
+          quiescence: "proved",
+          ...(reused ? { setupReused: true, objects: [] } : {}),
+        },
+      },
+    });
+    if (workload === "check") {
+      const first = (receipt?.body as {
+        result: { objects: { objectId: string }[] };
+      }).result.objects[0];
+      const stdout = await addressedRequest(
+        host,
+        `/runtime-objects/${first.objectId}/content`,
+      );
+      expect(await stdout.text()).toBe("ready");
+    }
+  }
+  const setupRoot = join(root, ".maister", "flow-setup");
+  const completed = (await readdir(setupRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory());
+  expect(completed).toHaveLength(1);
+  await writeFile(join(setupRoot, completed[0].name, "flow", "generated.txt"), "changed");
+  expect(await runAssetWorkload("setup", "flow:setup")).toMatchObject({
+    phase: "rejected",
+    body: { refusal: { details: { reason: "workspace_setup_unavailable" } } },
+  });
   const templateContext = await sealInput(
     host,
     prepared.owner,

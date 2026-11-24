@@ -716,6 +716,9 @@ definitions:
           - { type: "null" }
       checkValidity:
         enum: [ notRequested, valid, invalid, unavailable ]
+      setupReused:
+        const: true
+        description: This setup command reused a verified successful package setup from the same supervisor.
       outputState:
         enum: [ sealed, truncated, unavailable ]
       objects:

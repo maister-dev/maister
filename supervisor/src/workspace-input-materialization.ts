@@ -35,6 +35,7 @@ import {
   WORKSPACE_INPUT_MAX_BYTES,
   WORKSPACE_INPUT_MAX_FILES,
 } from "../../runtime/workspace-input-policy";
+import { workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
 
 import { withSqliteFileLock } from "./sqlite-file-lock";
 import { SupervisorError } from "./types";
@@ -224,6 +225,37 @@ async function readVerifiedInputFile(
   return bytes;
 }
 
+async function workspaceFlowAssetEntries(
+  inputDirectory: string,
+  manifestDigest: string,
+): Promise<InputManifest["files"]> {
+  await canonicalDirectory(inputDirectory);
+  const manifest = await retainedInputManifest(inputDirectory, manifestDigest);
+  const prefix = WORKSPACE_FLOW_ASSET_DIRECTORY + "/";
+  const assets = manifest.files.filter(({ path }) => path.startsWith(prefix));
+  if (!assets.length)
+    throw rejectInput("the command has no verified Flow package assets");
+  return assets;
+}
+
+/** Hash the original asset bytes and file modes independently of the Run or object IDs. */
+export async function workspaceFlowAssetDigest(
+  inputDirectory: string,
+  manifestDigest: string,
+): Promise<string> {
+  const assets = await workspaceFlowAssetEntries(inputDirectory, manifestDigest);
+  let remaining = WORKSPACE_INPUT_MAX_BYTES;
+  for (const asset of assets) {
+    const bytes = await readVerifiedInputFile(inputDirectory, asset, remaining);
+    remaining -= bytes.length;
+  }
+  return workspaceEvidenceDigest(
+    assets
+      .map(({ path, sha256, executable }) => ({ path, sha256, executable: executable === true }))
+      .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+  );
+}
+
 /** Build a command-local directory from only the files in the sealed Flow capture. */
 export async function materializeWorkspaceFlowAssets(input: {
   inputDirectory: string;
@@ -231,12 +263,7 @@ export async function materializeWorkspaceFlowAssets(input: {
   commandDirectory: string;
 }): Promise<string> {
   const { inputDirectory, manifestDigest, commandDirectory } = input;
-  await canonicalDirectory(inputDirectory);
-  const manifest = await retainedInputManifest(inputDirectory, manifestDigest);
-  const prefix = WORKSPACE_FLOW_ASSET_DIRECTORY + "/";
-  const assets = manifest.files.filter(({ path }) => path.startsWith(prefix));
-  if (!assets.length)
-    throw rejectInput("the command has no verified Flow package assets");
+  const assets = await workspaceFlowAssetEntries(inputDirectory, manifestDigest);
   let remaining = WORKSPACE_INPUT_MAX_BYTES;
   for (const asset of assets) {
     const bytes = await readVerifiedInputFile(inputDirectory, asset, remaining);

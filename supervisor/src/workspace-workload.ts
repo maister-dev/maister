@@ -15,6 +15,9 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import {
+  WORKSPACE_FLOW_SETUP_COMMAND,
+  WORKSPACE_FLOW_SETUP_ID,
+  WORKSPACE_FLOW_SETUP_TIMEOUT_MS,
   WORKSPACE_WORKLOAD_FILE,
   WORKSPACE_WORKLOAD_FILE_MAX_BYTES,
   WORKSPACE_WORKLOAD_KINDS,
@@ -36,6 +39,7 @@ import {
 } from "./workspace-input-materialization";
 import { executeWorkspaceWorkloadProcess } from "./workspace-workload-process";
 import { sealWorkspaceOutput } from "./workspace-output-object";
+import { copyPreparedFlowAssets, runFlowSetup } from "./workspace-flow-setup";
 
 const declarationsSchema = z
   .array(
@@ -55,6 +59,7 @@ const declarationsSchema = z
           .max(WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS),
         structuredOutput: z.enum(["json", "jsonFile"]).optional(),
         flowAssets: z.literal(true).optional(),
+        flowSetup: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/u).optional(),
       })
       .strict(),
   )
@@ -266,14 +271,26 @@ export async function runWorkspaceWorkload(
       },
     );
   const [declaration] = matches;
-  if (
-    declaration.flowAssets &&
-    !["cli", "check"].includes(declaration.workload)
-  )
+  const isSetup = declaration.workload === "setup";
+  if ((declaration.flowSetup && !declaration.flowAssets) ||
+    (isSetup && (!declaration.flowSetup ||
+      declaration.command !== WORKSPACE_FLOW_SETUP_COMMAND ||
+      declaration.id !== WORKSPACE_FLOW_SETUP_ID ||
+      declaration.timeoutMs > WORKSPACE_FLOW_SETUP_TIMEOUT_MS ||
+      declaration.structuredOutput)) ||
+    (declaration.flowAssets && declaration.workload === "requirementProbe"))
     throw new SupervisorError(
       "PRECONDITION",
-      "Flow package assets are scoped to node actions",
+      "Flow package setup or assets do not match the sealed declaration",
     );
+  const setupSource = declaration.flowSetup ? {
+    inputDirectory,
+    manifestDigest: payload.inputDigest,
+    runtimeRoot,
+    revision: declaration.flowSetup,
+    projectSlug: workspace.projectSlug,
+    owner,
+  } : undefined;
   const command = await resolveWorkloadCommand(
     input.objects,
     request,
@@ -282,7 +299,7 @@ export async function runWorkspaceWorkload(
   assertOwner();
   let processGroup: number | undefined;
   let outputDirectory: string | undefined;
-  if (declaration.structuredOutput === "jsonFile" || declaration.flowAssets) {
+  if (declaration.structuredOutput === "jsonFile" || (declaration.flowAssets && !isSetup)) {
     const outputRoot = join(runDirectory, "workload-results");
     await mkdir(outputRoot, { recursive: true, mode: 0o700 });
     if ((await realpath(outputRoot)) !== outputRoot)
@@ -301,17 +318,9 @@ export async function runWorkspaceWorkload(
     Awaited<ReturnType<typeof readDeclaredResult>> | undefined;
   let canRemoveOutput = true;
 
-  try {
-    const flowInstallPath =
-      outputDirectory && declaration.flowAssets
-        ? await materializeWorkspaceFlowAssets({
-            inputDirectory,
-            manifestDigest: payload.inputDigest,
-            commandDirectory: outputDirectory,
-          })
-        : undefined;
-    result = await executeWorkspaceWorkloadProcess({
-      cwd: workspace.realPath,
+  const execute = (cwd: string, flowInstallPath?: string) =>
+    executeWorkspaceWorkloadProcess({
+      cwd,
       command,
       timeoutMs: declaration.timeoutMs,
       signal: input.signal,
@@ -340,6 +349,37 @@ export async function runWorkspaceWorkload(
         canRemoveOutput = false;
       },
     });
+  try {
+    if (isSetup && setupSource) {
+      const setup = await runFlowSetup(setupSource, (cwd) => execute(cwd, cwd), assertOwner);
+      if (setup.kind === "reused") {
+        input.logger.info({ commandId: request.command.id, runId: owner.runId, revision: setupSource.revision }, "workspace-flow-setup-reused");
+        return {
+          generation: payload.generation,
+          exitCode: 0,
+          signal: null,
+          processOutcome: "exited",
+          checkValidity: "notRequested",
+          outputState: "sealed",
+          objects: [],
+          quiescence: "proved",
+          setupReused: true,
+        };
+      }
+      result = setup.result;
+    } else {
+      const flowInstallPath =
+        outputDirectory && declaration.flowAssets
+          ? setupSource
+            ? await copyPreparedFlowAssets(setupSource, outputDirectory)
+            : await materializeWorkspaceFlowAssets({
+                inputDirectory,
+                manifestDigest: payload.inputDigest,
+                commandDirectory: outputDirectory,
+              })
+          : undefined;
+      result = await execute(workspace.realPath, flowInstallPath);
+    }
     canRemoveOutput = result.retired;
     if (outputFile && result.retired)
       declaredOutput = await readDeclaredResult(outputFile);

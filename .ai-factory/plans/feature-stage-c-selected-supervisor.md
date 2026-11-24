@@ -377,6 +377,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   for bounded OS proof and retains the uncertain fence if proof is still
   missing. Passed 12 real supervisor workspace and process ownership cases.
 
+  The host now runs a sealed Flow `setup.sh` through the owned process group
+  from its private package directory. RED refused the new declaration.
+  GREEN refused the dependent action before setup, ran the script, and
+  returned the generated file through a later action's sealed stdout.
+  A second setup command recorded reuse without another shell or another
+  write. Refused reuse after changing the prepared file. Web admission and
+  the project trust handoff remain open.
+
   **C-08 templated workload checkpoint.** RED refused a board Flow command
   containing task and environment tokens. A first replay attempt also showed
   that recomputing the context after driver replacement changed the command
