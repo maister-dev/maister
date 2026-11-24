@@ -11,7 +11,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { EXECUTION_HOST_KEY_PATTERN } from "../../runtime/execution-host-address";
-import { isWorkspaceCancelTarget } from "../../runtime/workspace-prepare";
+import { isWorkspaceCancelTarget, isWorkspaceGenerationTarget } from "../../runtime/workspace-prepare";
 import type { WorkspacePrepareInput, WorkspaceTerminalPayload } from "../../runtime/workspace-prepare";
 
 import { reuseSqliteStatements } from "./sqlite-statements";
@@ -513,6 +513,15 @@ export type HostState = {
   recordWorkspaceInput(id: string, generation: number, digest: string, mode: WorkspacePrepareInput["mode"]): void;
   recordWorkspaceMaterialization(id: string, generation: number, digest: string): void;
   recordWorkspaceWorkloadProcess(commandId: string, group: number, physicalKey: string): boolean;
+  claimWorkspaceGitOperation(input: Readonly<{
+    commandId: string;
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    handle: string;
+    generation: number;
+    physicalKey: string;
+  }>): boolean;
   isWorkspaceWorkloadCancelled(input: Readonly<{
     commandId: string;
     runId: string;
@@ -1840,7 +1849,12 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               AND (wallet.host_session_id IS NULL OR wallet.host_session_id=?)
               AND (receipt.host_session_id IS NULL OR receipt.host_session_id=?)
               AND (receipt.host_key IS NULL OR receipt.host_key=?)
-              AND fence.assignment_id=receipt.assignment_id AND fence.epoch=receipt.epoch`,
+              AND fence.assignment_id=receipt.assignment_id AND fence.epoch=receipt.epoch
+              AND NOT EXISTS (
+                SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+                JOIN workspace_execution_state operation ON operation.workspace_id=physical.id
+                WHERE owned.run_id=receipt.run_id AND operation.operation_claim_id IS NOT NULL
+              )`,
             )
             .get(
               input.commandId,
@@ -2435,10 +2449,46 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
                 AND json_extract(active.body_json, '$.workspaceProcess.physicalKey')=?
                 AND json_extract(active.body_json, '$.result.quiescence') IS NOT 'proved'
             )
+            AND NOT EXISTS (
+              SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+              JOIN workspace_execution_state operation ON operation.workspace_id=physical.id
+              WHERE owned.id=json_extract(command_receipts.body_json, '$.workspaceTarget.handle')
+                AND operation.operation_claim_id IS NOT NULL
+            )
         `).run(JSON.stringify(process), commandId, physicalKey);
 
         return updated.changes === 1;
       });
+    },
+    claimWorkspaceGitOperation(input) {
+      return storage.write(() => db.prepare(`
+        UPDATE workspace_execution_state
+        SET operation_fence=operation_fence + (operation_claim_id IS NULL), operation_claim_id=?
+        WHERE workspace_id=? AND generation=? AND preparation_mode='ownWorktree'
+          AND (operation_claim_id IS NULL OR operation_claim_id=?)
+          AND EXISTS (
+            SELECT 1 FROM workspaces owned JOIN run_fences fence ON fence.run_id=owned.run_id
+            WHERE owned.id=workspace_execution_state.workspace_id AND owned.run_id=? AND owned.released_at IS NULL
+              AND fence.assignment_id=? AND fence.epoch=?
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+            JOIN workspace_execution_state other ON other.workspace_id=physical.id
+            WHERE owned.id=workspace_execution_state.workspace_id AND other.operation_claim_id IS NOT NULL
+              AND other.operation_claim_id<>?
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+            JOIN session_process_obligations process ON process.run_id=physical.run_id
+            WHERE owned.id=workspace_execution_state.workspace_id AND process.phase<>'released'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM command_receipts workload WHERE workload.kind='workspace.run'
+              AND json_extract(workload.body_json, '$.workspaceProcess.physicalKey')=?
+              AND json_extract(workload.body_json, '$.result.quiescence') IS NOT 'proved'
+          )
+      `).run(input.commandId, input.handle, input.generation, input.commandId,
+        input.runId, input.assignmentId, input.assignmentEpoch, input.commandId, input.physicalKey).changes === 1);
     },
     isWorkspaceWorkloadCancelled(input) {
       return db.prepare(`
@@ -2513,7 +2563,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       return storage.write(() => {
         const result = db
           .prepare(
-            "UPDATE workspaces SET released_at = ? WHERE id = ? AND released_at IS NULL",
+            `UPDATE workspaces SET released_at = ? WHERE id = ? AND released_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM workspace_execution_state WHERE workspace_id=workspaces.id AND operation_claim_id IS NOT NULL)`,
           )
           .run(releasedAt, id);
 
@@ -2763,6 +2814,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
                 }),
           });
           settleReceiptBudget(db, receipt);
+          if (receipt.kind === "workspace.checkpoint" || receipt.kind === "workspace.restore") {
+            const body = receipt.body as { workspacePhase?: unknown; workspaceTarget?: unknown };
+            if ((body.workspacePhase === "completed" || body.workspacePhase === "rejected") && isWorkspaceGenerationTarget(body.workspaceTarget))
+              db.prepare(`UPDATE workspace_execution_state SET operation_claim_id=NULL
+                WHERE workspace_id=? AND generation=? AND operation_claim_id=?`)
+                .run(body.workspaceTarget.handle, body.workspaceTarget.generation, receipt.commandId);
+          }
 
           db.exec("COMMIT");
           notifyCapacity();

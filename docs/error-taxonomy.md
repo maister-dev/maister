@@ -975,6 +975,8 @@ and grants no delivery authority.
 | `workspace_log_pending` | Web has no applied runtime-object evidence for the addressed history page yet. |
 | `workspace_template_context_invalid` | The sealed values or template cannot be verified or rendered within the workload budget. No process is started. |
 | `workspace_workload_cancelled` | A durable cancellation bound to this workspace, assignment and workload arrived before it. No process is started. |
+| `workspace_checkpoint_unknown` | The supervisor cannot verify a Git checkpoint for this workspace, generation and assignment. |
+| `workspace_writer_active` | A process or an outstanding Git operation holds the workspace writer fence. Retry after its outcome is recorded. |
 | `addressed_stop_pending` | Stop is retained on the current assignment. Web is awaiting canonical supervisor retirement evidence. |
 | `addressed_stop_owner_changed` | The Run no longer has the addressed workspace and assignment that can accept this Stop. |
 | `addressed_stop_child_active` | A dependent child still owns work. Stop the child through its current owner before releasing the parent. |

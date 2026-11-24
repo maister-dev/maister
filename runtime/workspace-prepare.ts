@@ -149,6 +149,24 @@ export type WorkspaceCancelWorkloadResult = Readonly<{
   objects: readonly WorkspaceInputObject[];
 }>;
 
+export type WorkspaceCheckpointRequest = Readonly<{
+  workspaceProtocol: 1;
+  command: Readonly<{ id: string; kind: "workspace.checkpoint"; issuedAt: string }>;
+  owner: WorkspaceAssignmentOwner;
+  payload: Readonly<{ generation: number }>;
+}>;
+export type WorkspaceRestoreRequest = Readonly<{
+  workspaceProtocol: 1;
+  command: Readonly<{ id: string; kind: "workspace.restore"; issuedAt: string }>;
+  owner: WorkspaceAssignmentOwner;
+  payload: Readonly<{ generation: number; checkpointId: string }>;
+}>;
+export type WorkspaceGitCheckpointResult = Readonly<{
+  generation: number;
+  checkpointId: string;
+  tree: string;
+}>;
+
 export type WorkspaceRecord = Readonly<{
   handle: string;
   generation: number;
@@ -172,6 +190,8 @@ export const WORKSPACE_PREPARE_TARGET = { kind: "prepare" } as const;
 export const WORKSPACE_MATERIALIZE_OPERATION = "stageCMaterialize";
 export const WORKSPACE_RUN_OPERATION = "stageCRunWorkload";
 export const WORKSPACE_CANCEL_OPERATION = "stageCCancelWorkload";
+export const WORKSPACE_CHECKPOINT_OPERATION = "stageCCheckpoint";
+export const WORKSPACE_RESTORE_OPERATION = "stageCRestore";
 export const WORKSPACE_TERMINAL_EVENT = "workspace.command.terminal";
 export const WORKSPACE_TERMINAL_SCHEMA =
   "maister.workspace.command.terminal.v1";
@@ -204,6 +224,14 @@ export type WorkspaceCommandBinding =
   | Readonly<{
       operationId: typeof WORKSPACE_CANCEL_OPERATION;
       target: WorkspaceCancelTarget;
+    }>
+  | Readonly<{
+      operationId: typeof WORKSPACE_CHECKPOINT_OPERATION;
+      target: WorkspaceGenerationTarget;
+    }>
+  | Readonly<{
+      operationId: typeof WORKSPACE_RESTORE_OPERATION;
+      target: WorkspaceGenerationTarget;
     }>;
 
 export type WorkspaceTerminalPayload = WorkspaceCommandBinding &
@@ -295,12 +323,16 @@ export type WorkspaceCommandReceipt =
   | WorkspacePrepareReceipt
   | WorkspaceMaterializeReceipt
   | WorkspaceWorkloadReceipt
-  | WorkspaceCancelWorkloadReceipt;
+  | WorkspaceCancelWorkloadReceipt
+  | WorkspaceReceipt<Extract<WorkspaceCommandBinding, { operationId: typeof WORKSPACE_CHECKPOINT_OPERATION }>, WorkspaceGitCheckpointResult>
+  | WorkspaceReceipt<Extract<WorkspaceCommandBinding, { operationId: typeof WORKSPACE_RESTORE_OPERATION }>, WorkspaceGitCheckpointResult>;
 export type WorkspaceCommandRequest =
   | WorkspacePrepareRequest
   | WorkspaceMaterializeRequest
   | WorkspaceWorkloadRequest
-  | WorkspaceCancelWorkloadRequest;
+  | WorkspaceCancelWorkloadRequest
+  | WorkspaceCheckpointRequest
+  | WorkspaceRestoreRequest;
 
 export function workspaceTerminalOutcome(
   receipt: Extract<WorkspaceCommandReceipt, { streamId: string }>,
@@ -378,7 +410,9 @@ export function isWorkspaceTerminalPayload(
       : value.operationId === WORKSPACE_CANCEL_OPERATION
         ? isWorkspaceCancelTarget(value.target)
         : (value.operationId === WORKSPACE_MATERIALIZE_OPERATION ||
-            value.operationId === WORKSPACE_RUN_OPERATION) &&
+            value.operationId === WORKSPACE_RUN_OPERATION ||
+            value.operationId === WORKSPACE_CHECKPOINT_OPERATION ||
+            value.operationId === WORKSPACE_RESTORE_OPERATION) &&
           isWorkspaceGenerationTarget(value.target)) &&
     (value.phase === "completed" ||
       value.phase === "rejected" ||

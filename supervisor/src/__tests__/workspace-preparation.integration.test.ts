@@ -687,6 +687,75 @@ function git(cwd: string, ...args: string[]): string {
   ).trim();
 }
 
+it("C-09 restores a retained Git checkpoint once without replacing later work on replay", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-git-checkpoint-"));
+  roots.push(root);
+  const repository = join(root, "sources");
+  git(root, "init", "-b", "main", repository);
+  await writeFile(join(repository, "input.txt"), "base\n");
+  git(repository, "add", "input.txt");
+  git(repository, "commit", "-m", "base");
+  const commit = git(repository, "rev-parse", "HEAD");
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repository }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, {
+    mode: "ownWorktree", repositoryId: "fixture", commit, inputDigest: "b".repeat(64),
+  });
+  if (prepared.phase !== "completed") throw new Error("fixture owns no checkout");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout) throw new Error("fixture checkout was not retained");
+  const file = join(checkout.realPath, "input.txt");
+  const untracked = join(checkout.realPath, "untracked.txt");
+  await writeFile(file, "captured tracked bytes\n");
+  await writeFile(untracked, "captured untracked bytes\n");
+  const checkpointId = randomUUID();
+  const checkpoint = await addressedRequest(host, `/v1/workspaces/${handle}/checkpoint`, {
+    workspaceProtocol: 1,
+    command: { id: checkpointId, kind: "workspace.checkpoint", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: { generation },
+  });
+  expect(checkpoint.status).toBe(202);
+  const captured = await vi.waitFor(async () => {
+    const response = await addressedRequest(host, `/v1/commands/${checkpointId}`);
+    const receipt = await response.json() as { result: { tree: string } };
+    expect(receipt).toMatchObject({ phase: "completed", result: { generation, checkpointId, tree: expect.stringMatching(/^[0-9a-f]{40}$/) } });
+    return receipt;
+  });
+  expect(git(checkout.realPath, "rev-parse", "HEAD")).toBe(commit);
+  expect(git(checkout.realPath, "ls-files", "--", "untracked.txt")).toBe("");
+  await writeFile(file, "changed after checkpoint\n");
+  await writeFile(untracked, "changed untracked bytes\n");
+  const restoreId = randomUUID();
+  const restore = {
+    workspaceProtocol: 1,
+    command: { id: restoreId, kind: "workspace.restore", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: { generation, checkpointId },
+  };
+  const restorePath = `/v1/workspaces/${handle}/restore`;
+  expect((await addressedRequest(host, restorePath, restore)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(host, `/v1/commands/${restoreId}`);
+    expect(await response.json()).toMatchObject({ phase: "completed", result: captured.result });
+  });
+  expect(await readFile(file, "utf8")).toBe("captured tracked bytes\n");
+  expect(await readFile(untracked, "utf8")).toBe("captured untracked bytes\n");
+  expect(git(checkout.realPath, "ls-files", "--", "untracked.txt")).toBe("");
+  await writeFile(file, "later work after restore\n");
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect(restarted.hostState.hostKey).toBe(host.hostState.hostKey);
+  expect((await addressedRequest(restarted, restorePath, restore)).status).toBe(202);
+  const replay = await addressedRequest(restarted, `/v1/commands/${restoreId}`);
+  expect(await replay.json()).toMatchObject({ phase: "completed", result: captured.result });
+  expect(await readFile(file, "utf8")).toBe("later work after restore\n");
+}, 30_000);
+
 function addressedRequest(
   host: BootedHost,
   path: string,

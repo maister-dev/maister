@@ -338,7 +338,7 @@ operationCases:
       state: accepted
     result: &a23
       generation: 1
-      checkpointId: cp_123
+      checkpointId: a7fced07-3241-4d20-9245-000000000004
       tree: 0123456789abcdef0123456789abcdef01234567
     refusal:
       status: 409
@@ -367,14 +367,14 @@ operationCases:
       owner: *a2
       payload:
         generation: 1
-        checkpointId: cp_123
+        checkpointId: a7fced07-3241-4d20-9245-000000000004
     invalidRequest:
       workspaceProtocol: 1
       command: *a22
       owner: *a2
       payload:
         generation: 1
-        checkpointId: cp_123
+        checkpointId: a7fced07-3241-4d20-9245-000000000004
         worktreePath: /private/repo
     response: &a25
       commandId: a7fced07-3241-4d20-9245-000000000005
@@ -389,7 +389,7 @@ operationCases:
           reason: workspace_rejected
       newEffects: 0
     target: {"kind":"workspace","handle":"ws_354c9b5edffe43f0b3a53ffd05b047ef","generation":1}
-    requestSha256: 537e5234a37e9135e8050edc0aab01e1d2509eb02bc8009449db3e968ab3cd38
+    requestSha256: 9c03caebd12a6e6fbc474b883d4742ec2c2810ae3236232a309179eb49c48183
     location: /v1/commands/a7fced07-3241-4d20-9245-000000000005
     replay:
       location: /v1/commands/a7fced07-3241-4d20-9245-000000000005

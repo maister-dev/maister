@@ -182,12 +182,12 @@ export async function claimAddressedFlowStop(
     const pending: string[] = [];
     for (const target of commands) {
       if (
-        target.kind === "session.create" &&
+        (target.kind === "session.create" || target.kind === "workspace.checkpoint" || target.kind === "workspace.restore") &&
         target.state === "queued" &&
         target.attempts === 0
       ) {
         await markFailed(tx, target.id, 0, {
-          reason: "addressed_stop_before_session_delivery",
+          reason: target.kind === "session.create" ? "addressed_stop_before_session_delivery" : "addressed_stop_before_git_delivery",
         });
       }
       if (target.kind !== "workspace.run") continue;
@@ -235,9 +235,9 @@ export async function settleAddressedWorkloadStops(
       .select()
       .from(executionCommands)
       .where(eq(executionCommands.executionAssignmentId, claim.assignmentId));
-    const pendingCreates = commands.some(
+    const pendingExecution = commands.some(
       ({ kind, state }) =>
-        kind === "session.create" &&
+        (kind === "session.create" || kind === "workspace.checkpoint" || kind === "workspace.restore") &&
         (state === "accepted" || state === "delivering" || state === "queued"),
     );
     const cancellations = commands.filter(({ id }) =>
@@ -253,7 +253,7 @@ export async function settleAddressedWorkloadStops(
     )
       throw stopPending();
     if (
-      !pendingCreates &&
+      !pendingExecution &&
       cancellations.length === claim.commands.length &&
       cancellations.every(cancellationProved)
     )

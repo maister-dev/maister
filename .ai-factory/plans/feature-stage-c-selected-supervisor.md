@@ -511,6 +511,18 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   whose repository grant had been revoked. Passed one focused supervisor
   and four Web integrations, both typechecks, contracts and docs/ERD.
 
+  **C-09 Git checkpoint and restore.** RED returned 404 from the owned
+  checkpoint operation. GREEN captured tracked and untracked changes on the
+  detached checkout, restored their original bytes and preserved edits made
+  after the first restore when replayed on the restarted supervisor. The
+  pathless board Graph records the host checkpoint before its first opted-in
+  ACP attempt. A separate real manager/host journey verifies canonical
+  checkpoint and restore projection. The populated PostgreSQL 0378 upgrade
+  keeps existing command bytes and verifies current-generation ownership,
+  completed checkpoint binding and immutable restore identity. Human
+  takeover, cross-assignment restore and the review source witness remain
+  open.
+
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure

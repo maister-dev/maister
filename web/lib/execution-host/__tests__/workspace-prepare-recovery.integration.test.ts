@@ -46,6 +46,7 @@ import { readRuntimeObjectContent } from "../runtime-objects";
 import { WorkspaceMaterializationPayloadSchema } from "../workspace-prepare-schema";
 import { asExecutionWorkspaceId } from "../types";
 import { reserveWorkspaceWorkload } from "../workspace-workloads";
+import { reserveWorkspaceGitOperation } from "../workspace-checkpoint";
 
 import { captureAddressedFlowContexts } from "@/lib/context-mounts/addressed-capture";
 import { stageProjectFlowMemory } from "@/lib/agent-memory-vault/injection";
@@ -222,6 +223,11 @@ it.each([
         {
           id: "edit",
           type: "ai_coding",
+          retry_policy: {
+            attempts: 2,
+            on_errors: ["SPAWN"],
+            workspace: "rewind-to-node-checkpoint",
+          },
           action: {
             prompt: `fixture-output:${JSON.stringify({
               bytes: 0,
@@ -435,7 +441,10 @@ it.each([
     const first = startDriver(firstDriver.signal);
     let commandId: string;
     try {
-      const queued = await vi.waitFor(() => findDeclaration("node:"), {
+      const queued = await vi.waitFor(async () => {
+        await projectEvidence();
+        return findDeclaration("node:");
+      }, {
         timeout: 3_000,
       });
       commandId = queued.id;
@@ -496,6 +505,7 @@ it.each([
       .select({
         status: nodeAttempts.status,
         acpSessionId: nodeAttempts.acpSessionId,
+        checkpointRef: nodeAttempts.checkpointRef,
       })
       .from(nodeAttempts)
       .where(
@@ -504,6 +514,7 @@ it.each([
     expect(editAttempt).toMatchObject({
       status: "Succeeded",
       acpSessionId: expect.stringMatching(/^mock-/),
+      checkpointRef: expect.stringMatching(/^host-checkpoint:[0-9a-f-]{36}$/),
     });
     expect(
       await db
@@ -1151,6 +1162,31 @@ async function assertAddressedRequirement({
     );
   }
 
+  const file = join(owned.path, "input.txt");
+  await writeFile(file, "checkpointed by host\n");
+  const checkpoint = await reserveWorkspaceGitOperation(db, {
+    runId, assignmentId: assignment.id, kind: "workspace.checkpoint", operationKey: "fixture:checkpoint",
+  });
+  const projectGit = async (future: number, id: string): Promise<Record<string, unknown>> => {
+    expect(await recoverAt(future)).toMatchObject({ errors: [], redelivered: 1 });
+    expect(await consumeRuntimeEventStreamOnce({
+      db, executionHostId: host.id, transport, owner: "fixture", maxEvents: 1,
+      signal: AbortSignal.timeout(15_000),
+    })).toMatchObject({ received: 1 });
+    await projectExecutionEvents({ db, projector: canonicalLifecycleProjector, runId, now: new Date(projectedAt.getTime() + 200_000) });
+    const row = await getCommand(db, id);
+    expect(row?.state).toBe("succeeded");
+    return row?.result ?? {};
+  };
+  const checkpointResult = await projectGit(90, checkpoint.id);
+  expect(checkpointResult).toMatchObject({ checkpointId: checkpoint.id, generation: 1, tree: expect.any(String) });
+  await writeFile(file, "changed after snapshot\n");
+  const restored = await reserveWorkspaceGitOperation(db, {
+    runId, assignmentId: assignment.id, kind: "workspace.restore", operationKey: "fixture:restore", checkpointId: checkpoint.id,
+  });
+  expect(await projectGit(120, restored.id)).toMatchObject({ checkpointId: checkpoint.id, tree: checkpointResult.tree });
+  expect(await readFile(file, "utf8")).toBe("checkpointed by host\n");
+
   await writeFile(
     join(owned.path, "input.txt"),
     "changed on the selected host\n",
@@ -1161,7 +1197,7 @@ async function assertAddressedRequirement({
     declarationId: "stop-check",
   });
   try {
-    expect(await recoverAt(90)).toMatchObject({ errors: [], redelivered: 1 });
+    expect(await recoverAt(150)).toMatchObject({ errors: [], redelivered: 1 });
     await vi.waitFor(async () => expect(await readFile(join(owned.path, ".stop-ready"), "utf8")).toBe(""));
     const supervisorState = new DatabaseSync(join(supervisor.stateDir, "state.sqlite"), { readOnly: true });
     const stopGroup = (() => {

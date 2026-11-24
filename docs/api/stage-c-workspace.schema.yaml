@@ -539,7 +539,7 @@ definitions:
     required: [ generation, checkpointId ]
     properties:
       generation: *a1
-      checkpointId: *a3
+      checkpointId: *a2
   CheckoutExpectation:
     type: object
     additionalProperties: false
@@ -685,7 +685,7 @@ definitions:
     required: [ generation, checkpointId, tree ]
     properties:
       generation: *a1
-      checkpointId: *a3
+      checkpointId: *a2
       tree: *a4
   GitResult:
     type: object

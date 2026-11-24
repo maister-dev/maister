@@ -226,6 +226,9 @@ export const WorkspaceWorkloadPayloadSchema = z
 export const WorkspaceCancelWorkloadPayloadSchema = z
   .object({ generation })
   .strict();
+export const WorkspaceCheckpointPayloadSchema = z.object({ generation }).strict();
+export const WorkspaceRestorePayloadSchema = WorkspaceCheckpointPayloadSchema.extend({ checkpointId: z.string().uuid() });
+export const WorkspaceGitCheckpointResultSchema = WorkspaceRestorePayloadSchema.extend({ tree: gitObject });
 const workloadObject = z
   .object({ objectId: z.string().uuid(), sha256: digest })
   .strict();
@@ -260,7 +263,7 @@ const cancellationResult = z
   .strict();
 
 function commandResultReceipt<
-  Op extends "stageCRunWorkload" | "stageCCancelWorkload",
+  Op extends "stageCRunWorkload" | "stageCCancelWorkload" | "stageCCheckpoint" | "stageCRestore",
   T extends z.ZodType,
   R extends z.ZodType,
 >(operationId: Op, target: T, result: R) {
@@ -317,4 +320,6 @@ export const WorkspaceCommandReceiptSchema = z.union([
     z.custom<WorkspaceCancelTarget>(isWorkspaceCancelTarget),
     cancellationResult,
   ),
+  commandResultReceipt("stageCCheckpoint", z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget), WorkspaceGitCheckpointResultSchema),
+  commandResultReceipt("stageCRestore", z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget), WorkspaceGitCheckpointResultSchema),
 ]);

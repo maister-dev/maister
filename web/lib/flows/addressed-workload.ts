@@ -2,7 +2,8 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand } from "@/lib/db/schema";
-import type { WorkspaceInputObject } from "../../../runtime/workspace-prepare";
+import type { WorkspaceGitCheckpointResult, WorkspaceInputObject } from "../../../runtime/workspace-prepare";
+import type { AddressedGitOperation } from "@/lib/execution-host/workspace-checkpoint";
 import type { FlowDriverClaim } from "./graph/driver-claim";
 import type { StepResult } from "./types";
 
@@ -34,7 +35,9 @@ import {
 import {
   WorkspaceWorkloadPayloadSchema,
   WorkspaceWorkloadResultSchema,
+  WorkspaceGitCheckpointResultSchema,
 } from "@/lib/execution-host/workspace-prepare-schema";
+import { reserveWorkspaceGitOperation } from "@/lib/execution-host/workspace-checkpoint";
 import { dispatchQueuedWorkspaceCommand } from "@/lib/execution-host/workspace-dispatch";
 import {
   reserveWorkspaceWorkload,
@@ -84,6 +87,39 @@ export class FlowWorkloadContinuationPending extends MaisterError {
       details: { reason: "flow_workload_continuation_pending", commandId },
     });
   }
+}
+
+/** Run a driver-owned Git operation through the same retained host command and event plane. */
+export async function runAddressedGitOperation(db: Db, operation: AddressedGitOperation, signal: AbortSignal): Promise<WorkspaceGitCheckpointResult> {
+  const command = await reserveWorkspaceGitOperation(db, operation);
+  if (command.state === "queued" && command.attempts === 0) {
+    try {
+      await dispatchQueuedWorkspaceCommand(db, { runId: operation.runId, commandId: command.id });
+    } catch (error) {
+      if (!(error instanceof MaisterError) || (error.code !== "EXECUTOR_UNAVAILABLE" && error.code !== "ACP_PROTOCOL")) throw error;
+      throw new FlowWorkloadContinuationPending(command.id);
+    }
+  }
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+  while (!deadline.aborted) {
+    const applied = await getCommand(db, command.id);
+    if (applied?.state === "succeeded") {
+      const result = WorkspaceGitCheckpointResultSchema.safeParse({
+        generation: applied.result?.generation,
+        checkpointId: applied.result?.checkpointId,
+        tree: applied.result?.tree,
+      });
+      if (result.success) return result.data;
+      throw new MaisterError("ACP_PROTOCOL", "The applied Git checkpoint receipt is inconsistent");
+    }
+    if (applied?.state === "failed")
+      throw new MaisterError("CHECKPOINT", "The selected supervisor refused the workspace Git operation", {
+        details: { reason: "workspace_checkpoint_unknown", commandId: command.id },
+      });
+    if (applied?.state === "fenced" || applied?.transportState === "reconciliation_required") break;
+    await runEventWakeBus.wait(operation.runId, 500, deadline);
+  }
+  throw new FlowWorkloadContinuationPending(command.id);
 }
 
 type CliOutput = Pick<StepResult, "stdout" | "stderr" | "originalOutput">;

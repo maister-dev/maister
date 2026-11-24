@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
-import type { WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
+import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
@@ -1934,6 +1934,12 @@ export function sendWorkspaceMaterialization(handle: string, input: WorkspaceMat
 
 export function sendWorkspaceWorkload(handle: string, input: WorkspaceWorkloadRequest): Promise<void> {
   return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(handle)}/commands`, input);
+}
+
+export function sendWorkspaceGitCommand(handle: string, input: WorkspaceCheckpointRequest | WorkspaceRestoreRequest): Promise<void> {
+  const operation = input.command.kind === "workspace.checkpoint" ? "checkpoint" : "restore";
+
+  return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(handle)}/${operation}`, input);
 }
 
 export function cancelWorkspaceWorkload(handle: string, targetCommandId: string, input: WorkspaceCancelWorkloadRequest): Promise<void> {

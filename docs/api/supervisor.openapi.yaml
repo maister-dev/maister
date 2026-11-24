@@ -255,6 +255,52 @@ paths:
               schema: { type: string }
         "400": { description: Invalid cancellation request. }
         "409": { description: Retained workload or workspace owner does not match this cancellation. }
+  /v1/workspaces/{id}/checkpoint:
+    post:
+      tags: [execution-host]
+      operationId: stageCCheckpoint
+      summary: Capture the Git tree of an owned worktree
+      description: The current assignment and generation must match. A live process or an outstanding Git claim prevents capture. The completed receipt identifies the private Git tree without exposing its filesystem path.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCCheckpointRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the retained checkpoint receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid checkpoint request. }
+        "409": { description: Workspace identity or current owner mismatch. }
+  /v1/workspaces/{id}/restore:
+    post:
+      tags: [execution-host]
+      operationId: stageCRestore
+      summary: Restore a retained Git checkpoint on its owning generation
+      description: Restore requires the completed checkpoint for this exact assignment and generation. Replay of a terminal command returns its original receipt. An interrupted mutation retains the writer fence until the resulting tree can be proved.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCRestoreRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the retained restore receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid restore request. }
+        "409": { description: Workspace identity or current owner mismatch. }
   /v1/workspaces/{id}/log:
     get:
       tags: [execution-host]

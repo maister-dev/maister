@@ -2619,6 +2619,13 @@
       "when": 1795494366957,
       "tag": "0377_stage_c_addressed_stop",
       "breakpoints": true
+    },
+    {
+      "idx": 378,
+      "version": "7",
+      "when": 1795505175944,
+      "tag": "0378_stage_c_workspace_git_checkpoint",
+      "breakpoints": true
     }
   ]
 }

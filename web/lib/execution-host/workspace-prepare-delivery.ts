@@ -6,6 +6,8 @@ import type {
   WorkspacePrepareRequest,
   WorkspaceWorkloadRequest,
   WorkspaceCancelWorkloadRequest,
+  WorkspaceCheckpointRequest,
+  WorkspaceRestoreRequest,
 } from "../../../runtime/workspace-prepare";
 import type {
   ExecutionAssignment,
@@ -27,6 +29,8 @@ import {
   WorkspacePreparePayloadSchema,
   WorkspaceWorkloadPayloadSchema,
   WorkspaceCancelWorkloadPayloadSchema,
+  WorkspaceCheckpointPayloadSchema,
+  WorkspaceRestorePayloadSchema,
 } from "./workspace-prepare-schema";
 import { z } from "zod";
 
@@ -44,6 +48,22 @@ function retainedOwner(
     assignmentId: command.executionAssignmentId,
     assignmentEpoch: command.assignmentEpoch,
   };
+}
+
+export function retainedWorkspaceGitRequest(command: ExecutionCommand, hostKey: string): WorkspaceCheckpointRequest | WorkspaceRestoreRequest {
+  const owner = retainedOwner(command, hostKey);
+  const issuedAt = command.createdAt.toISOString();
+  if (command.kind === "workspace.checkpoint") {
+    const payload = WorkspaceCheckpointPayloadSchema.safeParse(command.payload);
+    if (payload.success) return { workspaceProtocol: 1, owner, payload: payload.data,
+      command: { id: command.id, kind: command.kind, issuedAt } };
+  }
+  if (command.kind === "workspace.restore") {
+    const payload = WorkspaceRestorePayloadSchema.safeParse(command.payload);
+    if (payload.success) return { workspaceProtocol: 1, owner, payload: payload.data,
+      command: { id: command.id, kind: command.kind, issuedAt } };
+  }
+  throw new MaisterError("ACP_PROTOCOL", "Stored workspace Git operation is invalid");
 }
 
 export function retainedWorkspacePrepareRequest(
@@ -225,6 +245,8 @@ export async function recoverWorkspacePreparation(
         handle,
         retainedWorkspaceWorkloadRequest(command, host.hostKey),
       );
+    if ((command.kind === "workspace.checkpoint" || command.kind === "workspace.restore") && transport.sendWorkspaceGitCommand)
+      return transport.sendWorkspaceGitCommand(handle, retainedWorkspaceGitRequest(command, host.hostKey));
     if (
       command.kind === "workspace.cancel" &&
       transport.cancelWorkspaceWorkload
@@ -281,7 +303,9 @@ export async function recoverWorkspacePreparation(
   }
   if (
     command.kind === "workspace.materialize" ||
-    command.kind === "workspace.run"
+    command.kind === "workspace.run" ||
+    command.kind === "workspace.checkpoint" ||
+    command.kind === "workspace.restore"
   )
     await assertWorkspaceRunAuthority(db, command.runId);
   if (command.attempts >= command.maxAttempts) {

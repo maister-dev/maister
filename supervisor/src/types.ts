@@ -725,6 +725,8 @@ export const REASON_TOKENS = [
   "workspace_log_cursor_invalid",
   "workspace_log_too_large",
   "workspace_template_context_invalid",
+  "workspace_checkpoint_unknown",
+  "workspace_writer_active",
   "tool_not_declared",
   "workspace_protocol_unsupported",
   "legacy_field",

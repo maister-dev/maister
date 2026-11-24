@@ -453,4 +453,47 @@ describe("C-02 workspace ownership", () => {
     )).rejects.toMatchObject({ code: "23514", constraint: "addressed_stop_immutable" });
     expect((await read()).addressed_stop_requested_by).toBe(userId);
   });
+
+  it("upgrades retained command history and fences Git operations to their current owner", async () => {
+    const active = await createRun(hostId, "Running");
+    const workspaceId = await reserveWorkspace({ ...active, host: hostId });
+    const handle = `ws_${randomUUID().replaceAll("-", "")}`;
+    const checkpointId = randomUUID();
+    const insertCommand = (id: string, kind: string, payload: Record<string, unknown>) =>
+      database.pool.query(
+        `INSERT INTO execution_commands
+          (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch,
+           kind, target_session_id, payload, max_attempts)
+         VALUES ($1, $2, $3, $4, 1, $5, $6, $7, 3)`,
+        [id, active.runId, active.assignmentId, hostId, kind, handle, payload],
+      );
+    await database.pool.query("UPDATE workspaces SET execution_workspace_id=$2 WHERE id=$1", [workspaceId, handle]);
+    await database.pool.query("UPDATE execution_assignments SET execution_workspace_id=$2 WHERE id=$1", [active.assignmentId, handle]);
+    const priorCommandId = randomUUID();
+    await insertCommand(priorCommandId, "workspace.adopt", { fixture: "unchanged" });
+    const readPriorCommand = async () => (await database.pool.query(
+      "SELECT to_jsonb(command) AS record FROM execution_commands command WHERE id=$1", [priorCommandId],
+    )).rows[0].record;
+    const before = await readPriorCommand();
+    await database.db.transaction((tx) => applyMainMigration(tx, "0378_stage_c_workspace_git_checkpoint"));
+    expect(await readPriorCommand()).toEqual(before);
+
+    await expect(insertCommand(checkpointId, "workspace.checkpoint", { generation: 2 })).rejects.toMatchObject({
+      code: "23514", constraint: "workspace_git_command_owner_required",
+    });
+    await insertCommand(checkpointId, "workspace.checkpoint", { generation: 1 });
+    const restoreId = randomUUID();
+    const restore = { generation: 1, checkpointId };
+    await expect(insertCommand(restoreId, "workspace.restore", restore)).rejects.toMatchObject({
+      code: "23514", constraint: "workspace_restore_checkpoint_required",
+    });
+    await database.pool.query(
+      `UPDATE execution_commands SET state='succeeded', completed_at=clock_timestamp(), result=$2 WHERE id=$1`,
+      [checkpointId, { generation: 1, checkpointId, tree: sha }],
+    );
+    await insertCommand(restoreId, "workspace.restore", restore);
+    await expect(database.pool.query(
+      "UPDATE execution_commands SET payload=$2 WHERE id=$1", [restoreId, { ...restore, checkpointId: randomUUID() }],
+    )).rejects.toMatchObject({ code: "23514", constraint: "workspace_git_command_immutable" });
+  });
 });

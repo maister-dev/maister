@@ -11,6 +11,7 @@ import type {
   WorkspacePrepareRequest,
   WorkspaceWorkloadResult,
   WorkspaceCancelWorkloadResult,
+  WorkspaceGitCheckpointResult,
 } from "../../runtime/workspace-prepare";
 import type { RuntimeObjectRegistry } from "./runtime-objects";
 import type { RuntimeEventPublisher } from "./runtime-event-publisher";
@@ -25,11 +26,13 @@ import {
   isWorkspaceGenerationTarget,
   isWorkspaceCancelTarget,
   WORKSPACE_CANCEL_OPERATION,
+  WORKSPACE_CHECKPOINT_OPERATION,
   WORKSPACE_LOG_MAX_PAGE_SIZE,
   WORKSPACE_MATERIALIZE_OPERATION,
   WORKSPACE_PREPARE_OPERATION,
   WORKSPACE_PREPARE_TARGET,
   WORKSPACE_RUN_OPERATION,
+  WORKSPACE_RESTORE_OPERATION,
   WORKSPACE_WORKLOAD_KINDS,
   workspaceEvidenceDigest,
   workspaceCommandRequestDigest,
@@ -43,6 +46,7 @@ import { materializeWorkspaceInputs } from "./workspace-input-materialization";
 import { inspectWorkspace } from "./workspace-status";
 import { sealWorkspaceDiff } from "./workspace-diff";
 import { sealWorkspaceLog } from "./workspace-log";
+import { checkpointOwnedWorkspace, restoreOwnedWorkspace, WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
 import {
   recoverWorkspaceWorkload,
   runWorkspaceWorkload,
@@ -168,6 +172,14 @@ const cancelSchema = workloadSchema.extend({
   }),
   payload: z.object({ generation }).strict(),
 });
+const checkpointSchema = workloadSchema.extend({
+  command: workloadSchema.shape.command.extend({ kind: z.literal("workspace.checkpoint") }),
+  payload: z.object({ generation }).strict(),
+});
+const restoreSchema = workloadSchema.extend({
+  command: workloadSchema.shape.command.extend({ kind: z.literal("workspace.restore") }),
+  payload: z.object({ generation, checkpointId: z.string().uuid() }).strict(),
+});
 
 type WorkspaceEffect = Readonly<{
   request: WorkspaceCommandRequest;
@@ -180,6 +192,7 @@ type WorkspaceEffect = Readonly<{
     | MaterializedWorkspaceInputs
     | WorkspaceWorkloadResult
     | WorkspaceCancelWorkloadResult
+    | WorkspaceGitCheckpointResult
     | null
   >;
 }>;
@@ -215,6 +228,10 @@ function receiptBinding(row: CommandReceiptRow): WorkspaceCommandBinding {
       operationId: WORKSPACE_MATERIALIZE_OPERATION,
       target: stored.workspaceTarget,
     };
+  if (row.kind === "workspace.checkpoint" && isWorkspaceGenerationTarget(stored.workspaceTarget))
+    return { operationId: WORKSPACE_CHECKPOINT_OPERATION, target: stored.workspaceTarget };
+  if (row.kind === "workspace.restore" && isWorkspaceGenerationTarget(stored.workspaceTarget))
+    return { operationId: WORKSPACE_RESTORE_OPERATION, target: stored.workspaceTarget };
 
   throw new SupervisorError(
     "ACP_PROTOCOL",
@@ -798,6 +815,41 @@ export function registerWorkspacePreparation(args: {
       });
     },
   );
+
+  app.post<{ Params: { id: string } }>("/v1/workspaces/:id/checkpoint", async (req, reply) => {
+    const parsed = checkpointSchema.safeParse(req.body);
+    const handle = workspaceHandle.safeParse(req.params.id);
+    if (!parsed.success || !handle.success)
+      return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "Invalid workspace checkpoint request"));
+    return admit(reply, {
+      request: parsed.data,
+      binding: { operationId: WORKSPACE_CHECKPOINT_OPERATION, target: { kind: "workspace", handle: handle.data, generation: parsed.data.payload.generation } },
+      sourceDigest: null,
+      run: (assertOwner) => checkpointOwnedWorkspace({ state, handle: handle.data, assertOwner }, parsed.data),
+    });
+  });
+
+  app.post<{ Params: { id: string } }>("/v1/workspaces/:id/restore", async (req, reply) => {
+    const parsed = restoreSchema.safeParse(req.body);
+    const handle = workspaceHandle.safeParse(req.params.id);
+    if (!parsed.success || !handle.success)
+      return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "Invalid workspace restore request"));
+    return admit(reply, {
+      request: parsed.data,
+      binding: { operationId: WORKSPACE_RESTORE_OPERATION, target: { kind: "workspace", handle: handle.data, generation: parsed.data.payload.generation } },
+      sourceDigest: null,
+      async run(assertOwner) {
+        const replayingClaim = state.getWorkspaceExecutionState(handle.data)?.operationClaimId === parsed.data.command.id;
+        try {
+          return await restoreOwnedWorkspace({ state, handle: handle.data, assertOwner }, parsed.data);
+        } catch (cause) {
+          if (!replayingClaim) throw cause;
+          // Once a restore may have reached Git, refusal cannot release its writer fence.
+          throw new WorkspaceGitEffectUnconfirmed("Retained restore could not prove its exact resulting tree", { cause });
+        }
+      },
+    });
+  });
 
   app.get<{ Params: { commandId: string } }>(
     "/v1/commands/:commandId",

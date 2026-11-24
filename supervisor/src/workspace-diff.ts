@@ -3,13 +3,11 @@ import type { HostState, WorkspaceRow } from "./host-state";
 import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { RuntimeObjectRegistry } from "./runtime-objects";
 
-import { copyFile, mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { realpath } from "node:fs/promises";
 
 import { SupervisorError } from "./types";
 import { sealWorkspaceOutput } from "./workspace-output-object";
-import { isUnderRoot } from "./workspace-roots";
+import { withPreparedGitIndex } from "./workspace-git-index";
 import {
   executeWorkspaceGit,
   executeWorkspaceGitBytes,
@@ -34,34 +32,13 @@ async function readWorkingTreePatch(
   git: readonly string[],
   args: readonly string[],
 ): Promise<Buffer> {
-  if (!workspace.repoPath) throw diffRefusal();
-  const checkoutIndex = await executeWorkspaceGit([
-    ...git,
-    "rev-parse",
-    "--path-format=absolute",
-    "--git-path",
-    "index",
-  ]);
-  if (
-    !isUnderRoot(
-      join(workspace.repoPath, ".git", "worktrees"),
-      checkoutIndex,
-    ) ||
-    (await realpath(checkoutIndex)) !== checkoutIndex
-  )
-    throw diffRefusal();
-  const directory = await mkdtemp(join(tmpdir(), "maister-checked-diff-"));
-  const indexFile = join(directory, "index");
-  try {
-    await copyFile(checkoutIndex, indexFile);
+  return withPreparedGitIndex(workspace, git, async (indexFile) => {
     await executeWorkspaceGitBytes([...git, "add", "-N", "--", "."], {
       indexFile,
     });
 
     return await executeWorkspaceGitBytes(args, { indexFile });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  });
 }
 
 /** Capture only commits reachable from the owned checkout and seal the bounded Git patch. */

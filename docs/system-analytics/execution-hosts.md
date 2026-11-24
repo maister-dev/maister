@@ -1076,6 +1076,16 @@ after capacity has been released. The Web Run history endpoint checks current
 Run, repository content and knowledge disclosure authority before requesting
 history and rechecks it after verifying the sealed page.
 
+Addressed Graph attempts with an explicit `rewind-to-node-checkpoint` retry
+policy use a private Git ref and a temporary index on the owning supervisor.
+The checkpoint preserves tracked and untracked content while leaving the live
+index intact. PostgreSQL migration 0378 binds the command to the active Run,
+assignment and generation. The supervisor uses its durable workspace writer
+claim to exclude process admission and release during Git mutation. After an
+interrupted restore it verifies HEAD, the live index and the captured tree
+before settling the original command. An unproved restore keeps the claim.
+Replaying a completed restore returns its receipt and preserves later edits.
+
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable
 workload. The context excludes Web's environment. The supervisor verifies the

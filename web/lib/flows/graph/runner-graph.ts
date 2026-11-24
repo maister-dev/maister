@@ -77,9 +77,10 @@ import { FlowPromptContinuationPending } from "./prompt-owner";
 import {
   FlowWorkloadContinuationPending,
   flowWorkloadTarget,
+  runAddressedGitOperation,
 } from "../addressed-workload";
 import { ConsensusGenerationPending } from "./consensus/prompt-owner";
-import { FlowDriverClaimLost, isFlowDriverClaimLost } from "./driver-claim";
+import { assertFlowDriverClaim, FlowDriverClaimLost, isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
 import {
   persistFinishContinuation,
@@ -2965,6 +2966,15 @@ export async function runGraph(
   // `attempts` bounds the node's TOTAL ledger attempts — rework re-visits consume
   // the same budget. An apply failure abandons the retry (fails), never corrupts.
   type AutoRetryDecision = "retry" | "escalate" | "fail";
+  const addressedProject = !isCompanyFlowRun(loaded) && loaded.workspace.ownershipKind === "host_owned";
+  const addressedGitOwner = () => {
+    const driver = opts.driver;
+    if (driver?.claim.scope !== "assignment" || driver.claim.assignmentId !== loaded.run.executionAssignmentId)
+      throw new MaisterError("CHECKPOINT", "An assigned Flow driver is required for the workspace Git operation");
+
+    return { runId, assignmentId: driver.claim.assignmentId, signal: driver.signal,
+      assertDriver: (tx: Db) => assertFlowDriverClaim(tx, driver.claim) };
+  };
   const scheduleAutoRetry = async (
     node: CompiledNode,
     code: MaisterErrorCode,
@@ -3012,7 +3022,14 @@ export async function runGraph(
       return explicit ? "fail" : "escalate";
     }
 
-    if (retryPolicy.workspace !== "keep") {
+    if (addressedProject && retryPolicy.workspace === "rewind-to-node-checkpoint") {
+      const checkpoint = state.attemptCheckpointRef;
+      if (!checkpoint?.startsWith("host-checkpoint:")) return "fail";
+      const owner = addressedGitOwner();
+      await runAddressedGitOperation(rootDb, { ...owner, kind: "workspace.restore",
+        operationKey: `rewind:${checkpoint}`, checkpointId: checkpoint.slice("host-checkpoint:".length),
+      }, owner.signal);
+    } else if (retryPolicy.workspace !== "keep") {
       requireFlowWorktree(worktreePath);
       if (!state.attemptCheckpointRef) {
         log2.warn(
@@ -3588,6 +3605,20 @@ export async function runGraph(
             );
           }
         }
+      }
+
+      const retryWorkspace = (node.source.node as { retry_policy?: RetryPolicy }).retry_policy?.workspace;
+      if (addressedProject && retryWorkspace === "rewind-to-node-checkpoint" && !attemptCheckpointRef) {
+        const owner = addressedGitOwner();
+        const checkpoint = await runAddressedGitOperation(rootDb, { ...owner, kind: "workspace.checkpoint",
+          operationKey: `attempt-checkpoint:${nodeAttemptId}`,
+        }, owner.signal);
+        const checkpointRef = `host-checkpoint:${checkpoint.checkpointId}`;
+        await db.transaction(async (tx: Db) => {
+          await owner.assertDriver(tx);
+          await setCheckpointRef(nodeAttemptId, checkpointRef, tx);
+        });
+        attemptCheckpointRef = checkpointRef;
       }
 
       // M29 (ADR-074, D-C3): capture HEAD at this node's FIRST attempt start

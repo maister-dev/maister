@@ -32,6 +32,7 @@ import {
   retainedWorkspaceMaterializeRequest,
   retainedWorkspaceWorkloadRequest,
   retainedWorkspaceCancellation,
+  retainedWorkspaceGitRequest,
 } from "../workspace-prepare-delivery";
 import { WorkspaceCommandReceiptSchema } from "../workspace-prepare-schema";
 
@@ -71,6 +72,8 @@ const matchingCommandKind = {
   stageCMaterialize: "workspace.materialize",
   stageCRunWorkload: "workspace.run",
   stageCCancelWorkload: "workspace.cancel",
+  stageCCheckpoint: "workspace.checkpoint",
+  stageCRestore: "workspace.restore",
 } as const satisfies Record<WorkspaceCommandBinding["operationId"], string>;
 
 /** Read the receipt outside the projection transaction. Event commit and ACK
@@ -123,7 +126,9 @@ export async function prepareWorkspaceEvidence(
       const request =
         payload.operationId === "stageCMaterialize"
           ? retainedWorkspaceMaterializeRequest(command, host.hostKey)
-          : retainedWorkspaceWorkloadRequest(command, host.hostKey);
+          : payload.operationId === "stageCRunWorkload"
+            ? retainedWorkspaceWorkloadRequest(command, host.hostKey)
+            : retainedWorkspaceGitRequest(command, host.hostKey);
       expectedDigest = workspaceCommandRequestDigest(request, {
         operationId: payload.operationId,
         target: {
@@ -235,6 +240,32 @@ export async function applyWorkspaceEvidence(
       transportState: "reconciliation_required",
       lastError: { reason: receipt.condition, eventId: event.id },
     });
+    return;
+  }
+
+  if (receipt.operationId === "stageCCheckpoint" || receipt.operationId === "stageCRestore") {
+    const { target, result } = receipt;
+    const [workspace] = await tx.select({ id: workspaces.id }).from(workspaces).where(and(
+      eq(workspaces.runId, run.id), eq(workspaces.ownershipKind, "host_owned"),
+      eq(workspaces.executionHostId, assignment.executionHostId),
+      eq(workspaces.preparationAssignmentId, assignment.id),
+      eq(workspaces.executionWorkspaceId, target.handle),
+      eq(workspaces.workspaceGeneration, target.generation),
+      isNull(workspaces.removedAt),
+    ));
+    if (!workspace || target.handle !== assignment.executionWorkspaceId || result.generation !== target.generation ||
+        result.checkpointId !== (receipt.operationId === "stageCCheckpoint" ? command.id : command.payload.checkpointId))
+      throw inconsistent();
+    if (receipt.operationId === "stageCRestore") {
+      const [original] = await tx.select({ result: executionCommands.result }).from(executionCommands)
+        .where(and(eq(executionCommands.id, result.checkpointId), eq(executionCommands.kind, "workspace.checkpoint"),
+          eq(executionCommands.runId, run.id), eq(executionCommands.executionAssignmentId, assignment.id),
+          eq(executionCommands.targetSessionId, target.handle), eq(executionCommands.state, "succeeded")));
+      if (original?.result?.tree !== result.tree || original.result.generation !== target.generation) throw inconsistent();
+    }
+    const transition = await markSucceeded(tx, command.id, null, { ...result, eventId: event.id, outcomeSha256: receipt.outcomeSha256 });
+    if (!transition.changed) throw inconsistent();
+
     return;
   }
 

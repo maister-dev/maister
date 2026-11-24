@@ -153,7 +153,8 @@ export async function recoverAddressedFlowStop(db: Db): Promise<void> {
         sql`NOT EXISTS (SELECT 1 FROM ${executionCommands} command
       WHERE command.execution_assignment_id = ${executionAssignments.id}
       AND ((command.kind = 'workspace.cancel' AND command.state <> 'succeeded')
-        OR (command.kind = 'session.create' AND command.state IN ('queued', 'delivering', 'accepted'))))`,
+        OR (command.kind IN ('session.create', 'workspace.checkpoint', 'workspace.restore')
+          AND command.state IN ('queued', 'delivering', 'accepted'))))`,
       ),
     )
     .orderBy(

@@ -351,6 +351,8 @@ function receiptAdmission(
     case "workspace.prepare":
     case "workspace.materialize":
     case "workspace.run":
+    case "workspace.checkpoint":
+    case "workspace.restore":
     case "workspace.publication":
     case "runtime_object.reserve":
     case "runtime_object.upload":
