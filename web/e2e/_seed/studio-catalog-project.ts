@@ -16,7 +16,11 @@ import {
   installPackageRevision,
   trustPackageRevision,
 } from "@/lib/packages/attach";
-import { mkdtempReal } from "@/test-support/worktree-test-root";
+import { initRepo } from "@/test-support/git-fixture";
+import {
+  mkdtempReal,
+  resolveTestWorktreesRoot,
+} from "@/test-support/worktree-test-root";
 
 type MemberFlow = Readonly<{
   id: string;
@@ -75,9 +79,41 @@ async function writeMember(root: string, flow: MemberFlow): Promise<void> {
 }
 
 export async function seedStudioCatalogProject(endpoint: string) {
-  const project = loadFixtures().byKey.platformAgents;
+  const fixtures = loadFixtures();
   const root = await mkdtempReal("studio-delivery-");
   const suffix = randomUUID().slice(0, 8);
+  const projectSlug = `e2e-studio-delivery-${suffix}`;
+  const project = {
+    projectId: randomUUID(),
+    projectSlug,
+    repoPath: await initRepo(
+      join(resolveTestWorktreesRoot("e2e-live", process.env), projectSlug),
+    ),
+    runnerId: fixtures.byKey.platformAgents.runnerId,
+  };
+
+  // Each browser scenario installs a shared package with the same skill ID.
+  // A separate project keeps those providers from competing during resolution.
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      `WITH fixture AS (
+         INSERT INTO projects (id, slug, name, repo_path, task_key, default_runner_id)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+       )
+       INSERT INTO project_members (id, project_id, user_id, role)
+       SELECT $7, id, $8, 'owner' FROM fixture`,
+      [
+        project.projectId,
+        projectSlug,
+        `Studio delivery ${suffix}`,
+        project.repoPath,
+        `SD${suffix.toUpperCase()}`,
+        project.runnerId,
+        randomUUID(),
+        fixtures.users.admin.id,
+      ],
+    );
+  });
   const core = `core-${suffix}`;
   const design = `design-${suffix}`;
   const dev = `dev-${suffix}`;
@@ -226,6 +262,7 @@ export async function seedStudioCatalogProject(endpoint: string) {
 
   return {
     project,
+    designTaskTitle: designFlow.id,
     agent,
     mcp,
     installs,

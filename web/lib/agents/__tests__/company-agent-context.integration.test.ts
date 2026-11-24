@@ -14202,15 +14202,40 @@ async function qualifyCompanyCooperation(
           await db.execute(
             sql`UPDATE node_attempts SET started_at=clock_timestamp()-interval '10 minutes' WHERE run_id=${graph.childRunId}`,
           );
+          const unrelated =
+            stop === "parent interruption"
+              ? await reserveCompanyFixtureRun()
+              : undefined;
+
+          if (unrelated) {
+            await db
+              .update(runs)
+              .set({
+                status: "Running",
+                startedAt: sql`clock_timestamp()-interval '10 minutes'`,
+              })
+              .where(eq(runs.id, unrelated.runId));
+          }
           await runReconcileSweep({
             db,
             executionHosts: hosts,
             runFlow: resumeFlow,
           });
 
-          // The sweep spans every company. Inspect the runs in this delegation
-          // tree and distinguish the recovery wake from a later event replay.
-          expect(wokenRuns).toEqual([graph.childRunId]);
+          if (unrelated) {
+            const [stale] = await db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, unrelated.runId));
+
+            expect(stale).toEqual({ status: "Crashed" });
+          }
+          // The global sweep may also settle unrelated runs. Use the graph's
+          // own wake and terminal receipts to check recovery.
+          const graphWakes = () =>
+            wokenRuns.filter((runId) => runId === graph.childRunId);
+
+          expect(graphWakes()).toEqual([graph.childRunId]);
           const { rows: recovered } = await database.pool.query<{
             id: string;
             status: string;
@@ -14232,7 +14257,23 @@ async function qualifyCompanyCooperation(
             [nestedChildRunId!]: "Done",
           });
           await consumer.handle([settled]);
-          expect(wokenRuns).toEqual([graph.childRunId]);
+          expect(graphWakes()).toEqual([graph.childRunId]);
+          const graphTerminals = await db
+            .select({ kind: domainEvents.kind })
+            .from(domainEvents)
+            .where(
+              and(
+                eq(domainEvents.runId, graph.childRunId),
+                inArray(domainEvents.kind, [
+                  "run.done",
+                  "run.failed",
+                  "run.crashed",
+                  "run.abandoned",
+                ]),
+              ),
+            );
+
+          expect(graphTerminals).toEqual([{ kind: "run.done" }]);
         } finally {
           if (savedFlowCap === undefined)
             delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
@@ -14775,27 +14816,25 @@ async function qualifyCompanyCooperation(
       expect(wake.kind).toBe("skipped");
       expect(resumeFlow).not.toHaveBeenCalled();
       await prepared.afterCommit(terminal);
-      const terminalEvents = () =>
-        database.pool.query<{
-          run_id: string;
-          company_id: string;
-          status: string;
-        }>(
-          `SELECT event.run_id, event.company_id, run.status
-           FROM domain_events event JOIN runs run ON run.id=event.run_id
-           WHERE event.kind IN ('run.abandoned','run.crashed') AND event.run_id=ANY($1::text[])
-           ORDER BY event.id`,
-          [[pendingNestedRunId, parkedGraphRunId, pendingGraphRunId]],
-        );
+      const readInterruptionEvents = async () =>
+        (
+          await database.pool.query<{
+            run_id: string;
+            company_id: string;
+            status: string;
+            kind: string;
+          }>(
+            `SELECT event.run_id, event.company_id, run.status, event.kind
+       FROM domain_events event JOIN runs run ON run.id=event.run_id
+       WHERE event.kind IN ('run.abandoned','run.crashed') AND event.run_id=ANY($1::text[])
+       ORDER BY event.id`,
+            [[pendingNestedRunId, parkedGraphRunId, pendingGraphRunId]],
+          )
+        ).rows;
 
       await runReconcileSweep({ db, executionHosts: hosts });
-      const { rows: events } = await terminalEvents();
-      const [queuedOrphan] = await db
-        .select({ status: runs.status })
-        .from(runs)
-        .where(eq(runs.id, pendingGraphRunId!));
+      const events = await readInterruptionEvents();
 
-      expect(queuedOrphan).toEqual({ status: "Abandoned" });
       expect(
         events.filter((event) => event.run_id !== pendingGraphRunId),
       ).toEqual([
@@ -14803,16 +14842,28 @@ async function qualifyCompanyCooperation(
           run_id: pendingNestedRunId,
           company_id: request.companyId,
           status: "Abandoned",
+          kind: "run.abandoned",
         },
         {
           run_id: parkedGraphRunId,
           company_id: request.companyId,
           status: "Crashed",
+          kind: "run.crashed",
         },
       ]);
-
+      expect(
+        events.filter((event) => event.run_id === pendingGraphRunId),
+      ).toEqual([
+        {
+          run_id: pendingGraphRunId,
+          company_id: request.companyId,
+          status: "Abandoned",
+          kind: "run.abandoned",
+        },
+      ]);
       await runReconcileSweep({ db, executionHosts: hosts });
-      expect((await terminalEvents()).rows).toEqual(events);
+      await expect(readInterruptionEvents()).resolves.toEqual(events);
+
 
       return;
     }

@@ -57,6 +57,9 @@ let agentsRoot: string;
 let ctx: DelegationSeedCtx;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/scheduler/start-allocated-run", () => ({
+  startAllocatedRun: async () => ({ started: false, queuePosition: 1 }),
+}));
 // The scheduler is stubbed so no agent/flow session is ever spawned: the run row
 // stays a stable `Pending` with every delegation column set at INSERT, which is
 // what these cases are about. The one case that needs real admission behaviour
@@ -233,6 +236,8 @@ it.each(["message", "rework"] as const)(
 
     expect(delegated.status).toBe(202);
     const { childRunId } = await delegated.json();
+
+    expect((await childRun(childRunId)).status).toBe("Pending");
     const launch = await import("@/lib/agents/launch");
 
     if (action === "rework") {

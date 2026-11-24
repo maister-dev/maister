@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 import { expect, type APIRequestContext } from "@playwright/test";
 
-import { singleValue } from "./db";
+import { singleValue, withE2EDb } from "./db";
 import { waitForTaskLaunchRun } from "./task-launch";
 
 export async function createFixture(
@@ -17,22 +17,36 @@ export async function createFixture(
 ): Promise<Awaited<ReturnType<typeof seedStudioCatalogProject>>> {
   await mkdir(testRoot, { recursive: true });
   const fixtureHome = await mkdtemp(join(testRoot, "catalog-cache-"));
-  const { stdout } = await promisify(execFile)(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      "--import",
-      "./scripts/_register-shim.mjs",
-      "e2e/_seed/studio-catalog-project.ts",
-      endpoint,
-    ],
-    {
-      cwd: resolve("."),
-      env: { ...process.env, HOME: fixtureHome, LOG_LEVEL: "error" },
-      timeout: 90_000,
-    },
-  );
+  const { stdout } = await withE2EDb(async (pool) => {
+    const lock = await pool.connect();
+
+    try {
+      // Package installs refresh the global agent registry. Finish the fixture
+      // refresh before another worker installs its own synthetic packages.
+      await lock.query(
+        "SELECT pg_advisory_lock(hashtextextended('e2e-studio-delivery-fixture', 0))",
+      );
+
+      return await promisify(execFile)(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "--import",
+          "./scripts/_register-shim.mjs",
+          "e2e/_seed/studio-catalog-project.ts",
+          endpoint,
+        ],
+        {
+          cwd: resolve("."),
+          env: { ...process.env, HOME: fixtureHome, LOG_LEVEL: "error" },
+          timeout: 90_000,
+        },
+      );
+    } finally {
+      lock.release(true);
+    }
+  });
   const line = stdout
     .split("\n")
     .find((value) => value.startsWith('{"project":'));
@@ -89,8 +103,18 @@ export async function assertActive(runId: string): Promise<void> {
       status.run,
     ) ||
       status.attempt === "Failed")
-  )
-    throw new Error(
-      "Delivery Run " + runId + " ended: " + JSON.stringify(status),
+  ) {
+    const promptError = await singleValue<string>(
+      `SELECT last_error->>'message' AS value FROM execution_commands WHERE run_id=$1 AND kind='session.prompt'
+       ORDER BY created_at DESC LIMIT 1`,
+      [runId],
     );
+
+    throw new Error(
+      "Delivery Run " +
+        runId +
+        " ended: " +
+        JSON.stringify({ ...status, promptError }),
+    );
+  }
 }

@@ -99,14 +99,25 @@ async function call(server, name, args) {
       stderr: "inherit",
     });
   }
-  await client.connect(transport);
   try {
+    await client.connect(transport);
     const result = await client.callTool({ name, arguments: args });
-    if (result.isError) throw new Error(`Fixture call failed: ${name}`);
-    return result.content
+    const text = result.content
       .filter((item) => item.type === "text")
       .map((item) => item.text)
       .join("\n");
+    if (result.isError)
+      throw new Error(`Fixture call failed: ${name}: ${text}`);
+    return text;
+  } catch (error) {
+    process.stderr.write(
+      JSON.stringify({
+        fixture: "checkout-delivery",
+        tool: name,
+        error: String(error),
+      }) + "\n",
+    );
+    throw error;
   } finally {
     await client.close();
   }
@@ -177,8 +188,16 @@ serveAgent(
             `<title>Checkout</title><h1>${journey}</h1><a href="#payment">Next step</a><section id="payment">Payment</section><p>${goals.get("design-journey")}</p><p>${reference}</p>`,
           );
         } else if (text.includes("ask_human to ask which checkout journey")) {
-          if (!design || !goals.has("design-journey"))
+          if (!design || !goals.has("design-journey")) {
+            process.stderr.write(
+              JSON.stringify({
+                fixture: "checkout-delivery",
+                designServer: Boolean(design),
+                designSkill: goals.has("design-journey"),
+              }) + "\n",
+            );
             throw new Error("Design scope missing");
+          }
           const stopped = new Promise((resolve) => {
             cancel = resolve;
           });

@@ -71,6 +71,7 @@ test("E2E-CAP-06 delivers a designer's human answer and keeps its MCP out of a c
   await page.goto("/inbox");
   const card = page
     .getByTestId("hitl-card")
+    .filter({ has: page.getByText(fx.designTaskTitle, { exact: true }) })
     .filter({ hasText: "Which checkout journey should the prototype cover?" })
     .filter({ visible: true });
 
@@ -241,8 +242,8 @@ test("E2E-CAP-06 delivers a designer's human answer and keeps its MCP out of a c
   const runIds = [design, coding, standalone];
   const settled = () =>
     singleValue<{ runId: string; status: string }[]>(
-      `SELECT json_agg(json_build_object('runId',id,'status',status) ORDER BY id) AS value FROM runs WHERE id=ANY($1)`,
-      [runIds],
+      `SELECT json_agg(json_build_object('runId',id,'status',status) ORDER BY id) AS value FROM runs WHERE id=ANY($1) AND project_id=$2`,
+      [runIds, fx.project.projectId],
     );
 
   await expect
@@ -289,8 +290,10 @@ test("E2E-CAP-06 delivers a designer's human answer and keeps its MCP out of a c
     bySession.set(row.acpSessionId, row.runId);
   }
   const pins = await singleValue(
-    "SELECT json_agg(json_build_object('installId',id,'name',name,'revision',resolved_revision) ORDER BY name) AS value FROM package_installs WHERE id=ANY($1)",
-    [fx.installs],
+    `SELECT json_agg(json_build_object('installId',i.id,'name',i.name,'revision',i.resolved_revision) ORDER BY i.name) AS value
+     FROM package_installs i JOIN project_package_attachments a ON a.package_install_id=i.id
+     WHERE i.id=ANY($1) AND a.project_id=$2`,
+    [fx.installs, fx.project.projectId],
   );
 
   expect(pins).toHaveLength(3);

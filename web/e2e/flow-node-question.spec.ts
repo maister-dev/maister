@@ -53,6 +53,7 @@ test("E2E-ASK-03 races one human assignment across Inbox and Run and replays its
     await Promise.all([page.goto("/inbox"), detail.goto(`/runs/${runId}`)]);
     const inboxCard = page
       .getByTestId("hitl-card")
+      .filter({ has: page.getByText(fx.designTaskTitle, { exact: true }) })
       .filter({ hasText: question.prompt })
       .filter({ visible: true });
     const runCard = detail
