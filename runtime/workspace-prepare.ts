@@ -191,6 +191,41 @@ export type WorkspaceGitCheckpointResult = Readonly<{
   tree: string;
 }>;
 
+export type WorkspaceOperationOwner = Readonly<{
+  kind: "workspaceOperation";
+  hostKey: string;
+  workspaceHandle: string;
+  workspaceGeneration: number;
+  claimId: string;
+  fence: number;
+}>;
+
+export type WorkspacePublishRequest = Readonly<{
+  workspaceProtocol: 1;
+  command: Readonly<{ id: string; kind: "workspace.publish"; issuedAt: string }>;
+  owner: WorkspaceOperationOwner;
+  payload: Readonly<{
+    generation: number;
+    expected: Readonly<{
+      head: string;
+      remoteId: string;
+      targetRef: string;
+      priorTarget: string | null;
+    }>;
+    publication: "push" | "promote";
+  }>;
+}>;
+
+export type WorkspacePublishResult = Readonly<{
+  publication: WorkspacePublishRequest["payload"]["publication"];
+  git: Readonly<{
+    generation: number;
+    head: string;
+    priorTarget: string | null;
+    observedTarget: string;
+  }>;
+}>;
+
 export type WorkspaceRecord = Readonly<{
   handle: string;
   generation: number;
@@ -216,6 +251,7 @@ export const WORKSPACE_RUN_OPERATION = "stageCRunWorkload";
 export const WORKSPACE_CANCEL_OPERATION = "stageCCancelWorkload";
 export const WORKSPACE_CHECKPOINT_OPERATION = "stageCCheckpoint";
 export const WORKSPACE_RESTORE_OPERATION = "stageCRestore";
+export const WORKSPACE_PUBLISH_OPERATION = "stageCPublish";
 export const WORKSPACE_TERMINAL_EVENT = "workspace.command.terminal";
 export const WORKSPACE_TERMINAL_SCHEMA =
   "maister.workspace.command.terminal.v1";
@@ -258,11 +294,18 @@ export type WorkspaceCommandBinding =
       target: WorkspaceGenerationTarget;
     }>;
 
-export type WorkspaceTerminalPayload = WorkspaceCommandBinding &
+export type WorkspacePublishBinding = Readonly<{
+  operationId: typeof WORKSPACE_PUBLISH_OPERATION;
+  target: WorkspaceGenerationTarget;
+}>;
+
+export type WorkspaceTerminalPayload = (
+  | (WorkspaceCommandBinding & { owner: WorkspaceAssignmentOwner })
+  | (WorkspacePublishBinding & { owner: WorkspaceOperationOwner })
+) &
   Readonly<{
     commandId: string;
     requestSha256: string;
-    owner: WorkspaceAssignmentOwner;
     phase: "completed" | "rejected" | "indeterminate";
     outcomeSha256: string;
   }>;
@@ -280,17 +323,19 @@ export type WorkspaceTerminalEnvelope = Readonly<{
   payload: WorkspaceTerminalPayload;
 }>;
 
-type ReceiptIdentity = Pick<
-  WorkspaceTerminalPayload,
-  "commandId" | "requestSha256" | "owner"
->;
+type ReceiptIdentity = Readonly<{
+  commandId: string;
+  requestSha256: string;
+}>;
 
 type WorkspaceReceipt<
-  Binding extends WorkspaceCommandBinding,
+  Binding extends WorkspaceCommandBinding | WorkspacePublishBinding,
   Result,
+  Owner = WorkspaceAssignmentOwner,
 > = Readonly<
   ReceiptIdentity &
     Binding &
+    { owner: Owner } &
     (
       | {
           phase: "accepted";
@@ -349,7 +394,13 @@ export type WorkspaceCommandReceipt =
   | WorkspaceWorkloadReceipt
   | WorkspaceCancelWorkloadReceipt
   | WorkspaceReceipt<Extract<WorkspaceCommandBinding, { operationId: typeof WORKSPACE_CHECKPOINT_OPERATION }>, WorkspaceGitCheckpointResult>
-  | WorkspaceReceipt<Extract<WorkspaceCommandBinding, { operationId: typeof WORKSPACE_RESTORE_OPERATION }>, WorkspaceGitCheckpointResult>;
+  | WorkspaceReceipt<Extract<WorkspaceCommandBinding, { operationId: typeof WORKSPACE_RESTORE_OPERATION }>, WorkspaceGitCheckpointResult>
+  | WorkspacePublishReceipt;
+export type WorkspacePublishReceipt = WorkspaceReceipt<
+  WorkspacePublishBinding,
+  WorkspacePublishResult,
+  WorkspaceOperationOwner
+>;
 export type WorkspaceCommandRequest =
   | WorkspacePrepareRequest
   | WorkspaceMaterializeRequest
@@ -365,6 +416,27 @@ export function workspaceTerminalOutcome(
   if (receipt.phase === "rejected") return { refusal: receipt.refusal };
 
   return { condition: receipt.condition };
+}
+
+export function isWorkspaceOperationOwner(
+  value: unknown,
+): value is WorkspaceOperationOwner {
+  return (
+    exactRecord(value, [
+      "kind", "hostKey", "workspaceHandle", "workspaceGeneration", "claimId", "fence",
+    ]) &&
+    value.kind === "workspaceOperation" &&
+    matches(value.hostKey, EXECUTION_HOST_KEY_PATTERN) &&
+    matches(value.claimId, UUID) &&
+    typeof value.fence === "number" &&
+    Number.isSafeInteger(value.fence) &&
+    value.fence > 0 &&
+    isWorkspaceGenerationTarget({
+      kind: "workspace",
+      handle: value.workspaceHandle,
+      generation: value.workspaceGeneration,
+    })
+  );
 }
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -428,8 +500,13 @@ export function isWorkspaceTerminalPayload(
     ]) &&
     matches(value.commandId, UUID) &&
     matches(value.requestSha256, DIGEST) &&
-    isWorkspaceAssignmentOwner(value.owner) &&
-    (value.operationId === WORKSPACE_PREPARE_OPERATION
+    (value.operationId === WORKSPACE_PUBLISH_OPERATION
+      ? isWorkspaceOperationOwner(value.owner) &&
+        isWorkspaceGenerationTarget(value.target) &&
+        value.owner.workspaceHandle === value.target.handle &&
+        value.owner.workspaceGeneration === value.target.generation
+      : isWorkspaceAssignmentOwner(value.owner) &&
+        (value.operationId === WORKSPACE_PREPARE_OPERATION
       ? exactRecord(value.target, ["kind"]) && value.target.kind === "prepare"
       : value.operationId === WORKSPACE_CANCEL_OPERATION
         ? isWorkspaceCancelTarget(value.target)
@@ -437,7 +514,7 @@ export function isWorkspaceTerminalPayload(
             value.operationId === WORKSPACE_RUN_OPERATION ||
             value.operationId === WORKSPACE_CHECKPOINT_OPERATION ||
             value.operationId === WORKSPACE_RESTORE_OPERATION) &&
-          isWorkspaceGenerationTarget(value.target)) &&
+          isWorkspaceGenerationTarget(value.target))) &&
     (value.phase === "completed" ||
       value.phase === "rejected" ||
       value.phase === "indeterminate") &&
@@ -521,8 +598,8 @@ export function workspacePrepareRequestDigest(
 }
 
 export function workspaceCommandRequestDigest(
-  request: WorkspaceCommandRequest,
-  binding: WorkspaceCommandBinding,
+  request: WorkspaceCommandRequest | WorkspacePublishRequest,
+  binding: WorkspaceCommandBinding | WorkspacePublishBinding,
 ): string {
   return workspaceEvidenceDigest({
     ...binding,

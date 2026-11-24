@@ -2633,6 +2633,13 @@
       "when": 1795508672430,
       "tag": "0379_stage_c_inherited_workspace_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 380,
+      "version": "7",
+      "when": 1795510329635,
+      "tag": "0380_stage_c_retained_workspace_publication",
+      "breakpoints": true
     }
   ]
 }

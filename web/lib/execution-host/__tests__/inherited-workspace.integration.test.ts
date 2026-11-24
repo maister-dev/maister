@@ -34,7 +34,8 @@ import { startRealSupervisor } from "@/test-support/real-supervisor";
 
 import { mintPlacement } from "../placement";
 import { ensureLocalExecutionHost } from "../registrar";
-import { getCommand } from "../commands";
+import { getCommand, insertCommand } from "../commands";
+import { releaseAssignmentForRun } from "../assignments";
 import { canonicalLifecycleProjector } from "../events/lifecycle-projector";
 import {
   startRuntimeEventConsumer,
@@ -89,7 +90,8 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   await database?.stop();
   if (root) await rm(root, { recursive: true, force: true });
-  for (const result of results) if (result.status === "rejected") throw result.reason;
+  for (const result of results)
+    if (result.status === "rejected") throw result.reason;
 });
 
 async function prepareWorkspaceFixture() {
@@ -274,6 +276,8 @@ async function prepareWorkspaceFixture() {
     host,
     initial,
     base,
+    projectId,
+    repository,
     runId,
     readWorkspace,
     projectEvidence,
@@ -282,6 +286,120 @@ async function prepareWorkspaceFixture() {
     supervisor,
   };
 }
+
+function privateCheckoutPath(
+  owningHost: RealSupervisor,
+  handle: string,
+): string {
+  const state = new DatabaseSync(join(owningHost.stateDir, "state.sqlite"), {
+    readOnly: true,
+  });
+  try {
+    const path = state
+      .prepare("SELECT real_path AS path FROM workspaces WHERE id=?")
+      .get(handle)?.path;
+    if (typeof path !== "string")
+      throw new Error("The supervisor did not retain the checkout");
+
+    return path;
+  } finally {
+    state.close();
+  }
+}
+
+it("C-10 projects a publication from the historical owner and holds removal until the outcome is verified", async () => {
+  const {
+    db,
+    host,
+    initial,
+    projectId,
+    repository,
+    base,
+    runId,
+    readWorkspace,
+    settle,
+    supervisor: owningHost,
+  } = await prepareWorkspaceFixture();
+  const {
+    executionWorkspaceId: handle,
+    workspaceGeneration: generation,
+    id,
+  } = await readWorkspace();
+  if (!handle || !generation)
+    throw new Error("The publication fixture has no retained worktree");
+  const privateCheckout = privateCheckoutPath(owningHost, handle);
+  await git(repository, "config", "receive.denyCurrentBranch", "updateInstead");
+  const targetRef = await git(repository, "symbolic-ref", "HEAD");
+  await git(
+    privateCheckout,
+    "commit",
+    "--allow-empty",
+    "-m",
+    "reviewed publication",
+  );
+  const head = await git(privateCheckout, "rev-parse", "HEAD");
+  const claimId = randomUUID();
+  await db.transaction(async (tx) => {
+    await tx.update(runs).set({ status: "Review" }).where(eq(runs.id, runId));
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+    await tx
+      .update(workspaces)
+      .set({
+        promotionState: "claiming",
+        promotionAttemptId: claimId,
+        promotionClaimedAt: new Date(),
+      })
+      .where(eq(workspaces.id, id));
+  });
+  const pending = {
+    kind: "workspace.publish" as const,
+    runId,
+    assignmentId: initial.id,
+    hostId: host.id,
+    assignmentEpoch: initial.epoch,
+    targetSessionId: handle,
+    maxAttempts: 3,
+    driverless: true,
+    payload: {
+      generation,
+      claimId,
+      fence: 1,
+      publication: "promote",
+      expected: { head, remoteId: projectId, targetRef, priorTarget: base },
+    },
+  };
+  await expect(
+    insertCommand(db, {
+      ...pending,
+      payload: { ...pending.payload, claimId: randomUUID() },
+    }),
+  ).rejects.toMatchObject({
+    cause: { constraint: "retained_workspace_publication_owner" },
+  });
+  const command = await insertCommand(db, pending);
+  await expect(
+    db
+      .update(workspaces)
+      .set({ removedAt: new Date() })
+      .where(eq(workspaces.id, id)),
+  ).rejects.toMatchObject({
+    cause: { constraint: "unsettled_workspace_publication" },
+  });
+  expect(await git(repository, "rev-parse", targetRef)).toBe(base);
+  await settle(command.id);
+  expect(await git(repository, "rev-parse", targetRef)).toBe(head);
+  expect(await getCommand(db, command.id)).toMatchObject({
+    executionAssignmentId: initial.id,
+    result: {
+      publication: "promote",
+      git: { generation, priorTarget: base, head, observedTarget: head },
+    },
+  });
+  await db
+    .update(workspaces)
+    .set({ promotionState: "done" })
+    .where(eq(workspaces.id, id));
+}, 60_000);
 
 it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new epoch", async () => {
   const { db, host, initial, runId, readWorkspace, patchOf, settle } =
@@ -364,15 +482,7 @@ it("C-09 claims and returns operator commits from the selected supervisor throug
   const workspace = await readWorkspace();
   const handle = workspace.executionWorkspaceId;
   if (!handle) throw new Error("the takeover fixture has no prepared handle");
-  const state = new DatabaseSync(join(owningHost.stateDir, "state.sqlite"), {
-    readOnly: true,
-  });
-  const privateCheckout = state
-    .prepare("SELECT real_path AS path FROM workspaces WHERE id=?")
-    .get(handle)?.path;
-  state.close();
-  if (typeof privateCheckout !== "string")
-    throw new Error("the supervisor did not retain the checkout");
+  const privateCheckout = privateCheckoutPath(owningHost, handle);
   const { POST: claim } =
     await import("@/app/api/runs/[runId]/takeover/claim/route");
   const { POST: returnClaim } =

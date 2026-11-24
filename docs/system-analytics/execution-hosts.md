@@ -1135,6 +1135,20 @@ checkout with commits after that HEAD and records the sealed log and diff.
 The manager rechecks the human claim and assignment while recording the
 return, then resumes validation in a new epoch on the same checkout.
 
+A retained publication command binds the registered host, workspace handle,
+generation, claim ID and monotonic publication fence. PostgreSQL 0380 binds
+the command to its historical assignment and a held promotion or workbench
+claim. It prevents claim replacement and workspace removal while the outcome
+is unresolved. The supervisor verifies the configured repository, clean HEAD
+and remote target. It persists the SQLite 22 writer fence before issuing a
+fast-forward push with an exact expected target lease. A replay after a lost
+terminal write verifies the remote SHA and emits a receipt without pushing
+again. An unresolved effect holds the writer fence for reconciliation. Web
+accepts the terminal event after assignment release only when the immutable
+manager command, retained owner, host receipt, and verified target agree.
+The normal Web promotion, sync and disposition entry points remain part of
+the Stage C lifecycle work.
+
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable
 workload. The context excludes Web's environment. The supervisor verifies the

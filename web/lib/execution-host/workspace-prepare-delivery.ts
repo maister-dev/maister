@@ -8,6 +8,7 @@ import type {
   WorkspaceCancelWorkloadRequest,
   WorkspaceCheckpointRequest,
   WorkspaceRestoreRequest,
+  WorkspacePublishRequest,
 } from "../../../runtime/workspace-prepare";
 import type {
   ExecutionAssignment,
@@ -31,6 +32,7 @@ import {
   WorkspaceCancelWorkloadPayloadSchema,
   WorkspaceCheckpointPayloadSchema,
   WorkspaceRestorePayloadSchema,
+  RetainedWorkspacePublishSchema,
 } from "./workspace-prepare-schema";
 import { z } from "zod";
 
@@ -64,6 +66,27 @@ export function retainedWorkspaceGitRequest(command: ExecutionCommand, hostKey: 
       command: { id: command.id, kind: command.kind, issuedAt } };
   }
   throw new MaisterError("ACP_PROTOCOL", "Stored workspace Git operation is invalid");
+}
+
+export function retainedWorkspacePublishRequest(command: ExecutionCommand, hostKey: string): WorkspacePublishRequest {
+  const parsed = RetainedWorkspacePublishSchema.safeParse(command.payload);
+  if (command.kind !== "workspace.publish" || !parsed.success || !command.targetSessionId)
+    throw new MaisterError("ACP_PROTOCOL", "Stored workspace publication is invalid");
+  const { claimId, fence, ...payload } = parsed.data;
+
+  return {
+    workspaceProtocol: 1,
+    command: { id: command.id, kind: command.kind, issuedAt: command.createdAt.toISOString() },
+    owner: {
+      kind: "workspaceOperation",
+      hostKey,
+      workspaceHandle: command.targetSessionId,
+      workspaceGeneration: payload.generation,
+      claimId,
+      fence,
+    },
+    payload,
+  };
 }
 
 export function retainedWorkspacePrepareRequest(
@@ -121,7 +144,8 @@ export async function resolveWorkspacePreparationPeer(
 ): Promise<{ host: ExecutionHost; assignment: ExecutionAssignment }> {
   const assignment = await getAssignmentById(db, command.executionAssignmentId);
   if (
-    assignment?.state !== "active" ||
+    !assignment ||
+    (command.kind !== "workspace.publish" && assignment.state !== "active") ||
     assignment.runId !== command.runId ||
     assignment.epoch !== command.assignmentEpoch ||
     assignment.executionHostId !== command.executionHostId
@@ -232,6 +256,8 @@ export async function recoverWorkspacePreparation(
         "CONFLICT",
         "Workspace command no longer owns its prepared target",
       );
+    if (command.kind === "workspace.publish" && transport.sendWorkspacePublication)
+      return transport.sendWorkspacePublication(retainedWorkspacePublishRequest(command, host.hostKey));
     if (
       command.kind === "workspace.materialize" &&
       transport.sendWorkspaceMaterialization

@@ -537,7 +537,8 @@ export async function recoverExecutionCommands(
     const addressedWorkspaceCommand =
       row.kind === "workspace.prepare" || row.kind === "workspace.materialize" ||
       row.kind === "workspace.run" || row.kind === "workspace.cancel" ||
-      row.kind === "workspace.checkpoint" || row.kind === "workspace.restore";
+      row.kind === "workspace.checkpoint" || row.kind === "workspace.restore" ||
+      row.kind === "workspace.publish";
     const unattempted = row.state === "queued" && row.attempts === 0;
     if (ageMs(row, at) < graceMs && !(addressedWorkspaceCommand && unattempted)) {
       summary.skippedInFlight += 1;

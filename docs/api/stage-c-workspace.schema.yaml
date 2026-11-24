@@ -102,6 +102,9 @@ x-operations:
     status: 202
     result: PublicationResult
     replay: sameCommand
+    implementedProfile:
+      owner: workspaceOperation
+      publication: [push, promote]
   stageCPreserve:
     method: POST
     path: /v1/workspaces/{id}/preserve
@@ -789,6 +792,8 @@ definitions:
             command_digest_mismatch,
             retained_disposition_required,
             target_ref_changed,
+            head_changed,
+            workspace_writer_active,
             selection_changed,
             host_ineligible,
             preview_stale,

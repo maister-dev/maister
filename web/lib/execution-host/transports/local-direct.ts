@@ -274,6 +274,7 @@ export function createLocalDirectTransport(
     sendWorkspaceMaterialization: wire.sendWorkspaceMaterialization,
     sendWorkspaceWorkload: wire.sendWorkspaceWorkload,
     sendWorkspaceGitCommand: wire.sendWorkspaceGitCommand,
+    sendWorkspacePublication: wire.sendWorkspacePublication,
     cancelWorkspaceWorkload: wire.cancelWorkspaceWorkload,
     getWorkspaceCommandReceipt: wire.getWorkspaceCommandReceipt,
     getWorkspaceStatus: wire.getWorkspaceStatus,

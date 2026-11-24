@@ -626,6 +626,8 @@ const STAGE_C_REFUSALS = {
   command_digest_mismatch: [409, "CONFLICT"],
   retained_disposition_required: [409, "PRECONDITION"],
   target_ref_changed: [409, "CONFLICT"],
+  head_changed: [409, "CONFLICT"],
+  workspace_writer_active: [409, "PRECONDITION"],
   selection_changed: [409, "CONFLICT"],
   host_ineligible: [409, "PRECONDITION"],
   preview_stale: [409, "CONFLICT"],

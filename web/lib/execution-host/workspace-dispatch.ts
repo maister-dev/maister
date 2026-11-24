@@ -36,6 +36,7 @@ export async function dispatchQueuedWorkspaceCommand(
           "workspace.cancel",
           "workspace.checkpoint",
           "workspace.restore",
+          "workspace.publish",
         ]),
         eq(executionCommands.state, "queued"),
         eq(executionCommands.attempts, 0),

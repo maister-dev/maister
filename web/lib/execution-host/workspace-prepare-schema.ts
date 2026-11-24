@@ -5,10 +5,13 @@ import {
   isWorkspaceAssignmentOwner,
   isWorkspaceGenerationTarget,
   isWorkspaceCancelTarget,
+  isWorkspaceOperationOwner,
+  isWorkspaceSourceRef,
   WORKSPACE_WORKLOAD_KINDS,
   type WorkspaceCancelTarget,
   type WorkspaceAssignmentOwner,
   type WorkspaceGenerationTarget,
+  type WorkspaceOperationOwner,
 } from "../../../runtime/workspace-prepare";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -16,6 +19,20 @@ const handle = z.string().regex(/^ws_[a-f0-9]{32}$/);
 const opaqueId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
 const generation = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const gitObject = z.string().regex(GIT_OBJECT_ID);
+export const WorkspacePublishPayloadSchema = z.object({
+  generation,
+  expected: z.object({
+    head: gitObject,
+    remoteId: opaqueId,
+    targetRef: z.string().refine(isWorkspaceSourceRef),
+    priorTarget: gitObject.nullable(),
+  }).strict(),
+  publication: z.enum(["push", "promote"]),
+}).strict();
+export const RetainedWorkspacePublishSchema = WorkspacePublishPayloadSchema.extend({
+  claimId: z.string().uuid(),
+  fence: generation,
+});
 export const WorkspaceEvidenceObjectSchema = z
   .object({
     generation,
@@ -265,14 +282,16 @@ const cancellationResult = z
   .strict();
 
 function commandResultReceipt<
-  Op extends "stageCRunWorkload" | "stageCCancelWorkload" | "stageCCheckpoint" | "stageCRestore",
+  Op extends "stageCRunWorkload" | "stageCCancelWorkload" | "stageCCheckpoint" | "stageCRestore" | "stageCPublish",
   T extends z.ZodType,
   R extends z.ZodType,
->(operationId: Op, target: T, result: R) {
+  O extends z.ZodType,
+>(operationId: Op, target: T, result: R, owner: O) {
   const base = {
     ...materialization,
     operationId: z.literal(operationId),
     target,
+    owner,
   };
   const terminal = {
     ...base,
@@ -309,6 +328,8 @@ function commandResultReceipt<
   ]);
 }
 
+const assignmentOwner = z.custom<WorkspaceAssignmentOwner>(isWorkspaceAssignmentOwner);
+const workspaceTarget = z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget);
 export const WorkspaceCommandReceiptSchema = z.union([
   WorkspacePrepareReceiptSchema,
   WorkspaceMaterializationReceiptSchema,
@@ -316,12 +337,23 @@ export const WorkspaceCommandReceiptSchema = z.union([
     "stageCRunWorkload",
     z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget),
     WorkspaceWorkloadResultSchema,
+    assignmentOwner,
   ),
   commandResultReceipt(
     "stageCCancelWorkload",
     z.custom<WorkspaceCancelTarget>(isWorkspaceCancelTarget),
     cancellationResult,
+    assignmentOwner,
   ),
-  commandResultReceipt("stageCCheckpoint", z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget), WorkspaceGitCheckpointResultSchema),
-  commandResultReceipt("stageCRestore", z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget), WorkspaceGitCheckpointResultSchema),
+  commandResultReceipt("stageCCheckpoint", workspaceTarget, WorkspaceGitCheckpointResultSchema, assignmentOwner),
+  commandResultReceipt("stageCRestore", workspaceTarget, WorkspaceGitCheckpointResultSchema, assignmentOwner),
+  commandResultReceipt(
+    "stageCPublish",
+    workspaceTarget,
+    z.object({
+      publication: z.enum(["push", "promote"]),
+      git: z.object({ generation, head: gitObject, priorTarget: gitObject.nullable(), observedTarget: gitObject }).strict(),
+    }).strict(),
+    z.custom<WorkspaceOperationOwner>(isWorkspaceOperationOwner),
+  ),
 ]);

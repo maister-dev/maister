@@ -129,7 +129,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 21;
+export const HOST_STATE_SCHEMA_VERSION = 22;
 
 /** Native retirement survives registry loss. Released identities share the receipt tombstone's permanent retention and cannot reactivate. */
 export type SessionProcessObligation = Readonly<{
@@ -272,6 +272,7 @@ export type WorkspaceExecutionState = Readonly<{
   materializationDigest: string | null;
   operationFence: number;
   operationClaimId: string | null;
+  publicationFence: number;
 }>;
 
 // This row is deliberately supervisor-private. `privatePath` is never put in
@@ -521,6 +522,7 @@ export type HostState = {
     handle: string;
     generation: number;
     physicalKey: string;
+    retainedFence?: number;
   }>): boolean;
   isWorkspaceWorkloadCancelled(input: Readonly<{
     commandId: string;
@@ -765,6 +767,11 @@ CREATE TABLE IF NOT EXISTS workspace_workload_cancel_fences (
 );
 `;
 
+const WORKSPACE_PUBLICATION_FENCE_SCHEMA = `
+ALTER TABLE workspace_execution_state ADD COLUMN publication_fence INTEGER NOT NULL DEFAULT 0
+  CHECK (typeof(publication_fence) = 'integer' AND publication_fence >= 0);
+`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_identity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -806,6 +813,7 @@ CREATE TABLE IF NOT EXISTS command_receipts (
 CREATE INDEX IF NOT EXISTS command_receipts_received_idx ON command_receipts (received_at);
 ${WORKSPACE_PREPARATION_MODE_SCHEMA}
 ${WORKSPACE_CANCEL_FENCE_SCHEMA}
+${WORKSPACE_PUBLICATION_FENCE_SCHEMA}
 ${SESSION_PROCESS_SCHEMA}
 CREATE TABLE IF NOT EXISTS runtime_objects (
   id TEXT PRIMARY KEY,
@@ -1203,6 +1211,8 @@ function applySchema(
   }
   if (userVersion < 21)
     db.exec(`BEGIN IMMEDIATE; ${WORKSPACE_CANCEL_FENCE_SCHEMA} PRAGMA user_version = 21; COMMIT;`);
+  if (userVersion < 22)
+    db.exec(`BEGIN IMMEDIATE; ${WORKSPACE_PUBLICATION_FENCE_SCHEMA} PRAGMA user_version = 22; COMMIT;`);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -2406,7 +2416,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           `SELECT generation, input_digest AS inputDigest, preparation_mode AS preparationMode,
           materialization_generation AS materializationGeneration,
           materialization_digest AS materializationDigest,
-          operation_fence AS operationFence, operation_claim_id AS operationClaimId
+          operation_fence AS operationFence, operation_claim_id AS operationClaimId,
+          publication_fence AS publicationFence
          FROM workspace_execution_state WHERE workspace_id = ?`,
         )
         .get(id) as WorkspaceExecutionState | undefined;
@@ -2463,9 +2474,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     claimWorkspaceGitOperation(input) {
       return storage.write(() => db.prepare(`
         UPDATE workspace_execution_state
-        SET operation_fence=operation_fence + (operation_claim_id IS NULL), operation_claim_id=?
+        SET operation_fence=operation_fence + (operation_claim_id IS NULL), operation_claim_id=?,
+            publication_fence=COALESCE(?, publication_fence)
         WHERE workspace_id=? AND generation=? AND preparation_mode='ownWorktree'
           AND (operation_claim_id IS NULL OR operation_claim_id=?)
+          AND (? IS NULL OR publication_fence<? OR (publication_fence=? AND operation_claim_id=?))
           AND EXISTS (
             SELECT 1 FROM workspaces owned JOIN run_fences fence ON fence.run_id=owned.run_id
             WHERE owned.id=workspace_execution_state.workspace_id AND owned.run_id=? AND owned.released_at IS NULL
@@ -2487,7 +2500,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               AND json_extract(workload.body_json, '$.workspaceProcess.physicalKey')=?
               AND json_extract(workload.body_json, '$.result.quiescence') IS NOT 'proved'
           )
-      `).run(input.commandId, input.handle, input.generation, input.commandId,
+      `).run(input.commandId, input.retainedFence ?? null, input.handle, input.generation, input.commandId,
+        input.retainedFence ?? null, input.retainedFence ?? null, input.retainedFence ?? null, input.commandId,
         input.runId, input.assignmentId, input.assignmentEpoch, input.commandId, input.physicalKey).changes === 1);
     },
     isWorkspaceWorkloadCancelled(input) {
@@ -2814,7 +2828,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
                 }),
           });
           settleReceiptBudget(db, receipt);
-          if (receipt.kind === "workspace.checkpoint" || receipt.kind === "workspace.restore") {
+          if (receipt.kind === "workspace.checkpoint" || receipt.kind === "workspace.restore" || receipt.kind === "workspace.publish") {
             const body = receipt.body as { workspacePhase?: unknown; workspaceTarget?: unknown };
             if ((body.workspacePhase === "completed" || body.workspacePhase === "rejected") && isWorkspaceGenerationTarget(body.workspaceTarget))
               db.prepare(`UPDATE workspace_execution_state SET operation_claim_id=NULL

@@ -75,7 +75,7 @@ export async function* hostSpanPages(input: {
     const events: ExecutionEvent[] = [];
 
     for (const raw of page.events) {
-      const envelope = normalizeRuntimeEnvelope(raw);
+      const envelope = await normalizeRuntimeEnvelope(input.db, input.executionHostId, raw);
       const own = envelope.hostSessionId === input.hostSessionId;
       const classified = own
         ? await classifyEnvelopeDisposition(

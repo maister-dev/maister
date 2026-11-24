@@ -583,6 +583,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
 
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
+  Retained publication now runs through SQLite 22 and PostgreSQL 0380. The
+  real Git fixture interrupts terminal persistence after the remote ref moves
+  and proves one push across restart by counting reflog entries. It also
+  refuses a changed target. The Web integration reserves a command after
+  assignment release, rejects a mismatched claim and concurrent removal, then
+  verifies the Git target and folds the matching host receipt. The production
+  promotion route, sync and preserve-before-delete still need their witnesses.
+
   The production split-user sweep reproduced a `path.resolve(null)` failure
   while enumerating local agent materialization roots. The existing discovery
   test now contains an addressed workspace row and verifies that valid local

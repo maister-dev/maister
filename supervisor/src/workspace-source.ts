@@ -128,10 +128,26 @@ export async function observeWorkspaceSource(
   source: string,
   ref: string,
 ): Promise<string> {
+  const commit = await observeWorkspaceTarget(source, ref);
+  if (commit === null)
+    throw new SupervisorError(
+      "PRECONDITION",
+      "The approved Git source does not advertise this ref",
+      { details: { reason: "source_ref_unapproved" } },
+    );
+
+  return commit;
+}
+
+export async function observeWorkspaceTarget(
+  source: string,
+  ref: string,
+  git: readonly string[] = [],
+): Promise<string | null> {
   let output: string;
   try {
     output = await executeWorkspaceGit(
-      ["ls-remote", "--refs", "--heads", "--", source, ref],
+      [...git, "ls-remote", "--refs", "--heads", "--", source, ref],
       SOURCE_READ_TIMEOUT_MS,
     );
   } catch {
@@ -141,6 +157,7 @@ export async function observeWorkspaceSource(
       { details: { reason: "source_commit_unavailable" } },
     );
   }
+  if (!output) return null;
   const [commit, advertisedRef] = output.split("\t");
   if (!GIT_OBJECT_ID.test(commit) || advertisedRef !== ref)
     throw new SupervisorError(

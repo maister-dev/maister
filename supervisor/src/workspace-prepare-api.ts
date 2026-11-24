@@ -12,6 +12,11 @@ import type {
   WorkspaceWorkloadResult,
   WorkspaceCancelWorkloadResult,
   WorkspaceGitCheckpointResult,
+  WorkspaceOperationOwner,
+  WorkspacePublishBinding,
+  WorkspacePublishRequest,
+  WorkspacePublishResult,
+  WorkspaceTerminalPayload,
 } from "../../runtime/workspace-prepare";
 import type { RuntimeObjectRegistry } from "./runtime-objects";
 import type { RuntimeEventPublisher } from "./runtime-event-publisher";
@@ -25,6 +30,8 @@ import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 import {
   isWorkspaceGenerationTarget,
   isWorkspaceCancelTarget,
+  isWorkspaceOperationOwner,
+  isWorkspaceSourceRef,
   WORKSPACE_CANCEL_OPERATION,
   WORKSPACE_CHECKPOINT_OPERATION,
   WORKSPACE_LOG_MAX_PAGE_SIZE,
@@ -33,6 +40,7 @@ import {
   WORKSPACE_PREPARE_TARGET,
   WORKSPACE_RUN_OPERATION,
   WORKSPACE_RESTORE_OPERATION,
+  WORKSPACE_PUBLISH_OPERATION,
   WORKSPACE_WORKLOAD_KINDS,
   workspaceEvidenceDigest,
   workspaceCommandRequestDigest,
@@ -47,6 +55,7 @@ import { inspectWorkspace } from "./workspace-status";
 import { sealWorkspaceDiff } from "./workspace-diff";
 import { sealWorkspaceLog } from "./workspace-log";
 import { checkpointOwnedWorkspace, restoreOwnedWorkspace, WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
+import { publishOwnedWorkspace } from "./workspace-publish";
 import {
   recoverWorkspaceWorkload,
   runWorkspaceWorkload,
@@ -186,10 +195,32 @@ const restoreSchema = workloadSchema.extend({
   command: workloadSchema.shape.command.extend({ kind: z.literal("workspace.restore") }),
   payload: z.object({ generation, checkpointId: z.string().uuid() }).strict(),
 });
+const publishSchema = workloadSchema.extend({
+  command: workloadSchema.shape.command.extend({ kind: z.literal("workspace.publish") }),
+  owner: z.object({
+    kind: z.literal("workspaceOperation"),
+    hostKey: z.string().regex(EXECUTION_HOST_KEY_PATTERN),
+    workspaceHandle,
+    workspaceGeneration: generation,
+    claimId: z.string().uuid(),
+    fence: generation,
+  }).strict(),
+  payload: z.object({
+    generation,
+    expected: z.object({
+      head: z.string().regex(GIT_OBJECT_ID),
+      remoteId: opaqueId,
+      targetRef: z.string().refine(isWorkspaceSourceRef),
+      priorTarget: z.string().regex(GIT_OBJECT_ID).nullable(),
+    }).strict(),
+    publication: z.enum(["push", "promote"]),
+  }).strict(),
+});
 
-type WorkspaceEffect = Readonly<{
-  request: WorkspaceCommandRequest;
-  binding: WorkspaceCommandBinding;
+type WorkspaceEffect = (
+  | { request: WorkspaceCommandRequest; binding: WorkspaceCommandBinding }
+  | { request: WorkspacePublishRequest; binding: WorkspacePublishBinding }
+) & Readonly<{
   sourceDigest: string | null;
   run: (
     assertOwner: () => void,
@@ -199,11 +230,12 @@ type WorkspaceEffect = Readonly<{
     | WorkspaceWorkloadResult
     | WorkspaceCancelWorkloadResult
     | WorkspaceGitCheckpointResult
+    | WorkspacePublishResult
     | null
   >;
 }>;
 
-function receiptBinding(row: CommandReceiptRow): WorkspaceCommandBinding {
+function receiptBinding(row: CommandReceiptRow): WorkspaceCommandBinding | WorkspacePublishBinding {
   if (row.kind === "workspace.prepare")
     return {
       operationId: WORKSPACE_PREPARE_OPERATION,
@@ -238,6 +270,8 @@ function receiptBinding(row: CommandReceiptRow): WorkspaceCommandBinding {
     return { operationId: WORKSPACE_CHECKPOINT_OPERATION, target: stored.workspaceTarget };
   if (row.kind === "workspace.restore" && isWorkspaceGenerationTarget(stored.workspaceTarget))
     return { operationId: WORKSPACE_RESTORE_OPERATION, target: stored.workspaceTarget };
+  if (row.kind === "workspace.publish" && isWorkspaceGenerationTarget(stored.workspaceTarget))
+    return { operationId: WORKSPACE_PUBLISH_OPERATION, target: stored.workspaceTarget };
 
   throw new SupervisorError(
     "ACP_PROTOCOL",
@@ -245,17 +279,19 @@ function receiptBinding(row: CommandReceiptRow): WorkspaceCommandBinding {
   );
 }
 
+function storedPublicationOwner(row: CommandReceiptRow): WorkspaceOperationOwner {
+  const { workspaceOwner } = row.body as { workspaceOwner?: unknown };
+  if (!isWorkspaceOperationOwner(workspaceOwner))
+    throw new SupervisorError("ACP_PROTOCOL", "Stored publication owner is invalid");
+
+  return workspaceOwner;
+}
+
 function acceptance(commandId: string): {
   commandId: string;
   state: "accepted";
 } {
   return { commandId, state: "accepted" };
-}
-
-function fenceFor(request: WorkspaceCommandRequest): CommandFence {
-  const { hostKey, runId, assignmentId, assignmentEpoch } = request.owner;
-
-  return { hostKey, runId, assignmentId, assignmentEpoch };
 }
 
 function refusal(code: string, reason: string, message: string) {
@@ -324,12 +360,12 @@ export function registerWorkspacePreparation(args: {
     await Promise.allSettled(inflight.values());
   });
 
-  function assertCurrent(request: WorkspaceCommandRequest): void {
-    const current = state.getFence(request.owner.runId);
+  function assertCurrent(row: CommandReceiptRow): void {
+    const current = state.getFence(row.runId);
     if (
       !current ||
-      current.epoch !== request.owner.assignmentEpoch ||
-      current.assignmentId !== request.owner.assignmentId
+      current.epoch !== row.epoch ||
+      current.assignmentId !== row.assignmentId
     )
       throw new SupervisorError(
         "FENCED",
@@ -343,10 +379,12 @@ export function registerWorkspacePreparation(args: {
     effect: WorkspaceEffect,
   ): Promise<void> {
     const { request, binding } = effect;
+    if (row.assignmentId === null)
+      throw new SupervisorError("ACP_PROTOCOL", "Workspace receipt has no retained assignment provenance");
     let outcome: Record<string, unknown>;
     let phase: "completed" | "rejected" | "indeterminate";
     try {
-      const result = await effect.run(() => assertCurrent(request));
+      const result = await effect.run(() => assertCurrent(row));
       if (result === null) return;
       outcome = { result };
       phase = "completed";
@@ -377,6 +415,20 @@ export function registerWorkspacePreparation(args: {
     }
     const completedAt = new Date().toISOString();
     const outcomeSha256 = workspaceEvidenceDigest(outcome);
+    const identity = {
+      commandId: row.commandId,
+      requestSha256: workspaceCommandRequestDigest(request, binding),
+      phase,
+      outcomeSha256,
+    };
+    let payload: WorkspaceTerminalPayload;
+    if (binding.operationId === WORKSPACE_PUBLISH_OPERATION && request.owner.kind === "workspaceOperation") {
+      payload = { ...identity, ...binding, owner: request.owner };
+    } else if (binding.operationId !== WORKSPACE_PUBLISH_OPERATION && request.owner.kind === "assignment") {
+      payload = { ...identity, ...binding, owner: request.owner };
+    } else {
+      throw new SupervisorError("ACP_PROTOCOL", "Workspace command owner and target disagree");
+    }
     state.putReceiptWithRuntimeEvent(
       {
         ...row,
@@ -386,6 +438,7 @@ export function registerWorkspacePreparation(args: {
           workspacePhase: phase,
           outcomeSha256,
           workspaceTarget: binding.target,
+          ...(request.owner.kind === "workspaceOperation" ? { workspaceOwner: request.owner } : {}),
           ...(request.command.kind === "workspace.run"
             ? {
                 workspaceProcess: (
@@ -404,22 +457,29 @@ export function registerWorkspacePreparation(args: {
         terminal: true,
         draft: {
           runId: row.runId,
-          assignmentId: request.owner.assignmentId,
-          assignmentEpoch: request.owner.assignmentEpoch,
+          assignmentId: row.assignmentId,
+          assignmentEpoch: row.epoch,
           hostSessionId: null,
           eventType: "workspace.command.terminal",
           occurredAt: completedAt,
-          payload: {
-            commandId: row.commandId,
-            requestSha256: workspaceCommandRequestDigest(request, binding),
-            ...binding,
-            owner: request.owner,
-            phase,
-            outcomeSha256,
-          },
+          payload,
         },
       },
     );
+    if (request.owner.kind === "workspaceOperation")
+      logger.info({
+        commandId: row.commandId,
+        runId: row.runId,
+        workspaceHandle: request.owner.workspaceHandle,
+        generation: request.owner.workspaceGeneration,
+        claimId: request.owner.claimId,
+        fence: request.owner.fence,
+        phase,
+        outcomeSha256,
+        ...("expected" in request.payload && phase === "completed"
+          ? { verifiedHead: request.payload.expected.head, targetRef: request.payload.expected.targetRef }
+          : {}),
+      }, "workspace-publication-settled");
   }
 
   function admit(reply: FastifyReply, effect: WorkspaceEffect): FastifyReply {
@@ -474,13 +534,26 @@ export function registerWorkspacePreparation(args: {
             "Workspace source approval changed since acceptance",
           ),
         );
-    applyFence({ state, fence: fenceFor(request), logger });
+    let provenance: { runId: string; assignmentId: string; assignmentEpoch: number };
+    if ("runId" in owner) {
+      const { hostKey, runId, assignmentId, assignmentEpoch }: CommandFence = owner;
+      applyFence({ state, fence: { hostKey, runId, assignmentId, assignmentEpoch }, logger });
+      provenance = owner;
+    } else {
+      const workspace = state.getWorkspace(owner.workspaceHandle);
+      const fence = workspace && state.getFence(workspace.runId);
+      if (!workspace || !fence || (existing && (
+        existing.runId !== workspace.runId || existing.assignmentId !== fence.assignmentId || existing.epoch !== fence.epoch
+      )))
+        return reply.status(409).send(refusal("FENCED", "stale_workspace_generation", "Retained workspace ownership is unavailable"));
+      provenance = { runId: workspace.runId, assignmentId: fence.assignmentId, assignmentEpoch: fence.epoch };
+    }
     const row: CommandReceiptRow = existing ?? {
       commandId: command.id,
-      runId: owner.runId,
+      runId: provenance.runId,
       kind: command.kind,
-      assignmentId: owner.assignmentId,
-      epoch: owner.assignmentEpoch,
+      assignmentId: provenance.assignmentId,
+      epoch: provenance.assignmentEpoch,
       hostSessionId: null,
       hostKey: owner.hostKey,
       requestVersion: 1,
@@ -489,7 +562,11 @@ export function registerWorkspacePreparation(args: {
       eventId: null,
       phase: "accepted",
       httpStatus: 202,
-      body: { sourceDigest, workspaceTarget: binding.target },
+      body: {
+        sourceDigest,
+        workspaceTarget: binding.target,
+        ...(owner.kind === "workspaceOperation" ? { workspaceOwner: owner } : {}),
+      },
       receivedAt: new Date().toISOString(),
       completedAt: null,
     };
@@ -857,6 +934,41 @@ export function registerWorkspacePreparation(args: {
     });
   });
 
+  app.post<{ Params: { id: string } }>("/v1/workspaces/:id/publication", async (req, reply) => {
+    const parsed = publishSchema.safeParse(req.body);
+    if (!parsed.success || parsed.data.owner.workspaceHandle !== req.params.id ||
+      parsed.data.owner.workspaceGeneration !== parsed.data.payload.generation)
+      return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "Publication owner and workspace must match"));
+
+    const request = parsed.data;
+    const { workspaceHandle: handle, workspaceGeneration: generation } = request.owner;
+    const source = sources.get(request.payload.expected.remoteId);
+    return admit(reply, {
+      request,
+      binding: { operationId: WORKSPACE_PUBLISH_OPERATION, target: { kind: "workspace", handle, generation } },
+      sourceDigest: source === undefined ? null : workspaceEvidenceDigest(source),
+      async run(assertOwner) {
+        const replaying = state.getWorkspaceExecutionState(handle)?.operationClaimId === request.command.id;
+        try {
+          const workspace = state.getWorkspace(handle);
+          const fence = workspace && state.getFence(workspace.runId);
+          if (!workspace || !fence || source === undefined)
+            throw new SupervisorError("PRECONDITION", "The publication source or checkout is unavailable", {
+              details: { reason: "source_ref_unapproved" },
+            });
+          assertOwner();
+          return await publishOwnedWorkspace({
+            state, runtimeRoot, source, runId: workspace.runId,
+            assignmentId: fence.assignmentId, assignmentEpoch: fence.epoch,
+          }, request);
+        } catch (cause) {
+          if (!replaying || cause instanceof WorkspaceGitEffectUnconfirmed) throw cause;
+          throw new WorkspaceGitEffectUnconfirmed("Retained publication verification could not finish", { cause });
+        }
+      },
+    });
+  });
+
   app.get<{ Params: { commandId: string } }>(
     "/v1/commands/:commandId",
     async (req, reply) => {
@@ -880,7 +992,7 @@ export function registerWorkspacePreparation(args: {
         commandId: row.commandId,
         requestSha256: row.requestDigest,
         ...receiptBinding(row),
-        owner: {
+        owner: row.kind === "workspace.publish" ? storedPublicationOwner(row) : {
           kind: "assignment",
           hostKey: row.hostKey,
           runId: row.runId,
@@ -900,6 +1012,7 @@ export function registerWorkspacePreparation(args: {
         workspacePhase,
         workspaceTarget: _workspaceTarget,
         workspaceProcess: _workspaceProcess,
+        workspaceOwner: _workspaceOwner,
         ...outcome
       } = row.body as Record<string, unknown>;
 

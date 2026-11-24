@@ -933,6 +933,7 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
   try {
     priorStore.exec(`
       DROP TABLE workspace_workload_cancel_fences;
+      ALTER TABLE workspace_execution_state DROP COLUMN publication_fence;
       ALTER TABLE workspace_execution_state DROP COLUMN preparation_mode;
       PRAGMA user_version = 19;
     `);
@@ -1186,6 +1187,75 @@ async function prepareAndRead(
     { timeout: 10_000 },
   );
 }
+
+it("C-10 publishes one committed ref from its retained worktree and reconciles the exact receipt after restart", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-retained-publish-"));
+  roots.push(root);
+  const remote = join(root, "approved.git");
+  const source = join(root, "source");
+  git(root, "init", "--bare", "-b", "main", remote);
+  git(remote, "config", "core.logAllRefUpdates", "true");
+  git(root, "init", "-b", "main", source);
+  await writeFile(join(source, "input.txt"), "base\n");
+  git(source, "add", "--", "input.txt");
+  git(source, "commit", "-m", "base");
+  const priorTarget = git(source, "rev-parse", "HEAD");
+  git(source, "push", "--", remote, "HEAD:refs/heads/main");
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: remote }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, { mode: "ownWorktree", repositoryId: "fixture", commit: priorTarget, inputDigest: "a".repeat(64) });
+  if (prepared.phase !== "completed") throw new Error("publication fixture did not prepare");
+  const { handle, generation } = prepared.result.workspace;
+  const workspace = host.hostState.getWorkspace(handle);
+  if (!workspace) throw new Error("publication fixture has no checkout");
+  await writeFile(join(workspace.realPath, "input.txt"), "approved promotion\n");
+  git(workspace.realPath, "add", "--", "input.txt");
+  git(workspace.realPath, "commit", "-m", "approved promotion");
+  const head = git(workspace.realPath, "rev-parse", "HEAD");
+  const command = {
+    workspaceProtocol: 1,
+    command: { id: randomUUID(), kind: "workspace.publish", issuedAt: new Date().toISOString() },
+    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle, workspaceGeneration: generation, claimId: randomUUID(), fence: 1 },
+    payload: { generation, expected: { head, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget }, publication: "promote" },
+  };
+  const route = `/v1/workspaces/${handle}/publication`;
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted after the Git push and before the terminal SQLite commit");
+  });
+  const first = await addressedRequest(host, route, command);
+  expect(first.status).toBe(202);
+  await first.body?.cancel();
+  await vi.waitFor(() => expect(git(remote, "rev-parse", "refs/heads/main")).toBe(head), { timeout: 5_000 });
+  await host.stop();
+  // A successful remote mutation left only the accepted request and the writer fence.
+  const persisted = new DatabaseSync(join(host.stateDir, HOST_STATE_FILE), { readOnly: true });
+  try {
+    expect(persisted.prepare("SELECT phase FROM command_receipts WHERE command_id=?").get(command.command.id)?.phase).toBe("accepted");
+  } finally {
+    persisted.close();
+  }
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect((await addressedRequest(restarted, route, command)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(restarted, `/v1/commands/${command.command.id}`);
+    expect(await response.json()).toMatchObject({ operationId: "stageCPublish", phase: "completed", owner: command.owner,
+      result: { publication: "promote", git: { head, priorTarget, observedTarget: head, generation } },
+    });
+  }, { timeout: 5_000 });
+  const stale = {
+    ...command, command: { ...command.command, id: randomUUID() },
+    owner: { ...command.owner, claimId: randomUUID(), fence: 2 },
+  };
+  expect((await addressedRequest(restarted, route, stale)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(restarted, `/v1/commands/${stale.command.id}`);
+    expect(await response.json()).toMatchObject({ phase: "rejected", refusal: { details: { reason: "target_ref_changed" } } });
+  }, { timeout: 5_000 });
+  expect(git(remote, "reflog", "show", "--format=%H", "refs/heads/main").split("\n")).toEqual([head, priorTarget]);
+}, 30_000);
 
 it("C-06 creates the declared workspace modes and refuses a stale root, missing commit and escaped directory alias", async () => {
   const root = await mkdtemp(join(tmpdir(), "stage-c-workspace-modes-"));

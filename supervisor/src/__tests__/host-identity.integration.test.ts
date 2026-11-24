@@ -456,6 +456,7 @@ describe("execution-host identity", () => {
       materializationDigest: null,
       operationFence: 0,
       operationClaimId: null,
+      publicationFence: 0,
     };
 
     expect(original.getWorkspaceExecutionState(workspaceId)).toEqual(

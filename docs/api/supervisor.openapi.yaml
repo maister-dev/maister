@@ -301,6 +301,29 @@ paths:
               schema: { type: string }
         "400": { description: Invalid restore request. }
         "409": { description: Workspace identity or current owner mismatch. }
+  /v1/workspaces/{id}/publication:
+    post:
+      tags: [execution-host]
+      operationId: stageCPublish
+      summary: Publish the approved commit from its retained workspace
+      description: The selected-host pilot accepts push and promote with a workspaceOperation owner. A clean owned worktree, configured repository ID and exact prior target are required. The host verifies fast-forward ancestry and reads the target after the push. If receipt persistence was interrupted, replay can settle the proved target without repeating the push.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCPublishRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the retained publication receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: "Invalid publication request, owner, or workspace generation." }
+        "409": { description: "Different host, command digest, or retained owner." }
   /v1/workspaces/{id}/diff:
     get:
       tags: [execution-host]
