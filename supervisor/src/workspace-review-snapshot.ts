@@ -4,6 +4,8 @@ import type {
 } from "../../runtime/workspace-prepare";
 import type { WorkspaceRow } from "./host-state";
 
+import { GIT_OBJECT_ID } from "../../runtime/wait-head";
+
 import { SupervisorError } from "./types";
 import { withPreparedGitIndex } from "./workspace-git-index";
 import { executeWorkspaceGitBytes } from "./workspace-source";
@@ -96,10 +98,15 @@ export async function readWorkspaceReviewSnapshot(
     await executeWorkspaceGitBytes([...git, "add", "-A", "--", "."], {
       indexFile,
     });
+    const worktreeTree = (
+      await executeWorkspaceGitBytes([...git, "write-tree"], { indexFile })
+    )
+      .toString("utf8")
+      .trim();
+    if (!GIT_OBJECT_ID.test(worktreeTree)) throw invalidStats();
     const diff = [
       ...git,
       "diff",
-      "--cached",
       "--no-ext-diff",
       "--no-textconv",
       "--no-color",
@@ -107,19 +114,16 @@ export async function readWorkspaceReviewSnapshot(
       "--src-prefix=a/",
       "--dst-prefix=b/",
     ];
+    const range = [baseCommit, worktreeTree, "--"];
     const [patch, names, counts] = await Promise.all([
-      executeWorkspaceGitBytes([...diff, baseCommit, "--"], { indexFile }),
-      executeWorkspaceGitBytes(
-        [...diff, "--name-status", "-z", baseCommit, "--"],
-        { indexFile },
-      ),
-      executeWorkspaceGitBytes([...diff, "--numstat", "-z", baseCommit, "--"], {
-        indexFile,
-      }),
+      executeWorkspaceGitBytes([...diff, ...range]),
+      executeWorkspaceGitBytes([...diff, "--name-status", "-z", ...range]),
+      executeWorkspaceGitBytes([...diff, "--numstat", "-z", ...range]),
     ]);
 
     return {
       baseCommit,
+      worktreeTree,
       patch: new TextDecoder("utf-8", { fatal: true }).decode(patch),
       files: parseFileStats(names, counts),
     };

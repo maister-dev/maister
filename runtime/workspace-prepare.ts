@@ -64,6 +64,7 @@ export type WorkspaceGitReviewFile = Readonly<{
 }>;
 export type WorkspaceGitReview = Readonly<{
   baseCommit: string;
+  worktreeTree: string;
   patch: string;
   files: WorkspaceGitReviewFile[];
 }>;

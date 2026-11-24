@@ -538,6 +538,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   feedback admission inside the decision transaction still needs a host
   witness that can be checked without waiting for the event projector.
 
+  **C-09 mutation detection.** RED failed the real pathless board graph at
+  the legacy local-filesystem guard. GREEN compared the owning supervisor's
+  checkpoint and Git tree, so the blocking `must_touch` gate verified the CLI node's new
+  file. The advisory gate rejects attributing an earlier ACP node's file to
+  the CLI node. The graph reaches Review and its last-node diff shows the
+  current node's change. Passed the board integration and 25 mutation cases.
+
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure

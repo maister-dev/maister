@@ -1099,6 +1099,12 @@ the requested base. Review Diff and Change Summary apply the existing
 reviewable-file filter and compute the same source fingerprint. Git's
 NUL-delimited statistics preserve exact file names and binary-file state.
 
+Addressed mutation gates capture a pre-attempt checkpoint and evaluate
+`must_touch` against that checkpoint and the host's current Git tree. A
+`must_not_touch` gate also reads the pinned base range and requires both
+snapshots to have the same tree ID. Rename evidence includes both paths.
+A missing or changed snapshot blocks the gate under the existing check policy.
+
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable
 workload. The context excludes Web's environment. The supervisor verifies the

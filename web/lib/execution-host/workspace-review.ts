@@ -60,6 +60,7 @@ const logPage = z
 
 const reviewSnapshot = z.strictObject({
   baseCommit: z.string().regex(GIT_OBJECT_ID),
+  worktreeTree: z.string().regex(GIT_OBJECT_ID),
   patch: z.string(),
   files: z.array(
     z.strictObject({

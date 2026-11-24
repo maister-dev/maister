@@ -3609,7 +3609,8 @@ export async function runGraph(
       }
 
       const retryWorkspace = (node.source.node as { retry_policy?: RetryPolicy }).retry_policy?.workspace;
-      if (addressedProject && retryWorkspace === "rewind-to-node-checkpoint" && !attemptCheckpointRef) {
+      const needsMutationCheckpoint = node.gates.some((gate) => gate.must_touch !== undefined || gate.must_not_touch !== undefined);
+      if (addressedProject && (retryWorkspace === "rewind-to-node-checkpoint" || needsMutationCheckpoint) && !attemptCheckpointRef) {
         const owner = addressedGitOwner();
         const checkpoint = await runAddressedGitOperation(rootDb, { ...owner, kind: "workspace.checkpoint",
           operationKey: `attempt-checkpoint:${nodeAttemptId}`,
@@ -4831,6 +4832,7 @@ export async function runGraph(
             // M29 (ADR-074): the node's resolved restriction path sets for
             // must_not_touch — undefined for capability-less nodes.
             restrictionPaths: materialized?.restrictionPaths,
+            workspaceCheckpointRef: attemptCheckpointRef,
             db,
           },
         );

@@ -252,6 +252,8 @@ it.each([
                 command:
                   "test \"$(cat graph-marker)\" = 'from owning host' && printf 'gate saw host marker'",
               },
+              { id: "node-changed", kind: "artifact_required", mode: "blocking", must_touch: ["graph-marker"] },
+              { id: "prior-change", kind: "artifact_required", mode: "advisory", must_touch: ["acp-marker"] },
             ],
           },
           transitions: { success: "done" },
@@ -518,15 +520,18 @@ it.each([
     });
     expect(
       await db
-        .select({ status: gateResults.status, verdict: gateResults.verdict })
+        .select({ gateId: gateResults.gateId, status: gateResults.status, verdict: gateResults.verdict })
         .from(gateResults)
         .where(eq(gateResults.runId, runId)),
-    ).toEqual([
+    ).toEqual(expect.arrayContaining([
       {
+        gateId: "verify",
         status: "passed",
         verdict: { verdict: "pass", reasons: ["gate saw host marker"] },
       },
-    ]);
+      { gateId: "node-changed", status: "passed", verdict: { verdict: "pass", reasons: ["all 0 required artifact(s) present and current", "mutation assertions passed"] } },
+      { gateId: "prior-change", status: "failed", verdict: { verdict: "fail", reasons: ["must_touch: no path matched [acp-marker]"], payload: { assertionFailed: true } } },
+    ]));
     expect(
       await db
         .select({ path: workspaces.worktreePath })
@@ -569,7 +574,7 @@ it.each([
         scope: "last-node",
         scopes: { "last-node": { available: true } },
         baseCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
-        diff: expect.stringContaining("+written by addressed ACP"),
+        diff: expect.stringContaining("+from owning host"),
       });
       const review = await getDiff(
         new Request(`http://localhost/api/runs/${runId}/diff?scope=review`),

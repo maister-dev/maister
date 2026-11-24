@@ -708,9 +708,10 @@ definitions:
   WorkspaceGitReview:
     type: object
     additionalProperties: false
-    required: [baseCommit, patch, files]
+    required: [baseCommit, worktreeTree, patch, files]
     properties:
       baseCommit: *a4
+      worktreeTree: *a4
       patch: { type: string }
       files:
         type: array
