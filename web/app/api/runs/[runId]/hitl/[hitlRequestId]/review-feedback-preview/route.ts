@@ -47,6 +47,10 @@ function statusForCode(code: string): number {
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
+    case "EXECUTOR_UNAVAILABLE":
+      return 503;
+    case "ACP_PROTOCOL":
+      return 502;
     default:
       return 500;
   }

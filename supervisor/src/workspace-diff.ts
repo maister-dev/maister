@@ -1,11 +1,13 @@
 import type {
   WorkspaceDiffQuery,
   WorkspaceEvidenceObject,
+  WorkspaceReviewFingerprint,
 } from "../../runtime/workspace-prepare";
 import type { HostState, WorkspaceRow } from "./host-state";
 import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { RuntimeObjectRegistry } from "./runtime-objects";
 
+import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 
 import {
@@ -61,16 +63,10 @@ async function readWorkingTreePatch(
   });
 }
 
-/** Capture only commits reachable from the owned checkout and seal the bounded Git patch. */
-export async function sealWorkspaceDiff(
-  services: Readonly<{
-    state: HostState;
-    objects: RuntimeObjectRegistry;
-    events: RuntimeEventPublisher;
-  }>,
+async function captureWorkspaceDiff(
+  state: HostState,
   query: WorkspaceDiffQuery & Readonly<{ handle: string }>,
-): Promise<WorkspaceEvidenceObject | null> {
-  const { state } = services;
+) {
   const { handle, generation } = query;
   const owned = loadPreparedWorkspace(state, handle, generation);
   if (!owned) return null;
@@ -165,6 +161,40 @@ export async function sealWorkspaceDiff(
     throw diffRefusal();
   }
 
+  return { bytes, base, workspace, fence };
+}
+
+/** Return the same digest as the sealed Review object without adding an object or event. */
+export async function readWorkspaceReviewFingerprint(
+  state: HostState,
+  input: Readonly<{ handle: string; generation: number; base: string }>,
+): Promise<WorkspaceReviewFingerprint | null> {
+  const captured = await captureWorkspaceDiff(state, {
+    ...input,
+    format: "review",
+  });
+  if (!captured) return null;
+
+  return {
+    generation: input.generation,
+    baseCommit: captured.base,
+    sha256: createHash("sha256").update(captured.bytes).digest("hex"),
+  };
+}
+
+/** Capture only commits reachable from the owned checkout and seal the bounded Git patch. */
+export async function sealWorkspaceDiff(
+  services: Readonly<{
+    state: HostState;
+    objects: RuntimeObjectRegistry;
+    events: RuntimeEventPublisher;
+  }>,
+  query: WorkspaceDiffQuery & Readonly<{ handle: string }>,
+): Promise<WorkspaceEvidenceObject | null> {
+  const captured = await captureWorkspaceDiff(services.state, query);
+  if (!captured) return null;
+  const { bytes, base, workspace, fence } = captured;
+  const { handle, generation } = query;
   const object = await sealWorkspaceOutput(
     services,
     {

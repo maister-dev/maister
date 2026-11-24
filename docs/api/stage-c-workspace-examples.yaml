@@ -279,6 +279,20 @@ operationCases:
     invalidRequest:
       generation: 1
       hostUrl: http://localhost:9999
+  stageCGetReviewFingerprint:
+    request: { generation: 1, base: "0123456789abcdef0123456789abcdef01234567" }
+    invalidRequest: { generation: 1, base: "main" }
+    response:
+      generation: 1
+      baseCommit: "0123456789abcdef0123456789abcdef01234567"
+      sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The retained workspace is unavailable.
+        details: { reason: resource_not_found }
+      newEffects: 0
   stageCGetWorkspaceDiff:
     request:
       generation: 1

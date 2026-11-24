@@ -196,6 +196,21 @@ export async function readAddressedWorkspaceDiff(
   return transport.getWorkspaceDiff(handle, { ...range, generation });
 }
 
+export async function readAddressedWorkspaceReviewFingerprint(
+  db: Db,
+  workspace: RetainedWorkspaceRead,
+  base: string,
+  transport = defaultTransport(),
+) {
+  if (!transport.getWorkspaceReviewFingerprint)
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "Transport cannot verify a workspace review fingerprint", {
+      details: { reason: "workspace_protocol_unsupported" },
+    });
+  const { handle, generation } = await resolveAddressedWorkspaceRead(db, workspace, transport);
+
+  return transport.getWorkspaceReviewFingerprint(handle, { generation, base });
+}
+
 /** The caller authorizes repository content access before requesting history. */
 export async function readAddressedWorkspaceLog(
   db: Db,

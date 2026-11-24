@@ -576,7 +576,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   The new epoch ran its validation workload on the same checkout and reached
   Review with the retained patch and commit-set artifacts. The EN/RU panel
   shows the owning supervisor and handle. Passed 15 integration and 15
-  focused contract/UI cases. Review-feedback witness validation remains open.
+  focused contract/UI cases.
+
+  **C-09 review feedback.** RED showed the preview passing a null checkout
+  path to Web Git. GREEN verifies the SHA-256 of the owning supervisor's
+  bounded review snapshot without producing an object or waiting for the
+  event projector inside the response transaction. Changing a tracked file
+  rejects the original preview before claiming a response. Refreshing it
+  accepts the same packet, executes the chosen validation workload and
+  brings the Run back to Review.
 
   The local A/B supervisor lane passed 148 tests in ten suites on `8b9ac8932`
   (Darwin arm64, Node 24.15.0), with one suite worker.

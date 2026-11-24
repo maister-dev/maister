@@ -1135,6 +1135,12 @@ checkout with commits after that HEAD and records the sealed log and diff.
 The manager rechecks the human claim and assignment while recording the
 return, then resumes validation in a new epoch on the same checkout.
 
+Addressed review feedback uses a digest of the same pinned Review snapshot
+as the diff and change summary. The supervisor's fingerprint read checks
+the retained owner and generation without publishing an object or event.
+The response transaction recomputes the digest while holding the Run and
+HITL rows, so stale source or feedback refuses without claiming the decision.
+
 A retained publication command binds the registered host, workspace handle,
 generation, claim ID and monotonic publication fence. PostgreSQL 0380 binds
 the command to its historical assignment and a held promotion or workbench

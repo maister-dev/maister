@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { filterDiffByPath } from "@/lib/diff/prepare";
 import { MaisterError } from "@/lib/errors";
 import { readAddressedWorkspaceReviewSnapshot } from "@/lib/execution-host/workspace-review";
+import { readAddressedWorkspaceReviewFingerprint } from "@/lib/execution-host/workspace-preparation";
 import {
   filterReviewableChangeEntries,
   isReviewableChangeEntry,
@@ -32,6 +33,31 @@ export interface ReviewSource {
   fingerprint: string;
 }
 
+function requireReviewBase(workspace: typeof workspaces.$inferSelect): string {
+  if (!workspace.baseCommit)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected workspace has no pinned review base",
+    );
+
+  return workspace.baseCommit;
+}
+
+/** Verify the current sealed snapshot without waiting on a projector that may need the Run lock. */
+export async function readAddressedReviewFingerprint(
+  db: Db,
+  workspace: typeof workspaces.$inferSelect,
+): Promise<Pick<ReviewSource, "scope" | "baseCommit" | "fingerprint">> {
+  const baseCommit = requireReviewBase(workspace);
+  const { sha256 } = await readAddressedWorkspaceReviewFingerprint(
+    db,
+    workspace,
+    baseCommit,
+  );
+
+  return { scope: "review", baseCommit, fingerprint: `sha256:${sha256}` };
+}
+
 export async function readAddressedReviewSource(
   input: Readonly<{
     db: Db;
@@ -39,12 +65,7 @@ export async function readAddressedReviewSource(
     signal: AbortSignal;
   }>,
 ): Promise<ReviewSource & { files: WorkspaceGitReviewFile[] }> {
-  const { baseCommit } = input.workspace;
-  if (!baseCommit)
-    throw new MaisterError(
-      "PRECONDITION",
-      "The selected workspace has no pinned review base",
-    );
+  const baseCommit = requireReviewBase(input.workspace);
   const raw = await readAddressedWorkspaceReviewSnapshot({
     ...input,
     range: { base: baseCommit },
@@ -59,7 +80,7 @@ export async function readAddressedReviewSource(
     scope: "review",
     ...source,
     files,
-    fingerprint: reviewSourceFingerprint(source),
+    fingerprint: `sha256:${raw.sha256}`,
   };
 }
 

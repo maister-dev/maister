@@ -201,7 +201,7 @@ export async function readAddressedHeadCommitSet(
 export async function readAddressedWorkspaceReviewSnapshot(
   input: WorkspaceReview &
     Readonly<{ range: { base: string } | { checkpointId: string } }>,
-): Promise<WorkspaceGitReview> {
+): Promise<WorkspaceGitReview & { sha256: string }> {
   input.signal.throwIfAborted();
   const { object: reference, baseCommit } = await readAddressedWorkspaceDiff(
     input.db,
@@ -223,7 +223,7 @@ export async function readAddressedWorkspaceReviewSnapshot(
       snapshot.baseCommit ===
       ("base" in input.range ? input.range.base : baseCommit)
     )
-      return snapshot;
+      return { ...snapshot, sha256: reference.sha256 };
   } catch (cause) {
     throw new MaisterError(
       "ACP_PROTOCOL",

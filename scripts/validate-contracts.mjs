@@ -602,7 +602,7 @@ function validateCompanyBrainExamples() {
 const STAGE_C_REQUIRED_OPERATIONS = [
   "stageCHostCapabilities", "stageCRepositoryRefs", "stageCResolveRevision",
   "stageCPrepare", "stageCMaterialize", "stageCRunWorkload", "stageCCancelWorkload",
-  "stageCGetWorkspace", "stageCGetWorkspaceStatus", "stageCGetWorkspaceDiff",
+  "stageCGetWorkspace", "stageCGetWorkspaceStatus", "stageCGetWorkspaceDiff", "stageCGetReviewFingerprint",
   "stageCGetWorkspaceLog", "stageCCheckpoint", "stageCRestore", "stageCSync",
   "stageCPublish", "stageCPreserve", "stageCRelease", "stageCGetCommandReceipt",
   "stageCGetRuntimeObjectContent", "stageCTaskHostOptions", "stageCFlowHostOptions",

@@ -68,6 +68,11 @@ export type WorkspaceGitReview = Readonly<{
   patch: string;
   files: WorkspaceGitReviewFile[];
 }>;
+export type WorkspaceReviewFingerprint = Readonly<{
+  generation: number;
+  baseCommit: string;
+  sha256: string;
+}>;
 export const WORKSPACE_REVIEW_OBJECT_NAME = "workspace-review.json";
 export const WORKSPACE_REVIEW_MAX_BYTES = 64 * 1024;
 export type WorkspaceLogQuery = Readonly<{

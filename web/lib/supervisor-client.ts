@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
-import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspacePublishRequest, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
+import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspacePublishRequest, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
@@ -61,7 +61,7 @@ import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
-import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceEvidenceObjectSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceEvidenceObjectSchema, WorkspaceReviewFingerprintSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
@@ -2040,6 +2040,25 @@ export async function getWorkspaceLog(handle: string, input: WorkspaceLogQuery):
   });
 
   return getWorkspaceEvidence(handle, "log", query, input.generation);
+}
+
+export async function getWorkspaceReviewFingerprint(
+  handle: string,
+  input: { generation: number; base: string },
+): Promise<WorkspaceReviewFingerprint> {
+  const query = new URLSearchParams({ generation: String(input.generation), base: input.base });
+  const res = await request<unknown>({
+    method: "GET",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/review-fingerprint?${query}`,
+    ctx: "getWorkspaceReviewFingerprint",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const parsed = WorkspaceReviewFingerprintSchema.safeParse(res.body);
+  if (!parsed.success || parsed.data.baseCommit !== input.base || parsed.data.generation !== input.generation)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned a different review fingerprint range");
+
+  return parsed.data;
 }
 
 async function getWorkspaceEvidence(handle: string, resource: "diff" | "log", query: URLSearchParams, generation: number): Promise<WorkspaceEvidenceObject> {

@@ -69,6 +69,7 @@ x-operations:
       status: 200
     }
   stageCGetWorkspaceDiff: { method: GET, path: "/v1/workspaces/{id}/diff", request: DiffQuery, response: ObjectReference, status: 200 }
+  stageCGetReviewFingerprint: { method: GET, path: "/v1/workspaces/{id}/review-fingerprint", request: ReviewFingerprintQuery, response: ReviewFingerprint, status: 200 }
   stageCGetWorkspaceLog: { method: GET, path: "/v1/workspaces/{id}/log", request: LogQuery, response: ObjectReference, status: 200 }
   stageCCheckpoint:
     method: POST
@@ -329,6 +330,21 @@ definitions:
     required: [ generation ]
     properties:
       generation: *a1
+  ReviewFingerprintQuery:
+    type: object
+    additionalProperties: false
+    required: [generation, base]
+    properties:
+      generation: { $ref: "#/definitions/Positive" }
+      base: { $ref: "#/definitions/GitObjectId" }
+  ReviewFingerprint:
+    type: object
+    additionalProperties: false
+    required: [generation, baseCommit, sha256]
+    properties:
+      generation: { $ref: "#/definitions/Positive" }
+      baseCommit: { $ref: "#/definitions/GitObjectId" }
+      sha256: { $ref: "#/definitions/Digest" }
   DiffQuery:
     description: Exact commits reachable from the prepared checkout, or its retained checkpoint. A checkpointId selects the snapshot as the sole base. For an omitted base use the selected head. An omitted head reads the tracked and non-ignored untracked worktree against the base using a private temporary index. Patches above 65536 bytes are refused.
     type: object

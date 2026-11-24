@@ -9662,6 +9662,8 @@ paths:
         SHA-256 fingerprints. It writes no response, input artifact, evidence,
         run state, or ACP side effect. Resolved roots are excluded. Preview and
         runner logging is limited to ids, counts, state, and digests.
+        For an addressed workspace, the owning supervisor verifies the digest
+        of the same pinned snapshot used by the review diff.
       operationId: previewRunReviewFeedback
       parameters:
         - name: runId
@@ -9732,6 +9734,8 @@ paths:
               application/json:
                 { schema: { $ref: "#/components/schemas/MaisterErrorBody" } },
             }
+        "502": { description: The selected supervisor returned invalid review evidence. }
+        "503": { description: The selected supervisor could not verify the review snapshot. }
 
   /api/runs/{runId}/hitl/{hitlRequestId}/restart-preview:
     get:

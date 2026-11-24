@@ -18,6 +18,7 @@ import { closeDb } from "@/lib/db/client";
 import {
   artifactInstances,
   executionAssignments,
+  hitlRequests,
   nodeAttempts,
   runs,
   workspaces,
@@ -95,6 +96,7 @@ afterEach(async () => {
 });
 
 async function prepareWorkspaceFixture() {
+  const validation = `printf 'validation continued%s' "{{ review_comments ?? '' }}"`;
   root = await mkdtemp(join(tmpdir(), "stage-c-inherited-workspace-"));
   const repository = await initRepo(join(root, "approved-source"));
   await writeFile(join(repository, "README.md"), "captured base\n");
@@ -123,14 +125,28 @@ async function prepareWorkspaceFixture() {
           id: "review",
           type: "human",
           finish: {
-            human: { role: "maintainer", decisions: ["approve", "takeover"] },
+            human: {
+              role: "maintainer",
+              decisions: ["approve", "takeover", "rework"],
+              commentsVar: "review_comments",
+            },
           },
-          transitions: { approve: "done", takeover: "validate" },
+          transitions: {
+            approve: "done",
+            takeover: "validate",
+            rework: "validate",
+          },
+          rework: {
+            allowedTargets: ["validate"],
+            workspacePolicies: ["keep"],
+            maxLoops: 2,
+            commentsVar: "review_comments",
+          },
         },
         {
           id: "validate",
           type: "cli",
-          action: { command: "printf 'validation continued'" },
+          action: { command: validation },
           transitions: { success: "done" },
         },
       ],
@@ -200,7 +216,7 @@ async function prepareWorkspaceFixture() {
               {
                 id: nodeWorkloadDeclarationId("validate"),
                 workload: "cli",
-                command: "printf 'validation continued'",
+                command: validation,
                 timeoutMs: 5_000,
               },
             ]),
@@ -306,6 +322,149 @@ function privateCheckoutPath(
     state.close();
   }
 }
+
+it("C-09 rejects stale rework feedback after an addressed checkout changes and accepts its refreshed preview", async () => {
+  const {
+    db,
+    initial,
+    runId,
+    readWorkspace,
+    supervisor: owningHost,
+  } = await prepareWorkspaceFixture();
+  startCanonicalProjectionWorker();
+  await db
+    .update(runs)
+    .set({ status: "NeedsInput", currentStepId: "review" })
+    .where(eq(runs.id, runId));
+  const hitlRequestId = randomUUID();
+  await db.insert(nodeAttempts).values({
+    id: randomUUID(),
+    runId,
+    nodeId: "review",
+    nodeType: "human",
+    attempt: 1,
+    status: "NeedsInput",
+    executionAssignmentId: initial.id,
+  });
+  await db.insert(hitlRequests).values({
+    id: hitlRequestId,
+    runId,
+    stepId: "review",
+    kind: "human",
+    prompt: "Review the change",
+    schema: {
+      review: true,
+      allowedDecisions: ["approve", "rework"],
+      transitions: { approve: "done", rework: "validate" },
+      reworkTargets: ["validate"],
+      workspacePolicies: ["keep"],
+      commentsVar: "review_comments",
+    },
+  });
+  const { POST: preview } =
+    await import("@/app/api/runs/[runId]/hitl/[hitlRequestId]/review-feedback-preview/route");
+  const { POST: respond } =
+    await import("@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route");
+  const params = { params: Promise.resolve({ runId, hitlRequestId }) };
+  const response = {
+    decision: "rework",
+    comments: "Exercise empty input.",
+    workspacePolicy: "keep",
+  };
+  const request = (action: string, body: unknown) =>
+    new NextRequest(
+      `http://localhost/api/runs/${runId}/hitl/${hitlRequestId}/${action}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+  const fingerprints = async () => {
+    const reply = await preview(
+      request("review-feedback-preview", { response }),
+      params,
+    );
+    const data = await reply.json();
+    expect(reply.status, JSON.stringify(data)).toBe(200);
+
+    return {
+      reviewSourceFingerprint: data.reviewSource.fingerprint,
+      reviewFeedbackFingerprint: data.feedback.fingerprint,
+    };
+  };
+  const original = await fingerprints();
+  const workspace = await readWorkspace();
+  if (!workspace.executionWorkspaceId)
+    throw new Error("The preview fixture has no retained handle");
+  const path = privateCheckoutPath(owningHost, workspace.executionWorkspaceId);
+  const privateState = new DatabaseSync(
+    join(owningHost.stateDir, "state.sqlite"),
+    { readOnly: true },
+  );
+  try {
+    expect(
+      privateState
+        .prepare(
+          "SELECT count(*) AS total FROM runtime_objects WHERE logical_name='workspace-review.json'",
+        )
+        .get()?.total,
+    ).toBe(0);
+  } finally {
+    privateState.close();
+  }
+  await writeFile(
+    join(path, "README.md"),
+    "a new revision of the review target\n",
+  );
+  const rejected = await respond(
+    request("respond", { response, ...original }),
+    params,
+  );
+  expect(rejected.status, JSON.stringify(await rejected.json())).toBe(409);
+  const [pending] = await db
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, hitlRequestId));
+  expect(pending.response).toBeNull();
+  const fresh = await fingerprints();
+  expect(fresh.reviewSourceFingerprint).not.toBe(
+    original.reviewSourceFingerprint,
+  );
+  expect(fresh.reviewFeedbackFingerprint).toBe(
+    original.reviewFeedbackFingerprint,
+  );
+  const accepted = await respond(
+    request("respond", { response, ...fresh }),
+    params,
+  );
+  expect(accepted.status, JSON.stringify(await accepted.json())).toBe(200);
+  const [stored] = await db
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, hitlRequestId));
+  expect(stored).toMatchObject({ response, respondedAt: expect.any(Date) });
+  await vi.waitFor(
+    async () => {
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+      expect(run.status).toBe("Review");
+      const attempts = await db
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, runId));
+      expect(attempts).toEqual(
+        expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: "validate",
+          status: "Succeeded",
+          stdout: expect.stringContaining("Exercise empty input."),
+        }),
+        ]),
+      );
+    },
+    { timeout: 15_000, interval: 100 },
+  );
+}, 60_000);
 
 it("C-10 projects a publication from the historical owner and holds removal until the outcome is verified", async () => {
   const {

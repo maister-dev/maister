@@ -52,7 +52,7 @@ import { prepareOwnedWorkspace } from "./prepare-owned-workspace";
 import { isSupervisorError, SupervisorError } from "./types";
 import { materializeWorkspaceInputs } from "./workspace-input-materialization";
 import { inspectWorkspace } from "./workspace-status";
-import { sealWorkspaceDiff } from "./workspace-diff";
+import { readWorkspaceReviewFingerprint, sealWorkspaceDiff } from "./workspace-diff";
 import { sealWorkspaceLog } from "./workspace-log";
 import { checkpointOwnedWorkspace, restoreOwnedWorkspace, WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
 import { publishOwnedWorkspace } from "./workspace-publish";
@@ -134,6 +134,7 @@ const logQuery = workspaceQuery.extend({
   base: z.string().regex(GIT_OBJECT_ID).optional(),
   head: z.string().regex(GIT_OBJECT_ID).optional(),
 }).refine(({ base, head, cursor, limit }) => (!base && !head) || Boolean(base && head && cursor === undefined && limit === undefined));
+const reviewFingerprintQuery = workspaceQuery.extend({ base: z.string().regex(GIT_OBJECT_ID) });
 const materializeSchema = z
   .object({
     workspaceProtocol: z.literal(1),
@@ -636,6 +637,15 @@ export function registerWorkspacePreparation(args: {
         details: { reason: "invalid_request" },
       });
     const result = await sealWorkspaceDiff({ state, objects, events }, { ...parsed.data, handle: handle.data });
+
+    return result ?? reply.status(404).send(missingWorkspace);
+  });
+  app.get<StatusRequest>("/v1/workspaces/:id/review-fingerprint", async (req, reply) => {
+    const handle = workspaceHandle.safeParse(req.params.id);
+    const parsed = reviewFingerprintQuery.safeParse(req.query);
+    if (!handle.success || !parsed.success)
+      return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "Review fingerprint requires a handle, generation and pinned base"));
+    const result = await readWorkspaceReviewFingerprint(state, { ...parsed.data, handle: handle.data });
 
     return result ?? reply.status(404).send(missingWorkspace);
   });

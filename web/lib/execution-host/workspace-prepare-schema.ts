@@ -41,6 +41,7 @@ export const WorkspaceEvidenceObjectSchema = z
     headCommit: z.string().regex(GIT_OBJECT_ID).optional(),
   })
   .strict();
+export const WorkspaceReviewFingerprintSchema = z.object({ generation, baseCommit: gitObject, sha256: digest }).strict();
 const mode = z.enum([
   "ownWorktree",
   "readOnlyCheckout",
