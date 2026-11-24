@@ -202,14 +202,58 @@ export async function checkpointOwnedWorkspace(
   return { generation, checkpointId, tree };
 }
 
-export async function restoreOwnedWorkspace(
-  input: OwnedGitOperation,
-  request: WorkspaceRestoreRequest,
-): Promise<WorkspaceGitCheckpointResult | null> {
-  const owned = await claimGitOperation(input, request);
-  const { git, workspace } = owned;
-  const { generation, checkpointId } = request.payload;
-  const checkpoint = input.state.getReceipt(checkpointId);
+async function matchesRewoundTree(
+  owned: OwnedGit,
+  base: string,
+  tree: string,
+): Promise<boolean> {
+  const actual = await captureOwnedTree(owned);
+  if (actual === tree) return true;
+
+  const args = [
+    ...owned.git,
+    "diff-tree",
+    "-r",
+    "-z",
+    "--no-commit-id",
+    "--no-renames",
+  ];
+  const [changes, deletions] = await Promise.all([
+    executeWorkspaceGitBytes([...args, "--name-status", tree, actual]),
+    executeWorkspaceGitBytes([
+      ...args,
+      "--name-only",
+      "--diff-filter=D",
+      base,
+      tree,
+    ]),
+  ]);
+  const deleted = new Set(deletions.toString("latin1").split("\0"));
+  const entries = changes.toString("latin1").split("\0").slice(0, -1);
+  // Rewind preserves new untracked paths and restores deletions from the snapshot.
+  return (
+    entries.length % 2 === 0 &&
+    entries.every((entry, i) =>
+      i % 2 === 0 ? entry === "A" : !deleted.has(entry),
+    )
+  );
+}
+
+export async function resolveOwnedCheckpoint(
+  input: Readonly<{
+    state: HostState;
+    git: readonly string[];
+    handle: string;
+    generation: number;
+    checkpointId: string;
+    owner: Pick<
+      WorkspaceRestoreRequest["owner"],
+      "runId" | "assignmentId" | "assignmentEpoch"
+    >;
+  }>,
+): Promise<{ snapshot: string; result: WorkspaceGitCheckpointResult }> {
+  const { state, git, handle, generation, checkpointId, owner } = input;
+  const checkpoint = state.getReceipt(checkpointId);
   const evidence = checkpoint?.body as
     | {
         workspaceTarget?: unknown;
@@ -221,11 +265,11 @@ export async function restoreOwnedWorkspace(
   if (
     checkpoint?.kind !== "workspace.checkpoint" ||
     checkpoint.phase !== "completed" ||
-    checkpoint.runId !== request.owner.runId ||
-    checkpoint.assignmentId !== request.owner.assignmentId ||
-    checkpoint.epoch !== request.owner.assignmentEpoch ||
+    checkpoint.runId !== owner.runId ||
+    checkpoint.assignmentId !== owner.assignmentId ||
+    checkpoint.epoch !== owner.assignmentEpoch ||
     !isWorkspaceGenerationTarget(target) ||
-    target.handle !== input.handle ||
+    target.handle !== handle ||
     target.generation !== generation ||
     !expected ||
     expected.checkpointId !== checkpointId ||
@@ -234,24 +278,41 @@ export async function restoreOwnedWorkspace(
     throw invalidCheckpoint();
   const snapshot = await readCheckpointCommit(
     git,
-    checkpointRef(input.handle, generation, checkpointId),
+    checkpointRef(handle, generation, checkpointId),
   );
   if (!snapshot) throw invalidCheckpoint();
-  const [tree, base] = await Promise.all([
-    executeWorkspaceGit([
-      ...git,
-      "rev-parse",
-      "--verify",
-      `${snapshot}^{tree}`,
-    ]),
-    executeWorkspaceGit([...git, "rev-parse", "--verify", `${snapshot}^`]),
+  const tree = await executeWorkspaceGit([
+    ...git,
+    "rev-parse",
+    "--verify",
+    `${snapshot}^{tree}`,
   ]);
-  if (
-    tree !== expected.tree ||
-    !GIT_OBJECT_ID.test(tree) ||
-    !GIT_OBJECT_ID.test(base)
-  )
+  if (tree !== expected.tree || !GIT_OBJECT_ID.test(tree))
     throw invalidCheckpoint();
+
+  return { snapshot, result: expected };
+}
+
+export async function restoreOwnedWorkspace(
+  input: OwnedGitOperation,
+  request: WorkspaceRestoreRequest,
+): Promise<WorkspaceGitCheckpointResult | null> {
+  const owned = await claimGitOperation(input, request);
+  const { git, workspace } = owned;
+  const { snapshot, result: expected } = await resolveOwnedCheckpoint({
+    ...input,
+    ...request.payload,
+    git,
+    owner: request.owner,
+  });
+  const { tree } = expected;
+  const base = await executeWorkspaceGit([
+    ...git,
+    "rev-parse",
+    "--verify",
+    `${snapshot}^`,
+  ]);
+  if (!GIT_OBJECT_ID.test(base)) throw invalidCheckpoint();
   const restored = async (): Promise<boolean> =>
     (await observePreparedGitHead(workspace)).commit === base &&
     (await executeWorkspaceGit([
@@ -261,13 +322,11 @@ export async function restoreOwnedWorkspace(
       "--name-only",
       "--",
     ])) === "" &&
-    (await captureOwnedTree(owned)) === tree;
+    (await matchesRewoundTree(owned, base, tree));
   input.assertOwner();
   if (owned.replayingClaim) return (await restored()) ? expected : null;
 
   try {
-    await executeWorkspaceGit([...git, "clean", "-fd", "--"]);
-    input.assertOwner();
     await executeWorkspaceGit([...git, "reset", "--hard", base]);
     input.assertOwner();
     await executeWorkspaceGit([...git, "read-tree", "--reset", "-u", tree]);

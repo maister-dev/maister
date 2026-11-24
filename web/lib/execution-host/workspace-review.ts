@@ -58,19 +58,26 @@ const logPage = z
 export async function readAddressedWorkspacePatch(
   input: WorkspaceReview &
     Readonly<{ range: Omit<WorkspaceDiffQuery, "generation"> }>,
-): Promise<string> {
+): Promise<{ patch: string; baseCommit?: string }> {
   input.signal.throwIfAborted();
-  const { object: reference } = await readAddressedWorkspaceDiff(
+  const { object: reference, baseCommit } = await readAddressedWorkspaceDiff(
     input.db,
     input.workspace,
     input.range,
   );
-  return readWorkspaceReviewText(input, reference, {
+  if (input.range.checkpointId && !baseCommit)
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "The selected supervisor did not identify the patch's base checkpoint",
+    );
+  const patch = await readWorkspaceReviewText(input, reference, {
     logicalName: "workspace-diff.patch",
     mimeType: "text/x-diff",
     maxBytes: 64 * 1024,
     pendingReason: "workspace_diff_pending",
   });
+
+  return { patch, baseCommit };
 }
 
 export async function readAddressedWorkspaceHistory(

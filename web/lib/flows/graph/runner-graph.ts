@@ -295,6 +295,7 @@ import {
   acpContextFailureReason,
   type AcpContextFailureReason,
 } from "../../../../runtime/acp-context-failure";
+import { WORKSPACE_GIT_CHECKPOINT_PREFIX } from "../../../../runtime/workspace-prepare";
 
 import { nodeAttempts } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
@@ -3024,10 +3025,10 @@ export async function runGraph(
 
     if (addressedProject && retryPolicy.workspace === "rewind-to-node-checkpoint") {
       const checkpoint = state.attemptCheckpointRef;
-      if (!checkpoint?.startsWith("host-checkpoint:")) return "fail";
+      if (!checkpoint?.startsWith(WORKSPACE_GIT_CHECKPOINT_PREFIX)) return "fail";
       const owner = addressedGitOwner();
       await runAddressedGitOperation(rootDb, { ...owner, kind: "workspace.restore",
-        operationKey: `rewind:${checkpoint}`, checkpointId: checkpoint.slice("host-checkpoint:".length),
+        operationKey: `rewind:${checkpoint}`, checkpointId: checkpoint.slice(WORKSPACE_GIT_CHECKPOINT_PREFIX.length),
       }, owner.signal);
     } else if (retryPolicy.workspace !== "keep") {
       requireFlowWorktree(worktreePath);
@@ -3613,7 +3614,7 @@ export async function runGraph(
         const checkpoint = await runAddressedGitOperation(rootDb, { ...owner, kind: "workspace.checkpoint",
           operationKey: `attempt-checkpoint:${nodeAttemptId}`,
         }, owner.signal);
-        const checkpointRef = `host-checkpoint:${checkpoint.checkpointId}`;
+        const checkpointRef = `${WORKSPACE_GIT_CHECKPOINT_PREFIX}${checkpoint.checkpointId}`;
         await db.transaction(async (tx: Db) => {
           await owner.assertDriver(tx);
           await setCheckpointRef(nodeAttemptId, checkpointRef, tx);

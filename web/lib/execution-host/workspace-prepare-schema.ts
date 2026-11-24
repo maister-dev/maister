@@ -20,6 +20,7 @@ export const WorkspaceEvidenceObjectSchema = z
   .object({
     generation,
     object: z.object({ objectId: z.string().uuid(), sha256: digest }).strict(),
+    baseCommit: z.string().regex(GIT_OBJECT_ID).optional(),
   })
   .strict();
 const mode = z.enum([

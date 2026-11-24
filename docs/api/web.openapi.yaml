@@ -7963,7 +7963,9 @@ paths:
             (current behavior). `since-last-review`: `<prev-review-visit-sha>..branch`
             from `hitl_requests.review_tip_sha`. `last-node`:
             `<pre-attempt-checkpoint-sha>..branch` for the latest completed agent
-            node (ADR-079 checkpoint ref). `uncommitted`: `HEAD` vs working tree
+            node (ADR-079 checkpoint ref). On an addressed supervisor, `last-node`
+            compares the verified retained checkpoint with the current working
+            tree and returns the captured checkpoint commit. `uncommitted`: `HEAD` vs working tree
             (tracked) + untracked as additions, rendered under a temp
             `GIT_INDEX_FILE` intent-to-add — the real index is NEVER mutated. A
             scope whose base ref is missing is hidden/disabled with a reason,

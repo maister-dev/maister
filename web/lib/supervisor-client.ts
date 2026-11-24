@@ -2020,6 +2020,7 @@ export async function getWorkspaceDiff(handle: string, input: WorkspaceDiffQuery
     generation: String(input.generation),
     ...(input.base ? { base: input.base } : {}),
     ...(input.head ? { head: input.head } : {}),
+    ...(input.checkpointId ? { checkpointId: input.checkpointId } : {}),
   });
   return getWorkspaceEvidence(handle, "diff", query, input.generation);
 }

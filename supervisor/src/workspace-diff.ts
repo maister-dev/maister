@@ -1,4 +1,7 @@
-import type { WorkspaceInputObject } from "../../runtime/workspace-prepare";
+import type {
+  WorkspaceDiffQuery,
+  WorkspaceEvidenceObject,
+} from "../../runtime/workspace-prepare";
 import type { HostState, WorkspaceRow } from "./host-state";
 import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { RuntimeObjectRegistry } from "./runtime-objects";
@@ -7,6 +10,7 @@ import { realpath } from "node:fs/promises";
 
 import { SupervisorError } from "./types";
 import { sealWorkspaceOutput } from "./workspace-output-object";
+import { resolveOwnedCheckpoint } from "./workspace-git-checkpoint";
 import { withPreparedGitIndex } from "./workspace-git-index";
 import {
   executeWorkspaceGit,
@@ -48,13 +52,8 @@ export async function sealWorkspaceDiff(
     objects: RuntimeObjectRegistry;
     events: RuntimeEventPublisher;
   }>,
-  query: Readonly<{
-    handle: string;
-    generation: number;
-    base?: string;
-    head?: string;
-  }>,
-): Promise<{ generation: number; object: WorkspaceInputObject } | null> {
+  query: WorkspaceDiffQuery & Readonly<{ handle: string }>,
+): Promise<WorkspaceEvidenceObject | null> {
   const { state } = services;
   const { handle, generation } = query;
   const owned = loadPreparedWorkspace(state, handle, generation);
@@ -63,7 +62,12 @@ export async function sealWorkspaceDiff(
   const fence = state.getFence(workspace.runId);
   if (!fence || workspace.kind !== "git_worktree") throw diffRefusal();
 
-  const git = ["--no-optional-locks", "-C", workspace.realPath];
+  const git = [
+    "--no-optional-locks",
+    "--no-replace-objects",
+    "-C",
+    workspace.realPath,
+  ];
   let base: string;
   let bytes: Buffer;
   try {
@@ -71,10 +75,24 @@ export async function sealWorkspaceDiff(
       throw diffRefusal();
     const observed = await observePreparedGitHead(workspace);
     const head = query.head ?? observed.commit;
-    base = query.base ?? head;
+    const checkpoint = query.checkpointId
+      ? await resolveOwnedCheckpoint({
+          state,
+          git,
+          handle,
+          generation,
+          checkpointId: query.checkpointId,
+          owner: {
+            runId: workspace.runId,
+            assignmentId: fence.assignmentId,
+            assignmentEpoch: fence.epoch,
+          },
+        })
+      : null;
+    base = checkpoint?.snapshot ?? query.base ?? head;
     for (const [ancestor, descendant] of [
       [head, observed.commit],
-      [base, head],
+      [checkpoint ? head : base, head],
     ]) {
       if (ancestor !== descendant)
         await executeWorkspaceGit([
@@ -147,5 +165,9 @@ export async function sealWorkspaceDiff(
     },
   );
 
-  return { generation, object };
+  return {
+    generation,
+    object,
+    ...(query.checkpointId ? { baseCommit: base } : {}),
+  };
 }

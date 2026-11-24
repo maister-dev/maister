@@ -51,6 +51,7 @@ export type WorkspaceDiffQuery = Readonly<{
   generation: number;
   base?: string;
   head?: string;
+  checkpointId?: string;
 }>;
 export type WorkspaceLogQuery = Readonly<{
   generation: number;
@@ -70,7 +71,9 @@ export const WORKSPACE_TEMPLATE_CONTEXT_MAX_BYTES = 128 * 1024;
 export type WorkspaceEvidenceObject = Readonly<{
   generation: number;
   object: WorkspaceInputObject;
+  baseCommit?: string;
 }>;
+export const WORKSPACE_GIT_CHECKPOINT_PREFIX = "host-checkpoint:";
 export type WorkspaceMaterializeRequest = Readonly<{
   workspaceProtocol: 1;
   command: Readonly<{

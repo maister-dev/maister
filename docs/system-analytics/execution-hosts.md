@@ -1083,8 +1083,14 @@ index intact. PostgreSQL migration 0378 binds the command to the active Run,
 assignment and generation. The supervisor uses its durable workspace writer
 claim to exclude process admission and release during Git mutation. After an
 interrupted restore it verifies HEAD, the live index and the captured tree
-before settling the original command. An unproved restore keeps the claim.
+before settling the original command. Rewind preserves unrelated untracked
+paths created during the failed attempt. An unproved restore keeps the claim.
 Replaying a completed restore returns its receipt and preserves later edits.
+The Run Diff's last-node scope uses the latest completed attempt's checkpoint.
+The supervisor verifies its retained receipt and tree for the same assignment
+and generation, then seals a diff against the current working tree. That read
+remains available after the Run releases capacity and requires current Web
+repository disclosure authority.
 
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable

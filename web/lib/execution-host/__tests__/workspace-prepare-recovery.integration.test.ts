@@ -552,6 +552,29 @@ it.each([
         actual: { executionHostId: host.id, displayName: host.displayName, assignmentEpoch: 1 },
       },
     });
+    const { GET: getDiff } = await import("@/app/api/runs/[runId]/diff/route");
+    const lastNodeDiff = getDiff(
+      new Request(`http://localhost/api/runs/${runId}/diff?scope=last-node`),
+      { params: Promise.resolve({ runId }) },
+    );
+    let stopProjecting = false;
+    const projection = vi.waitFor(async () => {
+      await projectEvidence();
+      expect(stopProjecting).toBe(true);
+    }, { timeout: 12_000 });
+    try {
+      const response = await lastNodeDiff;
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        scope: "last-node",
+        scopes: { "last-node": { available: true } },
+        baseCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
+        diff: expect.stringContaining("+written by addressed ACP"),
+      });
+    } finally {
+      stopProjecting = true;
+      await projection;
+    }
   },
   90_000,
 );

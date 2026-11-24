@@ -114,7 +114,8 @@ const workspaceQuery = z.object({
 const diffQuery = workspaceQuery.extend({
   base: z.string().regex(GIT_OBJECT_ID).optional(),
   head: z.string().regex(GIT_OBJECT_ID).optional(),
-});
+  checkpointId: z.string().uuid().optional(),
+}).refine(({ checkpointId, base, head }) => !checkpointId || (!base && !head));
 const logQuery = workspaceQuery.extend({
   cursor: z.string().min(1).max(512).optional(),
   limit: z.string().regex(/^[1-9][0-9]{0,2}$/).transform(Number).pipe(z.number().max(WORKSPACE_LOG_MAX_PAGE_SIZE)).optional(),

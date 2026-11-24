@@ -5,6 +5,9 @@ import type { workspaces as workspaceTable } from "@/lib/db/schema";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
+import { z } from "zod";
+
+import { WORKSPACE_GIT_CHECKPOINT_PREFIX } from "../../../../../../runtime/workspace-prepare";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -241,6 +244,7 @@ async function addressedDiffResponse(
     scope: DiffScope;
     targetBranch: string;
     priorReviewTipSha: string | null;
+    lastNodeRef?: string | null;
     userId: string;
     signal: AbortSignal;
   }>,
@@ -248,15 +252,21 @@ async function addressedDiffResponse(
   const { runId, workspace, scope, priorReviewTipSha, signal } = input;
   const { projectId } = workspace;
   await requireProjectAction(projectId, "readRepoFiles");
+  const checkpoint = z
+    .uuid()
+    .safeParse(
+      input.lastNodeRef?.startsWith(WORKSPACE_GIT_CHECKPOINT_PREFIX)
+        ? input.lastNodeRef.slice(WORKSPACE_GIT_CHECKPOINT_PREFIX.length)
+        : undefined,
+    );
   const scopes: ScopeAvailability = {
     run: { available: workspace.baseCommit !== null },
     uncommitted: { available: true },
     "since-last-review": { available: priorReviewTipSha !== null },
     review: { available: false, reason: "workspace_review_source_unavailable" },
-    "last-node": {
-      available: false,
-      reason: "workspace_checkpoint_unavailable",
-    },
+    "last-node": checkpoint.success
+      ? { available: true }
+      : { available: false, reason: "workspace_checkpoint_unavailable" },
   };
   if (!scopes[scope].available)
     throw new MaisterError(
@@ -269,24 +279,27 @@ async function addressedDiffResponse(
       },
     );
   const db = getDb();
-  const baseCommit =
+  const base =
     scope === "uncommitted"
       ? (await readAddressedWorkspaceStatus(db, workspace)).workspace
           .observedCommit
       : scope === "since-last-review"
         ? priorReviewTipSha
         : workspace.baseCommit;
-  if (!baseCommit)
+  const checkpointId =
+    scope === "last-node" && checkpoint.success ? checkpoint.data : null;
+  if (!base && !checkpointId)
     throw new MaisterError(
       "PRECONDITION",
       "The selected supervisor has no verified base commit",
     );
-  const patch = await readAddressedWorkspacePatch({
-    db,
-    workspace,
-    range: { base: baseCommit },
-    signal,
-  });
+  const { patch, baseCommit: checkpointCommit } =
+    await readAddressedWorkspacePatch({
+      db,
+      workspace,
+      range: checkpointId ? { checkpointId } : { base: base ?? undefined },
+      signal,
+    });
   const diff = filterDiffByPath(patch, (path, oldPath) =>
     isReviewableChangeEntry({ path, oldPath }),
   );
@@ -307,7 +320,7 @@ async function addressedDiffResponse(
     runId,
     scope,
     scopes,
-    baseCommit,
+    baseCommit: checkpointCommit ?? base,
     sourceBranch: workspace.branch,
     targetBranch: input.targetBranch,
     reviewSourceFingerprint: null,
@@ -504,18 +517,19 @@ export async function GET(
     // Availability map (graceful degrade, ADR-082): resolve each scope's base
     // precondition once; the UI disables unavailable scopes with the reason.
     const priorReviewTipSha = await loadPriorReviewTipSha(db, runId);
+    const lastNodeRef = await loadLastNodeCheckpointRef(db, runId);
     if (workspace.ownershipKind === "host_owned")
       return await addressedDiffResponse({
         runId,
         workspace,
         priorReviewTipSha,
+        lastNodeRef,
         scope,
         userId: user.id,
         signal: req.signal,
         targetBranch:
           workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch,
       });
-    const lastNodeRef = await loadLastNodeCheckpointRef(db, runId);
     let lastNodeBaseSha: string | null = null;
 
     if (lastNodeRef) {

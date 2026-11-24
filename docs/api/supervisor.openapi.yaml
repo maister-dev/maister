@@ -301,6 +301,25 @@ paths:
               schema: { type: string }
         "400": { description: Invalid restore request. }
         "409": { description: Workspace identity or current owner mismatch. }
+  /v1/workspaces/{id}/diff:
+    get:
+      tags: [execution-host]
+      operationId: stageCGetWorkspaceDiff
+      summary: Seal a bounded Git patch from the retained workspace
+      description: A checkpoint ID selects the verified private snapshot for this exact retained owner and generation. Commit ranges must be reachable from the observed checkout. The sealed UTF-8 patch is limited to 64 KiB.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/DiffQuery
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: generation, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: base, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' } }
+        - { name: head, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' } }
+        - { name: checkpointId, in: query, schema: { type: string, format: uuid }, description: Exclusive of base and head. }
+      responses:
+        "200": { description: Generation and sealed patch reference. A checkpoint request also returns the verified checkpoint commit. }
+        "400": { description: Invalid generation or diff parameters. }
+        "404": { description: No retained workspace on this host. }
+        "409": { description: "Unavailable or foreign range or checkpoint, or a patch above 64 KiB." }
   /v1/workspaces/{id}/log:
     get:
       tags: [execution-host]

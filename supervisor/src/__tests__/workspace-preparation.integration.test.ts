@@ -708,6 +708,7 @@ it("C-09 restores a retained Git checkpoint once without replacing later work on
   if (!checkout) throw new Error("fixture checkout was not retained");
   const file = join(checkout.realPath, "input.txt");
   const untracked = join(checkout.realPath, "untracked.txt");
+  const attemptNotes = join(checkout.realPath, "attempt-notes.txt");
   await writeFile(file, "captured tracked bytes\n");
   await writeFile(untracked, "captured untracked bytes\n");
   const checkpointId = randomUUID();
@@ -728,6 +729,7 @@ it("C-09 restores a retained Git checkpoint once without replacing later work on
   expect(git(checkout.realPath, "ls-files", "--", "untracked.txt")).toBe("");
   await writeFile(file, "changed after checkpoint\n");
   await writeFile(untracked, "changed untracked bytes\n");
+  await writeFile(attemptNotes, "notes created during the failed attempt\n");
   const restoreId = randomUUID();
   const restore = {
     workspaceProtocol: 1,
@@ -743,6 +745,7 @@ it("C-09 restores a retained Git checkpoint once without replacing later work on
   });
   expect(await readFile(file, "utf8")).toBe("captured tracked bytes\n");
   expect(await readFile(untracked, "utf8")).toBe("captured untracked bytes\n");
+  expect(await readFile(attemptNotes, "utf8")).toBe("notes created during the failed attempt\n");
   expect(git(checkout.realPath, "ls-files", "--", "untracked.txt")).toBe("");
   await writeFile(file, "later work after restore\n");
   await host.stop();
@@ -754,6 +757,15 @@ it("C-09 restores a retained Git checkpoint once without replacing later work on
   const replay = await addressedRequest(restarted, `/v1/commands/${restoreId}`);
   expect(await replay.json()).toMatchObject({ phase: "completed", result: captured.result });
   expect(await readFile(file, "utf8")).toBe("later work after restore\n");
+  const other = await prepareAndRead(restarted, {
+    mode: "ownWorktree", repositoryId: "fixture", commit, inputDigest: "b".repeat(64),
+  });
+  if (other.phase !== "completed") throw new Error("foreign fixture owns no checkout");
+  const foreignDiff = await addressedRequest(restarted,
+    `/v1/workspaces/${other.result.workspace.handle}/diff?generation=${generation}&checkpointId=${checkpointId}`,
+  );
+  expect(foreignDiff.status).toBe(409);
+  expect(await foreignDiff.json()).toMatchObject({ details: { reason: "workspace_diff_range_invalid" } });
 }, 30_000);
 
 function addressedRequest(

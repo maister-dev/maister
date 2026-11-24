@@ -523,6 +523,12 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   takeover, cross-assignment restore and the review source witness remain
   open.
 
+  RED exposed two compatibility gaps. Host rewind removed unrelated files
+  created during the failed attempt, and the post-release `last-node` scope
+  returned 409. GREEN preserves those untracked files, verifies the retained
+  checkpoint before diffing and shows the real selected host's edits in Run
+  Diff after capacity release.
+
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure

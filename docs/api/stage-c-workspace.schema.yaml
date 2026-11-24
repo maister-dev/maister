@@ -327,7 +327,7 @@ definitions:
     properties:
       generation: *a1
   DiffQuery:
-    description: Exact commits reachable from the prepared checkout. For an omitted base use the selected head. An omitted head reads the tracked and non-ignored untracked worktree against the base using a private temporary index. Patches above 65536 bytes are refused.
+    description: Exact commits reachable from the prepared checkout, or its retained checkpoint. A checkpointId selects the snapshot as the sole base. For an omitted base use the selected head. An omitted head reads the tracked and non-ignored untracked worktree against the base using a private temporary index. Patches above 65536 bytes are refused.
     type: object
     additionalProperties: false
     required: [ generation ]
@@ -335,6 +335,11 @@ definitions:
       generation: *a1
       base: &a4 { $ref: "#/definitions/GitObjectId" }
       head: *a4
+      checkpointId: *a2
+    not:
+      anyOf:
+        - required: [checkpointId, base]
+        - required: [checkpointId, head]
   LogQuery:
     description: Page of history reachable from the observed HEAD in topological order. The cursor is scoped to the stable host, handle, generation and HEAD. A page over 65536 bytes is refused.
     type: object
@@ -679,6 +684,9 @@ definitions:
       generation: *a1
       object: { $ref: "#/definitions/InputObject" }
       nextCursor: { type: string, minLength: 1, maxLength: 512 }
+      baseCommit:
+        description: Verified private checkpoint commit when the request uses checkpointId.
+        $ref: "#/definitions/GitObjectId"
   GitCheckpoint:
     type: object
     additionalProperties: false
