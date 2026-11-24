@@ -20,6 +20,7 @@ import {
 import { ZodError } from "zod";
 
 import { hasNativeOutputCommand } from "../runtime-object-intent";
+import { hasRetainedWorkspaceDiffOwner } from "../workspace-diff-owner";
 
 import { encodeJsonbSafe } from "./jsonb-safe";
 import { seedCanonicalProjectionConsumers } from "./projection-consumers";
@@ -407,6 +408,15 @@ async function isBoundHistoricalEvent(
       assignmentEpoch: input.assignmentEpoch,
       commandId: outputCommandId,
       hostSessionId: input.hostSessionId,
+    });
+  if (
+    input.eventType === "runtime_object.available" &&
+    input.hostSessionId === null &&
+    input.payload?.workspaceGitDiff !== undefined
+  )
+    return hasRetainedWorkspaceDiffOwner(tx, {
+      ...input,
+      range: input.payload.workspaceGitDiff,
     });
   if (
     input.eventType === "runtime_object.available" ||

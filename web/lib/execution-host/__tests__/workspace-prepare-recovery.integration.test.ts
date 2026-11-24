@@ -30,6 +30,7 @@ import { projectExecutionEvents } from "../events/projector";
 import { projectCanonicalRuntimeObjects } from "../events/runtime-object-projector";
 import { findStalledEventStreams } from "../events/stream-health";
 import { mintPlacement } from "../placement";
+import { releaseAssignmentForRun } from "../assignments";
 import { buildEnvelope } from "../ledger";
 import { recoverExecutionCommands } from "../recovery";
 import { advanceAddressedWorkspaceAdmission } from "../workspace-dispatch";
@@ -1052,6 +1053,13 @@ async function assertAddressedRequirement({
     join(owned.path, "input.txt"),
     "changed on the selected host\n",
   );
+  await db.transaction(async (tx) => {
+    await tx.update(runs).set({ status: "Review" }).where(eq(runs.id, runId));
+    expect(await releaseAssignmentForRun(tx, runId, "run_terminal")).toMatchObject({
+      id: assignment.id,
+      state: "released",
+    });
+  });
   const diffRoute = (await import("@/app/api/runs/[runId]/diff/route")).GET;
   const requestDiff = () =>
     diffRoute(new Request(`${web.origin}/api/runs/${runId}/diff`), {

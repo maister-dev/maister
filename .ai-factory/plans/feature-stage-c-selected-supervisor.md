@@ -452,6 +452,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Passed 38 Web integrations, 16 route cases, 24 supervisor integrations,
   both typechecks, contracts and docs/ERD validation.
 
+  Production Chrome on `7f9f3f2f0` reached Review. Its subsequent diff
+  request received a host object, but Web ingested the event as `stale_epoch`
+  because the assignment was already released. The shared ingest and
+  catalogue check now require the exact retained host, handle, generation
+  and preparation assignment. The split integration reads the authorized
+  patch after release and still refuses a foreign Run and a revoked reader.
+  Passed three focused integrations, 48 ingress and object-lifecycle
+  cases, and Web typecheck.
+
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure

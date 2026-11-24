@@ -1015,6 +1015,12 @@ Fresh, unattempted workspace commands are eligible for sweep delivery without
 waiting for the in-flight grace period. Admission remains gated on the applied
 materialization and requirement results.
 
+When a Run reaches Review, its released execution assignment still identifies
+the retained checkout. Web admits post-release diff evidence only when its
+host, Run, assignment, epoch, workspace handle and generation match the
+current retained ownership record. Catalogue projection repeats that check.
+The browser receives the sealed patch after current repository read authorization.
+
 The [versioned schema profile](../api/stage-c-workspace.schema.yaml) fixes
 each operation's method, route, operation ID, stage-specific shape and
 terminal result. [Executable examples](../api/stage-c-workspace-examples.yaml)
