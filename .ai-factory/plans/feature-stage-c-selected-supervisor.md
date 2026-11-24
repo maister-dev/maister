@@ -479,6 +479,12 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   green. Passed 64 board tests, 31 integrations, Web typecheck, contracts
   and docs. Browser keyboard and SSE placement evidence remain open.
 
+  A confirmed preparation refusal now holds the bound intent with an
+  actionable EN/RU reason and keeps the original receipt and host identity.
+  RED left a Run pending indefinitely after an actual supervisor rejected
+  its managed root. GREEN reached Hold with one prepare receipt and zero
+  child commands. The four focused integration cases and docs suite passed.
+
   **C-11 preference checkpoint.** The project settings route checks
   `editSettings` and honors the composite ETag under row locks. A real
   PostgreSQL integration refused a member and an ineligible host and allowed

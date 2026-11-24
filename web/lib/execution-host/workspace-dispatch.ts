@@ -4,7 +4,8 @@ import type { Db } from "./db";
 
 import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 
-import { executionCommands } from "@/lib/db/schema";
+import { executionCommands, runs } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 import { defaultTransport } from "./default-transport";
 import {
@@ -52,6 +53,39 @@ export async function advanceAddressedWorkspaceAdmission(
   db: Db,
   runId: string,
 ): Promise<void> {
+  const [refused] = await db
+    .select({ id: executionCommands.id })
+    .from(executionCommands)
+    .innerJoin(
+      runs,
+      eq(runs.executionAssignmentId, executionCommands.executionAssignmentId),
+    )
+    .where(
+      and(
+        eq(runs.id, runId),
+        eq(runs.status, "Pending"),
+        eq(executionCommands.runId, runId),
+        inArray(executionCommands.kind, [
+          "workspace.prepare",
+          "workspace.materialize",
+          "workspace.run",
+        ]),
+        eq(executionCommands.state, "failed"),
+      ),
+    )
+    .limit(1);
+  if (refused)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected supervisor refused workspace preparation",
+      {
+        details: {
+          reason: "workspace_preparation_refused",
+          commandId: refused.id,
+        },
+      },
+    );
+
   const fail = (_runId: string, error: unknown): never => {
     throw error;
   };

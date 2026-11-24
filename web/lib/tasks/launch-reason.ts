@@ -7,6 +7,7 @@ const REASON_KEYS: Readonly<Record<string, string>> = {
   launch_flow_assets_changed: "assetsChanged",
   launch_capabilities_changed: "assetsChanged",
   launch_settings_changed: "settingsChanged",
+  workspace_preparation_refused: "workspacePreparationRefused",
   launch_authority_revoked: "authorityRevoked",
   launch_already_reserved: "alreadyReserved",
   launch_flagged: "held",

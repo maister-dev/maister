@@ -415,6 +415,12 @@ Interactive admission sends that token with the requested host ID. Entering
 the scheduling form returns to the default choice. Shared-root inheritance
 and actual placement display remain designed.
 
+When the selected supervisor returns a terminal preparation refusal for the
+current assignment, the worker holds the bound intent with the localized
+`workspace_preparation_refused` reason. The Run and command keep their
+original owner and the failed receipt. The worker cannot dispatch a child
+under that intent.
+
 For an addressed selection the Flow preview reads up to 100 branch names
 from the approved source on that supervisor. The response exposes
 `branchesNextCursor`, and the next preview accepts it as `branchCursor`.

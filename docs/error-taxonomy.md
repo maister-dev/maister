@@ -965,6 +965,7 @@ and grants no delivery authority.
 | Reason | Effect |
 | --- | --- |
 | `workspace_preparation_pending` | Session creation returns `PRECONDITION` and leaves the reserved Run without a child until the selected host's input receipt is applied. |
+| `workspace_preparation_refused` | The accepted board launch is held after its selected supervisor returns a terminal preparation refusal. The original command and ownership record remain available for diagnosis. |
 | `workspace_requirements_pending` | Workload and session admission wait until the selected host's required successful probe receipts have been applied. |
 | `workspace_requirement_failed` | A required probe failed and its process group retired. The Run records `PRECONDITION`, releases the assignment and retains diagnostic objects. |
 | `workspace_diff_range_invalid` | The owning supervisor cannot verify the requested ancestry or retained checkout. No diff object is returned. |

@@ -53,6 +53,7 @@ import { issueProjectVaultNodeToken } from "@/lib/agents/tokens";
 import { closeDb } from "@/lib/db/client";
 import { cliOutputFilePath } from "@/lib/flows/graph/node-output";
 import { runFlow } from "@/lib/flows/runner";
+import { dispatchBoundTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { runCliStep } from "@/lib/flows/runner-cli";
 import { loadGitState } from "@/lib/workbench-git/read-model";
 import {
@@ -164,290 +165,355 @@ it.each([
   120_000,
 );
 
-it("C-05/C-08 accepts a pathless board launch and runs its action and command gate in the selected checkout", async () => {
-  root = await mkdtemp(join(tmpdir(), "stage-c-pathless-graph-"));
-  database = await startMainPostgresTestDb({
-    databaseName: "eh_graph_workload",
-  });
-  const db = database.db as unknown as Db;
-  const {
-    userId,
-    projectId,
-    flowId,
-    repo: source,
-  } = await seedTaskLaunchFixture(database, root);
-  const commit = (await git(source, "rev-parse", "HEAD")).trim();
-  const installedScript = join(root, "flow", "scripts", "check.sh");
-  await mkdir(join(root, "flow", "scripts"), { recursive: true });
-  await writeFile(
-    installedScript,
-    "#!/bin/sh\nset -eu\ntest \"$(cat acp-marker)\" = 'written by addressed ACP'\nprintf 'from owning host' > graph-marker\ncat graph-marker\nprintf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"\n",
-    { mode: 0o755 },
-  );
-  await writeFile(
-    join(root, "flow", "result.json"),
-    JSON.stringify({ schemaVersion: 1, fields: [{ name: "verified", type: "boolean", required: true }] }),
-  );
-  const command = '"$MAISTER_FLOW_DIR/scripts/check.sh"';
-  const manifest = {
-    schemaVersion: 1,
-    name: "addressed-graph",
-    compat: { engine_min: "1.1.0" },
-    nodes: [
-      {
-        id: "edit",
-        type: "ai_coding",
-        settings: { permissionMode: "ask" },
-        action: {
-          prompt:
-            'fixture-output:{"bytes":0,"text":"addressed edit complete","writeWorkspaceMarker":true,"expectedCapabilityAgent":"codex"}',
-        },
-        transitions: { success: "work" },
-      },
-      {
-        id: "work",
-        type: "cli",
-        action: { command },
-        output: { result: { schema: "./result.json", required: true } },
-        pre_finish: {
-          gates: [
-            {
-              id: "verify",
-              kind: "command_check",
-              mode: "blocking",
-              command:
-                "test \"$(cat graph-marker)\" = 'from owning host' && printf 'gate saw host marker'",
-            },
-          ],
-        },
-        transitions: { success: "done" },
-      },
-    ],
-  };
-  session.userId = userId;
-  const managerRepoPath = join(root, "no-manager-checkout");
-  await db
-    .update(projects)
-    .set({ repoPath: managerRepoPath })
-    .where(eq(projects.id, projectId));
-  await db.update(flows).set({ manifest }).where(eq(flows.id, flowId));
-  await db
-    .update(flowRevisions)
-    .set({ manifest })
-    .where(eq(flowRevisions.flowRefId, flowId));
-  const taskId = randomUUID();
-  await db.insert(tasks).values({
-    id: taskId,
-    projectId,
-    number: 1,
-    title: "Addressed task",
-    prompt: "Run the approved check",
-    flowId,
-  });
-  vi.stubEnv("DB_URL", database.databaseUrl);
-  vi.stubEnv("MAISTER_RUNTIME_ROOT", join(root, "web"));
-  vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "web-worktrees"));
-  supervisor = await startRealSupervisor({
-    fixture: "mock-acp-lifecycle.mjs",
-    fixtureAdapters: ["codex"],
-    env: {
-      MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: source }),
-    },
-  });
-  const health = (await (await fetch(supervisor.url + "/health")).json()) as {
-    host: { hostKey: string };
-  };
-  vi.stubEnv("MAISTER_SUPERVISOR_URL", supervisor.url);
-  vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", health.host.hostKey);
-  const transport = createLocalDirectTransport();
-  const registration = await ensureLocalExecutionHost({ db, transport });
-  if (registration.status !== "registered")
-    throw new Error("graph fixture host failed registration");
-  const { host } = registration;
-  const { GET } = await import("@/app/api/runs/launch-options/route");
-  const preview = await GET(
-    new NextRequest(
-      `http://localhost/api/runs/launch-options?taskId=${taskId}&executionHostId=${host.id}`,
-    ),
-  );
-  const previewBody = (await preview.json()) as {
-    settingsToken: string;
-    task: { revision: number };
-  };
-  expect(preview.status, JSON.stringify(previewBody)).toBe(200);
-  expect(previewBody).toMatchObject({
-    branches: ["main"],
-    executionHostSelection: {
-      effectiveExecutionHostId: host.id,
-      provenance: "explicit",
-    },
-    executionHostOptions: {
-      defaultExecutionHostId: host.id,
-      hosts: [{ id: host.id, displayName: host.displayName }],
-    },
-  });
-  const accepted = await acceptInteractiveTaskLaunch(
-    db,
-    await interactiveTaskLaunchPrincipal(),
-    {
-      taskId,
-      executionHostId: host.id,
-      expectedTaskRevision: previewBody.task.revision,
-      expectedSettingsToken: previewBody.settingsToken,
-    },
-    randomUUID(),
-  );
-  await writeFile(
-    join(source, "after-acceptance.txt"),
-    "a later upstream commit\n",
-  );
-  await git(source, "add", "--", "after-acceptance.txt");
-  await git(source, "commit", "-m", "advance approved branch after acceptance");
-  const bound = await prepareTaskLaunchIntent(db, accepted.intentId);
-  expect(bound).toMatchObject({
-    state: "run_bound",
-    runId: expect.any(String),
-    snapshot: { baseCommit: commit },
-  });
-  if (!bound.runId) throw new Error("board intent did not bind a Run");
-  await writeFile(installedScript, "#!/bin/sh\nexit 73\n");
-  const { runId } = bound;
-  const [intent] = await db
-    .select()
-    .from(taskLaunchIntents)
-    .where(eq(taskLaunchIntents.id, bound.intentId));
-  expect(intent.preparationIdentity).toMatchObject({
-    version: 3,
-    executionHostId: host.id,
-    runId,
-    worktreePath: null,
-    parentRepoPath: null,
-  });
-  expect(await tryStartRun(runId, { db })).toMatchObject({ started: false });
-  const projectEvidence = async (): Promise<void> => {
-    await projectCanonicalRuntimeObjects({ db, runId });
-    await projectExecutionEvents({
-      db,
-      projector: canonicalLifecycleProjector,
-      runId,
+it.each([
+  {
+    outcome:
+      "accepts a pathless board launch and runs its action and command gate in the selected checkout",
+    refusedRoot: false,
+  },
+  {
+    outcome:
+      "holds a pathless board launch whose supervisor refuses the preparation root",
+    refusedRoot: true,
+  },
+])(
+  "C-05/C-08 $outcome",
+  async ({ refusedRoot }) => {
+    root = await mkdtemp(join(tmpdir(), "stage-c-pathless-graph-"));
+    database = await startMainPostgresTestDb({
+      databaseName: "eh_graph_workload",
     });
-  };
-  const applyCommand = async (commandId: string): Promise<void> => {
-    await vi.waitFor(
-      async () => {
-        await projectEvidence();
-        expect(await getCommand(db, commandId)).toMatchObject({
-          state: "succeeded",
-        });
-      },
-      { timeout: 10_000 },
+    const db = database.db as unknown as Db;
+    const {
+      userId,
+      projectId,
+      flowId,
+      repo: source,
+    } = await seedTaskLaunchFixture(database, root);
+    const commit = (await git(source, "rev-parse", "HEAD")).trim();
+    const installedScript = join(root, "flow", "scripts", "check.sh");
+    await mkdir(join(root, "flow", "scripts"), { recursive: true });
+    await writeFile(
+      installedScript,
+      "#!/bin/sh\nset -eu\ntest \"$(cat acp-marker)\" = 'written by addressed ACP'\nprintf 'from owning host' > graph-marker\ncat graph-marker\nprintf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"\n",
+      { mode: 0o755 },
     );
-  };
-  await advanceAddressedWorkspaceAdmission(db, runId);
-  const [prepare] = await listCommandsForRun(db, runId);
-  expect(prepare.kind).toBe("workspace.prepare");
-  await applyCommand(prepare.id);
-  await advanceAddressedWorkspaceAdmission(db, runId);
-  const materialization = (await listCommandsForRun(db, runId)).find(
-    ({ kind }) => kind === "workspace.materialize",
-  );
-  if (!materialization)
-    throw new Error("launch did not reserve workspace materialization");
-  await applyCommand(materialization.id);
-  expect(await tryStartRun(runId, { db })).toMatchObject({ started: true });
-  const runtimeRoot = join(root, "web");
-  const firstDriver = new AbortController();
-  const startDriver = (signal: AbortSignal) =>
-    runFlow(runId, { db, runtimeRoot, signal }).then(
-      () => ({ state: "returned" as const }),
-      (error: unknown) => ({ state: "threw" as const, error }),
+    await writeFile(
+      join(root, "flow", "result.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        fields: [{ name: "verified", type: "boolean", required: true }],
+      }),
     );
-  const findDeclaration = async (prefix: string) => {
-    const commands = (await listCommandsForRun(db, runId)).filter(
-      ({ kind, payload }) =>
-        kind === "workspace.run" &&
-        typeof payload.declarationId === "string" &&
-        payload.declarationId.startsWith(prefix),
-    );
-    expect(commands).toHaveLength(1);
-
-    return commands[0];
-  };
-  const first = startDriver(firstDriver.signal);
-  let commandId: string;
-  try {
-    const queued = await vi.waitFor(() => findDeclaration("node:"), {
-      timeout: 3_000,
-    });
-    commandId = queued.id;
-  } finally {
-    firstDriver.abort();
-    expect(await first).toEqual({ state: "returned" });
-  }
-
-  const driving = startDriver(AbortSignal.timeout(20_000));
-  try {
-    for (const declaration of ["node:", "gate:"]) {
-      const queued = await vi.waitFor(async () => {
-        await projectEvidence();
-        return findDeclaration(declaration);
-      }, {
-        timeout: 6_000,
-      });
-      if (declaration === "node:") expect(queued.id).toBe(commandId);
-      await applyCommand(queued.id);
-    }
-    await vi.waitFor(async () => {
-      await projectEvidence();
-      expect(
-        await db.select({ status: runs.status }).from(runs).where(eq(runs.id, runId)),
-      ).toEqual([{ status: "Review" }]);
-    }, { timeout: 10_000 });
-  } finally {
-    expect(await driving).toEqual({ state: "returned" });
-  }
-  expect(
+    const command = '"$MAISTER_FLOW_DIR/scripts/check.sh"';
+    const manifest = {
+      schemaVersion: 1,
+      name: "addressed-graph",
+      compat: { engine_min: "1.1.0" },
+      nodes: [
+        {
+          id: "edit",
+          type: "ai_coding",
+          settings: { permissionMode: "ask" },
+          action: {
+            prompt:
+              'fixture-output:{"bytes":0,"text":"addressed edit complete","writeWorkspaceMarker":true,"expectedCapabilityAgent":"codex"}',
+          },
+          transitions: { success: "work" },
+        },
+        {
+          id: "work",
+          type: "cli",
+          action: { command },
+          output: { result: { schema: "./result.json", required: true } },
+          pre_finish: {
+            gates: [
+              {
+                id: "verify",
+                kind: "command_check",
+                mode: "blocking",
+                command:
+                  "test \"$(cat graph-marker)\" = 'from owning host' && printf 'gate saw host marker'",
+              },
+            ],
+          },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    session.userId = userId;
+    const managerRepoPath = join(root, "no-manager-checkout");
     await db
-      .select({ status: nodeAttempts.status, stdout: nodeAttempts.stdout, vars: nodeAttempts.vars })
+      .update(projects)
+      .set({ repoPath: managerRepoPath })
+      .where(eq(projects.id, projectId));
+    await db.update(flows).set({ manifest }).where(eq(flows.id, flowId));
+    await db
+      .update(flowRevisions)
+      .set({ manifest })
+      .where(eq(flowRevisions.flowRefId, flowId));
+    const taskId = randomUUID();
+    await db.insert(tasks).values({
+      id: taskId,
+      projectId,
+      number: 1,
+      title: "Addressed task",
+      prompt: "Run the approved check",
+      flowId,
+    });
+    vi.stubEnv("DB_URL", database.databaseUrl);
+    vi.stubEnv("MAISTER_RUNTIME_ROOT", join(root, "web"));
+    vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "web-worktrees"));
+    supervisor = await startRealSupervisor({
+      fixture: "mock-acp-lifecycle.mjs",
+      fixtureAdapters: ["codex"],
+      env: {
+        MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: source }),
+        ...(refusedRoot ? { MAISTER_WORKSPACE_ROOTS: source } : {}),
+      },
+    });
+    const health = (await (await fetch(supervisor.url + "/health")).json()) as {
+      host: { hostKey: string };
+    };
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", supervisor.url);
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", health.host.hostKey);
+    const transport = createLocalDirectTransport();
+    const registration = await ensureLocalExecutionHost({ db, transport });
+    if (registration.status !== "registered")
+      throw new Error("graph fixture host failed registration");
+    const { host } = registration;
+    const { GET } = await import("@/app/api/runs/launch-options/route");
+    const preview = await GET(
+      new NextRequest(
+        `http://localhost/api/runs/launch-options?taskId=${taskId}&executionHostId=${host.id}`,
+      ),
+    );
+    const previewBody = (await preview.json()) as {
+      settingsToken: string;
+      task: { revision: number };
+    };
+    expect(preview.status, JSON.stringify(previewBody)).toBe(200);
+    expect(previewBody).toMatchObject({
+      branches: ["main"],
+      executionHostSelection: {
+        effectiveExecutionHostId: host.id,
+        provenance: "explicit",
+      },
+      executionHostOptions: {
+        defaultExecutionHostId: host.id,
+        hosts: [{ id: host.id, displayName: host.displayName }],
+      },
+    });
+    const accepted = await acceptInteractiveTaskLaunch(
+      db,
+      await interactiveTaskLaunchPrincipal(),
+      {
+        taskId,
+        executionHostId: host.id,
+        expectedTaskRevision: previewBody.task.revision,
+        expectedSettingsToken: previewBody.settingsToken,
+      },
+      randomUUID(),
+    );
+    await writeFile(
+      join(source, "after-acceptance.txt"),
+      "a later upstream commit\n",
+    );
+    await git(source, "add", "--", "after-acceptance.txt");
+    await git(
+      source,
+      "commit",
+      "-m",
+      "advance approved branch after acceptance",
+    );
+    const bound = await prepareTaskLaunchIntent(db, accepted.intentId);
+    expect(bound).toMatchObject({
+      state: "run_bound",
+      runId: expect.any(String),
+      snapshot: { baseCommit: commit },
+    });
+    if (!bound.runId) throw new Error("board intent did not bind a Run");
+    await writeFile(installedScript, "#!/bin/sh\nexit 73\n");
+    const { runId } = bound;
+    const [intent] = await db
+      .select()
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, bound.intentId));
+    expect(intent.preparationIdentity).toMatchObject({
+      version: 3,
+      executionHostId: host.id,
+      runId,
+      worktreePath: null,
+      parentRepoPath: null,
+    });
+    expect(await tryStartRun(runId, { db })).toMatchObject({ started: false });
+    const projectEvidence = async (): Promise<void> => {
+      await projectCanonicalRuntimeObjects({ db, runId });
+      await projectExecutionEvents({
+        db,
+        projector: canonicalLifecycleProjector,
+        runId,
+      });
+    };
+    const applyCommand = async (
+      commandId: string,
+      state: "succeeded" | "failed" = "succeeded",
+    ): Promise<void> => {
+      await vi.waitFor(
+        async () => {
+          await projectEvidence();
+          expect(await getCommand(db, commandId)).toMatchObject({
+            state,
+          });
+        },
+        { timeout: 10_000 },
+      );
+    };
+    await advanceAddressedWorkspaceAdmission(db, runId);
+    const [prepare] = await listCommandsForRun(db, runId);
+    expect(prepare.kind).toBe("workspace.prepare");
+    if (refusedRoot) {
+      await applyCommand(prepare.id, "failed");
+      await dispatchBoundTaskLaunchIntent(db, bound.intentId);
+      const [held] = await db
+        .select()
+        .from(taskLaunchIntents)
+        .where(eq(taskLaunchIntents.id, bound.intentId));
+      expect(held).toMatchObject({
+        state: "held",
+        reason: "workspace_preparation_refused",
+        dispatchCommittedAt: null,
+      });
+      expect(
+        (await listCommandsForRun(db, runId)).map(({ kind }) => kind),
+      ).toEqual(["workspace.prepare"]);
+      return;
+    }
+    await applyCommand(prepare.id);
+    await advanceAddressedWorkspaceAdmission(db, runId);
+    const materialization = (await listCommandsForRun(db, runId)).find(
+      ({ kind }) => kind === "workspace.materialize",
+    );
+    if (!materialization)
+      throw new Error("launch did not reserve workspace materialization");
+    await applyCommand(materialization.id);
+    expect(await tryStartRun(runId, { db })).toMatchObject({ started: true });
+    const runtimeRoot = join(root, "web");
+    const firstDriver = new AbortController();
+    const startDriver = (signal: AbortSignal) =>
+      runFlow(runId, { db, runtimeRoot, signal }).then(
+        () => ({ state: "returned" as const }),
+        (error: unknown) => ({ state: "threw" as const, error }),
+      );
+    const findDeclaration = async (prefix: string) => {
+      const commands = (await listCommandsForRun(db, runId)).filter(
+        ({ kind, payload }) =>
+          kind === "workspace.run" &&
+          typeof payload.declarationId === "string" &&
+          payload.declarationId.startsWith(prefix),
+      );
+      expect(commands).toHaveLength(1);
+
+      return commands[0];
+    };
+    const first = startDriver(firstDriver.signal);
+    let commandId: string;
+    try {
+      const queued = await vi.waitFor(() => findDeclaration("node:"), {
+        timeout: 3_000,
+      });
+      commandId = queued.id;
+    } finally {
+      firstDriver.abort();
+      expect(await first).toEqual({ state: "returned" });
+    }
+
+    const driving = startDriver(AbortSignal.timeout(20_000));
+    try {
+      for (const declaration of ["node:", "gate:"]) {
+        const queued = await vi.waitFor(
+          async () => {
+            await projectEvidence();
+            return findDeclaration(declaration);
+          },
+          {
+            timeout: 6_000,
+          },
+        );
+        if (declaration === "node:") expect(queued.id).toBe(commandId);
+        await applyCommand(queued.id);
+      }
+      await vi.waitFor(
+        async () => {
+          await projectEvidence();
+          expect(
+            await db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, runId)),
+          ).toEqual([{ status: "Review" }]);
+        },
+        { timeout: 10_000 },
+      );
+    } finally {
+      expect(await driving).toEqual({ state: "returned" });
+    }
+    expect(
+      await db
+        .select({
+          status: nodeAttempts.status,
+          stdout: nodeAttempts.stdout,
+          vars: nodeAttempts.vars,
+        })
+        .from(nodeAttempts)
+        .where(
+          and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "work")),
+        ),
+    ).toMatchObject([
+      {
+        status: "Succeeded",
+        stdout: "from owning host",
+        vars: { verified: true },
+      },
+    ]);
+    const [editAttempt] = await db
+      .select({
+        status: nodeAttempts.status,
+        acpSessionId: nodeAttempts.acpSessionId,
+      })
       .from(nodeAttempts)
       .where(
-        and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "work")),
-      ),
-  ).toMatchObject([{ status: "Succeeded", stdout: "from owning host", vars: { verified: true } }]);
-  const [editAttempt] = await db
-    .select({
-      status: nodeAttempts.status,
-      acpSessionId: nodeAttempts.acpSessionId,
-    })
-    .from(nodeAttempts)
-    .where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "edit")));
-  expect(editAttempt).toMatchObject({
-    status: "Succeeded",
-    acpSessionId: expect.stringMatching(/^mock-/),
-  });
-  expect(
-    await db
-      .select({ status: gateResults.status, verdict: gateResults.verdict })
-      .from(gateResults)
-      .where(eq(gateResults.runId, runId)),
-  ).toEqual([
-    {
-      status: "passed",
-      verdict: { verdict: "pass", reasons: ["gate saw host marker"] },
-    },
-  ]);
-  expect(
-    await db
-      .select({ path: workspaces.worktreePath })
-      .from(workspaces)
-      .where(eq(workspaces.runId, runId)),
-  ).toEqual([{ path: null }]);
-  expect(await findDeclaration("node:")).toMatchObject({
-    id: commandId,
-    state: "succeeded",
-    attempts: 1,
-  });
-}, 90_000);
+        and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "edit")),
+      );
+    expect(editAttempt).toMatchObject({
+      status: "Succeeded",
+      acpSessionId: expect.stringMatching(/^mock-/),
+    });
+    expect(
+      await db
+        .select({ status: gateResults.status, verdict: gateResults.verdict })
+        .from(gateResults)
+        .where(eq(gateResults.runId, runId)),
+    ).toEqual([
+      {
+        status: "passed",
+        verdict: { verdict: "pass", reasons: ["gate saw host marker"] },
+      },
+    ]);
+    expect(
+      await db
+        .select({ path: workspaces.worktreePath })
+        .from(workspaces)
+        .where(eq(workspaces.runId, runId)),
+    ).toEqual([{ path: null }]);
+    expect(await findDeclaration("node:")).toMatchObject({
+      id: commandId,
+      state: "succeeded",
+      attempts: 1,
+    });
+  },
+  90_000,
+);
 
 async function assertAddressedRequirement({
   probe,
@@ -1055,7 +1121,9 @@ async function assertAddressedRequirement({
   );
   await db.transaction(async (tx) => {
     await tx.update(runs).set({ status: "Review" }).where(eq(runs.id, runId));
-    expect(await releaseAssignmentForRun(tx, runId, "run_terminal")).toMatchObject({
+    expect(
+      await releaseAssignmentForRun(tx, runId, "run_terminal"),
+    ).toMatchObject({
       id: assignment.id,
       state: "released",
     });
