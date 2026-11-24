@@ -1365,7 +1365,29 @@ docker build --target production -t maister-mcp-qualification .
 MAISTER_MCP_QUALIFICATION_IMAGE=maister-mcp-qualification pnpm --filter maister-web exec vitest run --project qualification lib/execution-host/__tests__/assigned-host-mcp.qualification.test.ts
 ```
 
-The separate public protocol check from the control host returned HTTP 200 and a 9,905-byte response from Microsoft Learn MCP for the fixed public .NET introduction. This receipt covers the upstream endpoint. The B/C receipts cover assigned-host ACP calls on the private network. A public-endpoint call originating on B or C remains unqualified.
+The public qualification is opt-in. Before starting each supervisor, the
+fixture sends one fixed `microsoft_docs_fetch` request to Microsoft Learn MCP
+for the public .NET introduction. A separate helper limits egress to the
+unprivileged probe process and the pinned HTTPS peer. The fixture disconnects
+the public network before starting the supervisor. The log links each public
+receipt to the same container and assignment used for the private tool calls.
+Both requests returned HTTP 200 and the requested 9,905-byte document. The
+public receipts contain the call identity, status and digests.
+
+Use a local Linux helper image with `iptables` and `ip6tables` and a Docker
+release that supports `network connect --gw-priority`. The qualified helper
+used Ubuntu 24.04 with iptables 1.8.10. The helper receives network
+administration capability in the disposable test container's namespace.
+
+```sh
+docker build -t maister-mcp-qualification-filter - <<'DOCKERFILE'
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends iptables=1.8.10-3ubuntu2 && rm -rf /var/lib/apt/lists/*
+DOCKERFILE
+MAISTER_MCP_QUALIFICATION_IMAGE=maister-mcp-qualification \
+MAISTER_MCP_QUALIFICATION_PUBLIC_FILTER_IMAGE=maister-mcp-qualification-filter \
+pnpm --filter maister-web exec vitest run --project qualification lib/execution-host/__tests__/assigned-host-mcp.qualification.test.ts
+```
 
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
 

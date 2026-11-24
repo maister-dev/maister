@@ -1334,9 +1334,9 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_HARNESS_NEVER_FIRED_MIN` | no | `10` | **(Implemented, [ADR-073](decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension).)** Minimum terminal gate executions in the observatory lookback window before the never-fired heuristic may flag a declared gate ("never fired — verify gate quality or a blind spot"). Read by `web/lib/instance-config.ts:harnessNeverFiredMin()` at the query layer and passed into the pure rollup as a parameter; invalid/non-positive values fall back to the default with a one-time WARN. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. See [`system-analytics/observatory.md`](system-analytics/observatory.md). |
 > | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
 > | `MAISTER_REPOS_ROOT` | no | `~/.maister/repos` | Root that `POST /api/projects` clones a `repoUrl` into (ADR-025). Resolved by `web/lib/instance-config.ts:reposRoot()`; surfaced read-only on `/settings`. |
-> | `MAISTER_MCP_FACADE_COMMAND` | no | `<repo>/mcp/node_modules/.bin/tsx` | **(Implemented, ADR-089 D9.)** Command an agent session uses to launch the maister MCP facade (its sanctioned write channel, carrying the per-launch ephemeral token via the literal `env` channel). Override for split-host topologies. |
-> | `MAISTER_MCP_FACADE_ARGS` | no | `<repo>/mcp/src/main.ts --stdio` | **(Implemented, ADR-089 D9.)** Space-split args for the facade command; only read when the command default is overridden or the default args do not fit. |
-> | `MAISTER_MCP_PROBE_TIMEOUT_MS` | no | `8000` | **(ADR-129 — Designed, W-F.)** Supervisor. Bounds the MCP `initialize` handshake in `POST /mcp-probe`; on timeout the probe releases the spawned child (SIGTERM→SIGKILL teardown grace is fixed by the MCP SDK transport, ~2s). Host env — the supervisor is not containerized (compose runs Postgres only). |
+> | `MAISTER_MCP_FACADE_COMMAND` | no | Node with the built MCP entry point, or `tsx` in development when available | **(Implemented, ADR-089 D9.)** Web-side command override for the built-in MAIster MCP on local assignments. A remote supervisor launches its bundled facade. |
+> | `MAISTER_MCP_FACADE_ARGS` | no | `--stdio` for the command override | **(Implemented, ADR-089 D9.)** Space-separated arguments used with `MAISTER_MCP_FACADE_COMMAND`. |
+> | `MAISTER_MCP_PROBE_TIMEOUT_MS` | no | `8000` | **(Implemented, ADR-129.)** Supervisor. Bounds the MCP `initialize` handshake in `POST /mcp-probe`. On timeout the probe closes the transport, which releases the spawned child. |
 > | `MAISTER_WORKTREES_ROOT` | no | `~/.maister/worktrees` | Root for run worktrees (ADR-025). Resolved by `worktreesRoot()`. The deprecated `MAISTER_WORKTREE_ROOT` is accepted as a fallback. Surfaced read-only on `/settings`. |
 > | `MAISTER_LOCAL_PACKAGES_ROOT` | no | `~/.maister/local` | **(ADR-096 — Designed, Flow Studio Phase C.)** Root for editable local-package working directories (one git-backed dir per `local_packages` row). Resolved by `web/lib/instance-config.ts:localPackagesRoot()`. Host-only — like the flows/worktrees roots, `.maister` is NOT container-mounted ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); host/service-env only. |
 > | `MAISTER_EVALUATION_EVIDENCE_ROOT` | no | `~/.maister/evaluations` | **(ADR-144 — Implemented.)** Root for the content-addressed immutable Evaluation Lab evidence store. Blobs are written tmp+fsync+rename BEFORE the DB seal, so a crash leaves an orphan blob (GC-eligible) but the DB never points at an absent blob. Resolved by `web/lib/instance-config.ts:evaluationEvidenceRoot()`. Host-only — `.maister` is NOT container-mounted ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); host/service-env only. |
@@ -1353,6 +1353,10 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_WORKSPACE_REPOSITORIES` | no | — | Supervisor-only JSON map from approved repository IDs to credential-free HTTPS/SSH URLs or trusted absolute paths. The default ID for a project checkout is the Web project ID. The supervisor uses its own Git credentials and private Git cache. |
 > | `MAISTER_API_BASE_URL` | for addressed MAIster MCP | — | Set the same Web origin on Web and its supervisor. The supervisor checks the configured origin before starting the facade and chooses its local executable. Use `MAISTER_MCP_FACADE_COMMAND` on the supervisor to override the executable. |
 > | `MAISTER_WORKSPACE_DIRECTORIES` | no | — | Supervisor-only JSON map from directory profile IDs to absolute directories inside its approved workspace roots. |
+> | `MAISTER_MCP_ALLOWED_DIGESTS` | for reviewed npm/stdio servers | empty | Supervisor. Comma-separated SHA-256 descriptor digests approved on this host. An empty list admits no reviewed npm distribution. |
+> | `MAISTER_MCP_CACHE_DIR` | no | `<MAISTER_RUNTIME_ROOT>/mcp-cache` | Supervisor. Writable host-owned directory for verified npm distributions. The production Compose profile sets `/app/.maister/mcp-cache`. |
+> | `MAISTER_MCP_SECRET_<NAME>` | when referenced by a server | unset | Supervisor. Per-server credential referenced as `env:MAISTER_MCP_SECRET_<NAME>`. The prefix is filtered from inherited ACP child environments. |
+> | `MAISTER_STUDIO_CATALOG_REPOS` | no | Anthropic skills and Vercel agent skills | Web. JSON array of approved public GitHub repository entries containing `id`, `repo` and `kind`. A configured array replaces the built-in repository list. See [Studio catalog sources](#studio-catalog-sources). |
 > | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
 > | `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |
 > | `MAISTER_HEARTBEAT_INTERVAL_MS` | no | `5000` | Supervisor orphan-child detection |
@@ -1870,8 +1874,9 @@ API private to the control plane. Select the host for new Runs with
 workspace roots using the configured host placement. For an interactive
 checkpoint retain its original supervisor and workspace.
 
-On each workload set `MAISTER_WORKLOAD_API_BASE_URL` to the web API origin
-reachable by the platform facade. The image builds the facade into
+For each remote supervisor, set `MAISTER_WORKLOAD_API_BASE_URL` to the Web API
+origin reachable by its platform facade. Local assignments use the local
+facade command and `MAISTER_API_BASE_URL`. The image builds the facade into
 `mcp/dist/main.js`. For reviewed, self-contained npm stdio releases, approve
 the descriptor SHA-256 in `MAISTER_MCP_ALLOWED_DIGESTS`. The host fetches
 the exact npm tarball, verifies its SHA-512, manifest publisher and executable,
@@ -1880,5 +1885,9 @@ reuse checks the retained bytes and current approval. Place the host-owned
 cache outside project workspaces. Bind MCP credentials using `env:MAISTER_MCP_SECRET_<NAME>`
 on the selected server. The supervisor excludes this namespace and ambient MAIster access
 tokens from ACP child environments. HTTP MCPs connect directly from the workload.
-The optional compose profile `remote-supervisor` runs the read-only production
-image with a writable host state volume. Each supervisor needs its own volume.
+The production Compose profile `remote-supervisor` reads `supervisor/.env`.
+It runs the production image with a read-only root, persists state and the MCP
+cache in the `supervisor_state` volume, and publishes port `7777` on loopback.
+Configure private ingress or an authenticated tunnel on that host. Give each
+supervisor its own state and provision the required repository and workspace
+paths under its configured adoption roots.

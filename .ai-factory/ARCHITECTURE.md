@@ -45,11 +45,10 @@ context.
 
 ## Decision Rationale
 
-- **Project type:** Web control plane (Next.js + separate supervisor
-  daemon, two Node processes; single host current target — the two share
-  the host filesystem (ADR-023), and the supervisor is addressed as a
-  registered execution host behind a typed boundary (ADR-166) so later
-  stages can move it without rewriting domain code).
+- **Project type:** Next.js control plane with a separate supervisor daemon.
+  The default local deployment shares the host filesystem (ADR-023).
+  Registered remote supervisors use operator-provisioned workspace paths
+  through the same typed execution-host boundary (ADR-166).
 - **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI
   v3 · Tailwind 4 · Drizzle ORM · Postgres 16 · ACP (Zed-standard) via
   separate `supervisor/` daemon · Node `child_process.spawn` for agent
@@ -59,9 +58,9 @@ context.
   plugin engine, multi-executor (claude + codex), workspace lifecycle,
   ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
   (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
-- **Scale:** current target, single host (one registered local execution
-  host; multi-host is a later stage behind the ADR-166 seam),
-  `MAISTER_MAX_CONCURRENT_RUNS=6` (global cap).
+- **Scale:** one local supervisor by default. The operator can select a
+  pinned remote host for new assignments. The global cap is
+  `MAISTER_MAX_CONCURRENT_RUNS=6`.
 - **Key factors:**
   - ACP is the executor interface — the multi-executor pool is inherent,
     not bolted on later. The registry owns adapter launch args, provider
@@ -365,12 +364,17 @@ affected editor e2e (`m27-flow-editor.spec.ts` precedent).
   `BoundClient` via `executionHosts.forAssignment(assignment)` (every
   command carries a unique id + the assignment fence and is written to the
   `execution_commands` ledger before the wire call) or a `HostAdminClient`
-  via `executionHosts.local()`; `lib/supervisor-client.ts` is the
-  local-direct transport behind it and is lint-fenced to that module. The
-  supervisor URL is `MAISTER_SUPERVISOR_URL` (env, read at call time),
-  defaults to `http://localhost:7777`; it is never stored. Repository and
-  worktree placement remain shared on the supported single host until Stage C;
-  execution-runtime data is not mounted into web.
+  via `executionHosts.local()` or `executionHosts.preferred()`.
+  `lib/supervisor-client.ts` is the transport behind that boundary.
+  `MAISTER_SUPERVISOR_URL` configures loopback by default. Web routes a
+  remote assignment by its pinned host key through private HTTPS with
+  mutual TLS or an operator-managed authenticated tunnel. That host connects
+  to selected HTTP MCP servers and starts selected stdio servers and the
+  bundled remote facade. The operator provisions repository and workspace
+  paths there. General repository
+  and workspace placement remains Stage C, and a checkpoint stays with
+  its original host and workspace. The execution-runtime data plane uses
+  HTTP and SSE. [Operator settings](../docs/configuration.md#assigned-supervisor-mcps)
 - **Live updates:** the supervisor commits redacted events to its private
   SQLite outbox and the manager ingests canonical Postgres rows. Next.js
   `app/api/runs/[id]/stream/route.ts` replays those rows exclusively after

@@ -78,10 +78,10 @@ recovery action and retain diagnostics as described in
 
 ## Route a Run to a remote supervisor
 
-1. Give each supervisor a stable `MAISTER_EXECUTION_HOST_KEY` and its own persistent state. The production Compose profile `remote-supervisor` uses a read-only image and a writable supervisor volume. Provision the repository and workspace roots for that host.
+1. Give each supervisor a stable `MAISTER_EXECUTION_HOST_KEY` and its own persistent state. The production Compose profile `remote-supervisor` reads `supervisor/.env`, keeps state and the MCP cache on a writable volume, and publishes port 7777 on loopback. Provision the repository and workspace roots for that host.
 2. On Web, configure `MAISTER_EXECUTION_HOST_ENDPOINTS` as a JSON object mapping host keys to HTTPS origins, for example `{"design-b":"https://supervisor-b.internal"}`. Protect ingress with mutual TLS. Set `MAISTER_EXECUTION_HOST_TLS_CA_FILE`, `MAISTER_EXECUTION_HOST_TLS_CERT_FILE` and `MAISTER_EXECUTION_HOST_TLS_KEY_FILE` to the corresponding files on Web. A loopback endpoint may terminate an operator-managed authenticated tunnel.
-3. Set `MAISTER_EXECUTION_HOST_PREFERRED_KEY` on Web for new placements. Preserve the original supervisor state and workspace for interactive checkpoint resume. A new placement carries its own assignment epoch.
-4. On the supervisor, set `MAISTER_WORKLOAD_API_BASE_URL` to the Web API origin reachable from the workload. The built-in MAIster MCP uses this route for scoped operations such as asking a human.
+3. Set `MAISTER_EXECUTION_HOST_PREFERRED_KEY` on Web to send new placements to the selected host. Leave it unset to use the local supervisor by default. Preserve the original supervisor state and workspace for interactive checkpoint resume. A new placement carries its own assignment epoch.
+4. On each remote supervisor, set `MAISTER_WORKLOAD_API_BASE_URL` to the Web API origin reachable from the workload. The built-in MAIster MCP uses this route for scoped operations such as asking a human. A locally assigned Run uses the local facade and `MAISTER_API_BASE_URL`.
 
 ## Prepare the selected MCP servers
 

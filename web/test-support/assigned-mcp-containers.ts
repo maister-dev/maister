@@ -1,3 +1,4 @@
+import type { PublicHostMcpReceipt } from "./assigned-mcp-public-probe";
 import type { McpDistribution } from "../../runtime/mcp-distribution";
 
 import { execFile } from "node:child_process";
@@ -8,6 +9,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { probeFixedPublicMcp } from "./assigned-mcp-public-probe";
+
 const execute = promisify(execFile);
 
 async function docker(...args: string[]): Promise<string> {
@@ -16,7 +19,7 @@ async function docker(...args: string[]): Promise<string> {
   ).stdout.trim();
 }
 
-/** All traffic stays on an internal network. The fresh certificate and fixture token have no external authority. */
+/** Supervisor/ACP traffic stays private. The opt-in fixed public probe runs before the supervisor starts. */
 export async function withAssignedMcpHosts(
   qualify: (lab: {
     certFile: string;
@@ -28,7 +31,9 @@ export async function withAssignedMcpHosts(
       httpCalls: number;
       facadeCalls: number;
     }>;
-    start: (key: string) => Promise<string>;
+    start: (
+      key: string,
+    ) => Promise<{ url: string; publicReceipt?: PublicHostMcpReceipt }>;
     stop: (key: string) => Promise<void>;
     receipt: (
       key: string,
@@ -36,6 +41,7 @@ export async function withAssignedMcpHosts(
   }) => Promise<void>,
 ): Promise<void> {
   const image = process.env.MAISTER_MCP_QUALIFICATION_IMAGE;
+  const filterImage = process.env.MAISTER_MCP_QUALIFICATION_PUBLIC_FILTER_IMAGE;
 
   if (!image)
     throw new Error(
@@ -72,11 +78,19 @@ export async function withAssignedMcpHosts(
 
     await docker("network", "create", edge);
     clean.push(() => docker("network", "rm", edge));
+    const publicEdge = id + "-public";
+
+    if (filterImage) {
+      await docker("image", "inspect", filterImage);
+      await docker("network", "create", publicEdge);
+      clean.push(() => docker("network", "rm", publicEdge));
+    }
     const service = id + "-a";
 
     await docker(
       "run",
       "-d",
+      "--pull=never",
       "--name",
       service,
       "--hostname",
@@ -147,9 +161,10 @@ export async function withAssignedMcpHosts(
       },
       counts: async () => JSON.parse(await api("counters")),
       start: async (key) => {
-        await docker(
+        const containerId = await docker(
           "run",
           "-d",
+          "--pull=never",
           "--name",
           name(key),
           "--hostname",
@@ -190,13 +205,27 @@ export async function withAssignedMcpHosts(
           "--workdir",
           "/app/supervisor",
           "--entrypoint",
-          "node",
+          filterImage ? "/bin/sh" : "node",
           image,
-          "--import",
-          "tsx",
-          "src/main.ts",
+          ...(filterImage
+            ? [
+                "-ec",
+                "while [ ! -e /tmp/start-supervisor ]; do sleep 0.1; done; exec node --import tsx src/main.ts",
+              ]
+            : ["--import", "tsx", "src/main.ts"]),
         );
         clean.push(() => docker("rm", "-f", name(key)));
+        const publicReceipt = filterImage
+          ? await probeFixedPublicMcp({
+              container: containerId,
+              privateNetwork: id,
+              egressNetwork: publicEdge,
+              filterImage,
+            })
+          : undefined;
+
+        if (publicReceipt)
+          await docker("exec", containerId, "touch", "/tmp/start-supervisor");
         const port = (
           await docker(
             "port",
@@ -233,7 +262,7 @@ export async function withAssignedMcpHosts(
         }
         await docker("exec", name(key), "mkdir", "-p", "/state/work");
 
-        return url;
+        return { url, publicReceipt };
       },
       stop: async (key) => {
         await docker("stop", "-t", "4", name(key));

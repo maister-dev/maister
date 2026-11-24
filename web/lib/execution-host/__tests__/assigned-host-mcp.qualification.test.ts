@@ -12,6 +12,7 @@ import { mintPlacement } from "../placement";
 import { stopRuntimeEventConsumers } from "../events/consumer";
 
 import { mcpTransportFromMaterial } from "@/lib/capabilities/agent-map";
+import { librarianFacadeServer } from "@/lib/librarian/session-profile";
 import { withAssignedMcpHosts } from "@/test-support/assigned-mcp-containers";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
@@ -33,10 +34,11 @@ it("E2E-HST-01 binds real ACP tool calls and preparation receipts to B then clea
       vi.stubEnv("MAISTER_EXECUTION_HOST_TLS_CA_FILE", lab.certFile);
       vi.stubEnv("MAISTER_EXECUTION_HOST_TLS_CERT_FILE", lab.certFile);
       vi.stubEnv("MAISTER_EXECUTION_HOST_TLS_KEY_FILE", lab.keyFile);
+      vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", "/fixtures/local-maister-mcp");
       const endpoints: Record<string, string> = {};
 
       for (const [index, key] of ["supervisor-b", "supervisor-c"].entries()) {
-        const url = await lab.start(key);
+        const { url, publicReceipt } = await lab.start(key);
 
         endpoints[key] = url;
         const dispatcher = assignedTlsDispatcher(url, 1000);
@@ -58,6 +60,20 @@ it("E2E-HST-01 binds real ACP tool calls and preparation receipts to B then clea
 
         expect(client.host.hostKey).toBe(key);
         expect(client.assignment.id).toBe(assignment.id);
+        if (publicReceipt) {
+          expect(publicReceipt.httpStatus).toBe(200);
+          expect(publicReceipt.responseBytes).toBeGreaterThan(0);
+          logger.info(
+            {
+              executionHostId: client.host.id,
+              assignmentId: assignment.id,
+              assignmentEpoch: assignment.epoch,
+              hostKey: key,
+              publicReceipt,
+            },
+            "Public MCP probe belongs to this assigned supervisor container",
+          );
+        }
         await client.adoptWorkspace({
           runId,
           projectSlug: project.slug,
@@ -87,16 +103,10 @@ it("E2E-HST-01 binds real ACP tool calls and preparation receipts to B then clea
               mcpServers: [
                 { name: "fixture-stdio", ...stdio },
                 { name: "fixture-http", ...http },
-                {
-                  name: "maister",
-                  transport: "stdio",
-                  platformOrigin: "maister_facade",
-                  command: "maister:host-facade",
-                  env: {
-                    MAISTER_PROJECT_TOKEN: "mai_qualification_only",
-                    MAISTER_MCP_TOOLSET: "librarian",
-                  },
-                },
+                librarianFacadeServer(
+                  client.host.kind,
+                  "mai_qualification_only",
+                ),
               ],
             })
             .catch(async (error: unknown) => {
@@ -150,6 +160,7 @@ it("E2E-HST-01 binds real ACP tool calls and preparation receipts to B then clea
             },
             mcpServers: [{ name: "fixture-http", ...http }],
           });
+
           expect(await lab.receipt(key)).toMatchObject({
             host: key,
             inventory: ["fixture-http"],
