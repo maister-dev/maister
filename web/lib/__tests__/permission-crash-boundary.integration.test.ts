@@ -58,7 +58,6 @@ import { loadGateCrashRecoveryWitness } from "@/lib/flows/graph/gate-crash-recov
 import { reattachGatePrompt } from "@/lib/flows/runner-agent";
 import { runFlow } from "@/lib/flows/runner";
 import { getRunDetail, isRunRecoverable } from "@/lib/queries/run";
-import { CRASH_RECOVER_CONTINUATION_MAX_ATTEMPTS } from "@/lib/runs/crash-recover";
 import { resumeCrashedRun } from "@/lib/runs/recover";
 import { driveResume } from "@/lib/runs/recover";
 import { promoteNextPending } from "@/lib/scheduler";
@@ -1498,7 +1497,7 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
 });
 
 describe("the host restarts under a pending permission (G0 (ii), last: it recycles the host)", () => {
-  it("(ii) flow: turn_lost → Crashed, recoverable, row closed by crashRunningRun", async () => {
+  it("(ii) flow: turn_lost closes the crashed permission and automatic recovery reopens permission", async () => {
     const { runId, flow, hitl } = await flowOnPermission("flow-restart");
     const [original] = await db
       .select({ id: schema.executionCommands.id })
@@ -1510,12 +1509,6 @@ describe("the host restarts under a pending permission (G0 (ii), last: it recycl
         ),
       );
 
-    // This case observes the operator's recoverable crash. The command-recovery
-    // suite covers automatic restart, which can open a second permission first.
-    await db
-      .update(schema.runs)
-      .set({ crashRecoverAttempts: CRASH_RECOVER_CONTINUATION_MAX_ATTEMPTS })
-      .where(eq(schema.runs.id, runId));
     sup = await sup.restart();
     resetRegistrarStateForTests();
     resetResolverForTests();
