@@ -2,7 +2,7 @@
 //
 // Real Postgres (the predicate, the partial index and the budget arithmetic are
 // not faithfully mockable), with the three seams the arm actually consults
-// injected: `listSessionsForRun` through the passed `executionHosts`, and the two
+// injected: `inventoryForRun` through the passed `executionHosts`, and the two
 // dispatchers `driveResume` / `runFlow` as module mocks. That is the same shape
 // `reconcile-sweep.integration.test.ts` uses for the sweep, and it is the level
 // this arm lives at — the production-boot suite proves the workers START; this
@@ -13,9 +13,10 @@
 // `closeCrashedNodeAttempts` would close an attempt the session is still
 // producing so the re-prompt double-spends the turn.
 import type {
-  HostAdminClient,
+  ExecutionHosts,
   SupervisorSessionRecord,
 } from "@/lib/execution-host";
+import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 
@@ -33,6 +34,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { createExecutionHosts } from "@/lib/execution-host";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
   startMainPostgresTestDb,
@@ -80,19 +82,16 @@ let flowId = "";
 let runnerId = "";
 let hostId = "";
 let liveSessions: SupervisorSessionRecord[] = [];
-let listSessionsThrows = false;
+let inventoryUnavailable = false;
 
-const listSessionsForRun = vi.fn<HostAdminClient["listSessionsForRun"]>(
+const inventoryForRun = vi.fn<ExecutionHosts["inventoryForRun"]>(
   async (runId) => {
-    if (listSessionsThrows)
+    if (inventoryUnavailable)
       throw new Error("supervisor unavailable (network): fetch failed");
 
     return liveSessions.filter((session) => session.runId === runId);
   },
 );
-const executionHosts = {
-  local: () => ({ listSessionsForRun }),
-} as never;
 
 beforeAll(async () => {
   process.env.MAISTER_RECONCILE_GRACE_SECONDS = String(GRACE_SECONDS);
@@ -194,7 +193,7 @@ beforeEach(async () => {
   runFlowMock.mockReset().mockImplementation(runFlowDouble);
   logLines.length = 0;
   liveSessions = [];
-  listSessionsThrows = false;
+  inventoryUnavailable = false;
   await db.delete(schema.nodeAttempts);
   await db.delete(schema.executionAssignments);
   await db.delete(schema.runs);
@@ -292,9 +291,13 @@ async function runWorkerUntil(
 ): Promise<void> {
   const { startFlowContinuationWorker } =
     await import("../continuation-worker");
+  const executionDb = db as unknown as Db;
   const worker = startFlowContinuationWorker({
-    db: db as never,
-    executionHosts,
+    db: executionDb,
+    executionHosts: {
+      ...createExecutionHosts({ db: executionDb }),
+      inventoryForRun,
+    },
   });
   const deadline = Date.now() + budgetMs;
 
@@ -345,10 +348,8 @@ describe("flow continuation worker — crash-recover arm (ADR-176)", () => {
     expect(driveResumeMock.mock.calls.length).toBeLessThanOrEqual(SLOTS);
     for (const call of driveResumeMock.mock.calls) expect(call[0]).toBe(runId);
     expect(runFlowMock.mock.calls.length).toBe(0);
-    expect(listSessionsForRun).toHaveBeenCalledWith(runId);
-    expect(listSessionsForRun.mock.calls.every(([id]) => id === runId)).toBe(
-      true,
-    );
+    expect(inventoryForRun).toHaveBeenCalledWith(runId);
+    expect(inventoryForRun.mock.calls.every(([id]) => id === runId)).toBe(true);
     const lines = reentryLines();
 
     // Authorship: the worker's own id, not the sweep's `reconcile:` line.
@@ -386,10 +387,8 @@ describe("flow continuation worker — crash-recover arm (ADR-176)", () => {
     expect(runFlowMock.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(runFlowMock.mock.calls.length).toBeLessThanOrEqual(SLOTS);
     expect(runFlowMock.mock.calls[0][0]).toBe(runId);
-    expect(listSessionsForRun).toHaveBeenCalledWith(runId);
-    expect(listSessionsForRun.mock.calls.every(([id]) => id === runId)).toBe(
-      true,
-    );
+    expect(inventoryForRun).toHaveBeenCalledWith(runId);
+    expect(inventoryForRun.mock.calls.every(([id]) => id === runId)).toBe(true);
     expect(runFlowMock.mock.calls[0][1]).toMatchObject({
       crashResume: { targetStepId: "implement" },
     });
@@ -407,10 +406,11 @@ describe("flow continuation worker — crash-recover arm (ADR-176)", () => {
     expect(driveResumeMock.mock.calls.length).toBe(0);
     expect(runFlowMock.mock.calls.length).toBe(0);
     expect(reentryLines()).toHaveLength(0);
+    expect(inventoryForRun).not.toHaveBeenCalled();
   }, 60_000);
 
   it("(d) a failed liveness probe yields the candidate to the sweep and logs WARN", async () => {
-    listSessionsThrows = true;
+    inventoryUnavailable = true;
     const runId = await seedCrashRecoverRun();
 
     await runWorkerUntil(
