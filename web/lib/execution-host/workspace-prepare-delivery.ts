@@ -4,6 +4,8 @@ import type {
   WorkspaceAssignmentOwner,
   WorkspaceMaterializeRequest,
   WorkspacePrepareRequest,
+  WorkspaceWorkloadRequest,
+  WorkspaceCancelWorkloadRequest,
 } from "../../../runtime/workspace-prepare";
 import type {
   ExecutionAssignment,
@@ -21,7 +23,10 @@ import { usesHostWorkspacePreparation } from "./workspace-preparation";
 import {
   WorkspaceMaterializationPayloadSchema,
   WorkspacePreparePayloadSchema,
+  WorkspaceWorkloadPayloadSchema,
+  WorkspaceCancelWorkloadPayloadSchema,
 } from "./workspace-prepare-schema";
+import { z } from "zod";
 
 import { MaisterError } from "@/lib/errors";
 
@@ -118,6 +123,57 @@ export async function resolveWorkspacePreparationPeer(
   return { host, assignment };
 }
 
+export function retainedWorkspaceWorkloadRequest(
+  command: ExecutionCommand,
+  hostKey: string,
+): WorkspaceWorkloadRequest {
+  const payload = WorkspaceWorkloadPayloadSchema.safeParse(command.payload);
+  if (command.kind !== "workspace.run" || !payload.success)
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "Stored workspace workload payload is invalid",
+    );
+
+  return {
+    workspaceProtocol: 1,
+    command: {
+      id: command.id,
+      kind: command.kind,
+      issuedAt: command.createdAt.toISOString(),
+    },
+    owner: retainedOwner(command, hostKey),
+    payload: payload.data,
+  };
+}
+
+export function retainedWorkspaceCancellation(
+  command: ExecutionCommand,
+  hostKey: string,
+): { request: WorkspaceCancelWorkloadRequest; targetCommandId: string } {
+  const parsed = WorkspaceCancelWorkloadPayloadSchema.extend({
+    targetCommandId: z.string().uuid(),
+  }).safeParse(command.payload);
+  if (command.kind !== "workspace.cancel" || !parsed.success)
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "Stored workload cancellation payload is invalid",
+    );
+
+  return {
+    request: {
+      workspaceProtocol: 1,
+      command: {
+        id: command.id,
+        kind: command.kind,
+        issuedAt: command.createdAt.toISOString(),
+      },
+      owner: retainedOwner(command, hostKey),
+      payload: { generation: parsed.data.generation },
+    },
+    targetCommandId: parsed.data.targetCommandId,
+  };
+}
+
 /** The existing recovery sweep can retry the original command after an
  * unknown post-commit outcome. Terminal application belongs to its outbox event. */
 export async function recoverWorkspacePreparation(
@@ -142,32 +198,61 @@ export async function recoverWorkspacePreparation(
     command,
     transport,
   );
-  const deliver =
-    command.kind === "workspace.materialize"
-      ? () => {
-          if (
-            !command.targetSessionId ||
-            !transport.sendWorkspaceMaterialization ||
-            command.targetSessionId !== assignment.executionWorkspaceId
-          )
-            throw new MaisterError(
-              "EXECUTOR_UNAVAILABLE",
-              "Workspace materialization no longer has its prepared target",
-            );
-          return transport.sendWorkspaceMaterialization(
-            command.targetSessionId,
-            retainedWorkspaceMaterializeRequest(command, host.hostKey),
-          );
-        }
-      : () =>
-          transport.sendWorkspacePreparation!(
-            retainedWorkspacePrepareRequest(command, host.hostKey),
-          );
+  const deliver = (): Promise<void> => {
+    if (command.kind === "workspace.prepare")
+      return transport.sendWorkspacePreparation!(
+        retainedWorkspacePrepareRequest(command, host.hostKey),
+      );
+    const handle = command.targetSessionId;
+    if (!handle || handle !== assignment.executionWorkspaceId)
+      throw new MaisterError(
+        "CONFLICT",
+        "Workspace command no longer owns its prepared target",
+      );
+    if (
+      command.kind === "workspace.materialize" &&
+      transport.sendWorkspaceMaterialization
+    )
+      return transport.sendWorkspaceMaterialization(
+        handle,
+        retainedWorkspaceMaterializeRequest(command, host.hostKey),
+      );
+    if (command.kind === "workspace.run" && transport.sendWorkspaceWorkload)
+      return transport.sendWorkspaceWorkload(
+        handle,
+        retainedWorkspaceWorkloadRequest(command, host.hostKey),
+      );
+    if (
+      command.kind === "workspace.cancel" &&
+      transport.cancelWorkspaceWorkload
+    ) {
+      const { request, targetCommandId } = retainedWorkspaceCancellation(
+        command,
+        host.hostKey,
+      );
+
+      return transport.cancelWorkspaceWorkload(
+        handle,
+        targetCommandId,
+        request,
+      );
+    }
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Transport lacks the addressed operation",
+      {
+        details: { reason: "workspace_protocol_unsupported" },
+      },
+    );
+  };
   if (command.state !== "queued") {
     const receipt = await transport.getWorkspaceCommandReceipt(command.id);
     if (receipt && receipt.phase !== "accepted") return false;
   }
-  if (command.kind === "workspace.materialize")
+  if (
+    command.kind === "workspace.materialize" ||
+    command.kind === "workspace.run"
+  )
     await assertWorkspaceRunAuthority(db, command.runId);
   if (command.attempts >= command.maxAttempts) {
     if (command.transportState !== "reconciliation_required")

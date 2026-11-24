@@ -4,6 +4,9 @@ import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
 import {
   isWorkspaceAssignmentOwner,
   isWorkspaceGenerationTarget,
+  isWorkspaceCancelTarget,
+  WORKSPACE_WORKLOAD_KINDS,
+  type WorkspaceCancelTarget,
   type WorkspaceAssignmentOwner,
   type WorkspaceGenerationTarget,
 } from "../../../runtime/workspace-prepare";
@@ -185,7 +188,107 @@ export const WorkspaceMaterializationReceiptSchema = z.discriminatedUnion(
   ],
 );
 
+export const WorkspaceWorkloadPayloadSchema = z
+  .object({
+    generation,
+    workload: z.enum(WORKSPACE_WORKLOAD_KINDS),
+    declarationId: opaqueId,
+    inputGeneration: generation,
+    inputDigest: digest,
+  })
+  .strict();
+export const WorkspaceCancelWorkloadPayloadSchema = z
+  .object({ generation })
+  .strict();
+const workloadObject = z
+  .object({ objectId: z.string().uuid(), sha256: digest })
+  .strict();
+const workloadResult = z
+  .object({
+    generation,
+    processOutcome: z.enum([
+      "exited",
+      "signalled",
+      "timedOut",
+      "cancelled",
+      "interrupted",
+    ]),
+    exitCode: z.number().int().min(0).max(255).nullable(),
+    signal: z
+      .string()
+      .regex(/^SIG[A-Z0-9]+$/)
+      .max(32)
+      .nullable(),
+    checkValidity: z.enum(["notRequested", "valid", "invalid", "unavailable"]),
+    outputState: z.enum(["sealed", "truncated", "unavailable"]),
+    objects: z.array(workloadObject).max(16),
+    quiescence: z.enum(["proved", "uncertain"]),
+  })
+  .strict();
+const cancellationResult = z
+  .object({
+    targetCommandId: z.string().uuid(),
+    objects: z.array(workloadObject).max(16),
+    quiescence: z.enum(["proved", "uncertain"]),
+  })
+  .strict();
+
+function commandResultReceipt<
+  Op extends "stageCRunWorkload" | "stageCCancelWorkload",
+  T extends z.ZodType,
+  R extends z.ZodType,
+>(operationId: Op, target: T, result: R) {
+  const base = {
+    ...materialization,
+    operationId: z.literal(operationId),
+    target,
+  };
+  const terminal = {
+    ...base,
+    streamId: z.string().uuid(),
+    eventId: z.string().uuid(),
+    outcomeSha256: digest,
+  };
+  const refusal = z
+    .object({
+      code: z.string().min(1).max(64),
+      message: z.string().min(1).max(256),
+      details: z.object({ reason: z.string().min(1).max(64) }).strict(),
+    })
+    .strict();
+
+  return z.discriminatedUnion("phase", [
+    z
+      .object({
+        ...base,
+        phase: z.literal("accepted"),
+        status: z.literal(202),
+        acceptance: WorkspacePrepareAcceptanceSchema,
+      })
+      .strict(),
+    z.object({ ...terminal, phase: z.literal("completed"), result }).strict(),
+    z.object({ ...terminal, phase: z.literal("rejected"), refusal }).strict(),
+    z
+      .object({
+        ...terminal,
+        phase: z.literal("indeterminate"),
+        condition: z.enum(["effect_unconfirmed", "quiescence_unconfirmed"]),
+      })
+      .strict(),
+  ]);
+}
+
 export const WorkspaceCommandReceiptSchema = z.union([
   WorkspacePrepareReceiptSchema,
   WorkspaceMaterializationReceiptSchema,
+  commandResultReceipt(
+    "stageCRunWorkload",
+    z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget),
+    workloadResult,
+  ),
+  commandResultReceipt(
+    "stageCCancelWorkload",
+    z.custom<WorkspaceCancelTarget>(isWorkspaceCancelTarget),
+    cancellationResult,
+  ),
 ]);

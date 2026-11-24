@@ -67,6 +67,49 @@ export type MaterializedWorkspaceInputs = Readonly<{
   manifestDigest: string;
 }>;
 
+export const WORKSPACE_WORKLOAD_FILE = "workload-declarations.json";
+export const WORKSPACE_WORKLOAD_KINDS = [
+  "setup",
+  "cli",
+  "check",
+  "requirementProbe",
+] as const;
+export type WorkspaceWorkloadKind = (typeof WORKSPACE_WORKLOAD_KINDS)[number];
+export type WorkspaceWorkloadRequest = Readonly<{
+  workspaceProtocol: 1;
+  command: Readonly<{ id: string; kind: "workspace.run"; issuedAt: string }>;
+  owner: WorkspaceAssignmentOwner;
+  payload: Readonly<{
+    generation: number;
+    workload: WorkspaceWorkloadKind;
+    declarationId: string;
+    inputGeneration: number;
+    inputDigest: string;
+  }>;
+}>;
+export type WorkspaceWorkloadResult = Readonly<{
+  generation: number;
+  processOutcome:
+    "exited" | "signalled" | "timedOut" | "cancelled" | "interrupted";
+  exitCode: number | null;
+  signal: string | null;
+  checkValidity: "notRequested" | "valid" | "invalid" | "unavailable";
+  outputState: "sealed" | "truncated" | "unavailable";
+  objects: readonly WorkspaceInputObject[];
+  quiescence: "proved" | "uncertain";
+}>;
+export type WorkspaceCancelWorkloadRequest = Readonly<{
+  workspaceProtocol: 1;
+  command: Readonly<{ id: string; kind: "workspace.cancel"; issuedAt: string }>;
+  owner: WorkspaceAssignmentOwner;
+  payload: Readonly<{ generation: number }>;
+}>;
+export type WorkspaceCancelWorkloadResult = Readonly<{
+  targetCommandId: string;
+  quiescence: "proved" | "uncertain";
+  objects: readonly WorkspaceInputObject[];
+}>;
+
 export type PreparedWorkspace = Readonly<{
   workspace: Readonly<{
     handle: string;
@@ -80,6 +123,8 @@ export type PreparedWorkspace = Readonly<{
 export const WORKSPACE_PREPARE_OPERATION = "stageCPrepare";
 export const WORKSPACE_PREPARE_TARGET = { kind: "prepare" } as const;
 export const WORKSPACE_MATERIALIZE_OPERATION = "stageCMaterialize";
+export const WORKSPACE_RUN_OPERATION = "stageCRunWorkload";
+export const WORKSPACE_CANCEL_OPERATION = "stageCCancelWorkload";
 export const WORKSPACE_TERMINAL_EVENT = "workspace.command.terminal";
 export const WORKSPACE_TERMINAL_SCHEMA =
   "maister.workspace.command.terminal.v1";
@@ -88,6 +133,12 @@ export type WorkspaceGenerationTarget = Readonly<{
   kind: "workspace";
   handle: string;
   generation: number;
+}>;
+export type WorkspaceCancelTarget = Readonly<{
+  kind: "cancelWorkload";
+  handle: string;
+  generation: number;
+  commandId: string;
 }>;
 
 export type WorkspaceCommandBinding =
@@ -98,6 +149,14 @@ export type WorkspaceCommandBinding =
   | Readonly<{
       operationId: typeof WORKSPACE_MATERIALIZE_OPERATION;
       target: WorkspaceGenerationTarget;
+    }>
+  | Readonly<{
+      operationId: typeof WORKSPACE_RUN_OPERATION;
+      target: WorkspaceGenerationTarget;
+    }>
+  | Readonly<{
+      operationId: typeof WORKSPACE_CANCEL_OPERATION;
+      target: WorkspaceCancelTarget;
     }>;
 
 export type WorkspaceTerminalPayload = WorkspaceCommandBinding &
@@ -171,10 +230,30 @@ export type WorkspaceMaterializeReceipt = WorkspaceReceipt<
   >,
   MaterializedWorkspaceInputs
 >;
+export type WorkspaceWorkloadReceipt = WorkspaceReceipt<
+  Extract<
+    WorkspaceCommandBinding,
+    { operationId: typeof WORKSPACE_RUN_OPERATION }
+  >,
+  WorkspaceWorkloadResult
+>;
+export type WorkspaceCancelWorkloadReceipt = WorkspaceReceipt<
+  Extract<
+    WorkspaceCommandBinding,
+    { operationId: typeof WORKSPACE_CANCEL_OPERATION }
+  >,
+  WorkspaceCancelWorkloadResult
+>;
 export type WorkspaceCommandReceipt =
-  WorkspacePrepareReceipt | WorkspaceMaterializeReceipt;
+  | WorkspacePrepareReceipt
+  | WorkspaceMaterializeReceipt
+  | WorkspaceWorkloadReceipt
+  | WorkspaceCancelWorkloadReceipt;
 export type WorkspaceCommandRequest =
-  WorkspacePrepareRequest | WorkspaceMaterializeRequest;
+  | WorkspacePrepareRequest
+  | WorkspaceMaterializeRequest
+  | WorkspaceWorkloadRequest
+  | WorkspaceCancelWorkloadRequest;
 
 export function workspaceTerminalOutcome(
   receipt: Extract<WorkspaceCommandReceipt, { streamId: string }>,
@@ -249,8 +328,11 @@ export function isWorkspaceTerminalPayload(
     isWorkspaceAssignmentOwner(value.owner) &&
     (value.operationId === WORKSPACE_PREPARE_OPERATION
       ? exactRecord(value.target, ["kind"]) && value.target.kind === "prepare"
-      : value.operationId === WORKSPACE_MATERIALIZE_OPERATION &&
-        isWorkspaceGenerationTarget(value.target)) &&
+      : value.operationId === WORKSPACE_CANCEL_OPERATION
+        ? isWorkspaceCancelTarget(value.target)
+        : (value.operationId === WORKSPACE_MATERIALIZE_OPERATION ||
+            value.operationId === WORKSPACE_RUN_OPERATION) &&
+          isWorkspaceGenerationTarget(value.target)) &&
     (value.phase === "completed" ||
       value.phase === "rejected" ||
       value.phase === "indeterminate") &&
@@ -268,6 +350,21 @@ export function isWorkspaceGenerationTarget(
     typeof value.generation === "number" &&
     Number.isSafeInteger(value.generation) &&
     value.generation > 0
+  );
+}
+
+export function isWorkspaceCancelTarget(
+  value: unknown,
+): value is WorkspaceCancelTarget {
+  return (
+    exactRecord(value, ["kind", "handle", "generation", "commandId"]) &&
+    value.kind === "cancelWorkload" &&
+    matches(value.commandId, UUID) &&
+    isWorkspaceGenerationTarget({
+      kind: "workspace",
+      handle: value.handle,
+      generation: value.generation,
+    })
   );
 }
 

@@ -531,7 +531,8 @@ export async function recoverExecutionCommands(
 
       return;
     }
-    if (row.kind === "workspace.prepare" || row.kind === "workspace.materialize") {
+    if (row.kind === "workspace.prepare" || row.kind === "workspace.materialize" ||
+        row.kind === "workspace.run" || row.kind === "workspace.cancel") {
       if (row.nextAttemptAt && row.nextAttemptAt > at) {
         summary.skippedInFlight += 1;
 

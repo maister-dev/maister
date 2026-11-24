@@ -8,12 +8,13 @@ import type { RuntimeObjectRegistry } from "./runtime-objects";
 import type { ContextMount } from "./types";
 
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { constants, createReadStream, createWriteStream } from "node:fs";
 import {
   chmod,
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   realpath,
   rename,
@@ -151,6 +152,58 @@ async function retainedInputManifest(
     throw rejectInput("retained workspace input manifest is invalid");
 
   return parseManifest(bytes);
+}
+
+/** Verify the bytes handed to a side effect, with no verification/read gap. */
+export async function readRetainedWorkspaceInput(
+  directory: string,
+  manifestDigest: string,
+  name: string,
+  maxBytes: number,
+): Promise<Buffer | null> {
+  await canonicalDirectory(directory);
+  const manifest = await retainedInputManifest(directory, manifestDigest);
+  const reference = manifest.files.find((file) => file.path === name);
+  if (!reference) return null;
+
+  const path = join(directory, reference.path);
+  const stat = await lstat(path);
+  if (
+    !stat.isFile() ||
+    (stat.mode & 0o222) !== 0 ||
+    stat.size > maxBytes ||
+    (await realpath(path)) !== path
+  )
+    throw rejectInput(
+      "Retained declared workspace input has invalid file metadata",
+    );
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const buffer = Buffer.alloc(maxBytes + 1);
+  let length = 0;
+  try {
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(
+        buffer,
+        length,
+        buffer.length - length,
+        length,
+      );
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+  } finally {
+    await file.close();
+  }
+  const bytes = buffer.subarray(0, length);
+  if (
+    bytes.byteLength > maxBytes ||
+    createHash("sha256").update(bytes).digest("hex") !== reference.sha256
+  )
+    throw rejectInput(
+      "Retained declared workspace input failed digest verification",
+    );
+
+  return bytes;
 }
 
 /** Apply the same generation verification at the final local side-effect boundary. */

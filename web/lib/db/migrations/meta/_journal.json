@@ -2591,6 +2591,13 @@
       "when": 1795477280808,
       "tag": "0373_stage_c_workspace_inputs",
       "breakpoints": true
+    },
+    {
+      "idx": 374,
+      "version": "7",
+      "when": 1795479629221,
+      "tag": "0374_stage_c_workspace_workloads",
+      "breakpoints": true
     }
   ]
 }

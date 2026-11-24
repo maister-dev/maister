@@ -2,6 +2,7 @@ import type { Db } from "../db";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { WorkspacePrepareRequest } from "../../../../runtime/workspace-prepare";
+import { WORKSPACE_WORKLOAD_FILE } from "../../../../runtime/workspace-prepare";
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -16,7 +17,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { getAssignmentById } from "../assignments";
 import { createExecutionHosts } from "../client";
-import { listCommandsForRun } from "../commands";
+import { getCommand, listCommandsForRun } from "../commands";
 import { consumeRuntimeEventStreamOnce } from "../events/consumer";
 import { canonicalLifecycleProjector } from "../events/lifecycle-projector";
 import { projectExecutionEvents } from "../events/projector";
@@ -30,6 +31,7 @@ import { reserveHostWorkspace } from "../workspace-preparation";
 import { readRuntimeObjectContent } from "../runtime-objects";
 import { WorkspaceMaterializationPayloadSchema } from "../workspace-prepare-schema";
 import { asExecutionWorkspaceId } from "../types";
+import { reserveWorkspaceWorkload } from "../workspace-workloads";
 
 import { captureAddressedFlowContexts } from "@/lib/context-mounts/addressed-capture";
 import { stageProjectFlowMemory } from "@/lib/agent-memory-vault/injection";
@@ -194,6 +196,20 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
   const capture = [
     { path: "instructions.md", bytes: await readFile(instructions) },
     ...contexts,
+    {
+      path: WORKSPACE_WORKLOAD_FILE,
+      bytes: Buffer.from(
+        JSON.stringify([
+          {
+            id: "fixture-check",
+            workload: "check",
+            command: "printf '%s' '{\"verified\":true}'",
+            timeoutMs: 5000,
+            structuredOutput: "json",
+          },
+        ]),
+      ),
+    },
   ];
   const assignment = await db.transaction(async (tx) => {
     const placed = await mintPlacement(tx as unknown as Db, {
@@ -335,11 +351,11 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
     executionHostId: host.id,
     transport,
     owner: "fixture",
-    maxEvents: 7,
+    maxEvents: 9,
     signal: AbortSignal.timeout(15_000),
   });
   expect(inputEvents).toMatchObject({
-    received: 7,
+    received: 9,
     reconnectRequired: false,
   });
   const confirmed = await database.pool.query<{ confirmed: string }>(
@@ -347,7 +363,7 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
      WHERE execution_host_id = $1 AND state = 'active'`,
     [host.id],
   );
-  expect(confirmed.rows).toEqual([{ confirmed: "7" }]);
+  expect(confirmed.rows).toEqual([{ confirmed: "9" }]);
   await projectExecutionEvents({
     db,
     projector: canonicalLifecycleProjector,
@@ -388,6 +404,67 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
   );
   expect(client.assignment.executionWorkspaceId).toBe(
     workspace.executionWorkspaceId,
+  );
+
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    runId,
+  ]);
+  const workloadIntent = {
+    runId,
+    assignmentId: assignment.id,
+    operationKey: "fixture-check-0",
+    workload: "check",
+    declarationId: "fixture-check",
+  } as const;
+  const workload = await reserveWorkspaceWorkload(db, workloadIntent);
+  expect((await reserveWorkspaceWorkload(db, workloadIntent)).id).toBe(
+    workload.id,
+  );
+  const workDelivery = await recoverExecutionCommands({
+    db,
+    transport,
+    graceMs: 0,
+  });
+  expect(workDelivery.errors).toEqual([]);
+  expect(workDelivery.redelivered).toBe(1);
+  const workEvents = await consumeRuntimeEventStreamOnce({
+    db,
+    executionHostId: host.id,
+    transport,
+    owner: "fixture",
+    maxEvents: 3,
+    signal: AbortSignal.timeout(15_000),
+  });
+  expect(workEvents).toMatchObject({ received: 3, reconnectRequired: false });
+  await projectExecutionEvents({
+    db,
+    projector: canonicalLifecycleProjector,
+    runId,
+    now: new Date(projectedAt.getTime() + 120_000),
+  });
+  await projectCanonicalRuntimeObjects({ db, runId });
+  const appliedWork = await getCommand(db, workload.id);
+  expect(appliedWork).toMatchObject({
+    state: "succeeded",
+    result: {
+      exitCode: 0,
+      checkValidity: "valid",
+      outputState: "sealed",
+      quiescence: "proved",
+    },
+  });
+  const objects = appliedWork?.result?.objects as {
+    objectId: string;
+    sha256: string;
+  }[];
+  const workOutput = await readRuntimeObjectContent({
+    db,
+    runId,
+    objectId: objects[0].objectId,
+    transportForHost: async () => transport,
+  });
+  expect(Buffer.from(workOutput.content.bytes).toString("utf8")).toBe(
+    '{"verified":true}',
   );
 
   const agentId = "fixture-vault:reader";

@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
-import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceMaterializeRequest, WorkspacePrepareRequest } from "../../runtime/workspace-prepare";
+import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
   WorkspacePublicationSnapshot,
@@ -1928,6 +1928,16 @@ export function sendWorkspacePreparation(input: WorkspacePrepareRequest): Promis
 
 export function sendWorkspaceMaterialization(handle: string, input: WorkspaceMaterializeRequest): Promise<void> {
   return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(handle)}/materialization`, input);
+}
+
+export function sendWorkspaceWorkload(handle: string, input: WorkspaceWorkloadRequest): Promise<void> {
+  return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(handle)}/commands`, input);
+}
+
+export function cancelWorkspaceWorkload(handle: string, targetCommandId: string, input: WorkspaceCancelWorkloadRequest): Promise<void> {
+  return sendWorkspaceCommand(
+    `/v1/workspaces/${encodeURIComponent(handle)}/commands/${encodeURIComponent(targetCommandId)}/cancel`, input,
+  );
 }
 
 export async function observeWorkspaceRevision(repositoryId: string, ref: string): Promise<string> {

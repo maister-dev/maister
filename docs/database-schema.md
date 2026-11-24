@@ -221,6 +221,12 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `execution_data_plane_imports` | **(ADR-167 — Implemented, migration `0131`)** One preserved legacy import lane for every historical run and source kind; missing history is explicit rather than silently discarded. | `runs.id` (CASCADE) |
 | `execution_event_ingest_failures` | **(ADR-167 — Implemented, migration `0131`)** Sanitized malformed/oversized/unsupported host envelope quarantine facts. | `execution_hosts.id` (RESTRICT) |
 
+Stage C migration `0374` adds the addressed `workspace.run` and
+`workspace.cancel` kinds to the existing command ledger. Their assignments
+and workspace generations must match the prepared handle. A workload also
+requires the applied input manifest receipt. A cancellation names the exact
+original workload. Later delivery updates preserve the admitted command inputs.
+
 ## `users`
 
 (Introduced with the auth layer — migration `0004_petite_gamora.sql`.)

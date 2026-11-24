@@ -1,0 +1,311 @@
+import type {
+  WorkspaceInputObject,
+  WorkspaceWorkloadRequest,
+  WorkspaceWorkloadResult,
+} from "../../runtime/workspace-prepare";
+import type { CommandReceiptRow, HostState } from "./host-state";
+import type { RuntimeObjectRegistry } from "./runtime-objects";
+import type { RuntimeEventPublisher } from "./runtime-event-publisher";
+import type { Logger } from "pino";
+
+import { createHash, randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
+import { join } from "node:path";
+
+import { z } from "zod";
+
+import {
+  WORKSPACE_WORKLOAD_FILE,
+  WORKSPACE_WORKLOAD_KINDS,
+} from "../../runtime/workspace-prepare";
+import { inspectProcessGroup } from "../../runtime/process-group";
+
+import { SupervisorError } from "./types";
+import { readHostProcessContext } from "./session-process-context";
+import { readRetainedWorkspaceInput } from "./workspace-input-materialization";
+import { executeWorkspaceWorkloadProcess } from "./workspace-workload-process";
+
+const declarationsSchema = z
+  .array(
+    z
+      .object({
+        id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
+        workload: z.enum(WORKSPACE_WORKLOAD_KINDS),
+        command: z
+          .string()
+          .min(1)
+          .max(32768)
+          .refine((command) => !command.includes("\0")),
+        timeoutMs: z.number().int().min(1).max(3_600_000),
+        structuredOutput: z.literal("json").optional(),
+      })
+      .strict(),
+  )
+  .max(128);
+
+async function sealOutput(
+  args: Readonly<{
+    objects: RuntimeObjectRegistry;
+    events: RuntimeEventPublisher;
+    state: HostState;
+  }>,
+  owner: WorkspaceWorkloadRequest["owner"],
+  commandId: string,
+  name: string,
+  bytes: Buffer,
+): Promise<WorkspaceInputObject> {
+  const objectId = randomUUID();
+  const generation = 1;
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const { runId, assignmentId, assignmentEpoch } = owner;
+  await args.objects.reserve({
+    runId,
+    assignmentId,
+    assignmentEpoch,
+    payload: {
+      objectId,
+      kind: "diagnostic",
+      logicalName: name,
+      mimeType: "text/plain",
+      retentionClass: "run",
+      generation,
+      sizeBytes: bytes.byteLength,
+      sha256,
+    },
+  });
+  const metadata = await args.objects.upload({
+    objectId,
+    assignmentId,
+    assignmentEpoch,
+    generation,
+    sha256,
+    sizeBytes: bytes.byteLength,
+    chunks: (async function* () {
+      yield bytes;
+    })(),
+  });
+  const available = args.events.runtimeObjectInput({
+    runId,
+    assignmentId,
+    assignmentEpoch,
+    metadata,
+  });
+  args.state.appendRuntimeEvent({
+    ...available,
+    draft: {
+      ...available.draft,
+      payload: {
+        ...available.draft.payload,
+        workspaceWorkloadCommandId: commandId,
+      },
+    },
+  });
+
+  return { objectId, sha256 };
+}
+
+export async function runWorkspaceWorkload(
+  input: Readonly<{
+    request: WorkspaceWorkloadRequest;
+    state: HostState;
+    objects: RuntimeObjectRegistry;
+    events: RuntimeEventPublisher;
+    handle: string;
+    runtimeRoot: string;
+    assertOwner: () => void;
+    signal: AbortSignal;
+    logger: Logger;
+  }>,
+): Promise<WorkspaceWorkloadResult> {
+  const { state, handle, request, assertOwner, runtimeRoot } = input;
+  const workspace = state.getWorkspace(handle);
+  const retained = state.getWorkspaceExecutionState(handle);
+  const { payload, owner } = request;
+  if (
+    !workspace ||
+    workspace.runId !== owner.runId ||
+    workspace.releasedAt ||
+    retained?.generation !== payload.generation ||
+    retained.materializationGeneration !== payload.inputGeneration ||
+    retained.materializationDigest !== payload.inputDigest
+  )
+    throw new SupervisorError(
+      "FENCED",
+      "Workload workspace inputs have changed",
+      {
+        details: { reason: "stale_workspace_generation" },
+      },
+    );
+  if ((await realpath(workspace.realPath)) !== workspace.realPath)
+    throw new SupervisorError(
+      "PRECONDITION",
+      "Workload directory no longer matches its canonical root",
+      {
+        details: { reason: "workspace_rejected" },
+      },
+    );
+  const inputDirectory = join(
+    await realpath(runtimeRoot),
+    ".maister",
+    workspace.projectSlug,
+    "runs",
+    workspace.runId,
+    "inputs",
+    payload.inputDigest,
+  );
+  const bytes = await readRetainedWorkspaceInput(
+    inputDirectory,
+    payload.inputDigest,
+    WORKSPACE_WORKLOAD_FILE,
+    256 * 1024,
+  );
+  const declarations = (() => {
+    if (!bytes) return null;
+    try {
+      return declarationsSchema.safeParse(JSON.parse(bytes.toString("utf8")));
+    } catch (error) {
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    }
+  })();
+  const matches = declarations?.success
+    ? declarations.data.filter(
+        ({ id, workload }) =>
+          id === payload.declarationId && workload === payload.workload,
+      )
+    : [];
+  if (matches.length !== 1)
+    throw new SupervisorError(
+      "PRECONDITION",
+      "Workload does not match a single sealed declaration",
+      {
+        details: { reason: "tool_not_declared" },
+      },
+    );
+  const [declaration] = matches;
+  assertOwner();
+  let processGroup: number | undefined;
+  const result = await executeWorkspaceWorkloadProcess({
+    cwd: workspace.realPath,
+    command: declaration.command,
+    timeoutMs: declaration.timeoutMs,
+    signal: input.signal,
+    register: (pid) => {
+      assertOwner();
+      const physicalKey = createHash("sha256")
+        .update(workspace.realPath)
+        .digest("hex");
+      if (
+        !state.recordWorkspaceWorkloadProcess(
+          request.command.id,
+          pid,
+          physicalKey,
+        )
+      )
+        throw new SupervisorError(
+          "CONFLICT",
+          "The workload lost its assignment or another group owns the workspace",
+          {
+            details: { reason: "workspace_in_use" },
+          },
+        );
+      processGroup = pid;
+    },
+  });
+  const objects = [
+    await sealOutput(
+      input,
+      owner,
+      request.command.id,
+      "workload-stdout.txt",
+      result.stdout,
+    ),
+    await sealOutput(
+      input,
+      owner,
+      request.command.id,
+      "workload-stderr.txt",
+      result.stderr,
+    ),
+  ];
+  let checkValidity: WorkspaceWorkloadResult["checkValidity"] = "notRequested";
+  if (declaration.structuredOutput === "json") {
+    checkValidity = "unavailable";
+    if (!result.truncated && result.processOutcome === "exited") {
+      try {
+        JSON.parse(result.stdout.toString("utf8"));
+        checkValidity = "valid";
+      } catch {
+        checkValidity = "invalid";
+      }
+    }
+  }
+
+  input.logger.info(
+    {
+      runId: owner.runId,
+      commandId: request.command.id,
+      hostKey: owner.hostKey,
+      assignmentEpoch: owner.assignmentEpoch,
+      processGroup,
+      processOutcome: result.processOutcome,
+      exitCode: result.exitCode,
+      quiescence: result.retired ? "proved" : "uncertain",
+      outputObjectIds: objects.map(({ objectId }) => objectId),
+    },
+    "workspace-workload-settled",
+  );
+  return {
+    generation: payload.generation,
+    processOutcome: result.processOutcome,
+    exitCode: result.exitCode,
+    signal: result.signal,
+    checkValidity,
+    outputState: result.truncated ? "truncated" : "sealed",
+    objects,
+    quiescence: result.retired ? "proved" : "uncertain",
+  };
+}
+
+const persistedProcess = z
+  .object({
+    group: z.number().int().positive(),
+    physicalKey: z.string().regex(/^[a-f0-9]{64}$/),
+    osBootIdentity: z.string().uuid(),
+    pidNamespace: z.string().min(1).max(64),
+  })
+  .strict();
+
+/** A supervisor restart never repeats a shell that may have passed its gate. */
+export async function recoverWorkspaceWorkload(
+  receipt: CommandReceiptRow,
+  generation: number,
+): Promise<WorkspaceWorkloadResult> {
+  const witness = (receipt.body as { workspaceProcess?: unknown })
+    .workspaceProcess;
+  let quiescence: WorkspaceWorkloadResult["quiescence"] = "proved";
+  if (witness !== undefined) {
+    const process = persistedProcess.safeParse(witness);
+    const current = readHostProcessContext();
+
+    if (!process.success) quiescence = "uncertain";
+    else if (process.data.osBootIdentity === current.osBootIdentity) {
+      if (
+        process.data.pidNamespace !== current.pidNamespace ||
+        (await inspectProcessGroup(process.data.group)).state !== "retired"
+      )
+        quiescence = "uncertain";
+    }
+  }
+
+  return {
+    generation,
+    processOutcome: "interrupted",
+    exitCode: null,
+    signal: null,
+    checkValidity: "unavailable",
+    outputState: "unavailable",
+    objects: [],
+    quiescence,
+  };
+}

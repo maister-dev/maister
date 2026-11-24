@@ -12,6 +12,7 @@ import {
   workspaceCommandRequestDigest,
   workspacePrepareRequestDigest,
   workspaceTerminalOutcome,
+  type WorkspaceCommandBinding,
 } from "../../../../runtime/workspace-prepare";
 
 import { setAssignmentWorkspace } from "../assignments";
@@ -26,6 +27,8 @@ import {
   resolveWorkspacePreparationPeer,
   retainedWorkspacePrepareRequest,
   retainedWorkspaceMaterializeRequest,
+  retainedWorkspaceWorkloadRequest,
+  retainedWorkspaceCancellation,
 } from "../workspace-prepare-delivery";
 import { WorkspaceCommandReceiptSchema } from "../workspace-prepare-schema";
 
@@ -54,6 +57,13 @@ function matchesWorkspaceEvent(event: ExecutionEvent): boolean {
   );
 }
 
+const matchingCommandKind = {
+  stageCPrepare: "workspace.prepare",
+  stageCMaterialize: "workspace.materialize",
+  stageCRunWorkload: "workspace.run",
+  stageCCancelWorkload: "workspace.cancel",
+} as const satisfies Record<WorkspaceCommandBinding["operationId"], string>;
+
 /** Read the receipt outside the projection transaction. Event commit and ACK
  * can finish while the supervisor is unavailable or this application retries. */
 export async function prepareWorkspaceEvidence(
@@ -67,8 +77,7 @@ export async function prepareWorkspaceEvidence(
   const command = await getCommand(db, payload.commandId);
   if (
     !command ||
-    (command.kind !== "workspace.prepare" &&
-      command.kind !== "workspace.materialize") ||
+    command.kind !== matchingCommandKind[payload.operationId] ||
     command.executionHostId !== event.executionHostId ||
     command.executionAssignmentId !== event.executionAssignmentId ||
     command.assignmentEpoch !== event.assignmentEpoch
@@ -87,15 +96,34 @@ export async function prepareWorkspaceEvidence(
     );
   } else {
     if (!command.targetSessionId) throw inconsistent();
-    const request = retainedWorkspaceMaterializeRequest(command, host.hostKey);
-    expectedDigest = workspaceCommandRequestDigest(request, {
-      operationId: payload.operationId,
-      target: {
-        kind: "workspace",
-        handle: command.targetSessionId,
-        generation: request.payload.generation,
-      },
-    });
+    if (payload.operationId === "stageCCancelWorkload") {
+      const { request, targetCommandId } = retainedWorkspaceCancellation(
+        command,
+        host.hostKey,
+      );
+      expectedDigest = workspaceCommandRequestDigest(request, {
+        operationId: payload.operationId,
+        target: {
+          kind: "cancelWorkload",
+          handle: command.targetSessionId,
+          generation: request.payload.generation,
+          commandId: targetCommandId,
+        },
+      });
+    } else {
+      const request =
+        payload.operationId === "stageCMaterialize"
+          ? retainedWorkspaceMaterializeRequest(command, host.hostKey)
+          : retainedWorkspaceWorkloadRequest(command, host.hostKey);
+      expectedDigest = workspaceCommandRequestDigest(request, {
+        operationId: payload.operationId,
+        target: {
+          kind: "workspace",
+          handle: command.targetSessionId,
+          generation: request.payload.generation,
+        },
+      });
+    }
   }
   signal.throwIfAborted();
   const receipt = await transport.getWorkspaceCommandReceipt?.(command.id);
@@ -148,13 +176,17 @@ export async function applyWorkspaceEvidence(
   );
   if (!parsed.success || parsed.data.phase === "accepted") throw inconsistent();
   const receipt = parsed.data;
+  const isPreparation =
+    receipt.operationId === "stageCPrepare" ||
+    receipt.operationId === "stageCMaterialize";
   const [run] = await tx
     .select()
     .from(runs)
     .where(eq(runs.id, event.runId))
     .for("update");
   if (
-    run?.status !== "Pending" ||
+    !run ||
+    (isPreparation && run.status !== "Pending") ||
     run.executionAssignmentId !== receipt.owner.assignmentId
   )
     return;
@@ -165,8 +197,7 @@ export async function applyWorkspaceEvidence(
     .for("update");
   if (
     !command ||
-    (command.kind !== "workspace.prepare" &&
-      command.kind !== "workspace.materialize") ||
+    command.kind !== matchingCommandKind[receipt.operationId] ||
     !command.targetSessionId
   )
     throw inconsistent();
@@ -195,6 +226,35 @@ export async function applyWorkspaceEvidence(
       transportState: "reconciliation_required",
       lastError: { reason: receipt.condition, eventId: event.id },
     });
+    return;
+  }
+
+  if (
+    receipt.operationId === "stageCRunWorkload" ||
+    receipt.operationId === "stageCCancelWorkload"
+  ) {
+    if (
+      receipt.target.handle !== assignment.executionWorkspaceId ||
+      (receipt.operationId === "stageCRunWorkload"
+        ? receipt.result.generation !== receipt.target.generation
+        : receipt.result.targetCommandId !== receipt.target.commandId)
+    )
+      throw inconsistent();
+    if (receipt.result.quiescence !== "proved") {
+      await casTransition(tx, command.id, [command.state], command.attempts, {
+        transportState: "reconciliation_required",
+        lastError: { reason: "quiescence_unconfirmed", eventId: event.id },
+      });
+
+      return;
+    }
+    const transition = await markSucceeded(tx, command.id, null, {
+      ...receipt.result,
+      eventId: event.id,
+      outcomeSha256: receipt.outcomeSha256,
+    });
+    if (!transition.changed) throw inconsistent();
+
     return;
   }
 

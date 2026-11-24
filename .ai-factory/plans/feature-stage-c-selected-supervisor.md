@@ -295,6 +295,20 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   graph driver cutover still require evidence.
 - [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
 
+  **C-08 workload transport checkpoint.** RED reached a 404 when a
+  prepared local supervisor was asked to execute a sealed declaration.
+  GREEN uses the host's gated process group and accepts only the
+  retained declaration under its workspace generation. Web reserves the
+  same workload ID on retry and reads the actual sealed check stdout
+  through the catalogue and object API. The supervisor cases cover
+  filtered environment, nonzero exit with malformed JSON, timeout and
+  cancellation with retained partial stdout and proved group retirement.
+  Tested with Darwin arm64, Node 24.15.0, real PostgreSQL, SQLite and a
+  local supervisor. Passed 19 Web and 51 supervisor integration tests,
+  both typechecks, the contract suite and docs/ERD validation. The main
+  Flow drivers, package-local output file
+  transport, and supervisor death and stale epoch witnesses remain open.
+
 ### C3–C4 — review, board and single-host qualification
 
 - [ ] **T08 · Git / review (after T07 provides sealed evidence and T05H provides owned handles).** Move status/diff/log, mutation detection, Git checkpoint and restore behind the handle. Cover `flows/graph/workspace-checkpoint.ts`, `artifact-content.ts`, board diff readers and human takeover. Scope read authorization to the content returned. Verify dirty and detached states, bounded diff ranges, authorized read and denied cross-project read. Preserve ACP checkpoint separately. Log expected/actual commit and evidence ID.

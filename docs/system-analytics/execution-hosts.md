@@ -960,6 +960,23 @@ Web applies the result under the Run, host, assignment, generation and
 digest checks after committing and acknowledging the event. The
 materialization generation separately gates model dispatch.
 
+The addressed workload operation selects a command from the sealed input
+generation by declaration ID and workload class. The request carries the
+Run's assignment and the opaque workspace handle. The supervisor registers
+the process group and OS identity in the accepted receipt before the gate
+authorizes the shell. Competing workloads on the same canonical workspace
+cannot pass while its previous group lacks a positive retirement witness.
+Same-ID replay after supervisor restart observes the retained group and
+returns an interrupted result. Cancellation signals only the live group
+owned by its exact command.
+
+The host seals stdout and stderr as runtime objects and associates each
+availability event with its workload command. Web checks that command's
+Run, host, assignment and epoch before making the bytes referenceable.
+The terminal workload receipt records process exit, declared output
+validity and group retirement independently. Web holds unresolved
+quiescence in the command ledger for reconciliation.
+
 The [versioned schema profile](../api/stage-c-workspace.schema.yaml) fixes
 each operation's method, route, operation ID, stage-specific shape and
 terminal result. [Executable examples](../api/stage-c-workspace-examples.yaml)

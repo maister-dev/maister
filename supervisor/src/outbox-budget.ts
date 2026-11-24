@@ -747,6 +747,7 @@ const SESSION_TEARDOWN_KINDS = [
 const TEARDOWN_KINDS = [
   ...SESSION_TEARDOWN_KINDS,
   "workspace.release",
+  "workspace.cancel",
   "runtime_object.delete",
 ] as const;
 

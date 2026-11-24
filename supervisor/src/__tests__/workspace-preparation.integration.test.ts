@@ -90,7 +90,7 @@ async function sealInput(
   return { objectId, sha256 };
 }
 
-it("C-07 materializes the exact sealed input manifest under its workspace generation", async () => {
+it("C-07/C-08 materializes sealed inputs and executes bounded addressed workloads", async () => {
   const root = await mkdtemp(join(tmpdir(), "stage-c-workspace-inputs-"));
   roots.push(root);
   const contextSource = join(root, "context-source");
@@ -148,6 +148,40 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
       },
     ]),
   );
+  const workload = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    JSON.stringify([
+      {
+        id: "project-check",
+        workload: "check",
+        command:
+          "printf '%s' '\"local check\"'; test -z \"${UNRELATED_MCP_TOKEN:-}\"",
+        timeoutMs: 5000,
+        structuredOutput: "json",
+      },
+      {
+        id: "long-check",
+        workload: "check",
+        command: "printf 'partial stdout'; : > .fixture-ready; sleep 15",
+        timeoutMs: 20_000,
+      },
+      {
+        id: "timed-check",
+        workload: "check",
+        command: "sleep 15",
+        timeoutMs: 500,
+      },
+      {
+        id: "invalid-output-check",
+        workload: "check",
+        command: "printf 'not json'; exit 42",
+        timeoutMs: 5000,
+        structuredOutput: "json",
+      },
+    ]),
+  );
   await writeFile(join(contextSource, "context.md"), "# newer context");
   git(contextSource, "add", "--", "context.md");
   git(contextSource, "commit", "-m", "advance context");
@@ -161,6 +195,7 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
       files: [
         { path: skillPath, ...sealed },
         { path: WORKSPACE_CONTEXT_INPUT, ...context },
+        { path: "workload-declarations.json", ...workload },
       ],
     }),
   );
@@ -176,7 +211,7 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
     payload: {
       generation,
       manifestDigest: manifest.sha256,
-      objects: [manifest, sealed, context],
+      objects: [manifest, sealed, context, workload],
     },
   };
   const route = `/v1/workspaces/${handle}/materialization`;
@@ -186,7 +221,12 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
     command: { ...request.command, id: tampered },
     payload: {
       ...request.payload,
-      objects: [manifest, { ...sealed, sha256: "0".repeat(64) }, context],
+      objects: [
+        manifest,
+        { ...sealed, sha256: "0".repeat(64) },
+        context,
+        workload,
+      ],
     },
   };
   expect((await addressedRequest(host, route, tamperedRequest)).status).toBe(
@@ -332,6 +372,159 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
   );
   expect(prompt.status).toBe(200);
   expect(await readFile(recordedPrompt, "utf8")).toContain(skillPath);
+  const checkCommandId = randomUUID();
+  const check = await addressedRequest(
+    host,
+    `/v1/workspaces/${handle}/commands`,
+    {
+      workspaceProtocol: 1,
+      command: {
+        id: checkCommandId,
+        kind: "workspace.run",
+        issuedAt: new Date().toISOString(),
+      },
+      owner: prepared.owner,
+      payload: {
+        generation,
+        workload: "check",
+        declarationId: "project-check",
+        inputGeneration: 1,
+        inputDigest: manifest.sha256,
+      },
+    },
+  );
+  expect(check.status).toBe(202);
+  const checked = await vi.waitFor(async () => {
+    const result = await addressedRequest(
+      host,
+      `/v1/commands/${checkCommandId}`,
+    );
+    const body = (await result.json()) as {
+      result: { objects: Array<{ objectId: string; sha256: string }> };
+    };
+    expect(body).toMatchObject({
+      phase: "completed",
+      operationId: "stageCRunWorkload",
+      result: {
+        generation,
+        exitCode: 0,
+        processOutcome: "exited",
+        quiescence: "proved",
+        checkValidity: "valid",
+        outputState: "sealed",
+      },
+    });
+    return body.result;
+  });
+  const checkOutput = await addressedRequest(
+    host,
+    `/runtime-objects/${checked.objects[0].objectId}/content`,
+  );
+  expect(await checkOutput.text()).toBe('"local check"');
+  const longId = randomUUID();
+  const runPayload = {
+    generation,
+    workload: "check",
+    declarationId: "long-check",
+    inputGeneration: 1,
+    inputDigest: manifest.sha256,
+  };
+  const longRun = await addressedRequest(
+    host,
+    `/v1/workspaces/${handle}/commands`,
+    {
+      workspaceProtocol: 1,
+      command: {
+        id: longId,
+        kind: "workspace.run",
+        issuedAt: new Date().toISOString(),
+      },
+      owner: prepared.owner,
+      payload: runPayload,
+    },
+  );
+  expect(longRun.status).toBe(202);
+  await vi.waitFor(() => {
+    expect(host.hostState.getReceipt(longId)?.body).toMatchObject({
+      workspaceProcess: { group: expect.any(Number) },
+    });
+  });
+  await vi.waitFor(async () => {
+    expect((await stat(join(workspace.path, ".fixture-ready"))).isFile()).toBe(
+      true,
+    );
+  });
+  const cancelId = randomUUID();
+  const cancellation = await addressedRequest(
+    host,
+    `/v1/workspaces/${handle}/commands/${longId}/cancel`,
+    {
+      workspaceProtocol: 1,
+      command: {
+        id: cancelId,
+        kind: "workspace.cancel",
+        issuedAt: new Date().toISOString(),
+      },
+      owner: prepared.owner,
+      payload: { generation },
+    },
+  );
+  expect(cancellation.status).toBe(202);
+  await vi.waitFor(async () => {
+    const settled = await addressedRequest(host, `/v1/commands/${cancelId}`);
+    expect(await settled.json()).toMatchObject({
+      phase: "completed",
+      operationId: "stageCCancelWorkload",
+      result: { targetCommandId: longId, quiescence: "proved" },
+    });
+  });
+  const interrupted = (await (
+    await addressedRequest(host, `/v1/commands/${longId}`)
+  ).json()) as {
+    result: { objects: { objectId: string }[] };
+  };
+  expect(interrupted).toMatchObject({
+    phase: "completed",
+    result: { processOutcome: "cancelled", quiescence: "proved" },
+  });
+  const partial = await addressedRequest(
+    host,
+    `/runtime-objects/${interrupted.result.objects[0].objectId}/content`,
+  );
+  expect(await partial.text()).toBe("partial stdout");
+  for (const [declarationId, result] of [
+    ["timed-check", { processOutcome: "timedOut", exitCode: null }],
+    [
+      "invalid-output-check",
+      { processOutcome: "exited", exitCode: 42, checkValidity: "invalid" },
+    ],
+  ] as const) {
+    const commandId = randomUUID();
+    expect(
+      (
+        await addressedRequest(host, `/v1/workspaces/${handle}/commands`, {
+          workspaceProtocol: 1,
+          command: {
+            id: commandId,
+            kind: "workspace.run",
+            issuedAt: new Date().toISOString(),
+          },
+          owner: prepared.owner,
+          payload: { ...runPayload, declarationId },
+        })
+      ).status,
+    ).toBe(202);
+    await vi.waitFor(async () => {
+      expect(
+        await (
+          await addressedRequest(host, `/v1/commands/${commandId}`)
+        ).json(),
+      ).toMatchObject({
+        phase: "completed",
+        result: { ...result, quiescence: "proved" },
+      });
+    });
+  }
   expect(JSON.parse(await readFile(record, "utf8"))).toMatchObject({
     cwd: workspace.path,
     probePresent: false,

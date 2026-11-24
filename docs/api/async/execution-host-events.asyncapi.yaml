@@ -279,6 +279,7 @@ components:
                 v1 payloads for kind `session.steer` carry the parent link in
                 `result.parentCommandId` / `error.details.parentCommandId`.
             stdoutSegment: { $ref: "#/components/schemas/StdoutSegmentMetadata" }
+            workspaceWorkloadCommandId: { type: string, format: uuid }
           additionalProperties: true
           description: Open JSON only after a known eventType/payloadSchema validator and deterministic redactor accepts it.
       example:

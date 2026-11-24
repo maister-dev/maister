@@ -498,6 +498,20 @@ definitions:
       declarationId: *a3
       inputGeneration: *a1
       inputDigest: *a6
+  WorkspaceWorkloadDeclarations:
+    description: Optional sealed workload-declarations.json input. The supervisor uses a declaration only when the request selects its exact generation plus ID and workload. Maximum encoded size is 262144 bytes.
+    type: array
+    maxItems: 128
+    items:
+      type: object
+      additionalProperties: false
+      required: [ id, workload, command, timeoutMs ]
+      properties:
+        id: *a3
+        workload: { enum: [ setup, cli, check, requirementProbe ] }
+        command: { type: string, minLength: 1, maxLength: 32768 }
+        timeoutMs: { type: integer, minimum: 1, maximum: 3600000 }
+        structuredOutput: { const: json }
   ActiveGeneration:
     type: object
     additionalProperties: false

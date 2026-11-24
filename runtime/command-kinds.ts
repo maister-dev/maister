@@ -2,6 +2,8 @@ export const COMMAND_KINDS = [
   "workspace.adopt",
   "workspace.prepare",
   "workspace.materialize",
+  "workspace.run",
+  "workspace.cancel",
   "workspace.release",
   "workspace.observe_head",
   "workspace.publication",

@@ -2,6 +2,9 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+
 import {
   SessionContentReferenceSchema,
   StdoutSegmentMetadataSchema,
@@ -23,6 +26,7 @@ import {
 } from "./projector";
 
 import {
+  executionCommands,
   executionRuntimeObjects,
   runs,
   type ExecutionEvent,
@@ -314,6 +318,46 @@ async function applyRuntimeObjectEvent(
     return;
   }
   if (event.eventType === "runtime_object.available") {
+    if (event.payload?.workspaceWorkloadCommandId !== undefined) {
+      const commandId = z
+        .string()
+        .uuid()
+        .safeParse(event.payload.workspaceWorkloadCommandId);
+      if (
+        !commandId.success ||
+        event.hostSessionId ||
+        !event.executionHostId ||
+        !event.executionAssignmentId ||
+        event.assignmentEpoch === null ||
+        event.payload.kind !== "diagnostic" ||
+        event.payload.mimeType !== "text/plain" ||
+        !["workload-stdout.txt", "workload-stderr.txt"].includes(
+          String(event.payload.logicalName),
+        )
+      )
+        throw permanent("Workspace workload output has invalid identity");
+      const [source] = await tx
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.id, commandId.data),
+            eq(executionCommands.kind, "workspace.run"),
+            eq(executionCommands.runId, event.runId),
+            eq(executionCommands.executionHostId, event.executionHostId),
+            eq(
+              executionCommands.executionAssignmentId,
+              event.executionAssignmentId,
+            ),
+            eq(executionCommands.assignmentEpoch, event.assignmentEpoch),
+          ),
+        );
+      if (!source)
+        throw permanent(
+          "Workspace workload output has no matching command and assignment",
+        );
+      await catalogueContentIntent(tx, event);
+    }
     if (event.payload?.stdoutSegment !== undefined) {
       const segment = StdoutSegmentMetadataSchema.safeParse(
         event.payload.stdoutSegment,

@@ -349,6 +349,7 @@ function receiptAdmission(
     case "workspace.adopt":
     case "workspace.prepare":
     case "workspace.materialize":
+    case "workspace.run":
     case "workspace.publication":
     case "runtime_object.reserve":
     case "runtime_object.upload":
@@ -366,6 +367,7 @@ function receiptAdmission(
         walletId: context.entry?.record.createdByCommandId,
       };
     case "workspace.release":
+    case "workspace.cancel":
     case "runtime_object.delete":
       return { kind: "teardown" };
   }
@@ -2009,7 +2011,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
   const workspaceSources = configuredWorkspaceSources();
   registerWorkspacePreparation({
-    app, state: hostState, registry: workspaces, objects: runtimeObjects, runtimeRoot,
+    app, state: hostState, registry: workspaces, objects: runtimeObjects, events: runtimeEvents, runtimeRoot,
     sources: workspaceSources, logger,
   });
   app.get<{ Params: { repositoryId: string } }>("/v1/repositories/:repositoryId/refs", async (req, reply) => {

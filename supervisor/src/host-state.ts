@@ -510,6 +510,7 @@ export type HostState = {
   getWorkspaceExecutionState(id: string): WorkspaceExecutionState | null;
   recordWorkspaceInput(id: string, generation: number, digest: string): void;
   recordWorkspaceMaterialization(id: string, generation: number, digest: string): void;
+  recordWorkspaceWorkloadProcess(commandId: string, group: number, physicalKey: string): boolean;
   insertWorkspace(row: WorkspaceRow): void;
   releaseWorkspace(id: string, releasedAt: string): boolean;
   getWorkspaceWait(waitId: string): WorkspaceWaitWitness | null;
@@ -2342,6 +2343,32 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             "command_invariant_conflict",
             "workspace input does not match its retained generation",
           );
+      });
+    },
+    recordWorkspaceWorkloadProcess(commandId, group, physicalKey) {
+      return storage.write(() => {
+        if (!Number.isSafeInteger(group) || group <= 0)
+          throw new HostRuntimeEventError("command_invariant_conflict", "Workload process group is invalid");
+        const process = {
+          group, physicalKey, osBootIdentity: processContext.osBootIdentity, pidNamespace: processContext.pidNamespace,
+        };
+        const updated = db.prepare(`
+          UPDATE command_receipts SET body_json=json_set(body_json, '$.workspaceProcess', json(?))
+          WHERE command_id=? AND kind='workspace.run' AND phase='accepted'
+            AND json_type(body_json, '$.workspaceProcess') IS NULL
+            AND EXISTS (SELECT 1 FROM run_fences
+              WHERE run_fences.run_id=command_receipts.run_id
+                AND run_fences.assignment_id=command_receipts.assignment_id
+                AND run_fences.epoch=command_receipts.epoch)
+            AND NOT EXISTS (
+              SELECT 1 FROM command_receipts active
+              WHERE active.command_id <> command_receipts.command_id AND active.kind='workspace.run'
+                AND json_extract(active.body_json, '$.workspaceProcess.physicalKey')=?
+                AND json_extract(active.body_json, '$.result.quiescence') IS NOT 'proved'
+            )
+        `).run(JSON.stringify(process), commandId, physicalKey);
+
+        return updated.changes === 1;
       });
     },
     recordWorkspaceMaterialization(id, generation, digest) {

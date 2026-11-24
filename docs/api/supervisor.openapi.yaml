@@ -201,6 +201,51 @@ paths:
         "400": { description: Invalid payload or owner shape. }
         "409": { description: "Command digest, assignment, target or host key mismatch." }
         "503": { description: Workspace protocol or execution storage unavailable. }
+  /v1/workspaces/{id}/commands:
+    post:
+      tags: [execution-host]
+      operationId: stageCRunWorkload
+      summary: Execute one declaration from the retained workspace input generation
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCRunWorkloadRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects a retained receipt for output and process retirement.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid workload request. }
+        "409": { description: Workspace identity or owner mismatch. }
+  /v1/workspaces/{id}/commands/{commandId}/cancel:
+    post:
+      tags: [execution-host]
+      operationId: stageCCancelWorkload
+      summary: Cancel the exact workload and observe its group retirement
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCCancelWorkloadRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: commandId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the cancellation receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid cancellation request. }
+        "409": { description: Retained workload or assignment does not match this cancellation. }
   /v1/commands/{commandId}:
     parameters:
       - { name: commandId, in: path, required: true, schema: { type: string, format: uuid } }
