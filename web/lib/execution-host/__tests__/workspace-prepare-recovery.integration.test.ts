@@ -564,6 +564,15 @@ it.each([
     const capturedCommits = await readRuntimeObjectContent({ db, runId, objectId: commits.locator.objectId });
     expect(capturedCommits.object.sha256).toBe(commits.hash);
     expect(Buffer.from(capturedCommits.content.bytes).toString()).toMatch(/^[0-9a-f]+ fixture graph marker\n$/);
+    const [defaultDiff] = await db.select().from(artifactInstances).where(and(
+      eq(artifactInstances.runId, runId), eq(artifactInstances.artifactDefId, "default:work:diff"),
+    ));
+    expect(defaultDiff).toMatchObject({ kind: "diff", validity: "current", locator: { kind: "execution-object" } });
+    if (defaultDiff.locator.kind !== "execution-object") throw new Error("default diff is not a retained object");
+    const payload = await readRuntimeObjectContent({ db, runId, objectId: defaultDiff.locator.objectId });
+    const defaultPatch = Buffer.from(payload.content.bytes).toString();
+    expect(defaultPatch).toContain("+from owning host");
+    expect(defaultPatch).not.toContain("acp-marker");
     const { GET: getIntent } = await import("@/app/api/task-launch-intents/[intentId]/route");
     const receipt = await getIntent(
       new Request(`http://localhost/api/task-launch-intents/${bound.intentId}`),

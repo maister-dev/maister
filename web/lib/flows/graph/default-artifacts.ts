@@ -7,11 +7,17 @@ import pino from "pino";
 
 import { recordArtifact } from "./artifact-store";
 
+import { MaisterError } from "@/lib/errors";
+import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
+import { readAddressedWorkspacePatch } from "@/lib/execution-host/workspace-review";
 import { resolveBaseRef, resolveRefSha } from "@/lib/worktree";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests } = schemaModule as unknown as Record<string, any>;
+const { artifactInstances, hitlRequests } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -66,6 +72,8 @@ export type RecordDefaultArtifactsArgs = {
   nodeId: string;
   attempt: number;
   workspace: WorkspaceRow | null;
+  sourceDb?: Db;
+  signal?: AbortSignal;
 };
 
 // Record default ("index") artifact rows for a just-finished graph node. The
@@ -137,9 +145,60 @@ export async function recordDefaultArtifacts(
     );
   }
 
+  if (workspace?.ownershipKind === "host_owned" && workspace.baseCommit) {
+    const id = makeId("diff");
+    const [retained] = await db
+      .select({
+        locator: artifactInstances.locator,
+        validity: artifactInstances.validity,
+      })
+      .from(artifactInstances)
+      .where(
+        and(eq(artifactInstances.id, id), eq(artifactInstances.runId, runId)),
+      );
+    if (
+      retained?.validity === "current" &&
+      retained.locator.kind === "execution-object"
+    )
+      return;
+    const sourceDb = args.sourceDb ?? db;
+    const status = await readAddressedWorkspaceStatus(sourceDb, workspace);
+    if (!status.workspace.observedCommit)
+      throw new MaisterError(
+        "PRECONDITION",
+        "The assigned workspace has no verified HEAD for the default diff",
+      );
+    const { reference, sizeBytes } = await readAddressedWorkspacePatch({
+      db: sourceDb,
+      workspace,
+      range: {
+        base: workspace.baseCommit,
+        head: status.workspace.observedCommit,
+      },
+      signal: args.signal ?? AbortSignal.timeout(12_000),
+    });
+
+    await recordArtifact(
+      {
+        ...baseArgs,
+        id,
+        artifactDefId: `default:${nodeId}:diff`,
+        kind: "diff",
+        locator: { kind: "execution-object", objectId: reference.objectId },
+        hash: reference.sha256,
+        sizeBytes,
+      },
+      db,
+    );
+    return;
+  }
+
   // Company work has no repository diff; its HITL evidence above remains real.
   if (!workspace?.worktreePath) return;
-  const gitWorkspace = { worktreePath: workspace.worktreePath, branch: workspace.branch };
+  const gitWorkspace = {
+    worktreePath: workspace.worktreePath,
+    branch: workspace.branch,
+  };
 
   // 2. Diff artifact (always for repository work)
   try {

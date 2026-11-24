@@ -4364,6 +4364,8 @@ export async function runGraph(
             nodeId: node.id,
             attempt: nodeAttemptNumber,
             workspace: loaded.workspace,
+            sourceDb: rootDb,
+            signal: opts.driver?.signal,
           },
           db,
         ).catch((err) => {
@@ -5305,6 +5307,8 @@ export async function runGraph(
           nodeId: node.id,
           attempt: nodeAttemptNumber,
           workspace: loaded.workspace,
+          sourceDb: rootDb,
+          signal: opts.driver?.signal,
         },
         db,
       ).catch((err) => {

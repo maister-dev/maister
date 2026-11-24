@@ -1117,6 +1117,10 @@ seals the bounded `git log --oneline` bytes and returns both range limits.
 An unrelated HEAD is refused. A range whose endpoints coincide produces a
 verified empty object.
 
+The default diff uses the pinned base and immutable committed HEAD, matching
+the committed-range semantics of the local default artifact. It stores the
+same object identity and byte witness as declared Git artifacts.
+
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable
 workload. The context excludes Web's environment. The supervisor verifies the

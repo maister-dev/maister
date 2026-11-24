@@ -556,7 +556,10 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   an empty object when base equalled head. The pathless board Flow made a real
   Git commit on its selected supervisor and exposed the exact single-commit
   artifact after Review, with the artifact digest matching the sealed bytes.
-  Default artifact production and takeover still need equivalent coverage.
+  RED also exposed the missing default diff for pathless Runs. GREEN creates
+  the default artifact against the observed committed HEAD and omits unrelated
+  uncommitted content, while declared working-tree diffs retain it. Human
+  takeover still needs equivalent evidence.
 
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
