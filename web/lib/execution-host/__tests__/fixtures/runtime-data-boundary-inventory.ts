@@ -1533,7 +1533,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "flow-engine state the manager owns: installed package content, authored packages, run inputs/outputs under .maister/<slug>/runs",
       [
         [
-          "runMutationAssertionGate",
+          "legacyMutationEvidence",
           "lib/flows/graph/mutation-check.ts#readNodeStartHead",
           "wrapper",
         ],
