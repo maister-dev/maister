@@ -110,7 +110,7 @@ export async function hasRetainedWorkspaceGitOwner(
     .from(workspaces)
     .innerJoin(
       executionAssignments,
-      eq(executionAssignments.id, workspaces.preparationAssignmentId),
+      eq(executionAssignments.runId, workspaces.runId),
     )
     .where(
       and(

@@ -2626,6 +2626,13 @@
       "when": 1795505175944,
       "tag": "0378_stage_c_workspace_git_checkpoint",
       "breakpoints": true
+    },
+    {
+      "idx": 379,
+      "version": "7",
+      "when": 1795508672430,
+      "tag": "0379_stage_c_inherited_workspace_ownership",
+      "breakpoints": true
     }
   ]
 }

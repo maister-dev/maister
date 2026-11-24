@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "../db";
 import type { ExecutionEvent } from "@/lib/db/schema";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lte } from "drizzle-orm";
 
 import {
   isWorkspaceTerminalPayload,
@@ -248,7 +248,6 @@ export async function applyWorkspaceEvidence(
     const [workspace] = await tx.select({ id: workspaces.id }).from(workspaces).where(and(
       eq(workspaces.runId, run.id), eq(workspaces.ownershipKind, "host_owned"),
       eq(workspaces.executionHostId, assignment.executionHostId),
-      eq(workspaces.preparationAssignmentId, assignment.id),
       eq(workspaces.executionWorkspaceId, target.handle),
       eq(workspaces.workspaceGeneration, target.generation),
       isNull(workspaces.removedAt),
@@ -259,7 +258,8 @@ export async function applyWorkspaceEvidence(
     if (receipt.operationId === "stageCRestore") {
       const [original] = await tx.select({ result: executionCommands.result }).from(executionCommands)
         .where(and(eq(executionCommands.id, result.checkpointId), eq(executionCommands.kind, "workspace.checkpoint"),
-          eq(executionCommands.runId, run.id), eq(executionCommands.executionAssignmentId, assignment.id),
+          eq(executionCommands.runId, run.id), eq(executionCommands.executionHostId, assignment.executionHostId),
+          lte(executionCommands.assignmentEpoch, assignment.epoch),
           eq(executionCommands.targetSessionId, target.handle), eq(executionCommands.state, "succeeded")));
       if (original?.result?.tree !== result.tree || original.result.generation !== target.generation) throw inconsistent();
     }

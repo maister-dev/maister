@@ -2,7 +2,8 @@ import "server-only";
 
 import type { Db } from "./db";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
 import { WORKSPACE_CONTEXT_INPUT } from "../../../runtime/workspace-context-input";
@@ -11,6 +12,7 @@ import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 
 import {
   agentProjectLinks,
+  executionAssignments,
   projects,
   runs,
   taskLaunchIntents,
@@ -26,6 +28,10 @@ export async function assertWorkspaceRunAuthority(
   db: Db,
   runId: string,
 ): Promise<void> {
+  const preparation = alias(
+    executionAssignments,
+    "workspace_preparation_owner",
+  );
   const [run] = await db
     .select({
       projectId: runs.projectId,
@@ -41,10 +47,34 @@ export async function assertWorkspaceRunAuthority(
     })
     .from(runs)
     .innerJoin(
+      executionAssignments,
+      and(
+        eq(executionAssignments.id, runs.executionAssignmentId),
+        eq(executionAssignments.runId, runs.id),
+        eq(executionAssignments.state, "active"),
+      ),
+    )
+    .innerJoin(
       workspaces,
       and(
         eq(workspaces.runId, runs.id),
-        eq(workspaces.preparationAssignmentId, runs.executionAssignmentId),
+        eq(workspaces.ownershipKind, "host_owned"),
+        eq(workspaces.executionHostId, executionAssignments.executionHostId),
+      ),
+    )
+    .innerJoin(
+      preparation,
+      and(
+        eq(preparation.id, workspaces.preparationAssignmentId),
+        eq(preparation.runId, runs.id),
+        eq(preparation.executionHostId, executionAssignments.executionHostId),
+        or(
+          eq(preparation.id, executionAssignments.id),
+          eq(
+            preparation.executionWorkspaceId,
+            executionAssignments.executionWorkspaceId,
+          ),
+        ),
       ),
     )
     .innerJoin(

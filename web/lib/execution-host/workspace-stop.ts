@@ -131,7 +131,6 @@ export async function claimAddressedFlowStop(
       .where(
         and(
           eq(workspaces.runId, runId),
-          eq(workspaces.preparationAssignmentId, assignment.id),
           eq(workspaces.executionHostId, assignment.executionHostId),
           eq(workspaces.executionWorkspaceId, assignment.executionWorkspaceId),
           eq(workspaces.ownershipKind, "host_owned"),

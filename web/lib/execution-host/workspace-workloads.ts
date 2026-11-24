@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { WorkspaceInputObject, WorkspaceWorkloadKind } from "../../../runtime/workspace-prepare";
+import type {
+  WorkspaceInputObject,
+  WorkspaceWorkloadKind,
+} from "../../../runtime/workspace-prepare";
 import type { Db } from "./db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 
@@ -72,33 +75,55 @@ export async function reserveWorkspaceWorkload(
       .select({
         generation: workspaces.workspaceGeneration,
         inputGeneration: workspaces.workspaceMaterializationGeneration,
+        preparationAssignmentId: workspaces.preparationAssignmentId,
       })
       .from(workspaces)
+      .innerJoin(
+        executionAssignments,
+        eq(executionAssignments.id, workspaces.preparationAssignmentId),
+      )
       .where(
         and(
           eq(workspaces.runId, input.runId),
           eq(workspaces.ownershipKind, "host_owned"),
-          eq(workspaces.preparationAssignmentId, assignment.id),
           eq(workspaces.executionHostId, assignment.executionHostId),
+          eq(executionAssignments.runId, input.runId),
+          eq(executionAssignments.executionHostId, assignment.executionHostId),
+          eq(
+            executionAssignments.executionWorkspaceId,
+            assignment.executionWorkspaceId,
+          ),
           isNull(workspaces.removedAt),
         ),
       )
-      .for("share");
+      .for("share", { of: workspaces });
+    if (
+      !owned?.preparationAssignmentId ||
+      !owned.generation ||
+      !owned.inputGeneration
+    )
+      throw workloadConflict(
+        "Workload inputs have no applied materialization receipt",
+      );
     const [materialization] = await tx
       .select({ result: executionCommands.result })
       .from(executionCommands)
       .where(
         and(
-          eq(executionCommands.executionAssignmentId, assignment.id),
+          eq(
+            executionCommands.executionAssignmentId,
+            owned.preparationAssignmentId,
+          ),
           eq(executionCommands.kind, "workspace.materialize"),
           eq(executionCommands.state, "succeeded"),
         ),
       );
-    const inputDigest = materialization?.result?.manifestDigest;
+    const applied = materialization?.result;
+    const inputDigest = applied?.manifestDigest;
     if (
-      !owned?.generation ||
-      !owned.inputGeneration ||
-      typeof inputDigest !== "string"
+      typeof inputDigest !== "string" ||
+      applied?.generation !== owned.generation ||
+      applied.inputGeneration !== owned.inputGeneration
     )
       throw workloadConflict(
         "Workload inputs have no applied materialization receipt",
@@ -120,7 +145,9 @@ export async function reserveWorkspaceWorkload(
       generation: owned.generation,
       inputGeneration: owned.inputGeneration,
       inputDigest,
-      ...(input.templateContext ? { templateContext: input.templateContext } : {}),
+      ...(input.templateContext
+        ? { templateContext: input.templateContext }
+        : {}),
     };
     const commandId = workspaceWorkloadCommandId(input);
     const [existing] = await tx
@@ -155,11 +182,13 @@ export async function reserveWorkspaceWorkload(
   });
 }
 
-export function workspaceWorkloadCommandId(input: Readonly<{
-  runId: string;
-  assignmentId: string;
-  operationKey: string;
-}>): string {
+export function workspaceWorkloadCommandId(
+  input: Readonly<{
+    runId: string;
+    assignmentId: string;
+    operationKey: string;
+  }>,
+): string {
   return deterministicRuntimeObjectId({
     runId: input.runId,
     sourceKey: `workspace-workload:${input.assignmentId}:${input.operationKey}`,

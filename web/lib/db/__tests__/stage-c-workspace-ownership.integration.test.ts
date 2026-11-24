@@ -496,4 +496,27 @@ describe("C-02 workspace ownership", () => {
       "UPDATE execution_commands SET payload=$2 WHERE id=$1", [restoreId, { ...restore, checkpointId: randomUUID() }],
     )).rejects.toMatchObject({ code: "23514", constraint: "workspace_git_command_immutable" });
   });
+
+  it("upgrades a populated workspace and rejects placement under a substituted host or handle", async () => {
+    const active = await createRun(hostId, "Running");
+    const workspaceId = await reserveWorkspace({ ...active, host: hostId });
+    const handle = `ws_${randomUUID().replaceAll("-", "")}`;
+    await database.pool.query("UPDATE workspaces SET execution_workspace_id=$2 WHERE id=$1", [workspaceId, handle]);
+    await database.pool.query("UPDATE execution_assignments SET execution_workspace_id=$2 WHERE id=$1", [active.assignmentId, handle]);
+    const read = async () => (await database.pool.query(
+      "SELECT to_jsonb(workspace) AS record FROM workspaces workspace WHERE id=$1", [workspaceId],
+    )).rows[0].record;
+    const before = await read();
+    await database.db.transaction((tx) => applyMainMigration(tx, "0379_stage_c_inherited_workspace_ownership"));
+    expect(await read()).toEqual(before);
+
+    const insert = (owner: string, target: string) => database.pool.query(
+      `INSERT INTO execution_assignments (id, run_id, execution_host_id, epoch, state, placement_reason, execution_workspace_id)
+       VALUES ($1, $2, $3, 2, 'active', 'rework_return', $4)`,
+      [randomUUID(), active.runId, owner, target],
+    );
+    const refused = { code: "23514", constraint: "addressed_assignment_inherited_owner_required" };
+    await expect(insert(otherHostId, handle)).rejects.toMatchObject(refused);
+    await expect(insert(hostId, `ws_${randomUUID().replaceAll("-", "")}`)).rejects.toMatchObject(refused);
+  });
 });

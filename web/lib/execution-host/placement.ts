@@ -3,7 +3,7 @@ import type { Db } from "./db";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type { PlacementReason } from "./types";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import {
@@ -13,7 +13,7 @@ import {
 } from "./assignments";
 import { localHost } from "./resolver";
 
-import { runs } from "@/lib/db/schema";
+import { executionHosts, runs, workspaces } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
@@ -22,9 +22,8 @@ const defaultLog = pino({
 }).child({ component: "placement" });
 
 // ADR-166 D2/D3: every placement re-entry (launch, resume, recover, …) mints
-// the next epoch INSIDE its existing CAS claim — `tx` is the caller's
-// transaction. The host is the memoized local host; resolution never runs
-// DB work inside the caller's tx (the registrar has its own).
+// the next epoch inside its existing CAS claim. Addressed workspaces inherit
+// their original host, including when the deployment default changes.
 export async function mintPlacement(
   tx: Db,
   input: {
@@ -39,7 +38,36 @@ export async function mintPlacement(
     logger?: Logger;
   },
 ): Promise<ExecutionAssignment> {
+  const [owner] = await tx
+    .select({ host: executionHosts })
+    .from(workspaces)
+    .innerJoin(
+      executionHosts,
+      eq(executionHosts.id, workspaces.executionHostId),
+    )
+    .where(
+      and(
+        eq(workspaces.runId, input.runId),
+        eq(workspaces.ownershipKind, "host_owned"),
+        isNull(workspaces.removedAt),
+      ),
+    )
+    .limit(1);
+  if (owner?.host.retiredAt)
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "The prepared workspace's execution host is retired",
+    );
+  if (owner && input.host && input.host.id !== owner.host.id)
+    throw new MaisterError(
+      "CONFLICT",
+      "The prepared workspace belongs to another execution host",
+      {
+        details: { reason: "workspace_preparation_changed" },
+      },
+    );
   const host =
+    owner?.host ??
     input.host ??
     (await localHost({ db: input.db ?? tx, transport: input.transport }));
 

@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "./db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lte } from "drizzle-orm";
 
 import { workspaceEvidenceDigest } from "../../../runtime/workspace-prepare";
 
@@ -82,7 +82,6 @@ export async function reserveWorkspaceGitOperation(
         and(
           eq(workspaces.runId, input.runId),
           eq(workspaces.ownershipKind, "host_owned"),
-          eq(workspaces.preparationAssignmentId, assignment.id),
           eq(workspaces.executionHostId, assignment.executionHostId),
           eq(workspaces.executionWorkspaceId, assignment.executionWorkspaceId),
           isNull(workspaces.removedAt),
@@ -104,7 +103,8 @@ export async function reserveWorkspaceGitOperation(
             eq(executionCommands.id, input.checkpointId),
             eq(executionCommands.kind, "workspace.checkpoint"),
             eq(executionCommands.runId, input.runId),
-            eq(executionCommands.executionAssignmentId, assignment.id),
+            eq(executionCommands.executionHostId, assignment.executionHostId),
+            lte(executionCommands.assignmentEpoch, assignment.epoch),
             eq(
               executionCommands.targetSessionId,
               assignment.executionWorkspaceId,

@@ -266,8 +266,9 @@ export async function resolveOwnedCheckpoint(
     checkpoint?.kind !== "workspace.checkpoint" ||
     checkpoint.phase !== "completed" ||
     checkpoint.runId !== owner.runId ||
-    checkpoint.assignmentId !== owner.assignmentId ||
-    checkpoint.epoch !== owner.assignmentEpoch ||
+    checkpoint.epoch > owner.assignmentEpoch ||
+    (checkpoint.epoch === owner.assignmentEpoch &&
+      checkpoint.assignmentId !== owner.assignmentId) ||
     !isWorkspaceGenerationTarget(target) ||
     target.handle !== handle ||
     target.generation !== generation ||

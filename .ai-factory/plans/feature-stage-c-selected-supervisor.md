@@ -561,6 +561,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   uncommitted content, while declared working-tree diffs retain it. Human
   takeover still needs equivalent evidence.
 
+  **C-09 inherited workspace.** RED refused the first workload in the next
+  assignment epoch because authority was tied to the preparation assignment.
+  GREEN inherited the same host and handle, rejected the old writer, ran a
+  real new-epoch workload against the original sealed inputs and restored
+  the prior checkpoint. The Git patch was readable during the new epoch.
+  The populated 0379 migration preserved the previous workspace record and
+  refused a substituted host or handle. Passed nine PostgreSQL and real-host
+  integration cases.
+
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure

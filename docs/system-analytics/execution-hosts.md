@@ -1121,6 +1121,14 @@ The default diff uses the pinned base and immutable committed HEAD, matching
 the committed-range semantics of the local default artifact. It stores the
 same object identity and byte witness as declared Git artifacts.
 
+When a Run starts another epoch on the same addressed workspace, the
+preparation assignment remains the immutable source of materialization
+evidence. The current assignment must inherit that host and handle.
+PostgreSQL migration 0379 preserves the original records and refuses a
+substituted host or handle on placement. A previous epoch's checkpoint can be
+restored by the current owner only for the same Run, workspace and generation.
+The old epoch cannot admit a new workload.
+
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable
 workload. The context excludes Web's environment. The supervisor verifies the
