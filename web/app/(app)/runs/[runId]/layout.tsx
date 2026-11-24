@@ -750,6 +750,7 @@ export default async function RunDetailLayout({
 
   const canClaim =
     detail.status === "NeedsInput" &&
+    (!detail.addressedCheckout || canReadRepoFiles) &&
     offersTakeover(detail.pendingHitl?.schema);
   const isHumanWorking = detail.status === "HumanWorking";
   // ADR-161: an interrupt is only offered on a live flow run. The route
@@ -2347,8 +2348,9 @@ export default async function RunDetailLayout({
                 {t("handoff")}
               </h2>
               <RunTakeoverActions
+                addressedCheckout={detail.addressedCheckout}
                 branch={detail.branch}
-                canAct={canAct}
+                canAct={canAct && (!detail.addressedCheckout || canReadRepoFiles)}
                 displayWorktreePath={displayWorktreePath}
                 isOwner={detail.takeoverOwnerUserId === user.id}
                 mode="working"

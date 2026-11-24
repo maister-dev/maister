@@ -188,6 +188,10 @@ export async function loadProjectRun(
   return requireProjectFlowRun(await loadRun(db, runId));
 }
 
+export async function loadRepositoryRun(db: Db, runId: string): Promise<LoadedRepositoryRun> {
+  return requireRepositoryFlowRun(await loadRun(db, runId));
+}
+
 export function resolveFlowRuntimeRoot(override?: string): string {
   return override ?? configuredRuntimeRoot();
 }

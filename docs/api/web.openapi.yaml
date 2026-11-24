@@ -10728,15 +10728,15 @@ paths:
   /api/runs/{runId}/takeover/claim:
     post:
       tags: [takeover]
-      summary: (M11b) Claim a run for manual takeover (local worktree handoff)
+      summary: Claim a run for manual takeover on its owning supervisor
       description: |
         (M11b — Implemented. Reflects HEAD-after-M11b.)
 
-        Claims a run parked at an M11a `human_review` node for a LOCAL worktree
-        handoff (ADR-030). The run transitions `NeedsInput → HumanWorking` (a real
-        `runs.status`). The EXISTING worktree path + run branch are exposed; NO new
-        branch, target, PR, remote, or supervisor session is created — the reviewer
-        edits in place on the same host.
+        Claims a run parked at a `human_review` node (ADR-030). The run
+        transitions `NeedsInput → HumanWorking`. A local checkout returns its
+        path and branch. An addressed checkout requires `readRepoFiles`, captures
+        the selected supervisor's observed HEAD and returns the supervisor ID,
+        workspace handle and branch with a null worktree path.
 
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`); role-restricted claim is M13.
@@ -10770,7 +10770,7 @@ paths:
         "200":
           description: |
             Claim recorded. The run is now `HumanWorking`; the response carries the
-            checkout context (the EXISTING worktree path + run branch).
+            checkout context for its owner.
           content:
             application/json:
               schema:
@@ -10779,7 +10779,15 @@ paths:
                 properties:
                   worktreePath:
                     type: string
-                    description: Existing `workspaces.worktree_path` (server-state).
+                    nullable: true
+                    description: Local worktree path or null for an addressed checkout.
+                  executionHostId:
+                    type: string
+                    description: Selected supervisor ID for an addressed checkout.
+                  workspaceHandle:
+                    type: string
+                    pattern: '^ws_[a-f0-9]{32}$'
+                    description: Opaque retained workspace handle for an addressed checkout.
                   branch:
                     type: string
                     description: Existing `workspaces.branch` — the run branch (no new branch).
@@ -10811,6 +10819,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: The selected supervisor is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/runs/{runId}/takeover/return:
     post:
       tags: [takeover]
@@ -10827,6 +10840,11 @@ paths:
         the graph runner at the `human_review` node's `transitions.takeover` target
         (a validation node — `checks`) so the staled gates rerun over the human's
         commits and a fresh `human_review` gate is produced.
+
+        An addressed return requires current repository access, a clean checkout
+        and commits descending from the claim-time HEAD. The owning supervisor
+        seals the committed patch and log. The return atomically binds the next
+        execution epoch to the same host and workspace and records the evidence.
 
         Requires the session user to equal the recorded `owner_user_id`
         (owner-only in M11b; "take over stale work" by another user is M13).

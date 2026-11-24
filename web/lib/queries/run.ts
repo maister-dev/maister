@@ -125,6 +125,7 @@ const {
   assignmentEvents,
   assignments,
   capabilityImports,
+  executionHosts,
   flows,
   gateResults,
   hitlRequests,
@@ -212,6 +213,7 @@ export interface RunDetail {
   currentStepId: string | null;
   branch: string;
   worktreePath: string;
+  addressedCheckout?: Readonly<{ hostName: string; handle: string }>;
   agent: CapabilityAgent | null;
   // Run kind drives the Review surface: flow and worktree-agent runs use the
   // ReviewPanel; scratch runs keep their own promote affordance.
@@ -518,6 +520,9 @@ export const getRunDetail = cache(async function getRunDetail(
       projectMainBranch: projects.mainBranch,
       projectRepoPath: projects.repoPath,
       workspaceId: workspaces.id,
+      workspaceOwnership: workspaces.ownershipKind,
+      workspaceHandle: workspaces.executionWorkspaceId,
+      workspaceHostName: executionHosts.displayName,
       branch: workspaces.branch,
       worktreePath: workspaces.worktreePath,
       parentRepoPath: workspaces.parentRepoPath,
@@ -563,6 +568,7 @@ export const getRunDetail = cache(async function getRunDetail(
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .leftJoin(workspaces, eq(workspaces.runId, runs.id))
+    .leftJoin(executionHosts, eq(executionHosts.id, workspaces.executionHostId))
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
     .leftJoin(flows, eq(flows.id, runs.flowId))
     .where(eq(runs.id, runId));
@@ -920,6 +926,9 @@ export const getRunDetail = cache(async function getRunDetail(
     agentKind: row.agentKind,
     branch,
     worktreePath,
+    ...(row.workspaceOwnership === "host_owned" && row.workspaceHandle && row.workspaceHostName
+      ? { addressedCheckout: { hostName: row.workspaceHostName, handle: row.workspaceHandle } }
+      : {}),
     parentRepoPath,
     projectMainBranch: row.projectMainBranch,
     projectRepoPath: row.projectRepoPath,

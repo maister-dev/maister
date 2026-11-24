@@ -570,6 +570,17 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   refused a substituted host or handle. Passed nine PostgreSQL and real-host
   integration cases.
 
+  **C-09 manual takeover.** RED the normal claim route tried to load a Web-local
+  checkout. GREEN returned the opaque handle and selected supervisor, rejected
+  zero-commit and dirty returns, and accepted the operator's real Git commit.
+  The new epoch ran its validation workload on the same checkout and reached
+  Review with the retained patch and commit-set artifacts. The EN/RU panel
+  shows the owning supervisor and handle. Passed 15 integration and 15
+  focused contract/UI cases. Review-feedback witness validation remains open.
+
+  The local A/B supervisor lane passed 148 tests in ten suites on `8b9ac8932`
+  (Darwin arm64, Node 24.15.0), with one suite worker.
+
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure

@@ -12,6 +12,7 @@ import {
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { requireFlowWorktree } from "@/lib/execution-host/legacy-workspace";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { transitionNodeId } from "@/lib/flows/graph/transition-target";
 import {
@@ -26,12 +27,16 @@ import {
 } from "@/lib/flows/graph/artifact-store";
 import { downstreamOf } from "@/lib/flows/graph/runner-graph";
 import {
-  loadProjectRun as loadRun,
+  loadRepositoryRun as loadRun,
   loadRunProjectId,
 } from "@/lib/flows/graph/runner-core";
 import { runFlow } from "@/lib/flows/runner";
 import { countOperatorCommits } from "@/lib/runs/claim-head";
-import { loadProjectMainBranch } from "@/lib/runs/takeover-context";
+import {
+  loadProjectMainBranch,
+  readAddressedTakeoverReturn,
+  type TakeoverReturnEvidence,
+} from "@/lib/runs/takeover-context";
 import { markReturnedToRunning } from "@/lib/runs/state-transitions";
 import {
   DIFF_TRUNCATED_MARKER,
@@ -104,8 +109,82 @@ function errorResponse(err: unknown, ctx: { runId: string }): NextResponse {
 
 type RouteParams = { params: Promise<{ runId: string }> };
 
+async function readLocalTakeoverReturn(
+  input: Readonly<{
+    db: Db;
+    projectId: string;
+    runId: string;
+    nodeId: string;
+    branch: string;
+    worktreePath: string;
+    claimHeadSha: string | null;
+  }>,
+): Promise<TakeoverReturnEvidence> {
+  const { db, projectId, runId, nodeId, branch, worktreePath, claimHeadSha } =
+    input;
+  const porcelain = await statusPorcelain({ worktreePath });
+
+  if (porcelain.trim().length > 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      `run ${runId} worktree has uncommitted changes — commit or discard before returning`,
+    );
+  }
+
+  const mainBranch = await loadProjectMainBranch(projectId, db);
+  const baseRef = await resolveBaseRef({ worktreePath, branch, mainBranch });
+  const returnedCommits = await logRange({ worktreePath, baseRef, branch });
+  const returnedRange = await diffRange({ worktreePath, baseRef, branch });
+  // An oversized returned diff keeps its in-band marker so the stored evidence
+  // text still flags the cut (this surface has no structured channel).
+  const returnedDiff = returnedRange.truncated
+    ? returnedRange.text + DIFF_TRUNCATED_MARKER
+    : returnedRange.text;
+
+  // F3: store the immutable head SHA in the git artifact locators so their
+  // payloads render the returned range, not the live branch tip. Branch-name
+  // fallback for parity with the runner (git is available here in practice).
+  let headRef = branch;
+
+  try {
+    headRef = await resolveRefSha(worktreePath, branch);
+  } catch (err) {
+    // keep the branch name when git cannot resolve the SHA
+    log.warn(
+      { runId, nodeId, branch, err: (err as Error).message },
+      "resolveRefSha failed — storing mutable branch headRef",
+    );
+  }
+
+  // The merge-base range stays the REVIEW evidence (the whole branch); whether
+  // the reviewer actually committed anything is answered from the claim-time
+  // HEAD, because a run's branch already carries every commit its flow made.
+  const branchCommitCount = returnedCommits
+    .split("\n")
+    .filter((l) => l.length > 0).length;
+  const operatorCommitCount = await countOperatorCommits({
+    worktreePath,
+    branch,
+    claimHeadSha,
+    runId,
+  });
+  const commitCountPre = operatorCommitCount ?? branchCommitCount;
+
+  return {
+    baseRef,
+    headRef,
+    returnedCommits,
+    returnedDiff,
+    operatorCommitCount: commitCountPre,
+    commitArtifact: { locator: { kind: "git-log", baseRef, headRef } },
+    diffArtifact: {
+      locator: { kind: "git-range", baseCommit: baseRef, headRef },
+    },
+  };
+}
+
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { runId } = await params;
@@ -193,7 +272,7 @@ export async function POST(
     const nodeId = intent.nodeId;
     const nodeAttemptId = intent.nodeAttemptId;
     const attempt = intent.attempt;
-    const { worktreePath, branch } = loaded.workspace;
+    const { workspace } = loaded;
 
     // Resolve the validation re-entry from the human_review node's
     // transitions.takeover target (server-state; NOT body-controlled).
@@ -223,53 +302,35 @@ export async function POST(
     // dirty worktree (the reviewer would silently lose work + get misleading
     // evidence) and refuse an empty (zero-commit) return BEFORE any ledger
     // write, so both stay in the "no state change, retryable" failure class.
-    const porcelain = await statusPorcelain({ worktreePath });
-
-    if (porcelain.trim().length > 0) {
-      throw new MaisterError(
-        "CONFLICT",
-        `run ${runId} worktree has uncommitted changes — commit or discard before returning`,
-      );
+    const addressed = workspace.ownershipKind === "host_owned";
+    if (addressed) await requireProjectAction(projectId, "readRepoFiles");
+    const evidence = addressed
+      ? await readAddressedTakeoverReturn({
+          db,
+          workspace,
+          claimHeadSha: intent.claimHeadSha,
+          signal: req.signal,
+        })
+      : await readLocalTakeoverReturn({
+          db,
+          runId,
+          nodeId,
+          projectId,
+          branch: workspace.branch,
+          worktreePath: requireFlowWorktree(workspace.worktreePath),
+          claimHeadSha: intent.claimHeadSha,
+        });
+    if (addressed) {
+      await requireProjectAction(projectId, "answerHitl");
+      await requireProjectAction(projectId, "readRepoFiles");
     }
-
-    const mainBranch = await loadProjectMainBranch(run.projectId, db);
-    const baseRef = await resolveBaseRef({ worktreePath, branch, mainBranch });
-    const returnedCommits = await logRange({ worktreePath, baseRef, branch });
-    const returnedRange = await diffRange({ worktreePath, baseRef, branch });
-    // An oversized returned diff keeps its in-band marker so the stored evidence
-    // text still flags the cut (this surface has no structured channel).
-    const returnedDiff = returnedRange.truncated
-      ? returnedRange.text + DIFF_TRUNCATED_MARKER
-      : returnedRange.text;
-
-    // F3: store the immutable head SHA in the git artifact locators so their
-    // payloads render the returned range, not the live branch tip. Branch-name
-    // fallback for parity with the runner (git is available here in practice).
-    let headRef = branch;
-
-    try {
-      headRef = await resolveRefSha(worktreePath, branch);
-    } catch (err) {
-      // keep the branch name when git cannot resolve the SHA
-      log.warn(
-        { runId, nodeId, branch, err: (err as Error).message },
-        "resolveRefSha failed — storing mutable branch headRef",
-      );
-    }
-
-    // The merge-base range stays the REVIEW evidence (the whole branch); whether
-    // the reviewer actually committed anything is answered from the claim-time
-    // HEAD, because a run's branch already carries every commit its flow made.
-    const branchCommitCount = returnedCommits
-      .split("\n")
-      .filter((l) => l.length > 0).length;
-    const operatorCommitCount = await countOperatorCommits({
-      worktreePath,
-      branch,
-      claimHeadSha: intent.claimHeadSha,
-      runId,
-    });
-    const commitCountPre = operatorCommitCount ?? branchCommitCount;
+    const {
+      baseRef,
+      headRef,
+      returnedCommits,
+      returnedDiff,
+      operatorCommitCount: commitCountPre,
+    } = evidence;
 
     if (commitCountPre === 0) {
       throw new MaisterError(
@@ -284,7 +345,6 @@ export async function POST(
         nodeId,
         baseRef,
         commitCount: commitCountPre,
-        branchCommitCount,
         claimHeadSha: intent.claimHeadSha,
       },
       "takeover return phase 2a — git log/diff captured",
@@ -314,6 +374,27 @@ export async function POST(
     // finds the row already Running ({ok:false} → PRECONDITION → 409).
     try {
       await db.transaction(async (tx: Db) => {
+        if (addressed) {
+          const [current] = await tx
+            .select({
+              status: runs.status,
+              assignmentId: runs.executionAssignmentId,
+            })
+            .from(runs)
+            .where(eq(runs.id, runId))
+            .for("no key update");
+          const active = await getActiveTakeover(runId, tx);
+          if (
+            current?.status !== "HumanWorking" ||
+            current.assignmentId !== run.executionAssignmentId ||
+            !active || active.id !== nodeAttemptId ||
+            active.ownerUserId !== user.id
+          )
+            throw new MaisterError(
+              "CONFLICT",
+              "The addressed takeover claim changed while its return was verified",
+            );
+        }
         await recordTakeoverReturn({
           runId,
           nodeId,
@@ -337,7 +418,7 @@ export async function POST(
             artifactDefId: `takeover:${nodeId}:commit_set`,
             kind: "commit_set",
             producer: "takeover",
-            locator: { kind: "git-log", baseRef, headRef },
+            ...evidence.commitArtifact,
           },
           tx,
         );
@@ -352,11 +433,7 @@ export async function POST(
             artifactDefId: `takeover:${nodeId}:diff`,
             kind: "diff",
             producer: "takeover",
-            locator: {
-              kind: "git-range",
-              baseCommit: baseRef,
-              headRef,
-            },
+            ...evidence.diffArtifact,
           },
           tx,
         );
@@ -381,10 +458,10 @@ export async function POST(
         const toRefresh = await getCurrentRequiredForGitArtifacts(runId, tx);
 
         for (const art of toRefresh) {
-          const refreshedLocator =
+          const refreshed =
             art.kind === "commit_set"
-              ? { kind: "git-log" as const, baseRef, headRef }
-              : { kind: "git-range" as const, baseCommit: baseRef, headRef };
+              ? evidence.commitArtifact
+              : evidence.diffArtifact;
 
           const { id: refreshedId } = await recordArtifact(
             {
@@ -396,7 +473,7 @@ export async function POST(
               artifactDefId: art.artifactDefId,
               kind: art.kind,
               producer: "takeover",
-              locator: refreshedLocator,
+              ...refreshed,
               validity: "current",
               requiredFor: art.requiredFor,
               visibility: art.visibility,

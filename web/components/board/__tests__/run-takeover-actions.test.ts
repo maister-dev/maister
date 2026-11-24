@@ -3,8 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next-intl", () => ({
-  useTranslations: (namespace: string) => (key: string) =>
-    `${namespace}.${key}`,
+  useTranslations:
+    (namespace: string) => (key: string, values?: { name: string }) =>
+      `${namespace}.${key}${values ? ` ${values.name}` : ""}`,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -31,5 +32,25 @@ describe("RunTakeoverActions", () => {
     expect(html).not.toContain(
       "/Users/developer/.maister/worktrees/myapp/run-1",
     );
+  });
+
+  it("shows the selected supervisor and workspace handle for addressed takeover", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunTakeoverActions, {
+        addressedCheckout: {
+          hostName: "Local supervisor B",
+          handle: "ws_354c9b5edffe43f0b3a53ffd05b047ef",
+        },
+        branch: "fixture",
+        canAct: true,
+        isOwner: true,
+        mode: "working",
+        runId: "run-1",
+        worktreePath: "/path/from/another/machine",
+      }),
+    );
+    expect(html).toContain("Local supervisor B");
+    expect(html).toContain("ws_354c9b5edffe43f0b3a53ffd05b047ef");
+    expect(html).not.toContain("/path/from/another/machine");
   });
 });

@@ -1129,6 +1129,12 @@ substituted host or handle on placement. A previous epoch's checkpoint can be
 restored by the current owner only for the same Run, workspace and generation.
 The old epoch cannot admit a new workload.
 
+Manual takeover records the selected supervisor's claim-time HEAD. The
+handoff panel shows the supervisor and workspace ID. Return requires a clean
+checkout with commits after that HEAD and records the sealed log and diff.
+The manager rechecks the human claim and assignment while recording the
+return, then resumes validation in a new epoch on the same checkout.
+
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable
 workload. The context excludes Web's environment. The supervisor verifies the

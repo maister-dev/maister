@@ -2,19 +2,33 @@ import type { Db } from "../db";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { eq } from "drizzle-orm";
+import { NextRequest } from "next/server";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { WORKSPACE_WORKLOAD_FILE } from "../../../../runtime/workspace-prepare";
 
 import { closeDb } from "@/lib/db/client";
-import { runs, workspaces } from "@/lib/db/schema";
-import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
+import {
+  artifactInstances,
+  executionAssignments,
+  nodeAttempts,
+  runs,
+  workspaces,
+} from "@/lib/db/schema";
+import { nodeWorkloadDeclarationId } from "@/lib/flows/addressed-workload-input";
 import { git, initRepo } from "@/test-support/git-fixture";
+import { seedGraphRun } from "@/test-support/graph-run-seed";
+import {
+  addProjectMember,
+  seedActiveUser,
+} from "@/test-support/librarian-seed";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 import { startRealSupervisor } from "@/test-support/real-supervisor";
 
@@ -28,6 +42,10 @@ import {
 } from "../events/consumer";
 import { projectExecutionEvents } from "../events/projector";
 import { projectCanonicalRuntimeObjects } from "../events/runtime-object-projector";
+import {
+  startCanonicalProjectionWorker,
+  stopCanonicalProjectionWorker,
+} from "../events/projection-runtime";
 import { createLocalDirectTransport } from "../transports/local-direct";
 import { reserveWorkspaceGitOperation } from "../workspace-checkpoint";
 import {
@@ -41,17 +59,40 @@ import { reserveWorkspaceWorkload } from "../workspace-workloads";
 let root: string | undefined;
 let database: StartedPostgresTestDb | undefined;
 let supervisor: RealSupervisor | undefined;
+const session = vi.hoisted(() => ({ userId: "" }));
+const drivers = vi.hoisted(() => [] as Promise<void>[]);
+
+vi.mock("@/auth", () => ({
+  auth: async () => ({ user: { id: session.userId } }),
+}));
+
+vi.mock("@/lib/flows/runner", async (importOriginal) => {
+  const runner = await importOriginal<typeof import("@/lib/flows/runner")>();
+
+  return {
+    ...runner,
+    runFlow: (...args: Parameters<typeof runner.runFlow>) => {
+      const run = runner.runFlow(...args);
+      drivers.push(run);
+
+      return run;
+    },
+  };
+});
 
 afterEach(async () => {
+  const results = await Promise.allSettled(drivers.splice(0));
+  await stopCanonicalProjectionWorker();
   await stopRuntimeEventConsumers();
   await supervisor?.kill();
   await closeDb();
   vi.unstubAllEnvs();
   await database?.stop();
   if (root) await rm(root, { recursive: true, force: true });
+  for (const result of results) if (result.status === "rejected") throw result.reason;
 });
 
-it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new epoch", async () => {
+async function prepareWorkspaceFixture() {
   root = await mkdtemp(join(tmpdir(), "stage-c-inherited-workspace-"));
   const repository = await initRepo(join(root, "approved-source"));
   await writeFile(join(repository, "README.md"), "captured base\n");
@@ -62,19 +103,57 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
     databaseName: "eh_inherited_workspace",
   });
   const db = database.db as unknown as Db;
-  const project = await seedProjectRow(database.db, {
-    repoPath: join(root, "web-has-no-repo"),
-  });
-  const runId = await seedRun(database.db, {
-    projectId: project.id,
-    runKind: "flow",
-    status: "Pending",
+  session.userId = await seedActiveUser(database.db);
+  const seeded = await seedGraphRun(
+    database.db,
+    {
+      schemaVersion: 1,
+      name: "Addressed takeover",
+      compat: { engine_min: "1.2.0" },
+      nodes: [
+        {
+          id: "work",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "review" },
+        },
+        {
+          id: "review",
+          type: "human",
+          finish: {
+            human: { role: "maintainer", decisions: ["approve", "takeover"] },
+          },
+          transitions: { approve: "done", takeover: "validate" },
+        },
+        {
+          id: "validate",
+          type: "cli",
+          action: { command: "printf 'validation continued'" },
+          transitions: { success: "done" },
+        },
+      ],
+    },
+    {
+      repoPath: join(root, "web-has-no-repo"),
+      workspace: false,
+      flowRevision: true,
+      run: { status: "Pending", createdByUserId: session.userId },
+    },
+  );
+  const { projectId, runId } = seeded;
+  await rm(seeded.runtimeRoot, { recursive: true, force: true });
+  await rm(seeded.worktreePath, { recursive: true, force: true });
+  await addProjectMember(database.db, {
+    userId: session.userId,
+    projectId,
+    role: "member",
   });
   vi.stubEnv("DB_URL", database.databaseUrl);
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", join(root, "manager-runtime"));
   supervisor = await startRealSupervisor({
     env: {
       MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({
-        [project.id]: repository,
+        [projectId]: repository,
       }),
     },
   });
@@ -98,10 +177,10 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
     await reserveHostWorkspace(
       tx,
       { host, assignment },
-      { projectId: project.id, branch: "fixture", baseCommit: base },
+      { projectId, branch: "fixture", baseCommit: base },
       {
         mode: "ownWorktree",
-        repositoryId: project.id,
+        repositoryId: projectId,
         commit: base,
         inputDigest: "a".repeat(64),
       },
@@ -114,6 +193,12 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
                 id: "fixture-edit",
                 workload: "cli",
                 command: "printf 'after handoff\\n' > README.md",
+                timeoutMs: 5_000,
+              },
+              {
+                id: nodeWorkloadDeclarationId("validate"),
+                workload: "cli",
+                command: "printf 'validation continued'",
                 timeoutMs: 5_000,
               },
             ]),
@@ -183,6 +268,24 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
     },
     { timeout: 10_000 },
   );
+
+  return {
+    db,
+    host,
+    initial,
+    base,
+    runId,
+    readWorkspace,
+    projectEvidence,
+    patchOf,
+    settle,
+    supervisor,
+  };
+}
+
+it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new epoch", async () => {
+  const { db, host, initial, runId, readWorkspace, patchOf, settle } =
+    await prepareWorkspaceFixture();
   await db.update(runs).set({ status: "Running" }).where(eq(runs.id, runId));
   const checkpoint = await reserveWorkspaceGitOperation(db, {
     runId,
@@ -234,3 +337,133 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
   expect((await readWorkspace()).preparationAssignmentId).toBe(initial.id);
   expect(await patchOf(workspace)).toBe("");
 }, 60_000);
+
+it("C-09 claims and returns operator commits from the selected supervisor through the normal Run routes", async () => {
+  const {
+    db,
+    host,
+    initial,
+    base,
+    runId,
+    readWorkspace,
+    supervisor: owningHost,
+  } = await prepareWorkspaceFixture();
+  await db
+    .update(runs)
+    .set({ status: "NeedsInput", currentStepId: "review" })
+    .where(eq(runs.id, runId));
+  await db.insert(nodeAttempts).values({
+    id: randomUUID(),
+    runId,
+    nodeId: "review",
+    nodeType: "human",
+    attempt: 1,
+    status: "NeedsInput",
+    executionAssignmentId: initial.id,
+  });
+  const workspace = await readWorkspace();
+  const handle = workspace.executionWorkspaceId;
+  if (!handle) throw new Error("the takeover fixture has no prepared handle");
+  const state = new DatabaseSync(join(owningHost.stateDir, "state.sqlite"), {
+    readOnly: true,
+  });
+  const privateCheckout = state
+    .prepare("SELECT real_path AS path FROM workspaces WHERE id=?")
+    .get(handle)?.path;
+  state.close();
+  if (typeof privateCheckout !== "string")
+    throw new Error("the supervisor did not retain the checkout");
+  const { POST: claim } =
+    await import("@/app/api/runs/[runId]/takeover/claim/route");
+  const { POST: returnClaim } =
+    await import("@/app/api/runs/[runId]/takeover/return/route");
+  const params = { params: Promise.resolve({ runId }) };
+  const request = (action: string) =>
+    new NextRequest(`http://localhost/api/runs/${runId}/takeover/${action}`, {
+      method: "POST",
+    });
+  startCanonicalProjectionWorker();
+  const claimed = await claim(request("claim"), params);
+  const claimedBody = await claimed.json();
+  expect(claimed.status, JSON.stringify(claimedBody)).toBe(200);
+  expect(claimedBody).toMatchObject({
+    worktreePath: null,
+    executionHostId: host.id,
+    workspaceHandle: handle,
+  });
+  expect(JSON.stringify(claimedBody)).not.toContain(privateCheckout);
+
+  expect((await returnClaim(request("return"), params)).status).toBe(409);
+  await writeFile(join(privateCheckout, "README.md"), "operator edit\n");
+  expect((await returnClaim(request("return"), params)).status).toBe(409);
+  await git(privateCheckout, "add", "--", "README.md");
+  await git(
+    privateCheckout,
+    "-c",
+    "user.name=Operator",
+    "-c",
+    "user.email=operator@example.test",
+    "-c",
+    "commit.gpgSign=false",
+    "commit",
+    "-m",
+    "operator changed the selected checkout",
+  );
+  const returned = await returnClaim(request("return"), params);
+  expect(returned.status, await returned.clone().text()).toBe(200);
+  await vi.waitFor(
+    async () => {
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+      expect(run.status).toBe("Review");
+    },
+    { timeout: 15_000 },
+  );
+  const history = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.runId, runId));
+  expect(history).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        epoch: 2,
+        executionHostId: host.id,
+        executionWorkspaceId: handle,
+      }),
+    ]),
+  );
+  const attempts = await db
+    .select()
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.runId, runId));
+  expect(attempts).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        ownerUserId: session.userId,
+        claimHeadSha: base,
+      }),
+      expect.objectContaining({
+        nodeId: "validate",
+        status: "Succeeded",
+        stdout: "validation continued",
+      }),
+    ]),
+  );
+  const artifacts = await db
+    .select()
+    .from(artifactInstances)
+    .where(eq(artifactInstances.runId, runId));
+  expect(artifacts).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        producer: "takeover",
+        kind: "diff",
+        locator: { kind: "execution-object", objectId: expect.any(String) },
+      }),
+      expect.objectContaining({
+        producer: "takeover",
+        kind: "commit_set",
+        locator: { kind: "execution-object", objectId: expect.any(String) },
+      }),
+    ]),
+  );
+}, 90_000);
