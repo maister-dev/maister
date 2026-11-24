@@ -445,6 +445,12 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   both typechecks, contracts and docs/ERD validation.
 
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
+
+  The production split-user sweep reproduced a `path.resolve(null)` failure
+  while enumerating local agent materialization roots. The existing discovery
+  test now contains an addressed workspace row and verifies that valid local
+  roots remain discoverable. RED failed on the null path, GREEN passed all
+  four GC tests. Host-owned preservation and disposal remain open.
 - [ ] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
 
   The launch dialog shows the default and eligible supervisor names in
