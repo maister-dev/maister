@@ -40,9 +40,10 @@ vi.mock("next/server", async (original) => ({
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 // Collect and cancel inspect allocated children before their first dispatch.
-vi.mock("@/lib/scheduler/start-allocated-run", () => ({
-  startAllocatedRun: async () => ({ started: false, queuePosition: 1 }),
-}));
+vi.mock(
+  import("@/lib/scheduler/start-allocated-run"),
+  () => import("@/test-support/queued-allocated-run"),
+);
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/lib/supervisor-client")>();

@@ -40,6 +40,10 @@ let agentsRoot: string;
 let ctx: DelegationSeedCtx;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock(
+  import("@/lib/scheduler/start-allocated-run"),
+  () => import("@/test-support/queued-allocated-run"),
+);
 vi.mock("@/lib/scheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/scheduler")>();
 

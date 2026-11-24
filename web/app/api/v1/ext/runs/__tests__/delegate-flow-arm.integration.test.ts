@@ -61,6 +61,10 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 // stays a stable `Pending` with every delegation column set at INSERT, which is
 // what these cases are about. The one case that needs real admission behaviour
 // drives `promoteNextPending` explicitly through the unmocked import.
+vi.mock(
+  import("@/lib/scheduler/start-allocated-run"),
+  () => import("@/test-support/queued-allocated-run"),
+);
 vi.mock("@/lib/scheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/scheduler")>();
 

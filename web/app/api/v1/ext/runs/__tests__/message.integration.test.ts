@@ -45,9 +45,10 @@ let agentsRoot: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 // Newly delegated children queue here. The messaging cases explicitly drive their parked or live sessions.
-vi.mock("@/lib/scheduler/start-allocated-run", () => ({
-  startAllocatedRun: async () => ({ started: false, queuePosition: 1 }),
-}));
+vi.mock(
+  import("@/lib/scheduler/start-allocated-run"),
+  () => import("@/test-support/queued-allocated-run"),
+);
 
 // Supervisor seam: createSession returns a fake handle (spied so test 2 can
 // assert the resumeSessionId), sendPrompt is a no-op, and streamSession yields
