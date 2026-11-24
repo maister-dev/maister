@@ -34,7 +34,7 @@ import { findStalledEventStreams } from "../events/stream-health";
 import { mintPlacement } from "../placement";
 import { buildEnvelope } from "../ledger";
 import { recoverExecutionCommands } from "../recovery";
-import { advanceAddressedWorkspaceAdmission } from "../workspace-dispatch";
+import { advanceAddressedWorkspaceAdmission, dispatchQueuedWorkspaceCommand } from "../workspace-dispatch";
 import { ensureLocalExecutionHost } from "../registrar";
 import { createLocalDirectTransport } from "../transports/local-direct";
 import {
@@ -1356,17 +1356,82 @@ async function assertAddressedRequirement({
     });
     startRuntimeEventConsumer({ db, executionHostId: host.id, transport });
     startCanonicalProjectionWorker();
-    const stop = (await import("@/app/api/runs/[runId]/stop/route")).POST;
-    const stopped = await stop(new Request(`${web.origin}/api/runs/${runId}/stop`, { method: "POST" }), {
-      params: Promise.resolve({ runId }),
+    const reserveChild = async (branch: string) => {
+      const id = await seedRun(database!.db, { projectId: project.id, runKind: "flow", status: "Pending" });
+      await db.update(runs).set({ parentRunId: runId, rootRunId: runId }).where(eq(runs.id, id));
+      const owner = await db.transaction(async (tx) => {
+        const placement = await mintPlacement(tx, { runId: id, host, reason: "launch" });
+        await reserveHostWorkspace(tx, { host, assignment: placement }, {
+          projectId: project.id, branch, baseCommit: commit,
+        }, {
+          mode: "ownWorktree", repositoryId: project.id, commit, inputDigest: "9".repeat(64),
+        }, capture.filter(({ path }) => path === WORKSPACE_WORKLOAD_FILE));
+        return placement;
+      });
+      return { id, owner };
+    };
+    const { id: childId, owner: childAssignment } = await reserveChild("stop-active-child");
+    const materializedChild = await vi.waitFor(async () => {
+      await advanceAddressedWorkspaceAdmission(db, childId);
+      const [child] = await db.select().from(workspaces).where(eq(workspaces.runId, childId));
+      expect(child?.workspaceMaterializationGeneration).toBe(1);
+      return child;
+    }, { timeout: 10_000 });
+    await db.update(runs).set({ status: "Running" }).where(eq(runs.id, childId));
+    const childCheck = await reserveWorkspaceWorkload(db, {
+      runId: childId, assignmentId: childAssignment.id, operationKey: "child-stop-check",
+      workload: "check", declarationId: "stop-check",
     });
-    expect(stopped.status).toBe(200);
+    await dispatchQueuedWorkspaceCommand(db, { runId: childId, commandId: childCheck.id });
+    const childState = new DatabaseSync(join(supervisor.stateDir, "state.sqlite"), { readOnly: true });
+    let childPath: string;
+    let childGroup: number;
+    try {
+      const childWorkspace = childState.prepare("SELECT real_path AS path FROM workspaces WHERE id=?")
+        .get(materializedChild.executionWorkspaceId) as { path: string };
+      childPath = childWorkspace.path;
+      childGroup = await vi.waitFor(async () => {
+        expect(await readFile(join(childPath, ".stop-ready"), "utf8")).toBe("");
+        const receipt = childState.prepare(
+          "SELECT json_extract(body_json, '$.workspaceProcess.group') AS pgid FROM command_receipts WHERE command_id=?",
+        ).get(childCheck.id) as { pgid: number };
+        expect(receipt.pgid).toBeGreaterThan(1);
+        return receipt.pgid;
+      });
+    } finally {
+      childState.close();
+    }
+    const { id: pendingChildId } = await reserveChild("stop-pending-child");
+    const [pendingPrepare] = await listCommandsForRun(db, pendingChildId);
+    expect(pendingPrepare).toMatchObject({ state: "queued", kind: "workspace.prepare" });
+    await db.update(runs).set({ status: "WaitingOnChildren" }).where(eq(runs.id, runId));
+    const stop = (await import("@/app/api/runs/[runId]/stop/route")).POST;
+    const stopped = await (async () => {
+      try {
+        return await stop(new Request(`${web.origin}/api/runs/${runId}/stop`, { method: "POST" }), {
+          params: Promise.resolve({ runId }),
+        });
+      } finally {
+        await writeFile(join(childPath, ".stop-release"), "release");
+      }
+    })();
+    expect(stopped.status, await stopped.clone().text()).toBe(200);
     expect(await stopped.json()).toMatchObject({ runStatus: "Review", supervisorStopped: true });
     expect(await getCommand(db, stoppedWork.id)).toMatchObject({
       state: "succeeded",
       result: { processOutcome: "cancelled", quiescence: "proved" },
     });
     expect((await inspectProcessGroup(stopGroup.pgid)).state).toBe("retired");
+    expect((await inspectProcessGroup(childGroup)).state).toBe("retired");
+    expect(await getCommand(db, childCheck.id)).toMatchObject({
+      state: "succeeded",
+      result: { processOutcome: "cancelled", quiescence: "proved" },
+    });
+    expect(await db.select({ status: runs.status }).from(runs).where(eq(runs.id, childId)))
+      .toEqual([{ status: "Abandoned" }]);
+    expect(await db.select({ status: runs.status }).from(runs).where(eq(runs.id, pendingChildId)))
+      .toEqual([{ status: "Abandoned" }]);
+    expect(await transport.getWorkspaceCommandReceipt!(pendingPrepare.id)).toBeNull();
     const cancellations = (await listCommandsForRun(db, runId)).filter(({ kind }) => kind === "workspace.cancel");
     expect(cancellations).toHaveLength(2);
     expect(cancellations).toEqual(expect.arrayContaining([stoppedWork, undeliveredWork].map(({ id }) =>

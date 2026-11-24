@@ -3117,7 +3117,7 @@ export const executionAssignments = pgTable(
     ),
     addressedStopCheck: check(
       "execution_assignments_addressed_stop_check",
-      sql`((${t.addressedStopRequestedAt} IS NULL AND ${t.addressedStopRequestedBy} IS NULL) OR (${t.addressedStopRequestedAt} IS NOT NULL AND char_length(${t.addressedStopRequestedBy}) BETWEEN 1 AND 128 AND ${t.executionWorkspaceId} IS NOT NULL)) IS TRUE`,
+      sql`((${t.addressedStopRequestedAt} IS NULL AND ${t.addressedStopRequestedBy} IS NULL) OR (${t.addressedStopRequestedAt} IS NOT NULL AND char_length(${t.addressedStopRequestedBy}) BETWEEN 1 AND 128)) IS TRUE`,
     ),
     stateCheck: check(
       "execution_assignments_state_check",

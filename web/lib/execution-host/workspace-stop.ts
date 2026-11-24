@@ -2,8 +2,9 @@ import "server-only";
 
 import type { Db } from "./db";
 import type { ExecutionCommand } from "@/lib/db/schema";
+import type { Run } from "@/lib/db/schema";
 
-import { and, eq, isNull, notInArray } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { workspaceEvidenceDigest } from "../../../runtime/workspace-prepare";
@@ -32,11 +33,18 @@ const log = pino({
 
 export type AddressedStopClaim = Readonly<{
   runId: string;
+  taskId: string | null;
   projectId: string;
+  requestedBy: string;
   assignmentId: string;
   commands: readonly string[];
   alreadyStopped: boolean;
 }>;
+
+export const addressedFlowStopStates: readonly Run["status"][] = [
+  "Pending", "Running", "NeedsInput", "NeedsInputIdle", "WaitingOnChildren",
+  "Waiting", "HumanWorking", "Review", "Crashed",
+];
 
 function stopChanged(): MaisterError {
   return new MaisterError(
@@ -93,7 +101,13 @@ export async function claimAddressedFlowStop(
       )
       .for("no key update");
     if (!assignment) throw stopChanged();
-    const claim = { runId, projectId, assignmentId: assignment.id };
+    const claim = {
+      runId,
+      taskId: run.taskId,
+      projectId,
+      assignmentId: assignment.id,
+      requestedBy: assignment.addressedStopRequestedBy ?? userId,
+    };
     if (
       run.status === "Review" &&
       assignment.state === "released" &&
@@ -103,28 +117,9 @@ export async function claimAddressedFlowStop(
       return { ...claim, commands: [], alreadyStopped: true };
     if (
       assignment.state !== "active" ||
-      !assignment.executionWorkspaceId ||
-      (run.status !== "Running" && run.status !== "NeedsInput")
+      !addressedFlowStopStates.includes(run.status)
     )
       throw stopChanged();
-    const [activeChild] = await tx
-      .select({ id: runs.id })
-      .from(runs)
-      .where(
-        and(
-          eq(runs.parentRunId, runId),
-          notInArray(runs.status, ["Done", "Failed", "Crashed", "Abandoned"]),
-        ),
-      )
-      .limit(1);
-    if (activeChild)
-      throw new MaisterError(
-        "CONFLICT",
-        "Stop requires retirement of this addressed Run's child first",
-        {
-          details: { reason: "addressed_stop_child_active" },
-        },
-      );
     const [workspace] = await tx
       .select({ generation: workspaces.workspaceGeneration })
       .from(workspaces)
@@ -132,7 +127,7 @@ export async function claimAddressedFlowStop(
         and(
           eq(workspaces.runId, runId),
           eq(workspaces.executionHostId, assignment.executionHostId),
-          eq(workspaces.executionWorkspaceId, assignment.executionWorkspaceId),
+          sql`${workspaces.executionWorkspaceId} IS NOT DISTINCT FROM ${assignment.executionWorkspaceId}`,
           eq(workspaces.ownershipKind, "host_owned"),
           isNull(workspaces.removedAt),
         ),
@@ -181,15 +176,16 @@ export async function claimAddressedFlowStop(
     const pending: string[] = [];
     for (const target of commands) {
       if (
-        (target.kind === "session.create" || target.kind === "workspace.checkpoint" || target.kind === "workspace.restore") &&
+        ["session.create", "workspace.prepare", "workspace.materialize", "workspace.checkpoint", "workspace.restore"].includes(target.kind) &&
         target.state === "queued" &&
         target.attempts === 0
       ) {
         await markFailed(tx, target.id, 0, {
-          reason: target.kind === "session.create" ? "addressed_stop_before_session_delivery" : "addressed_stop_before_git_delivery",
+          reason: target.kind === "session.create" ? "addressed_stop_before_session_delivery" : "addressed_stop_before_workspace_delivery",
         });
       }
       if (target.kind !== "workspace.run") continue;
+      if (!assignment.executionWorkspaceId) throw stopChanged();
       const previous = cancellations.get(target.id);
       if (previous) {
         pending.push(previous.id);
@@ -236,7 +232,7 @@ export async function settleAddressedWorkloadStops(
       .where(eq(executionCommands.executionAssignmentId, claim.assignmentId));
     const pendingExecution = commands.some(
       ({ kind, state }) =>
-        (kind === "session.create" || kind === "workspace.checkpoint" || kind === "workspace.restore") &&
+        ["session.create", "workspace.prepare", "workspace.materialize", "workspace.checkpoint", "workspace.restore"].includes(kind) &&
         (state === "accepted" || state === "delivering" || state === "queued"),
     );
     const cancellations = commands.filter(({ id }) =>

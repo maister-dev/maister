@@ -3034,6 +3034,7 @@ export async function recordProjectRunStopped(
     endedAt: Date;
     reason: string;
     expectedRunStatus?: "Pending";
+    addressedOwner?: Readonly<{ assignmentId: string; status: (typeof runs.$inferSelect)["status"] }>;
   }>,
 ): Promise<void> {
   const rows = await tx
@@ -3049,7 +3050,10 @@ export async function recordProjectRunStopped(
     .where(
       and(
         eq(runs.id, args.runId),
-        args.expectedRunStatus === "Pending"
+        args.addressedOwner
+          ? and(eq(runs.executionAssignmentId, args.addressedOwner.assignmentId),
+              eq(runs.status, args.addressedOwner.status))
+          : args.expectedRunStatus === "Pending"
           ? and(
               eq(runs.status, args.expectedRunStatus),
               eq(runs.runKind, "flow"),

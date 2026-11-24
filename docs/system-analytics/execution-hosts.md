@@ -1227,9 +1227,16 @@ Never claim retirement from a missing session or a request timeout. Once
 canonical workload and ACP retirement are verified, reuse project Flow
 stop-to-Review and release the assignment in one transaction. A repeated
 request or the normal recovery sweep can resume the retained Stop while the
-operator's current authority still holds. This path covers `Running` and
-`NeedsInput` with no live child. Shared and dependent work needs coordinated
-retirement before the parent can stop.
+operator's current authority still holds.
+
+Migration `0385` extends the Stop fence to the owner's Run tree. It permits
+claiming a Pending child before it has a workspace handle and prevents new
+execution commands under the stopped ancestor. A never-delivered child
+checkout command is settled without contacting the host. An uncertain
+command keeps its original assignment for reconciliation. Workload and ACP
+retirement for an active addressed child precedes its Abandoned transition.
+The parent reaches Review only after the subtree settles. The first actor,
+child assignment and actual host receipts remain attributable across retries.
 
 JSON commands are limited to 1 MiB and each strict variant explicitly
 accepts its input fields. IDs use the existing bounded host key, Run ID

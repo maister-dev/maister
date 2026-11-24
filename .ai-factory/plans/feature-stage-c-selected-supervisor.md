@@ -376,7 +376,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Darwin arm64 with Node 24.15.0. Both workspace typechecks passed. The
   C-07 checks use the selected-host boundary. G2 separately qualifies the
   second registered supervisor in the two-host topology.
-- [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
+- [x] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. Verify a real project check via the selected host and Web without opening the host filesystem. T14 repeats the check with B as the non-default host. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
 
   **C-08 workload transport checkpoint.** RED reached a 404 when a
   prepared local supervisor was asked to execute a sealed declaration.
@@ -517,6 +517,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   the sealed JSON in the graph completion record and drives the verified
   result through recovery, the gate and Review. Ten integration cases
   passed, including the existing local output path.
+
+  **C-08 tree Stop.** RED observed an active child process group after
+  the parent stop refusal was removed. GREEN retires real parent and child
+  groups, preserves the original requester and receipt, cancels a pending
+  child's prepare before delivery, and exposes Review only after the
+  descendants are quiet. PostgreSQL 0385 fences new descendant commands
+  against each ancestor's Stop and preserves historical Stop rows during
+  upgrade. Four selected-host integrations and ten PostgreSQL ownership
+  and upgrade cases passed on Darwin arm64 with Node 24.15.0.
 
 ### C3–C4 — review, board and single-host qualification
 

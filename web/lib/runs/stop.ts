@@ -3,6 +3,7 @@ import "server-only";
 import type { Run } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
 import type { StopWorkbenchRunResult } from "@/lib/workbench-lifecycle/service";
+import type { AddressedStopClaim } from "@/lib/execution-host/workspace-stop";
 
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import pino from "pino";
@@ -33,7 +34,10 @@ import {
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { createExecutionHosts } from "@/lib/execution-host";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import { cascadeAbandonRunTreeAndStopSessions } from "@/lib/orchestrator/cascade";
+import { CASCADE_NON_TERMINAL_RUN_STATUSES, getRunSubtreeIds } from "@/lib/queries/run";
 import {
+  addressedFlowStopStates,
   claimAddressedFlowStop,
   settleAddressedWorkloadStops,
 } from "@/lib/execution-host/workspace-stop";
@@ -48,6 +52,56 @@ import {
 
 const log = pino({ name: "run-stop", level: process.env.LOG_LEVEL ?? "info" });
 
+async function retireAddressedFlowExecution(
+  db: Db,
+  claim: AddressedStopClaim,
+): Promise<boolean> {
+  await assertTaskLaunchUserAuthority(db, claim.projectId, claim.requestedBy, ["recoverRun"]);
+  await settleAddressedWorkloadStops(db, claim);
+  const hosts = createExecutionHosts({ db });
+  const client = await hosts.forAssignment({ id: claim.assignmentId });
+  let supervisorStopped = claim.commands.length > 0;
+  for (const session of await client.sessionsForRun()) {
+    if (session.status !== "live") continue;
+    await assertTaskLaunchUserAuthority(db, claim.projectId, claim.requestedBy, [
+      "recoverRun",
+    ]);
+    await client.deleteSession(session.sessionId);
+    supervisorStopped = true;
+  }
+  const identity = { id: claim.runId, executionAssignmentId: claim.assignmentId };
+  await assertAgentExecutionQuiescent(db, identity, undefined, hosts);
+  return supervisorStopped;
+}
+
+async function retireAddressedChild(
+  db: Db,
+  child: Run,
+  userId: string,
+): Promise<void> {
+  const [assignment] = child.executionAssignmentId
+    ? await db.select().from(executionAssignments).where(eq(executionAssignments.id, child.executionAssignmentId))
+    : [];
+  if (assignment?.state === "active") {
+    const claim = await claimAddressedFlowStop(db, child.id, userId);
+    if (!claim.alreadyStopped) await retireAddressedFlowExecution(db, claim);
+    return;
+  }
+  await assertAgentExecutionQuiescent(db, child);
+  if (assignment) {
+    const [uncertain] = await db.select({ id: executionCommands.id })
+      .from(executionCommands).where(and(
+        eq(executionCommands.executionAssignmentId, assignment.id),
+        eq(executionCommands.kind, "workspace.run"),
+        sql`(${executionCommands.result}->>'quiescence' IS DISTINCT FROM 'proved'
+          AND ${executionCommands.state} NOT IN ('failed', 'fenced'))`,
+      )).limit(1);
+    if (uncertain)
+      throw new MaisterError("CONFLICT", "An addressed child still needs workload retirement evidence",
+        { details: { reason: "addressed_stop_pending", runId: child.id } });
+  }
+}
+
 async function stopAddressedFlowForUser(
   db: Db,
   userId: string,
@@ -56,20 +110,13 @@ async function stopAddressedFlowForUser(
   const claim = await claimAddressedFlowStop(db, runId, userId);
   if (claim.alreadyStopped)
     return { ok: true, runId, runStatus: "Review", supervisorStopped: false };
-  await settleAddressedWorkloadStops(db, claim);
-  const hosts = createExecutionHosts({ db });
-  const client = await hosts.forAssignment({ id: claim.assignmentId });
-  let supervisorStopped = claim.commands.length > 0;
-  for (const session of await client.sessionsForRun()) {
-    if (session.status !== "live") continue;
-    await assertTaskLaunchUserAuthority(db, claim.projectId, userId, [
-      "recoverRun",
-    ]);
-    await client.deleteSession(session.sessionId);
-    supervisorStopped = true;
-  }
+  await cascadeAbandonRunTreeAndStopSessions(runId, claim.taskId, "user_stopped", {
+    db,
+    logLabel: "[addressed-stop]",
+    confirmAddressedChildRetirement: (child) => retireAddressedChild(db, child, claim.requestedBy),
+  });
+  const supervisorStopped = await retireAddressedFlowExecution(db, claim);
   const identity = { id: runId, executionAssignmentId: claim.assignmentId };
-  await assertAgentExecutionQuiescent(db, identity, undefined, hosts);
   await db.transaction(async (tx) => {
     const [run] = await tx
       .select()
@@ -93,7 +140,7 @@ async function stopAddressedFlowForUser(
       .from(executionAssignments)
       .where(eq(executionAssignments.id, claim.assignmentId))
       .for("no key update");
-    await assertTaskLaunchUserAuthority(tx, claim.projectId, userId, [
+    await assertTaskLaunchUserAuthority(tx, claim.projectId, claim.requestedBy, [
       "recoverRun",
     ]);
     if (
@@ -110,11 +157,17 @@ async function stopAddressedFlowForUser(
           details: { reason: "addressed_stop_owner_changed" },
         },
       );
+    const descendants = await getRunSubtreeIds(runId, tx);
+    const [child] = descendants.length ? await tx.select({ id: runs.id }).from(runs)
+      .where(and(inArray(runs.id, descendants), inArray(runs.status, CASCADE_NON_TERMINAL_RUN_STATUSES))).limit(1) : [];
+    if (child) throw new MaisterError("CONFLICT", "An addressed child still needs retirement",
+      { details: { reason: "addressed_stop_pending", runId: child.id } });
     await assertAgentSessionBindingsQuiescent(tx, identity);
     await recordProjectRunStopped(tx, {
       runId,
       endedAt: new Date(),
       reason: "run stopped by operator",
+      addressedOwner: { assignmentId: claim.assignmentId, status: run.status },
     });
   });
   try {
@@ -149,11 +202,22 @@ export async function recoverAddressedFlowStop(db: Db): Promise<void> {
       and(
         eq(executionAssignments.state, "active"),
         isNotNull(executionAssignments.addressedStopRequestedAt),
-        inArray(runs.status, ["Running", "NeedsInput"]),
+        inArray(runs.status, addressedFlowStopStates),
+        sql`NOT EXISTS (
+          WITH RECURSIVE ancestors AS (
+            SELECT id,parent_run_id,execution_assignment_id FROM runs WHERE id=${runs.parentRunId}
+            UNION
+            SELECT parent.id,parent.parent_run_id,parent.execution_assignment_id
+            FROM runs parent JOIN ancestors child ON parent.id=child.parent_run_id
+          )
+          SELECT 1 FROM ancestors
+          JOIN execution_assignments owner ON owner.id=ancestors.execution_assignment_id
+          WHERE owner.state='active' AND owner.addressed_stop_requested_at IS NOT NULL
+        )`,
         sql`NOT EXISTS (SELECT 1 FROM ${executionCommands} command
       WHERE command.execution_assignment_id = ${executionAssignments.id}
       AND ((command.kind = 'workspace.cancel' AND command.state <> 'succeeded')
-        OR (command.kind IN ('session.create', 'workspace.checkpoint', 'workspace.restore')
+        OR (command.kind IN ('session.create', 'workspace.prepare', 'workspace.materialize', 'workspace.checkpoint', 'workspace.restore')
           AND command.state IN ('queued', 'delivering', 'accepted'))))`,
       ),
     )

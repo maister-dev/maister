@@ -25,7 +25,7 @@ import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { encodeWorkspaceInputCapture } from "./workspace-input-capture";
 import { hostForAssignment } from "./resolver";
 
-import { runs, workspaceInputCaptures, workspaces } from "@/lib/db/schema";
+import { executionAssignments, runs, workspaceInputCaptures, workspaces } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 type WorkspaceMetadata = Pick<
@@ -299,6 +299,10 @@ export async function reserveHostWorkspace(
 
 export function workspacePreparationReadySql(runId: SQL): SQL {
   return sql`NOT EXISTS (
+    SELECT 1 FROM ${runs} preparing_run
+    JOIN ${executionAssignments} owner ON owner.id=preparing_run.execution_assignment_id
+    WHERE preparing_run.id=${runId} AND owner.state='active' AND owner.addressed_stop_requested_at IS NOT NULL
+  ) AND NOT EXISTS (
     SELECT 1 FROM ${workspaces} preparation
     LEFT JOIN ${workspaceInputCaptures} capture ON capture.workspace_id = preparation.id
     WHERE preparation.run_id = ${runId}

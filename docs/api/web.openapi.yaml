@@ -12032,6 +12032,12 @@ paths:
         via `listSessions()` and calls `deleteSession(sessionId)` when found, then
         clears live ACP/current-step handles.
 
+        An addressed project Flow retains the first Stop actor against its
+        assignment. The handler waits for owning-host retirement evidence and
+        fences descendant dispatch. A stopped descendant is abandoned before
+        the parent enters Review. Recoverable uncertainty leaves the retained
+        Stop pending.
+
         - **flow** (Implemented) → `runs.status = Review`, active assignments
           closed.
           For an addressed project Flow in `Running` or `NeedsInput`, Stop

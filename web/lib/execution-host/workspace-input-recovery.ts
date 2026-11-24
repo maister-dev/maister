@@ -56,6 +56,7 @@ export async function recoverWorkspaceInputCaptures(
         eq(runs.status, "Pending"),
         eq(workspaces.ownershipKind, "host_owned"),
         eq(executionAssignments.state, "active"),
+        isNull(executionAssignments.addressedStopRequestedAt),
         isNotNull(executionAssignments.executionWorkspaceId),
         isNull(workspaces.workspaceMaterializationGeneration),
         isNull(workspaces.removedAt),
@@ -146,6 +147,7 @@ export async function recoverWorkspacePreflight(
         eq(runs.status, "Pending"),
         eq(workspaces.ownershipKind, "host_owned"),
         eq(executionAssignments.state, "active"),
+        isNull(executionAssignments.addressedStopRequestedAt),
         isNotNull(workspaces.workspaceMaterializationGeneration),
         isNull(workspaces.removedAt),
         sql`${declaration} IS NOT NULL AND NOT EXISTS (
