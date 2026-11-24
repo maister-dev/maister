@@ -15,6 +15,9 @@ const buttonClass =
 const fieldClass = "block w-full rounded-lg border border-line p-2 font-mono";
 
 type DialogKind = "edit" | "recover-setup";
+const coordinateFields = ["source", "version", "path"] as const;
+
+type CoordinateField = (typeof coordinateFields)[number];
 
 function DeclarationRow({
   slug,
@@ -31,6 +34,9 @@ function DeclarationRow({
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [invalidField, setInvalidField] = useState<CoordinateField | null>(
+    null,
+  );
   const base = `/api/projects/${encodeURIComponent(slug)}/dependency-declarations/${encodeURIComponent(row.id)}`;
 
   async function send(
@@ -39,6 +45,7 @@ function DeclarationRow({
   ): Promise<void> {
     setBusy(true);
     setNotice(null);
+    setInvalidField(null);
     try {
       const response = await fetch(
         action === "edit" ? base : `${base}/${action}`,
@@ -63,6 +70,14 @@ function DeclarationRow({
                 : "conflict",
           ),
         );
+      } else if (response.status === 422 && action === "edit") {
+        const failure = await response.json();
+        const field = coordinateFields.find(
+          (key) => key === failure.details?.field,
+        );
+
+        if (field) setInvalidField(field);
+        else setNotice(t("refused"));
       } else setNotice(t("refused"));
       router.refresh();
     } catch {
@@ -136,7 +151,11 @@ function DeclarationRow({
             className={buttonClass}
             disabled={busy}
             type="button"
-            onClick={() => setDialog({ kind: "edit", snapshot: row })}
+            onClick={() => {
+              setInvalidField(null);
+              setNotice(null);
+              setDialog({ kind: "edit", snapshot: row });
+            }}
           >
             {t("edit")}
           </button>
@@ -192,17 +211,31 @@ function DeclarationRow({
               className="space-y-2"
               onSubmit={(event) => edit(event, dialog.snapshot.generation)}
             >
-              {(["source", "version", "path"] as const).map((field) => (
+              {coordinateFields.map((field) => (
                 <label key={field} className="block">
                   {t(field)}
                   <input
+                    aria-describedby={
+                      field === invalidField
+                        ? `dependency-${row.id}-error`
+                        : undefined
+                    }
+                    aria-invalid={field === invalidField || undefined}
                     className={fieldClass}
                     defaultValue={dialog.snapshot[field] ?? ""}
                     name={field}
                     required={field !== "path"}
+                    onChange={() => {
+                      if (field === invalidField) setInvalidField(null);
+                    }}
                   />
                 </label>
               ))}
+              {invalidField && (
+                <p id={`dependency-${row.id}-error`} role="alert">
+                  {t(`validation.${invalidField}`)}
+                </p>
+              )}
               <button className={buttonClass} disabled={busy} type="submit">
                 {t("save")}
               </button>

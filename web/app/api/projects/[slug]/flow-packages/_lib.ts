@@ -73,9 +73,14 @@ export async function parseAuthorizedJson<T>(args: {
   try {
     return args.schema.parse(await args.req.json());
   } catch (err) {
+    const field = err instanceof z.ZodError ? err.issues[0]?.path[0] : null;
+
     throw new MaisterError(
       "CONFIG",
-      `invalid ${args.method} body: ${err instanceof Error ? err.message : String(err)}`,
+      err instanceof z.ZodError
+        ? `invalid ${args.method} body: ${err.issues[0]?.message ?? "schema validation failed"}`
+        : `invalid ${args.method} JSON body`,
+      typeof field === "string" ? { details: { field } } : undefined,
     );
   }
 }

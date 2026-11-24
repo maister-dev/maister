@@ -16094,7 +16094,22 @@ paths:
                 oneOf:
                   - { $ref: "#/components/schemas/ActivePackageProjectPrecondition" }
                   - { $ref: "#/components/schemas/ProjectDependencyConflict" }
-        "422": { $ref: "#/components/responses/Config" }
+        "422":
+          description: Invalid JSON, an ineligible declaration kind, or an invalid editable field. For field errors details.field identifies the input to correct.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: {type: string, enum: [CONFIG]}
+                  message: {type: string}
+                  details:
+                    type: object
+                    required: [field]
+                    properties:
+                      field: {type: string, enum: [source, version, path, expectedGeneration]}
+              example: {code: CONFIG, message: "Invalid package path.", details: {field: path}}
 
   /api/projects/{slug}/dependency-declarations/{declarationId}/retry:
     post:
@@ -38070,9 +38085,22 @@ components:
       required: [expectedGeneration, source, version]
       properties:
         expectedGeneration: {type: integer, minimum: 1}
-        source: {type: string, minLength: 1}
-        version: {type: string, minLength: 1}
-        path: {type: string, minLength: 1}
+        source:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Absolute local path, local file URL, HTTP(S), SSH URL or user@host:path Git remote. Control characters are forbidden. URLs reject whitespace, backslashes, query strings and fragments. HTTP(S) credentials and SSH passwords are forbidden. An explicit network port must be at most 65535.
+        version:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^(?![-/])(?!.*\.\.)[A-Za-z0-9._+/-]+$'
+        path:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^(?!\.{1,2}(?:/|$))(?!.*\/\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$'
+          description: Relative package directory. Omit the property to clear the previous path and select the repository root.
       example: {expectedGeneration: 1, source: "https://example.org/team/packages", version: "core/v1.1", path: packages/core}
     RetryProjectDependency:
       type: object
@@ -38119,7 +38147,7 @@ components:
         effectiveAttachmentId: {type: string, nullable: true}
         readiness:
           type: string
-          enum: [unresolved, awaiting_trust, setup_failed, recovery_required, installed]
+          enum: [unresolved, awaiting_trust, setup_pending, setup_failed, recovery_required, installed]
           description: Installation readiness. Run admission also checks runner bindings and current runtime policy.
         actions:
           type: object

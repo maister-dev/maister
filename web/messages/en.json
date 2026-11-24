@@ -4543,6 +4543,11 @@
     "setupLive": "The previous setup process is still running.",
     "conflict": "The declaration changed. Review its refreshed state before trying again.",
     "refused": "The server refused this change. Check permissions and coordinates.",
+    "validation": {
+      "source": "Enter an absolute local directory or a Git URL of up to 4096 characters. For remote URLs, remove passwords, access tokens, spaces, query parameters and fragments. An explicit network port must be at most 65535.",
+      "version": "Use up to 128 letters (A–Z, a–z), digits or . _ + / -. The version cannot contain two consecutive dots or start with / or -.",
+      "path": "Enter a relative directory of up to 256 characters, such as packages/core. Use letters (A–Z, a–z), digits, dots, underscores or hyphens. Remove empty, . or .. segments. Leave the field empty for the repository root."
+    },
     "requestFailed": "The request could not be completed. Refresh the status before retrying.",
     "kinds": {
       "package": "Package",
@@ -4560,6 +4565,7 @@
       "unresolved": "No effective revision",
       "installed": "Installed",
       "awaiting_trust": "Awaiting trust",
+      "setup_pending": "Waiting for setup to finish",
       "setup_failed": "Setup failed",
       "recovery_required": "Setup requires verification"
     },

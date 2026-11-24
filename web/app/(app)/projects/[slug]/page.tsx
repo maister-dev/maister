@@ -3,7 +3,7 @@ import type { ReactElement } from "react";
 
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { IncomingRequests } from "@/components/agents/incoming-requests";
 import { ProjectWorkspaces } from "@/components/projects/project-workspaces";
@@ -183,6 +183,8 @@ export default async function ProjectBoardPage({
   const user = await getSessionUser();
 
   if (!user) notFound();
+  if (user.accountStatus !== "active") redirect("/login");
+  if (user.mustChangePassword) redirect("/change-password");
 
   const project = await getProjectBySlug(slug);
 
@@ -218,7 +220,7 @@ export default async function ProjectBoardPage({
     ["remote", "no-remote", "initialized"].includes(registrationStatus ?? "");
   const declarations =
     isAdmin && (tab === "packages" || tab === "settings")
-      ? await getProjectDependencyDeclarations(project.id, canTrustPackages)
+      ? await getProjectDependencyDeclarations(project.id)
       : [];
   const tNewTask = await getTranslations("newtask");
   const tCommon = await getTranslations("common");

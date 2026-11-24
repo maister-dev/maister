@@ -251,6 +251,43 @@ it("submits retry for the exact failed declaration displayed by the server", asy
   });
 });
 
+it("keeps a rejected edit open and associates the translated correction with its field", async () => {
+  vi.stubGlobal("fetch", fetchMock);
+  fetchMock.mockClear().mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        code: "CONFIG",
+        details: { field: "version" },
+      }),
+      { status: 422 },
+    ),
+  );
+  const host = render(attachment, [failedPin]);
+
+  await click(
+    [...host.querySelectorAll("button")].find(
+      (b) => b.textContent === "dependencies.edit",
+    )!,
+  );
+  const form = document.body.querySelector<HTMLFormElement>(
+    '[role="dialog"] form',
+  )!;
+  const field = form.querySelector<HTMLInputElement>('[name="version"]')!;
+
+  field.value = "release candidate";
+  await act(async () => {
+    form.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+  });
+  expect(field.value).toBe("release candidate");
+  expect(field.getAttribute("aria-invalid")).toBe("true");
+  expect(
+    document.getElementById(field.getAttribute("aria-describedby")!)
+      ?.textContent,
+  ).toBe("dependencies.validation.version");
+});
+
 it("submits the reviewed setup witness when server refreshes the row during confirmation", async () => {
   vi.stubGlobal("fetch", fetchMock);
   fetchMock

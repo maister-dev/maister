@@ -283,17 +283,27 @@ describe("project dependency declaration commands (AC06)", () => {
       version: "v2",
       roleRefs: ["reviewer"],
     });
-    for (const source of [
-      "https://admin:token@example.org/x",
-      "https://example.org/my repo",
-      "https://example.org:65536/x",
-    ]) {
+    for (const [field, value] of [
+      ["source", "https://admin:token@example.org/x"],
+      ["source", "https://example.org/my repo"],
+      ["source", "https://example.org:65536/x"],
+      ["version", "release candidate"],
+      ["path", "../bundle"],
+    ] as const) {
       const refused = await PATCH(
-        jsonRequest("/edit", { ...input, expectedGeneration: 2, source }),
+        jsonRequest("/edit", {
+          ...input,
+          expectedGeneration: 2,
+          [field]: value,
+        }),
         ctx,
       );
+
       expect(refused.status).toBe(422);
-      expect(await refused.json()).toMatchObject({ code: "CONFIG" });
+      const body = await refused.json();
+
+      expect(body).toMatchObject({ code: "CONFIG", details: { field } });
+      expect(JSON.stringify(body)).not.toContain(value);
     }
     const { head: flow } = await failedDeclaration("flow");
 

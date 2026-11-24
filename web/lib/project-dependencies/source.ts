@@ -42,6 +42,7 @@ export function assertDependencySource(source: string): void {
     new MaisterError(
       "CONFIG",
       "Use an absolute local path or supported Git URL without credentials, query parameters or fragments.",
+      { details: { field: "source" } },
     );
 
   if (!source || [...source].length > 4096 || controls.test(source))

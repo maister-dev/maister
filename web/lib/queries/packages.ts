@@ -15,6 +15,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { readProjectDeclarations } from "@/lib/project-dependencies/read";
+import { requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { loadFlowManifest } from "@/lib/config";
@@ -64,11 +65,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export function getProjectDependencyDeclarations(
-  projectId: string,
-  mayInstall: boolean,
-) {
-  return readProjectDeclarations(getDb(), projectId, mayInstall);
+export async function getProjectDependencyDeclarations(projectId: string) {
+  const { user } = await requireProjectAction(projectId, "managePackages");
+
+  return readProjectDeclarations(getDb(), projectId, user.role === "admin");
 }
 
 export type ProjectPackageVersionTarget = PackageVersionTarget & {
