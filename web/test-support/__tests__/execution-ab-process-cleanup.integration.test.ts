@@ -26,6 +26,7 @@ import { createServer } from "node:net";
 
 import { describe, expect, it } from "vitest";
 
+import { startOwnedFixture } from "@/test-support/owned-fixture";
 import {
   createInvocation,
   invocationEnvironment,
@@ -876,6 +877,64 @@ async function assertMissingBuildLockIdentity(
 }
 
 describe("S5.2 invocation process ownership", () => {
+  it("O-drain: graceful fixture stop lets an in-flight ownership inspection finish", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "s52-fixture-drain-"));
+    const invocation = await createInvocation(root);
+    const logFile = path.join(root, "service.log");
+    const inspector = `
+      process.on("disconnect", () => process.exit(0));
+      process.send("inspecting");
+    `;
+    const service = `
+      const { spawn } = require("node:child_process");
+      const inspector = spawn(process.execPath, ["-e", process.argv[1]], {
+        stdio: ["ignore", "ignore", "inherit", "ipc"],
+      });
+      process.on("SIGTERM", () => {
+        if (inspector.connected) inspector.disconnect();
+      });
+      inspector.on("message", message => process.send(message));
+      inspector.on("exit", (code, signal) => process.exit(signal ? 1 : code));
+    `;
+
+    try {
+      await writeFile(logFile, "");
+      const child = spawn(process.execPath, ["-e", service, inspector], {
+        detached: true,
+        env: {
+          ...process.env,
+          ...(await fixtureProcessEnvironment(invocation)),
+        },
+        stdio: ["ignore", "ignore", "inherit", "ipc"],
+      });
+      const inspecting = once(child, "message").then(([message]) => message);
+      const fixture = await startOwnedFixture({
+        child,
+        invocation,
+        role: "web",
+        root,
+        logFile,
+        bootId: "drain",
+        killGraceMs: 5_000,
+        ready: async (exited) => {
+          expect(await Promise.race([inspecting, exited])).toBe("inspecting");
+
+          return undefined;
+        },
+      });
+
+      await fixture.kill("SIGTERM");
+      expect(await fixture.outcome).toEqual({
+        kind: "observed",
+        code: 0,
+        signal: null,
+      });
+    } finally {
+      await sweepInvocation(invocation);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("O-build-lock: a proved dead owner is reclaimed and the verified artifact is reused", async () => {
     const directory = await mkdtemp(
       path.join(

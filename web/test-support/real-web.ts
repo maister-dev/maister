@@ -21,7 +21,6 @@ import {
   readLogTail,
   preserveFixtureLog,
   logInvocation,
-  signalInvocationProcess,
 } from "./process-invocation";
 import {
   retryFixturePortAllocation,
@@ -408,10 +407,6 @@ async function startRealWebAttempt(options: RealWebOptions): Promise<RealWeb> {
     bootId: `${buildId}:${child.pid ?? -1}`,
     killGraceMs: 30_000,
     outcome: application?.outcome,
-    gracefulSignal: application
-      ? (identity, signal) =>
-          signalInvocationProcess(invocation, identity, signal)
-      : undefined,
     ready: async (exited: Promise<number | null>) => {
       if (application)
         await waitForLinuxApplication(
