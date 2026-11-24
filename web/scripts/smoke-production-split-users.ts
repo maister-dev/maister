@@ -22,6 +22,7 @@ const useChrome = process.argv.includes("--chrome");
 const useSecondSupervisor = process.argv.includes("--second-supervisor");
 const addressedBuild = process.argv.includes("--addressed-build");
 const addressedStopTaskTitle = "Stop an accepted private workload";
+const addressedReworkTaskTitle = "Restore the selected workspace for rework";
 
 type SeededTarget = {
   projectId: string;
@@ -30,6 +31,7 @@ type SeededTarget = {
   repoPath: string;
   baseCommit?: string;
   stopTaskId?: string;
+  reworkTaskId?: string;
 };
 
 function fixtureOutput(stdout: string, marker: string): string {
@@ -148,6 +150,7 @@ ${adapterScript}EOF
     let baseCommit;
     let manifest;
     let stopTaskId;
+    let reworkTaskId;
     if (${addressedBuild}) {
       await db.update(platformAcpRunners).set(testPlatformRunnerRow(runnerId,"codex")).where(eq(platformAcpRunners.id,runnerId));
       await db.update(projects).set({deliveryPolicyDefault:{strategy:"publish_branch",push:"on_success",trigger:"manual",targetBranch:"main"}}).where(eq(projects.id,project.projectId));
@@ -195,8 +198,22 @@ while :; do sleep 1; done`)}},
       }});
       stopTaskId = stopTask.taskId;
       await db.update(tasks).set({title:${JSON.stringify(addressedStopTaskTitle)}}).where(eq(tasks.id,stopTaskId));
+      const reworkTask = await seedFlowTask(db,{projectId:project.projectId,installedPath:"/s53/shared",terminalDelayMs:0,manifest:{
+        schemaVersion:1,name:"addressed-rework",nodes:[
+          {id:"work",type:"cli",action:{command:${JSON.stringify(`set -eu
+test ! -e abandoned-attempt.txt
+test ! -e changed-between-attempts.txt
+printf '%s' "{{ review_comments ?? '' }}" > /dev/null
+printf 'reviewed change\\n' > abandoned-attempt.txt`)}},transitions:{success:"review"}},
+          {id:"review",type:"human",finish:{human:{role:"maintainer",decisions:["approve","rework"],commentsVar:"review_comments"}},
+           transitions:{approve:"done",rework:"work"},
+           rework:{allowedTargets:["work"],workspacePolicies:["fresh-attempt"],maxLoops:2,commentsVar:"review_comments"}}
+        ]
+      }});
+      reworkTaskId = reworkTask.taskId;
+      await db.update(tasks).set({title:${JSON.stringify(addressedReworkTaskTitle)}}).where(eq(tasks.id,reworkTaskId));
     }
-    console.log("S53_SEED:"+JSON.stringify({...project,...task,baseCommit,stopTaskId}));
+    console.log("S53_SEED:"+JSON.stringify({...project,...task,baseCommit,stopTaskId,reworkTaskId}));
     await closeDb();
   `;
   const seedOut = await docker(
@@ -1024,6 +1041,105 @@ ${adapterScript}EOF
       hostId: selectedHost.id,
       pid,
       processGroup,
+    });
+    assert(witness.reworkTaskId);
+    const reworkRunId = await launchFromBoard(
+      witness.reworkTaskId,
+      selectedHost,
+      addressedReworkTaskTitle,
+    );
+    await page.goto(`/runs/${reworkRunId}`);
+    const rework = page.getByRole("button", {
+      name: "Send back with comments",
+      exact: true,
+    });
+    await expect(rework).toBeVisible({ timeout: 30_000 });
+    const working = await ownedCheckoutForRun(reworkRunId);
+    assert(working);
+    assert.equal(
+      await inContainer(primary.user, [
+        "cat",
+        working.path + "/abandoned-attempt.txt",
+      ]),
+      "reviewed change",
+    );
+    await inContainer(primary.user, [
+      "sh",
+      "-ec",
+      'printf "%s" "discarded under explicit fresh-attempt policy" > "$1"',
+      "sh",
+      working.path + "/changed-between-attempts.txt",
+    ]);
+    await page
+      .locator("#hitl-review-comments")
+      .fill("Start from the accepted Git checkpoint.");
+    await rework.click();
+    const reworkResponse = page.waitForResponse((response) => {
+      const pathname = new URL(response.url()).pathname;
+      return (
+        pathname.startsWith(`/api/runs/${reworkRunId}/hitl/`) &&
+        pathname.endsWith("/respond") &&
+        response.request().method() === "POST"
+      );
+    });
+    await page.getByTestId("review-feedback-preview-confirm").click();
+    const applied = await reworkResponse;
+    assert.equal(applied.status(), 200, await applied.text());
+    note("addressed-rework-accepted", {
+      runId: reworkRunId,
+      response: await applied.json(),
+      decision: applied.request().postDataJSON().response,
+    });
+    const restored = await poll(
+      async () => {
+        const { rows } = await db.pool.query<{
+          checkpoint_ref: string;
+          command_id: string;
+          execution_host_id: string;
+        }>(
+          `select first.checkpoint_ref, r.id as command_id, r.execution_host_id
+         from node_attempts first join node_attempts second
+           on second.run_id=first.run_id and second.node_id=first.node_id and second.attempt=2
+         join execution_commands r on r.run_id=first.run_id and r.kind='workspace.restore'
+           and r.payload->>'checkpointId'=split_part(first.checkpoint_ref, ':', 2)
+         where first.run_id=$1 and first.node_id='work' and first.attempt=1
+           and r.state='succeeded' and second.status='Succeeded'`,
+          [reworkRunId],
+        );
+        return rows[0] ?? null;
+      },
+      20_000,
+      "host command restored the checkpoint and the second attempt passed",
+    ).catch(async (error: unknown) => {
+      const { rows } = await db.pool.query(
+        `select r.status,r.current_step_id,
+          (select jsonb_agg(to_jsonb(n)) from (select node_id,status,attempt,checkpoint_ref
+             from node_attempts where run_id=r.id) n) as attempts,
+          (select jsonb_agg(to_jsonb(c)) from (select kind,state,last_error,payload->>'checkpointId' as checkpoint_id
+             from execution_commands where run_id=r.id and kind like 'workspace.%') c) as commands
+          from runs r where r.id=$1`,
+        [reworkRunId],
+      );
+      note("addressed-rework-unsettled", { runId: reworkRunId, outcome: rows[0] });
+      throw error;
+    });
+    assert.equal(restored.execution_host_id, selectedHost.id);
+    assert.match(restored.checkpoint_ref, /^host-checkpoint:/);
+    assert.equal(
+      (await ownedCheckoutForRun(reworkRunId))?.handle,
+      working.handle,
+    );
+    await inContainer(primary.user, [
+      "test",
+      "!",
+      "-e",
+      working.path + "/changed-between-attempts.txt",
+    ]);
+    note("addressed-rework-restored-checkpoint", {
+      runId: reworkRunId,
+      hostId: selectedHost.id,
+      checkpointRef: restored.checkpoint_ref,
+      restoreCommandId: restored.command_id,
     });
   } else {
     const runStatus = page.getByRole("main").getByTestId("run-header-status");

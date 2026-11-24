@@ -773,6 +773,17 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Run to Review and retained the exact witness bytes. Linux process
   inventory found no remaining live member of that group.
 
+  **C-12 browser checkpoint slice.** RED on `c64c42e77` accepted the human
+  rework response but left the first CLI attempt without a checkpoint. The
+  graph now captures before a target whose rework policy can rewind or start
+  fresh. The production candidate built from `62de39f61` plus the checkpoint
+  and browser-fixture changes
+  (`sha256:7cbf70205a66faf792783a09f76bc8e3ed4bcc1cadc1d728b18791c9f8374e0c`)
+  repeated the build, promotion, archive and Stop cases. Chrome confirmed
+  `fresh-attempt` feedback. The owning supervisor applied the first attempt's
+  checkpoint, removed transient between-attempts work and ran the second
+  attempt successfully on the original handle.
+
   The deployment and supervisor samples now describe the verified private
   root, repository approval and stable-key pin. The PostgreSQL-only
   production Compose configuration and full documentation validator pass.

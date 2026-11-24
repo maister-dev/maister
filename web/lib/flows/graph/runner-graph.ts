@@ -2969,6 +2969,18 @@ export async function runGraph(
   // the same budget. An apply failure abandons the retry (fails), never corrupts.
   type AutoRetryDecision = "retry" | "escalate" | "fail";
   const addressedProject = !isCompanyFlowRun(loaded) && loaded.workspace.ownershipKind === "host_owned";
+  const addressedReworkCheckpointTargets = new Set(
+    addressedProject
+      ? [...graph.nodes.values()].flatMap((node) =>
+          node.rework?.workspacePolicies.some((policy) => policy !== "keep")
+            ? [
+                ...node.rework.allowedTargets,
+                ...(node.output?.result?.on_mismatch === "retry" ? [node.id] : []),
+              ]
+            : [],
+        )
+      : [],
+  );
   const addressedGitOwner = () => {
     const driver = opts.driver;
     if (driver?.claim.scope !== "assignment" || driver.claim.assignmentId !== loaded.run.executionAssignmentId)
@@ -3629,7 +3641,13 @@ export async function runGraph(
 
       const retryWorkspace = (node.source.node as { retry_policy?: RetryPolicy }).retry_policy?.workspace;
       const needsMutationCheckpoint = node.gates.some((gate) => gate.must_touch !== undefined || gate.must_not_touch !== undefined);
-      if (addressedProject && (retryWorkspace === "rewind-to-node-checkpoint" || needsMutationCheckpoint) && !attemptCheckpointRef) {
+      if (
+        addressedProject &&
+        (retryWorkspace === "rewind-to-node-checkpoint" ||
+          needsMutationCheckpoint ||
+          addressedReworkCheckpointTargets.has(node.id)) &&
+        !attemptCheckpointRef
+      ) {
         const owner = addressedGitOwner();
         const checkpoint = await runAddressedGitOperation(rootDb, { ...owner, kind: "workspace.checkpoint",
           operationKey: `attempt-checkpoint:${nodeAttemptId}`,
