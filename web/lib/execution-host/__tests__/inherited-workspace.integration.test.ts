@@ -3,7 +3,7 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -576,6 +576,51 @@ it("C-10 publishes and finalizes a host-owned Run through the normal promotion r
       `refs/heads/${target.remoteBranch}`,
     ),
   ).toBe(head);
+  await writeFile(
+    join(checkout, "untracked-archive.txt"),
+    "retain the operator's change\n",
+  );
+  const { GET: gitState } =
+    await import("@/app/api/runs/[runId]/git-state/route");
+  const actions = await gitState(
+    new Request(`http://localhost/api/runs/${runId}/git-state`),
+    {
+      params: Promise.resolve({ runId }),
+    },
+  );
+  expect(actions.status).toBe(200);
+  expect(await actions.json()).toMatchObject({
+    actions: expect.arrayContaining([
+      { id: "archive", enabled: true, disabledReason: null },
+    ]),
+  });
+  const { POST: archive } =
+    await import("@/app/api/runs/[runId]/archive/route");
+  const archiveRequest = () =>
+    archive(
+      new Request(`http://localhost/api/runs/${runId}/archive`, {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ runId }) },
+    );
+  const archived = await archiveRequest();
+  const archiveResult = await archived.json();
+  expect(archived.status, JSON.stringify(archiveResult)).toBe(200);
+  expect(archiveResult).toMatchObject({
+    runStatus: "Done",
+    workspaceRemoved: true,
+    preservationOutcome: "snapshot_created",
+  });
+  await expect(stat(checkout)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readWorkspace()).toMatchObject({
+    archivedCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
+    removedAt: expect.any(Date),
+    removalKind: "archive",
+  });
+  expect(await (await archiveRequest()).json()).toMatchObject({
+    workspaceRemoved: true,
+    idempotent: true,
+  });
 }, 60_000);
 
 it("C-10 projects a publication from the historical owner and holds removal until the outcome is verified", async () => {

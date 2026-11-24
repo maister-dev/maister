@@ -519,4 +519,51 @@ describe("C-02 workspace ownership", () => {
     await expect(insert(otherHostId, handle)).rejects.toMatchObject(refused);
     await expect(insert(hostId, `ws_${randomUUID().replaceAll("-", "")}`)).rejects.toMatchObject(refused);
   });
+
+  it("upgrades a retained archive claim and requires its exact applied preservation before release", async () => {
+    await database.db.transaction((tx) => applyMainMigration(tx, "0380_stage_c_retained_workspace_publication"));
+    const run = await createRun(hostId, "Review");
+    const workspaceId = await reserveWorkspace({ ...run, host: hostId });
+    const handle = `ws_${randomUUID().replaceAll("-", "")}`;
+    const claimId = randomUUID();
+    await database.pool.query(`UPDATE workspaces SET execution_workspace_id=$2,
+      lifecycle_operation_state='claiming', lifecycle_operation_name='archive',
+      lifecycle_operation_expected_run_status='Review', lifecycle_operation_attempt_id=$3,
+      lifecycle_operation_claimed_at=now(), lifecycle_operation_lease_expires_at=now()+interval '5 minutes'
+      WHERE id=$1`, [workspaceId, handle, claimId]);
+    await database.pool.query(`UPDATE execution_assignments SET execution_workspace_id=$2,
+      state='released', ended_at=now(), released_reason='run_terminal' WHERE id=$1`, [run.assignmentId, handle]);
+    const read = async () => (await database.pool.query("SELECT * FROM workspaces WHERE id=$1", [workspaceId])).rows[0];
+    const before = await read();
+    await database.db.transaction((tx) => applyMainMigration(tx, "0381_stage_c_retained_workspace_archive"));
+    expect(await read()).toEqual(before);
+
+    const preserveId = randomUUID();
+    const releaseId = randomUUID();
+    const owner = { claimId, generation: 1, fence: 1, quiescenceId: claimId };
+    const reserve = (id: string, kind: string, payload: Record<string, unknown>) =>
+      database.pool.query(`INSERT INTO execution_commands
+        (id,run_id,execution_assignment_id,execution_host_id,assignment_epoch,kind,target_session_id,payload,max_attempts)
+        VALUES ($1,$2,$3,$4,1,$5,$6,$7,3)`, [id, run.runId, run.assignmentId, hostId, kind, handle, payload]);
+    const release = { ...owner, dispositionId: preserveId };
+    await expect(reserve(releaseId, "workspace.release", release)).rejects.toMatchObject({
+      constraint: "retained_workspace_preservation_required",
+    });
+    await reserve(preserveId, "workspace.preserve", { ...owner, disposition: "archive" });
+    await expect(database.pool.query("UPDATE workspaces SET removed_at=now() WHERE id=$1", [workspaceId]))
+      .rejects.toMatchObject({ constraint: "unsettled_workspace_archive" });
+    await database.pool.query("UPDATE execution_commands SET state='succeeded',completed_at=now(),result=$2 WHERE id=$1",
+      [preserveId, { ...owner, dispositionId: preserveId, retainedCommit: sha }]);
+    await expect(reserve(releaseId, "workspace.release", { ...release, fence: 2 })).rejects.toMatchObject({
+      constraint: "retained_workspace_preservation_required",
+    });
+    await reserve(releaseId, "workspace.release", release);
+    await expect(reserve(randomUUID(), "workspace.release", release)).rejects.toMatchObject({
+      constraint: "retained_workspace_preservation_required",
+    });
+    await database.pool.query("UPDATE execution_commands SET state='succeeded',completed_at=now(),result=$2 WHERE id=$1",
+      [releaseId, { handle, generation: 1, dispositionId: preserveId }]);
+    expect((await database.pool.query(`UPDATE workspaces SET removed_at=now(),archived_at=now(),
+      archived_commit=$2,preservation_outcome='snapshot_created',removal_kind='archive' WHERE id=$1`, [workspaceId, sha])).rowCount).toBe(1);
+  });
 });

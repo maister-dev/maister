@@ -13,6 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { EXECUTION_HOST_KEY_PATTERN } from "../../runtime/execution-host-address";
 import { isWorkspaceCancelTarget, isWorkspaceGenerationTarget } from "../../runtime/workspace-prepare";
 import type { WorkspacePrepareInput, WorkspaceTerminalPayload } from "../../runtime/workspace-prepare";
+import { SupervisorError } from "./types";
 
 import { reuseSqliteStatements } from "./sqlite-statements";
 import {
@@ -523,6 +524,7 @@ export type HostState = {
     generation: number;
     physicalKey: string;
     retainedFence?: number;
+    requireExclusiveHandle?: true;
   }>): boolean;
   isWorkspaceWorkloadCancelled(input: Readonly<{
     commandId: string;
@@ -2026,6 +2028,15 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             assertPhysicalAdmission();
           db.exec("BEGIN IMMEDIATE");
           admitRuntimeReceipt(row, admission);
+          const dispositionId = (row.body as { archiveDispositionId?: unknown }).archiveDispositionId;
+          if (row.kind === "workspace.release" && row.phase === "accepted" && typeof dispositionId === "string" &&
+            db.prepare(`SELECT 1 FROM command_receipts WHERE kind='workspace.release'
+              AND command_id<>? AND json_extract(body_json, '$.archiveDispositionId')=?
+              AND (phase IN ('accepted','completed') OR json_extract(body_json, '$.workspacePhase')='indeterminate')`
+            ).get(row.commandId, dispositionId))
+            throw new SupervisorError("CONFLICT", "Another command owns this retained release", {
+              details: { reason: "workspace_writer_active" },
+            });
           writeReceiptRow(db, row);
           if (row.kind === "workspace.cancel" && row.phase === "accepted") {
             const target = (row.body as { workspaceTarget?: unknown }).workspaceTarget;
@@ -2350,7 +2361,10 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             )
             .get(commandId);
 
-          if (openProducer || pendingProcess) return refuse("producer_open");
+          const workspaceWriter = db.prepare(
+            "SELECT 1 FROM workspace_execution_state WHERE operation_claim_id=?",
+          ).get(commandId);
+          if (openProducer || pendingProcess || workspaceWriter) return refuse("producer_open");
 
           if (row.request_version === 2) {
             if (row.terminal_sequence === null)
@@ -2479,6 +2493,10 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         WHERE workspace_id=? AND generation=? AND preparation_mode='ownWorktree'
           AND (operation_claim_id IS NULL OR operation_claim_id=?)
           AND (? IS NULL OR publication_fence<? OR (publication_fence=? AND operation_claim_id=?))
+          AND (?=0 OR NOT EXISTS (
+            SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+            WHERE owned.id=workspace_execution_state.workspace_id AND physical.id<>owned.id AND physical.released_at IS NULL
+          ))
           AND EXISTS (
             SELECT 1 FROM workspaces owned JOIN run_fences fence ON fence.run_id=owned.run_id
             WHERE owned.id=workspace_execution_state.workspace_id AND owned.run_id=? AND owned.released_at IS NULL
@@ -2502,6 +2520,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           )
       `).run(input.commandId, input.retainedFence ?? null, input.handle, input.generation, input.commandId,
         input.retainedFence ?? null, input.retainedFence ?? null, input.retainedFence ?? null, input.commandId,
+        input.requireExclusiveHandle ? 1 : 0,
         input.runId, input.assignmentId, input.assignmentEpoch, input.commandId, input.physicalKey).changes === 1);
     },
     isWorkspaceWorkloadCancelled(input) {
@@ -2553,6 +2572,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     insertWorkspace(row) {
       return storage.write(() => {
+        if (db.prepare(`SELECT 1 FROM workspaces physical
+          JOIN workspace_execution_state state ON state.workspace_id=physical.id
+          WHERE physical.real_path=? AND physical.released_at IS NULL AND state.operation_claim_id IS NOT NULL`
+        ).get(row.realPath))
+          throw new SupervisorError("CONFLICT", "A Git operation still owns this physical worktree", {
+            details: { reason: "workspace_writer_active" },
+          });
         db.prepare(
           `INSERT INTO workspaces
            (id, run_id, project_slug, kind, path, real_path, repo_path, run_dir, context_mounts, adopted_at, released_at, company_id)
@@ -2834,6 +2860,21 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               db.prepare(`UPDATE workspace_execution_state SET operation_claim_id=NULL
                 WHERE workspace_id=? AND generation=? AND operation_claim_id=?`)
                 .run(body.workspaceTarget.handle, body.workspaceTarget.generation, receipt.commandId);
+          }
+          if (receipt.kind === "workspace.release") {
+            const body = receipt.body as { workspacePhase?: unknown; workspaceTarget?: unknown; result?: { dispositionId?: string } };
+            if (body.workspacePhase === "completed" && isWorkspaceGenerationTarget(body.workspaceTarget)) {
+              const { handle, generation } = body.workspaceTarget;
+              const owner = db.prepare(`UPDATE workspace_execution_state SET operation_claim_id=NULL
+                WHERE workspace_id=? AND generation=? AND operation_claim_id=?`
+              ).run(handle, generation, body.result?.dispositionId ?? null);
+              const workspace = db.prepare(`UPDATE workspaces SET released_at=? WHERE id=? AND released_at IS NULL AND run_id=?`
+              ).run(receipt.completedAt, handle, receipt.runId);
+              if (owner.changes !== 1 || workspace.changes !== 1)
+                throw new SupervisorError("FENCED", "The archive owner changed before settling release", {
+                  details: { reason: "stale_workspace_claim" },
+                });
+            }
           }
 
           db.exec("COMMIT");

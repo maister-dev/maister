@@ -33,7 +33,7 @@ import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
-import { recoverWorkspacePreparation } from "./workspace-prepare-delivery";
+import { isAddressedRetainedWorkspaceCommand, recoverWorkspacePreparation } from "./workspace-prepare-delivery";
 import { recoverWorkspaceInputCaptures, recoverWorkspaceRequirementProbes } from "./workspace-input-recovery";
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { reportLegacyActiveRuns } from "./legacy";
@@ -538,7 +538,7 @@ export async function recoverExecutionCommands(
       row.kind === "workspace.prepare" || row.kind === "workspace.materialize" ||
       row.kind === "workspace.run" || row.kind === "workspace.cancel" ||
       row.kind === "workspace.checkpoint" || row.kind === "workspace.restore" ||
-      row.kind === "workspace.publish";
+      isAddressedRetainedWorkspaceCommand(row);
     const unattempted = row.state === "queued" && row.attempts === 0;
     if (ageMs(row, at) < graceMs && !(addressedWorkspaceCommand && unattempted)) {
       summary.skippedInFlight += 1;

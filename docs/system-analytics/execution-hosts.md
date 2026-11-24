@@ -1163,8 +1163,11 @@ manager command, retained owner, host receipt, and verified target agree.
 The normal Web promotion route uses this flow for manual branch delivery.
 It requires current project authority, a Review-ready Run and a clean
 addressed checkout. Web reserves the dedicated branch, returns the verified
-delivery on retry and changes Review to Done once. Sync and disposition
-remain part of the Stage C lifecycle work.
+delivery on retry and changes Review to Done once. Manual archive retains the
+same owning supervisor for preservation and release. Migration 0381 prevents
+an early release and keeps the Web claim until the physical release receipt
+applies. Sync and automatic retention remain part of the Stage C lifecycle
+work.
 
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable

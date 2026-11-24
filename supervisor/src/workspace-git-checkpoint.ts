@@ -107,7 +107,7 @@ async function claimGitOperation(
   };
 }
 
-async function captureOwnedTree(owned: OwnedGit): Promise<string> {
+export async function captureOwnedTree(owned: Pick<OwnedGit, "workspace" | "git">): Promise<string> {
   return withPreparedGitIndex(owned.workspace, owned.git, async (indexFile) => {
     await executeWorkspaceGitBytes([...owned.git, "add", "-A", "--", "."], {
       indexFile,

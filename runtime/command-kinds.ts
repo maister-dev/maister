@@ -7,6 +7,7 @@ export const COMMAND_KINDS = [
   "workspace.checkpoint",
   "workspace.restore",
   "workspace.publish",
+  "workspace.preserve",
   "workspace.release",
   "workspace.observe_head",
   "workspace.publication",

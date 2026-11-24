@@ -69,6 +69,7 @@ export type WorkbenchGitPolicyInput = {
   scratchDialogStatus: ScratchDialogStatus | null;
   hasWorkspace: boolean;
   workspaceRemoved: boolean;
+  addressedWorkspace?: boolean;
   // Legacy input kept for existing callers; no action depends on it.
   workspaceArchived?: boolean;
   queuedConditionResume?: boolean;
@@ -264,6 +265,8 @@ export function deriveWorkbenchGitActions(
   const usable = !input.workspaceRemoved && input.worktreePresent !== false;
 
   return allOrdered((id) => {
+    if (input.addressedWorkspace && id !== "archive" && id !== "stop")
+      return "unsupported-run";
     if (owner && OWNER_FORBIDDEN.has(id)) return "human-owned";
     if (!input.hasWorkspace) return "missing-workspace";
 

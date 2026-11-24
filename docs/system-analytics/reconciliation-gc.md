@@ -662,6 +662,17 @@ Persist the exact disposal receipt before finalizing the Web lifecycle.
 Keep pending, ambiguous and potentially dirty work discoverable in
 reconciliation. C-10 verifies the result against concurrent publication.
 
+Manual archive of a parked addressed Run uses the existing lifecycle claim,
+with PostgreSQL 0381 binding the released assignment, generation, preservation
+command and release command. The supervisor verifies writer retirement and
+aliases, captures tracked and unignored files under a private retained Git
+ref, and keeps the physical workspace claim. Release checks the current
+HEAD and captured tree again. Changed data keeps the worktree available.
+After an interrupted removal the supervisor requires the same retained
+archive and observes the checkout absent before settling. Web marks the
+worktree removed after the canonical release receipt. Automatic addressed
+retention GC and recovery actions still need their own qualification.
+
 ## Expectations
 
 - Reconcile is **allow-list `Running`-only**: a row whose `runs.status` is

@@ -1278,6 +1278,93 @@ it("C-10 publishes one committed ref from its retained worktree and reconciles t
   expect(git(remote, "reflog", "show", "--format=%H", "refs/heads/main").split("\n")).toEqual([head, priorTarget]);
 }, 30_000);
 
+it("C-10 preserves dirty tracked and untracked files before releasing a retained address", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-retained-archive-"));
+  roots.push(root);
+  const repository = join(root, "source");
+  git(root, "init", "-b", "main", repository);
+  await writeFile(join(repository, "tracked.txt"), "base\n");
+  git(repository, "add", "--", "tracked.txt");
+  git(repository, "commit", "-m", "base");
+  const commit = git(repository, "rev-parse", "HEAD");
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repository }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, {
+    mode: "ownWorktree", repositoryId: "fixture", commit, inputDigest: "a".repeat(64),
+  });
+  if (prepared.phase !== "completed") throw new Error("archive fixture was not prepared");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout?.repoPath) throw new Error("archive fixture has no owned checkout");
+  await writeFile(join(checkout.realPath, "tracked.txt"), "dirty before archive\n");
+  await writeFile(join(checkout.realPath, "untracked.txt"), "untracked before archive\n");
+  const issuedAt = new Date().toISOString();
+  const owner = {
+    kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle,
+    workspaceGeneration: generation, claimId: randomUUID(), fence: 1,
+  };
+  const preserveId = randomUUID();
+  const quiescenceId = randomUUID();
+  const preserve = {
+    workspaceProtocol: 1, owner, command: { id: preserveId, kind: "workspace.preserve", issuedAt },
+    payload: { generation, disposition: "archive", quiescenceId },
+  };
+  expect((await addressedRequest(host, `/v1/workspaces/${handle}/preserve`, preserve)).status).toBe(202);
+  const archived = await vi.waitFor(async () => {
+    const body = await (await addressedRequest(host, `/v1/commands/${preserveId}`)).json() as {
+      result: { dispositionId: string; retainedCommit: string };
+    };
+    expect(body).toMatchObject({ phase: "completed", result: {
+      dispositionId: preserveId, retainedCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
+    } });
+    return body.result;
+  });
+  const releaseId = randomUUID();
+  const remove = {
+    workspaceProtocol: 1, owner, command: { id: releaseId, kind: "workspace.release", issuedAt },
+    payload: { generation, dispositionId: archived.dispositionId, quiescenceId },
+  };
+  const release = (target: BootedHost, request: typeof remove = remove) => fetch(`${target.url}/v1/workspaces/${handle}`, {
+    method: "DELETE",
+    headers: { [EXECUTION_HOST_KEY_HEADER]: owner.hostKey, "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  const changed = join(checkout.realPath, "tracked.txt");
+  await writeFile(changed, "new work after archive\n");
+  const staleReleaseId = randomUUID();
+  expect((await release(host, { ...remove, command: { ...remove.command, id: staleReleaseId } })).status).toBe(202);
+  await vi.waitFor(async () => {
+    const failed = await addressedRequest(host, `/v1/commands/${staleReleaseId}`);
+    expect(await failed.json()).toMatchObject({
+      phase: "rejected", refusal: { details: { reason: "retained_disposition_required" } },
+    });
+  });
+  expect(await readFile(changed, "utf8")).toBe("new work after archive\n");
+  await writeFile(changed, "dirty before archive\n");
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted after physical removal and before the release receipt");
+  });
+  expect((await release(host)).status).toBe(202);
+  await vi.waitFor(async () => await expect(stat(checkout.realPath)).rejects.toMatchObject({ code: "ENOENT" }));
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect(restarted.hostState.getReceipt(releaseId)).toMatchObject({ phase: "accepted" });
+  expect((await release(restarted)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(restarted, `/v1/commands/${releaseId}`);
+    expect(await response.json()).toMatchObject({
+      phase: "completed", result: { handle, generation, dispositionId: preserveId },
+    });
+  });
+  await expect(stat(checkout.realPath)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(git(checkout.repoPath, "show", archived.retainedCommit + ":tracked.txt")).toBe("dirty before archive");
+  expect(git(checkout.repoPath, "show", archived.retainedCommit + ":untracked.txt")).toBe("untracked before archive");
+  expect((await release(restarted)).status).toBe(202);
+}, 30_000);
+
 it("C-06 creates the declared workspace modes and refuses a stale root, missing commit and escaped directory alias", async () => {
   const root = await mkdtemp(join(tmpdir(), "stage-c-workspace-modes-"));
   const outside = await mkdtemp(join(tmpdir(), "stage-c-workspace-outside-"));

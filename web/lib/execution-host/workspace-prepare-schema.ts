@@ -35,6 +35,15 @@ export const RetainedWorkspacePublishSchema = WorkspacePublishPayloadSchema.exte
   claimId: z.string().uuid(),
   fence: generation,
 });
+export const WorkspacePreservePayloadSchema = z.object({
+  generation, disposition: z.literal("archive"), quiescenceId: opaqueId,
+}).strict();
+export const WorkspaceReleasePayloadSchema = z.object({
+  generation, dispositionId: z.string().uuid(), quiescenceId: opaqueId,
+}).strict();
+const RetainedDispositionIdentity = { claimId: z.string().uuid(), fence: generation };
+export const RetainedWorkspacePreserveSchema = WorkspacePreservePayloadSchema.extend(RetainedDispositionIdentity);
+export const RetainedWorkspaceReleaseSchema = WorkspaceReleasePayloadSchema.extend(RetainedDispositionIdentity);
 export const WorkspaceEvidenceObjectSchema = z
   .object({
     generation,
@@ -292,7 +301,7 @@ const cancellationResult = z
   .strict();
 
 function commandResultReceipt<
-  Op extends "stageCRunWorkload" | "stageCCancelWorkload" | "stageCCheckpoint" | "stageCRestore" | "stageCPublish",
+  Op extends "stageCRunWorkload" | "stageCCancelWorkload" | "stageCCheckpoint" | "stageCRestore" | "stageCPublish" | "stageCPreserve" | "stageCRelease",
   T extends z.ZodType,
   R extends z.ZodType,
   O extends z.ZodType,
@@ -339,6 +348,7 @@ function commandResultReceipt<
 }
 
 const assignmentOwner = z.custom<WorkspaceAssignmentOwner>(isWorkspaceAssignmentOwner);
+const workspaceOperationOwner = z.custom<WorkspaceOperationOwner>(isWorkspaceOperationOwner);
 const workspaceTarget = z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget);
 export const WorkspaceCommandReceiptSchema = z.union([
   WorkspacePrepareReceiptSchema,
@@ -364,6 +374,18 @@ export const WorkspaceCommandReceiptSchema = z.union([
       publication: z.enum(["push", "promote"]),
       git: z.object({ generation, head: gitObject, priorTarget: gitObject.nullable(), observedTarget: gitObject }).strict(),
     }).strict(),
-    z.custom<WorkspaceOperationOwner>(isWorkspaceOperationOwner),
+    workspaceOperationOwner,
+  ),
+  commandResultReceipt(
+    "stageCPreserve",
+    workspaceTarget,
+    z.object({ generation, dispositionId: z.string().uuid(), retainedCommit: gitObject }).strict(),
+    workspaceOperationOwner,
+  ),
+  commandResultReceipt(
+    "stageCRelease",
+    workspaceTarget,
+    z.object({ handle, generation, dispositionId: z.string().uuid() }).strict(),
+    workspaceOperationOwner,
   ),
 ]);

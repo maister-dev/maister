@@ -730,6 +730,7 @@ export const REASON_TOKENS = [
   "target_ref_changed",
   "head_changed",
   "stale_workspace_claim",
+  "retained_disposition_required",
   "tool_not_declared",
   "workspace_protocol_unsupported",
   "legacy_field",

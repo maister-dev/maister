@@ -9,6 +9,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
+import { workbenchClaimHoldsTree } from "@/lib/runs/lifecycle-claim";
 import { loadWorkbenchGitFacts } from "@/lib/workbench-git/facts";
 import {
   deriveWorkbenchGitActions,
@@ -246,12 +247,25 @@ export async function loadGitState(args: {
 
   for (const field of facts.degraded) warnings.push(field);
 
-  const actions = addressed
-    ? []
-    : deriveWorkbenchGitActions({
-        ...facts.policy,
-        viewerUserId: args.viewerUserId,
-      });
+  const actions = deriveWorkbenchGitActions({
+    ...facts.policy,
+    ...(addressed
+      ? {
+          addressedWorkspace: true,
+          hasWorkspace: true,
+          workspaceRemoved: workspace.removedAt !== null,
+          worktreePresent:
+            status?.workspace.mode === "ownWorktree" ||
+            (workspace.lifecycleOperationName === "archive" &&
+              workspace.lifecycleOperationState === "claiming"),
+          busy:
+            facts.hasLiveSharedSibling ||
+            (workspace.lifecycleOperationName !== "archive" &&
+              workbenchClaimHoldsTree(workspace)),
+        }
+      : {}),
+    viewerUserId: args.viewerUserId,
+  });
   const mainBranch: string = project?.mainBranch ?? "main";
   // D3: scratch base/target live on `scratch_runs` (the workspace row has none).
   const targetBranch: string =

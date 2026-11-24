@@ -15,13 +15,11 @@ import pino from "pino";
 import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
 import { getAssignmentById } from "@/lib/execution-host/assignments";
 import { getCommand, insertCommand } from "@/lib/execution-host/commands";
-import { defaultTransport } from "@/lib/execution-host/default-transport";
-import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import {
   readAddressedWorkspacePublicationTarget,
   readAddressedWorkspaceStatus,
 } from "@/lib/execution-host/workspace-preparation";
-import { recoverWorkspacePreparation } from "@/lib/execution-host/workspace-prepare-delivery";
+import { settleRetainedWorkspaceCommand } from "@/lib/execution-host/workspace-retained-operation";
 import { WorkspacePublishPayloadSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import { isWorkspaceSourceRef } from "../../../runtime/workspace-prepare";
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
@@ -2084,49 +2082,24 @@ async function publishAddressedDelivery(
       "ACP_PROTOCOL",
       "The retained publication claim is inconsistent",
     );
-  if (command.state === "queued" && command.attempts === 0)
-    await recoverWorkspacePreparation(
-      db,
-      command,
-      defaultTransport(),
-      new Date(),
-    );
-  const deadline = AbortSignal.timeout(20_000);
-  while (!deadline.aborted) {
-    const applied = await getCommand(db, commandId);
-    if (applied?.state === "succeeded")
-      return {
-        commit: request.data.expected.head,
-        diffStat: claim.run.diffStat ?? null,
-        publication: target,
-      };
-    if (applied?.state === "failed") {
-      const reason = applied.lastError?.details;
-      await markPromotionFailed(db, claim.workspace.id, claim.attemptId, {
-        target,
-        error: "The supervisor refused Git publication",
-      });
-      throw new MaisterError(
-        "CONFLICT",
-        "The supervisor refused Git publication",
-        {
-          details:
-            typeof reason === "object" && reason !== null
-              ? (reason as Record<string, unknown>)
-              : {},
-        },
-      );
-    }
-    if (applied?.transportState === "reconciliation_required") break;
-    await runEventWakeBus.wait(claim.run.id, 500, deadline);
-  }
-  throw new MaisterError(
-    "EXECUTOR_UNAVAILABLE",
-    "Publication is recorded and awaiting verification on its original supervisor",
-    {
-      details: { reason: "effect_unconfirmed", commandId },
-    },
-  );
+  const applied = await settleRetainedWorkspaceCommand(db, command);
+  if (applied.state === "succeeded")
+    return {
+      commit: request.data.expected.head,
+      diffStat: claim.run.diffStat ?? null,
+      publication: target,
+    };
+  const reason = applied.lastError?.details;
+  await markPromotionFailed(db, claim.workspace.id, claim.attemptId, {
+    target,
+    error: "The supervisor refused Git publication",
+  });
+  throw new MaisterError("CONFLICT", "The supervisor refused Git publication", {
+    details:
+      typeof reason === "object" && reason !== null
+        ? (reason as Record<string, unknown>)
+        : {},
+  });
 }
 
 async function branchDeliveryTarget(

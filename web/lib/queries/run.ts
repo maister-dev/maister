@@ -101,6 +101,7 @@ import {
 } from "@/lib/queries/run-cutover";
 import { type WorkbenchLifecycleAction } from "@/lib/queries/portfolio";
 import { loadWorkbenchGitFacts } from "@/lib/workbench-git/facts";
+import { workbenchClaimHoldsTree } from "@/lib/runs/lifecycle-claim";
 import {
   deriveWorkbenchGitActions,
   type WorkbenchGitPolicyInput,
@@ -848,6 +849,7 @@ export const getRunDetail = cache(async function getRunDetail(
     );
   }
 
+  const addressedWorkspace = row.workspaceOwnership === "host_owned";
   const gitFacts = await loadWorkbenchGitFacts({
     db: client,
     run: {
@@ -860,7 +862,7 @@ export const getRunDetail = cache(async function getRunDetail(
       rootRunId: row.rootRunId,
       parentRunId: row.parentRunId,
     },
-    workspace: row.workspaceId
+    workspace: row.workspaceId && !addressedWorkspace
       ? {
           branch: row.branch!,
           worktreePath: row.worktreePath!,
@@ -881,6 +883,14 @@ export const getRunDetail = cache(async function getRunDetail(
         }
       : null,
   });
+  const lifecycleFacts: Omit<WorkbenchGitPolicyInput, "viewerUserId"> = addressedWorkspace ? {
+    ...gitFacts.policy,
+    addressedWorkspace: true,
+    hasWorkspace: true,
+    worktreePresent: Boolean(row.workspaceHandle),
+    workspaceRemoved: row.removedAt !== null,
+    busy: gitFacts.hasLiveSharedSibling || (row.lifecycleOperationName !== "archive" && workbenchClaimHoldsTree(row)),
+  } : gitFacts.policy;
 
   // ADR-160: server-owned continuation availability. The eligibility + re-entry
   // resolution are only meaningful for a flow run that is in Review (claimable)
@@ -976,11 +986,11 @@ export const getRunDetail = cache(async function getRunDetail(
     pruned: ttl.pruned,
     continuation,
     lifecycleActions: lifecycleActionsForViewer(
-      { lifecycleFacts: gitFacts.policy },
+      { lifecycleFacts },
       null,
     ),
     claimOwnerUserId: gitFacts.claimOwnerUserId,
-    lifecycleFacts: gitFacts.policy,
+    lifecycleFacts,
     runnerResolutionWarnings: runnerResolutionWarningRows.map((warningRow) => ({
       sessionName: warningRow.sessionName,
       warning: warningRow.warning as RunnerResolutionWarning,

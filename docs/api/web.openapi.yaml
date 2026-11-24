@@ -12202,6 +12202,10 @@ paths:
         and retains the original run status as non-actionable history. Live and
         HITL states are refused. A completed identical replay is idempotent;
         a conflicting completed intent is `409 CONFLICT`.
+        For an addressed owned worktree, the original supervisor produces
+        both the preservation and physical-release receipts. Web finalizes
+        the archive after the verified release. A still-pending effect stays
+        recoverable under the original claim.
       operationId: archiveRunWorkbench
       parameters:
         - name: runId

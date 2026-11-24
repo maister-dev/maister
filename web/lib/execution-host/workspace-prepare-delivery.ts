@@ -8,7 +8,7 @@ import type {
   WorkspaceCancelWorkloadRequest,
   WorkspaceCheckpointRequest,
   WorkspaceRestoreRequest,
-  WorkspacePublishRequest,
+  WorkspaceRetainedRequest,
 } from "../../../runtime/workspace-prepare";
 import type {
   ExecutionAssignment,
@@ -33,6 +33,8 @@ import {
   WorkspaceCheckpointPayloadSchema,
   WorkspaceRestorePayloadSchema,
   RetainedWorkspacePublishSchema,
+  RetainedWorkspacePreserveSchema,
+  RetainedWorkspaceReleaseSchema,
 } from "./workspace-prepare-schema";
 import { z } from "zod";
 
@@ -68,25 +70,51 @@ export function retainedWorkspaceGitRequest(command: ExecutionCommand, hostKey: 
   throw new MaisterError("ACP_PROTOCOL", "Stored workspace Git operation is invalid");
 }
 
-export function retainedWorkspacePublishRequest(command: ExecutionCommand, hostKey: string): WorkspacePublishRequest {
-  const parsed = RetainedWorkspacePublishSchema.safeParse(command.payload);
-  if (command.kind !== "workspace.publish" || !parsed.success || !command.targetSessionId)
-    throw new MaisterError("ACP_PROTOCOL", "Stored workspace publication is invalid");
-  const { claimId, fence, ...payload } = parsed.data;
+export function isAddressedRetainedWorkspaceCommand(command: ExecutionCommand): boolean {
+  return command.kind === "workspace.publish" || command.kind === "workspace.preserve" ||
+    (command.kind === "workspace.release" && typeof command.payload.claimId === "string");
+}
+
+function retainedWorkspaceEnvelope(
+  command: ExecutionCommand,
+  hostKey: string,
+  identity: { generation: number; claimId: string; fence: number },
+) {
+  if (!command.targetSessionId)
+    throw new MaisterError("ACP_PROTOCOL", "Stored workspace operation lacks a retained handle");
+  const { claimId, fence, generation } = identity;
 
   return {
     workspaceProtocol: 1,
-    command: { id: command.id, kind: command.kind, issuedAt: command.createdAt.toISOString() },
     owner: {
       kind: "workspaceOperation",
       hostKey,
       workspaceHandle: command.targetSessionId,
-      workspaceGeneration: payload.generation,
+      workspaceGeneration: generation,
       claimId,
       fence,
     },
-    payload,
-  };
+  } as const;
+}
+
+export function retainedWorkspaceOperationRequest(command: ExecutionCommand, hostKey: string): WorkspaceRetainedRequest {
+  const identity = { id: command.id, issuedAt: command.createdAt.toISOString() };
+  if (command.kind === "workspace.publish") {
+    const { claimId, fence, ...payload } = RetainedWorkspacePublishSchema.parse(command.payload);
+    return { ...retainedWorkspaceEnvelope(command, hostKey, { ...payload, claimId, fence }),
+      command: { ...identity, kind: command.kind }, payload };
+  }
+  if (command.kind === "workspace.preserve") {
+    const { claimId, fence, ...payload } = RetainedWorkspacePreserveSchema.parse(command.payload);
+    return { ...retainedWorkspaceEnvelope(command, hostKey, { ...payload, claimId, fence }),
+      command: { ...identity, kind: command.kind }, payload };
+  }
+  if (command.kind === "workspace.release") {
+    const { claimId, fence, ...payload } = RetainedWorkspaceReleaseSchema.parse(command.payload);
+    return { ...retainedWorkspaceEnvelope(command, hostKey, { ...payload, claimId, fence }),
+      command: { ...identity, kind: command.kind }, payload };
+  }
+  throw new MaisterError("ACP_PROTOCOL", "Stored retained workspace operation is invalid");
 }
 
 export function retainedWorkspacePrepareRequest(
@@ -145,7 +173,7 @@ export async function resolveWorkspacePreparationPeer(
   const assignment = await getAssignmentById(db, command.executionAssignmentId);
   if (
     !assignment ||
-    (command.kind !== "workspace.publish" && assignment.state !== "active") ||
+    (!isAddressedRetainedWorkspaceCommand(command) && assignment.state !== "active") ||
     assignment.runId !== command.runId ||
     assignment.epoch !== command.assignmentEpoch ||
     assignment.executionHostId !== command.executionHostId
@@ -256,8 +284,8 @@ export async function recoverWorkspacePreparation(
         "CONFLICT",
         "Workspace command no longer owns its prepared target",
       );
-    if (command.kind === "workspace.publish" && transport.sendWorkspacePublication)
-      return transport.sendWorkspacePublication(retainedWorkspacePublishRequest(command, host.hostKey));
+    if (isAddressedRetainedWorkspaceCommand(command) && transport.sendRetainedWorkspaceCommand)
+      return transport.sendRetainedWorkspaceCommand(retainedWorkspaceOperationRequest(command, host.hostKey));
     if (
       command.kind === "workspace.materialize" &&
       transport.sendWorkspaceMaterialization

@@ -609,14 +609,28 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   strategy for an addressed Run. RED refused the pathless workspace.
   GREEN derived the approved target, delivered a real Git commit, moved
   Review to Done, and returned the same response on replay. The remote
-  reflog proved one update. Sync, other promotion strategies and
-  preserve-before-delete still need their witnesses.
+  reflog proved one update. Sync and other promotion strategies still need
+  their witnesses.
+
+  Manual archive now reserves a preservation and release under the original
+  host, handle, generation and claim. RED reproduced the missing host route
+  and the path-only Web archive refusal. GREEN retained dirty tracked and
+  untracked bytes in a private Git ref, rejected removal after a subsequent
+  edit, and recovered one release after a restart between removal and its
+  SQLite receipt. Migration 0381 binds the release to the matching applied
+  preservation and guards the workspace claim. The normal local Web route
+  removed the owned worktree after an addressed publication and returned
+  the same archive on repeat. The Git state exposes the authorized Archive
+  action through the existing workbench menu. Passed 14 Web and populated
+  migration integrations, 29 supervisor integrations with one worker, 129
+  legacy-policy and service cases, and the contracts and docs checks.
+  Automatic GC and reconciliation remain open.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure
   while enumerating local agent materialization roots. The existing discovery
   test now contains an addressed workspace row and verifies that valid local
   roots remain discoverable. RED failed on the null path, GREEN passed all
-  four GC tests. Host-owned preservation and disposal remain open.
+  four GC tests.
 - [ ] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
 
   The launch dialog shows the default and eligible supervisor names in

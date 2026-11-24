@@ -13,10 +13,12 @@ import type {
   WorkspaceCancelWorkloadResult,
   WorkspaceGitCheckpointResult,
   WorkspaceOperationOwner,
-  WorkspacePublishBinding,
-  WorkspacePublishRequest,
+  WorkspaceRetainedBinding,
+  WorkspaceRetainedRequest,
   WorkspacePublishResult,
   WorkspaceTerminalPayload,
+  WorkspacePreserveResult,
+  WorkspaceReleaseResult,
 } from "../../runtime/workspace-prepare";
 import type { RuntimeObjectRegistry } from "./runtime-objects";
 import type { RuntimeEventPublisher } from "./runtime-event-publisher";
@@ -41,6 +43,8 @@ import {
   WORKSPACE_RUN_OPERATION,
   WORKSPACE_RESTORE_OPERATION,
   WORKSPACE_PUBLISH_OPERATION,
+  WORKSPACE_PRESERVE_OPERATION,
+  WORKSPACE_RELEASE_OPERATION,
   WORKSPACE_WORKLOAD_KINDS,
   workspaceEvidenceDigest,
   workspaceCommandRequestDigest,
@@ -56,6 +60,7 @@ import { readWorkspaceReviewFingerprint, sealWorkspaceDiff } from "./workspace-d
 import { sealWorkspaceLog } from "./workspace-log";
 import { checkpointOwnedWorkspace, restoreOwnedWorkspace, WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
 import { publishOwnedWorkspace, readOwnedPublicationTarget } from "./workspace-publish";
+import { preserveOwnedWorkspace, releaseArchivedWorkspace } from "./workspace-archive";
 import {
   recoverWorkspaceWorkload,
   runWorkspaceWorkload,
@@ -221,10 +226,18 @@ const publishSchema = workloadSchema.extend({
     publication: z.enum(["push", "promote"]),
   }).strict(),
 });
+const archiveSchema = publishSchema.extend({
+  command: publishSchema.shape.command.extend({ kind: z.literal("workspace.preserve") }),
+  payload: z.object({ generation, disposition: z.literal("archive"), quiescenceId: opaqueId }).strict(),
+});
+const releaseSchema = publishSchema.extend({
+  command: publishSchema.shape.command.extend({ kind: z.literal("workspace.release") }),
+  payload: z.object({ generation, dispositionId: z.string().uuid(), quiescenceId: opaqueId }).strict(),
+});
 
 type WorkspaceEffect = (
   | { request: WorkspaceCommandRequest; binding: WorkspaceCommandBinding }
-  | { request: WorkspacePublishRequest; binding: WorkspacePublishBinding }
+  | { request: WorkspaceRetainedRequest; binding: WorkspaceRetainedBinding }
 ) & Readonly<{
   sourceDigest: string | null;
   run: (
@@ -236,11 +249,13 @@ type WorkspaceEffect = (
     | WorkspaceCancelWorkloadResult
     | WorkspaceGitCheckpointResult
     | WorkspacePublishResult
+    | WorkspacePreserveResult
+    | WorkspaceReleaseResult
     | null
   >;
 }>;
 
-function receiptBinding(row: CommandReceiptRow): WorkspaceCommandBinding | WorkspacePublishBinding {
+function receiptBinding(row: CommandReceiptRow): WorkspaceCommandBinding | WorkspaceRetainedBinding {
   if (row.kind === "workspace.prepare")
     return {
       operationId: WORKSPACE_PREPARE_OPERATION,
@@ -277,6 +292,10 @@ function receiptBinding(row: CommandReceiptRow): WorkspaceCommandBinding | Works
     return { operationId: WORKSPACE_RESTORE_OPERATION, target: stored.workspaceTarget };
   if (row.kind === "workspace.publish" && isWorkspaceGenerationTarget(stored.workspaceTarget))
     return { operationId: WORKSPACE_PUBLISH_OPERATION, target: stored.workspaceTarget };
+  if (row.kind === "workspace.preserve" && isWorkspaceGenerationTarget(stored.workspaceTarget))
+    return { operationId: WORKSPACE_PRESERVE_OPERATION, target: stored.workspaceTarget };
+  if (row.kind === "workspace.release" && isWorkspaceGenerationTarget(stored.workspaceTarget))
+    return { operationId: WORKSPACE_RELEASE_OPERATION, target: stored.workspaceTarget };
 
   throw new SupervisorError(
     "ACP_PROTOCOL",
@@ -427,9 +446,11 @@ export function registerWorkspacePreparation(args: {
       outcomeSha256,
     };
     let payload: WorkspaceTerminalPayload;
-    if (binding.operationId === WORKSPACE_PUBLISH_OPERATION && request.owner.kind === "workspaceOperation") {
+    const retained = binding.operationId === WORKSPACE_PUBLISH_OPERATION ||
+      binding.operationId === WORKSPACE_PRESERVE_OPERATION || binding.operationId === WORKSPACE_RELEASE_OPERATION;
+    if (retained && request.owner.kind === "workspaceOperation") {
       payload = { ...identity, ...binding, owner: request.owner };
-    } else if (binding.operationId !== WORKSPACE_PUBLISH_OPERATION && request.owner.kind === "assignment") {
+    } else if (!retained && request.owner.kind === "assignment") {
       payload = { ...identity, ...binding, owner: request.owner };
     } else {
       throw new SupervisorError("ACP_PROTOCOL", "Workspace command owner and target disagree");
@@ -444,6 +465,8 @@ export function registerWorkspacePreparation(args: {
           outcomeSha256,
           workspaceTarget: binding.target,
           ...(request.owner.kind === "workspaceOperation" ? { workspaceOwner: request.owner } : {}),
+          ...("quiescenceId" in request.payload ? { archiveQuiescenceId: request.payload.quiescenceId } : {}),
+          ...("dispositionId" in request.payload ? { archiveDispositionId: request.payload.dispositionId } : {}),
           ...(request.command.kind === "workspace.run"
             ? {
                 workspaceProcess: (
@@ -484,7 +507,7 @@ export function registerWorkspacePreparation(args: {
         ...("expected" in request.payload && phase === "completed"
           ? { verifiedHead: request.payload.expected.head, targetRef: request.payload.expected.targetRef }
           : {}),
-      }, "workspace-publication-settled");
+      }, "retained-workspace-operation-settled");
   }
 
   function admit(reply: FastifyReply, effect: WorkspaceEffect): FastifyReply {
@@ -571,13 +594,14 @@ export function registerWorkspacePreparation(args: {
         sourceDigest,
         workspaceTarget: binding.target,
         ...(owner.kind === "workspaceOperation" ? { workspaceOwner: owner } : {}),
+        ...("dispositionId" in request.payload ? { archiveDispositionId: request.payload.dispositionId } : {}),
       },
       receivedAt: new Date().toISOString(),
       completedAt: null,
     };
     if (!existing)
       state.putReceipt(row, {
-        kind: command.kind === "workspace.cancel" ? "teardown" : "new_work",
+        kind: command.kind === "workspace.cancel" || command.kind === "workspace.release" ? "teardown" : "new_work",
       });
 
     const execution = finish(
@@ -997,6 +1021,36 @@ export function registerWorkspacePreparation(args: {
     });
   });
 
+  app.post<{ Params: { id: string } }>("/v1/workspaces/:id/preserve", async (req, reply) => {
+    const parsed = archiveSchema.safeParse(req.body);
+    if (!parsed.success || parsed.data.owner.workspaceHandle !== req.params.id ||
+      parsed.data.owner.workspaceGeneration !== parsed.data.payload.generation)
+      return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "Archive owner and workspace must match"));
+    const request = parsed.data;
+    const { workspaceHandle: handle, workspaceGeneration: generation } = request.owner;
+
+    return admit(reply, {
+      request, sourceDigest: null,
+      binding: { operationId: WORKSPACE_PRESERVE_OPERATION, target: { kind: "workspace", handle, generation } },
+      run: (assertOwner) => preserveOwnedWorkspace({ state, runtimeRoot, assertOwner }, request),
+    });
+  });
+
+  app.delete<{ Params: { id: string } }>("/v1/workspaces/:id", async (req, reply) => {
+    const parsed = releaseSchema.safeParse(req.body);
+    if (!parsed.success || parsed.data.owner.workspaceHandle !== req.params.id ||
+      parsed.data.owner.workspaceGeneration !== parsed.data.payload.generation)
+      return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "Release owner and workspace must match"));
+    const request = parsed.data;
+    const { workspaceHandle: handle, workspaceGeneration: generation } = request.owner;
+
+    return admit(reply, {
+      request, sourceDigest: null,
+      binding: { operationId: WORKSPACE_RELEASE_OPERATION, target: { kind: "workspace", handle, generation } },
+      run: (assertOwner) => releaseArchivedWorkspace({ state, runtimeRoot, assertOwner }, request),
+    });
+  });
+
   app.get<{ Params: { commandId: string } }>(
     "/v1/commands/:commandId",
     async (req, reply) => {
@@ -1020,7 +1074,7 @@ export function registerWorkspacePreparation(args: {
         commandId: row.commandId,
         requestSha256: row.requestDigest,
         ...receiptBinding(row),
-        owner: row.kind === "workspace.publish" ? storedPublicationOwner(row) : {
+        owner: row.kind === "workspace.publish" || row.kind === "workspace.preserve" || row.kind === "workspace.release" ? storedPublicationOwner(row) : {
           kind: "assignment",
           hostKey: row.hostKey,
           runId: row.runId,
@@ -1041,6 +1095,8 @@ export function registerWorkspacePreparation(args: {
         workspaceTarget: _workspaceTarget,
         workspaceProcess: _workspaceProcess,
         workspaceOwner: _workspaceOwner,
+        archiveDispositionId: _archiveDispositionId,
+        archiveQuiescenceId: _archiveQuiescenceId,
         ...outcome
       } = row.body as Record<string, unknown>;
 

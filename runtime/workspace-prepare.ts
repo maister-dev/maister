@@ -238,6 +238,28 @@ export type WorkspacePublicationTarget = Readonly<{
   targetRef: string;
   priorTarget: string | null;
 }>;
+export type WorkspacePreserveRequest = Readonly<{
+  workspaceProtocol: 1;
+  command: Readonly<{ id: string; kind: "workspace.preserve"; issuedAt: string }>;
+  owner: WorkspaceOperationOwner;
+  payload: Readonly<{ generation: number; disposition: "archive"; quiescenceId: string }>;
+}>;
+export type WorkspaceReleaseRequest = Readonly<{
+  workspaceProtocol: 1;
+  command: Readonly<{ id: string; kind: "workspace.release"; issuedAt: string }>;
+  owner: WorkspaceOperationOwner;
+  payload: Readonly<{ generation: number; dispositionId: string; quiescenceId: string }>;
+}>;
+export type WorkspacePreserveResult = Readonly<{
+  generation: number;
+  dispositionId: string;
+  retainedCommit: string;
+}>;
+export type WorkspaceReleaseResult = Readonly<{
+  handle: string;
+  generation: number;
+  dispositionId: string;
+}>;
 
 export type WorkspaceRecord = Readonly<{
   handle: string;
@@ -265,6 +287,8 @@ export const WORKSPACE_CANCEL_OPERATION = "stageCCancelWorkload";
 export const WORKSPACE_CHECKPOINT_OPERATION = "stageCCheckpoint";
 export const WORKSPACE_RESTORE_OPERATION = "stageCRestore";
 export const WORKSPACE_PUBLISH_OPERATION = "stageCPublish";
+export const WORKSPACE_PRESERVE_OPERATION = "stageCPreserve";
+export const WORKSPACE_RELEASE_OPERATION = "stageCRelease";
 export const WORKSPACE_TERMINAL_EVENT = "workspace.command.terminal";
 export const WORKSPACE_TERMINAL_SCHEMA =
   "maister.workspace.command.terminal.v1";
@@ -311,10 +335,15 @@ export type WorkspacePublishBinding = Readonly<{
   operationId: typeof WORKSPACE_PUBLISH_OPERATION;
   target: WorkspaceGenerationTarget;
 }>;
+export type WorkspaceDispositionBinding =
+  | Readonly<{ operationId: typeof WORKSPACE_PRESERVE_OPERATION; target: WorkspaceGenerationTarget }>
+  | Readonly<{ operationId: typeof WORKSPACE_RELEASE_OPERATION; target: WorkspaceGenerationTarget }>;
+export type WorkspaceRetainedBinding = WorkspacePublishBinding | WorkspaceDispositionBinding;
+export type WorkspaceRetainedRequest = WorkspacePublishRequest | WorkspacePreserveRequest | WorkspaceReleaseRequest;
 
 export type WorkspaceTerminalPayload = (
   | (WorkspaceCommandBinding & { owner: WorkspaceAssignmentOwner })
-  | (WorkspacePublishBinding & { owner: WorkspaceOperationOwner })
+  | (WorkspaceRetainedBinding & { owner: WorkspaceOperationOwner })
 ) &
   Readonly<{
     commandId: string;
@@ -342,7 +371,7 @@ type ReceiptIdentity = Readonly<{
 }>;
 
 type WorkspaceReceipt<
-  Binding extends WorkspaceCommandBinding | WorkspacePublishBinding,
+  Binding extends WorkspaceCommandBinding | WorkspaceRetainedBinding,
   Result,
   Owner = WorkspaceAssignmentOwner,
 > = Readonly<
@@ -408,10 +437,22 @@ export type WorkspaceCommandReceipt =
   | WorkspaceCancelWorkloadReceipt
   | WorkspaceReceipt<Extract<WorkspaceCommandBinding, { operationId: typeof WORKSPACE_CHECKPOINT_OPERATION }>, WorkspaceGitCheckpointResult>
   | WorkspaceReceipt<Extract<WorkspaceCommandBinding, { operationId: typeof WORKSPACE_RESTORE_OPERATION }>, WorkspaceGitCheckpointResult>
-  | WorkspacePublishReceipt;
+  | WorkspacePublishReceipt
+  | WorkspacePreserveReceipt
+  | WorkspaceReleaseReceipt;
 export type WorkspacePublishReceipt = WorkspaceReceipt<
   WorkspacePublishBinding,
   WorkspacePublishResult,
+  WorkspaceOperationOwner
+>;
+export type WorkspacePreserveReceipt = WorkspaceReceipt<
+  Extract<WorkspaceDispositionBinding, { operationId: typeof WORKSPACE_PRESERVE_OPERATION }>,
+  WorkspacePreserveResult,
+  WorkspaceOperationOwner
+>;
+export type WorkspaceReleaseReceipt = WorkspaceReceipt<
+  Extract<WorkspaceDispositionBinding, { operationId: typeof WORKSPACE_RELEASE_OPERATION }>,
+  WorkspaceReleaseResult,
   WorkspaceOperationOwner
 >;
 export type WorkspaceCommandRequest =
@@ -513,7 +554,7 @@ export function isWorkspaceTerminalPayload(
     ]) &&
     matches(value.commandId, UUID) &&
     matches(value.requestSha256, DIGEST) &&
-    (value.operationId === WORKSPACE_PUBLISH_OPERATION
+    (isWorkspaceRetainedOperation(value.operationId)
       ? isWorkspaceOperationOwner(value.owner) &&
         isWorkspaceGenerationTarget(value.target) &&
         value.owner.workspaceHandle === value.target.handle &&
@@ -533,6 +574,14 @@ export function isWorkspaceTerminalPayload(
       value.phase === "indeterminate") &&
     matches(value.outcomeSha256, DIGEST)
   );
+}
+
+export function isWorkspaceRetainedOperation(
+  operationId: unknown,
+): operationId is WorkspaceRetainedBinding["operationId"] {
+  return operationId === WORKSPACE_PUBLISH_OPERATION ||
+    operationId === WORKSPACE_PRESERVE_OPERATION ||
+    operationId === WORKSPACE_RELEASE_OPERATION;
 }
 
 export function isWorkspaceGenerationTarget(
@@ -611,8 +660,8 @@ export function workspacePrepareRequestDigest(
 }
 
 export function workspaceCommandRequestDigest(
-  request: WorkspaceCommandRequest | WorkspacePublishRequest,
-  binding: WorkspaceCommandBinding | WorkspacePublishBinding,
+  request: WorkspaceCommandRequest | WorkspaceRetainedRequest,
+  binding: WorkspaceCommandBinding | WorkspaceRetainedBinding,
 ): string {
   return workspaceEvidenceDigest({
     ...binding,

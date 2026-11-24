@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
-import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspacePublishRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
+import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspaceRetainedRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
@@ -1908,10 +1908,10 @@ export async function getCommandReceipt(
   }
 }
 
-async function sendWorkspaceCommand(path: string, input: WorkspaceCommandRequest | WorkspacePublishRequest): Promise<void> {
+async function sendWorkspaceCommand(path: string, input: WorkspaceCommandRequest | WorkspaceRetainedRequest, method: "POST" | "DELETE" = "POST"): Promise<void> {
   const commandPath = `/v1/commands/${encodeURIComponent(input.command.id)}`;
   const res = await request<unknown>({
-    method: "POST",
+    method,
     path,
     body: input,
     ctx: input.command.kind,
@@ -1942,8 +1942,12 @@ export function sendWorkspaceGitCommand(handle: string, input: WorkspaceCheckpoi
   return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(handle)}/${operation}`, input);
 }
 
-export function sendWorkspacePublication(input: WorkspacePublishRequest): Promise<void> {
-  return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(input.owner.workspaceHandle)}/publication`, input);
+export function sendRetainedWorkspaceCommand(input: WorkspaceRetainedRequest): Promise<void> {
+  const workspace = `/v1/workspaces/${encodeURIComponent(input.owner.workspaceHandle)}`;
+  if (input.command.kind === "workspace.release") return sendWorkspaceCommand(workspace, input, "DELETE");
+  const action = input.command.kind === "workspace.preserve" ? "preserve" : "publication";
+
+  return sendWorkspaceCommand(`${workspace}/${action}`, input);
 }
 
 export async function getWorkspacePublicationTarget(

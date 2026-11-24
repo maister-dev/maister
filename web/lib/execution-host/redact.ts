@@ -68,6 +68,7 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
   "workspace.cancel": (payload) => pickScalars(payload, ["generation", "targetCommandId"]),
   "workspace.checkpoint": (payload) => pickScalars(payload, ["generation"]),
   "workspace.restore": (payload) => pickScalars(payload, ["generation", "checkpointId", "policy"]),
+  "workspace.preserve": (payload) => pickScalars(payload, ["generation", "claimId", "fence", "disposition", "quiescenceId"]),
   "workspace.publish": (payload) => {
     const expected = asObject(payload.expected);
 
@@ -89,7 +90,9 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
       : {}),
     contextMountCount: countOf(p.contextMounts),
   }),
-  "workspace.release": () => ({}),
+  "workspace.release": (payload) => typeof payload.claimId === "string"
+    ? pickScalars(payload, ["generation", "claimId", "fence", "dispositionId", "quiescenceId"])
+    : {},
   "workspace.publication": (payload) =>
     pickScalars(payload, [
       "action",

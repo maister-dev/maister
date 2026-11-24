@@ -18,7 +18,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { ZodError } from "zod";
-import { isWorkspaceTerminalPayload, type WorkspaceOperationOwner } from "../../../../runtime/workspace-prepare";
+import { isWorkspaceTerminalPayload, type WorkspaceOperationOwner, type WorkspaceTerminalPayload } from "../../../../runtime/workspace-prepare";
 
 import { hasNativeOutputCommand } from "../runtime-object-intent";
 import { carriesWorkspaceGitEvidence, hasRetainedWorkspaceGitOwner, workspaceGitEvidence } from "../workspace-git-evidence";
@@ -146,14 +146,21 @@ export {
 
 /** The one envelope normalization: schema parse, then the jsonb-safe escape
  * `execution_events.payload` needs (U+0000 and lone surrogates). */
-async function retainedPublicationProvenance(db: Db, executionHostId: string, commandId: string, owner: WorkspaceOperationOwner) {
+async function retainedWorkspaceProvenance(
+  db: Db, executionHostId: string, commandId: string, owner: WorkspaceOperationOwner,
+  operationId: WorkspaceTerminalPayload["operationId"],
+) {
+  const kind = operationId === "stageCPublish" ? "workspace.publish"
+    : operationId === "stageCPreserve" ? "workspace.preserve"
+    : operationId === "stageCRelease" ? "workspace.release" : null;
+  if (!kind) return undefined;
   const [command] = await db.select({
     runId: executionCommands.runId,
     assignmentId: executionCommands.executionAssignmentId,
     assignmentEpoch: executionCommands.assignmentEpoch,
   }).from(executionCommands).where(and(
     eq(executionCommands.id, commandId),
-    eq(executionCommands.kind, "workspace.publish"),
+    eq(executionCommands.kind, kind),
     eq(executionCommands.executionHostId, executionHostId),
     eq(executionCommands.targetSessionId, owner.workspaceHandle),
     sql`${executionCommands.payload}->>'generation' = ${String(owner.workspaceGeneration)}`,
@@ -168,9 +175,9 @@ export async function normalizeRuntimeEnvelope(db: Db, executionHostId: string, 
   const parsed = encodeJsonbSafe(RuntimeEventWireEnvelopeSchema.parse(raw));
   if (parsed.envelopeVersion === 1) return parsed;
   const { payload } = parsed;
-  if (payload.operationId === "stageCPublish") {
-    const command = await retainedPublicationProvenance(db, executionHostId, payload.commandId, payload.owner);
-    if (!command) throw new MaisterError("ACP_PROTOCOL", "Publication event has no matching retained owner");
+  if (payload.owner.kind === "workspaceOperation") {
+    const command = await retainedWorkspaceProvenance(db, executionHostId, payload.commandId, payload.owner, payload.operationId);
+    if (!command) throw new MaisterError("ACP_PROTOCOL", "Workspace operation event has no matching retained owner");
 
     return { ...parsed, ...command, hostSessionId: null };
   }
@@ -412,8 +419,8 @@ async function isBoundHistoricalEvent(
   },
 ): Promise<boolean> {
   if (input.eventType === "workspace.command.terminal" && isWorkspaceTerminalPayload(input.payload) &&
-    input.payload.operationId === "stageCPublish") {
-    const command = await retainedPublicationProvenance(tx, input.executionHostId, input.payload.commandId, input.payload.owner);
+    input.payload.owner.kind === "workspaceOperation") {
+    const command = await retainedWorkspaceProvenance(tx, input.executionHostId, input.payload.commandId, input.payload.owner, input.payload.operationId);
 
     return command?.runId === input.runId && command.assignmentId === input.assignmentId && command.assignmentEpoch === input.assignmentEpoch;
   }

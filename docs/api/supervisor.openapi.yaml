@@ -332,6 +332,52 @@ paths:
         "404": { description: No retained workspace on this host. }
         "409": { description: The repository or generation does not match the retained checkout. }
         "503": { description: The approved repository could not be read. }
+  /v1/workspaces/{id}:
+    delete:
+      tags: [execution-host]
+      operationId: stageCRelease
+      summary: Release a physically removed worktree after verified archival
+      description: Binds release to the original owner and archive. Changed tracked or unignored content refuses before removal. Replay after interruption verifies the retained ref and the physical absence of the original checkout.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCReleaseRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. Use the Location header to verify disposal.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid release request or owner. }
+        "409": { description: Different host or competing retained release. }
+  /v1/workspaces/{id}/preserve:
+    post:
+      tags: [execution-host]
+      operationId: stageCPreserve
+      summary: Preserve an owned worktree before archival release
+      description: Requires the retained workspace-operation owner and an exclusive physical worktree. The host commits the checkout snapshot to a private retained ref and keeps its writer claim until release.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCPreserveRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the verified archive receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid archive request or owner. }
+        "409": { description: Different host or command digest. }
   /v1/workspaces/{id}/publication:
     post:
       tags: [execution-host]

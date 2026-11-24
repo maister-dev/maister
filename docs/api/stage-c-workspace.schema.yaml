@@ -115,6 +115,7 @@ x-operations:
     status: 202
     result: Preserved
     replay: sameCommand
+    implementedProfile: { owner: workspaceOperation, disposition: archive }
   stageCRelease:
     method: DELETE
     path: /v1/workspaces/{id}
@@ -123,6 +124,7 @@ x-operations:
     status: 202
     result: Released
     replay: sameCommand
+    implementedProfile: { owner: workspaceOperation, prerequisite: verifiedArchive }
   stageCGetCommandReceipt:
     method: GET
     path: /v1/commands/{commandId}

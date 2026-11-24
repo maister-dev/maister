@@ -10,12 +10,15 @@ import type { ProjectAction } from "@/lib/authz";
 import type {
   WorkspacePreservationOutcome,
   WorkspaceRemovalKind,
+  Workspace,
+  ExecutionCommand,
 } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 
 import { and, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
+import { z } from "zod";
 import pino from "pino";
 
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
@@ -31,7 +34,13 @@ import {
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { pgErrorOf } from "@/lib/db/pg-error";
+import { getAssignmentById } from "@/lib/execution-host/assignments";
+import { insertCommand } from "@/lib/execution-host/commands";
 import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
+import { settleRetainedWorkspaceCommand } from "@/lib/execution-host/workspace-retained-operation";
+import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
+import { WORKTREE_ACTION_STATUSES } from "@/lib/workbench-git/policy";
 import { MaisterError } from "@/lib/errors";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
@@ -917,6 +926,26 @@ export async function archiveWorkbench(
   const deps = depsFromOptions(options);
 
   const sessionUser = await deps.requireActiveSession();
+  if (!options?.deps) {
+    const client = db();
+    const [addressed] = await client
+      .select()
+      .from(workspaces)
+      .where(
+        and(
+          eq(workspaces.runId, runId),
+          eq(workspaces.ownershipKind, "host_owned"),
+        ),
+      );
+    if (addressed) {
+      await deps.authorize(
+        requireRunProjectId(addressed.projectId, runId),
+        "recoverRun",
+      );
+
+      return archiveAddressedWorkbench(client, addressed, sessionUser.id);
+    }
+  }
 
   const ctx = await deps.loadContext(runId);
 
@@ -927,6 +956,319 @@ export async function archiveWorkbench(
   return archiveWorkbenchForCtx(runId, ctx, deps, {
     allowPausedBudgetRun: options?.allowPausedBudgetRun,
   });
+}
+
+const RetainedArchiveResult = z.object({
+  generation: z.number().int().positive(),
+  dispositionId: z.string().uuid(),
+  retainedCommit: z.string().regex(GIT_OBJECT_ID),
+});
+
+function addressedArchiveResult(
+  runId: string,
+  status: WorkbenchRunStatus,
+  idempotent: boolean,
+): ArchiveWorkbenchResult {
+  return {
+    ok: true,
+    runId,
+    operation: "archive",
+    runStatus: status,
+    workspaceRemoved: true,
+    idempotent,
+    preservationOutcome: "snapshot_created",
+    archived: true,
+    archivedBranch: null,
+    snapshotted: true,
+  };
+}
+
+async function lockAddressedArchiveRun(tx: ExecutionDb, runId: string) {
+  const [run] = await tx
+    .select()
+    .from(schema.runs)
+    .where(eq(runs.id, runId))
+    .for("update", { noWait: true })
+    .catch((cause: unknown) => {
+      if (pgErrorOf(cause)?.code === "55P03")
+        throw new MaisterError(
+          "CONFLICT",
+          "The Run is being changed by another operation",
+          { cause },
+        );
+      throw cause;
+    });
+  if (
+    !run ||
+    (run.runKind !== "flow" &&
+      run.runKind !== "agent" &&
+      run.runKind !== "scratch") ||
+    !WORKTREE_ACTION_STATUSES.has(run.status) ||
+    run.workspaceMode === "shared"
+  )
+    throw gitActionRefusal(runId, "archive", "unsupported-status");
+  assertCodeDeliveryAllowed(run, "archive");
+
+  return { ...run, runKind: run.runKind };
+}
+
+async function archiveAddressedWorkbench(
+  client: ExecutionDb,
+  candidate: Workspace,
+  actorUserId: string,
+): Promise<ArchiveWorkbenchResult> {
+  const runId = candidate.runId;
+  const reserved = await client.transaction(async (tx) => {
+    const [workspace] = await tx
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, candidate.id))
+      .for("update");
+    const run = await lockAddressedArchiveRun(tx, runId);
+    if (
+      !workspace ||
+      workspace.ownershipKind !== "host_owned" ||
+      run.projectId !== candidate.projectId ||
+      !workspace.executionHostId ||
+      !workspace.executionWorkspaceId ||
+      !workspace.workspaceGeneration
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The addressed workspace changed before archival",
+      );
+    if (workspace.removedAt) {
+      if (
+        workspace.removalKind === "archive" &&
+        workspace.preservationOutcome === "snapshot_created" &&
+        workspace.archivedCommit
+      )
+        return {
+          completed: addressedArchiveResult(runId, run.status, true),
+        } as const;
+      throw new MaisterError(
+        "CONFLICT",
+        "The workspace was removed by a different operation",
+      );
+    }
+    const {
+      executionHostId: hostId,
+      executionWorkspaceId: handle,
+      workspaceGeneration: generation,
+    } = workspace;
+    const assignment = run.executionAssignmentId
+      ? await getAssignmentById(tx, run.executionAssignmentId)
+      : null;
+    if (
+      !assignment ||
+      assignment.state !== "released" ||
+      assignment.executionHostId !== hostId ||
+      assignment.executionWorkspaceId !== handle
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The workspace's original execution has not retired",
+      );
+    const rows = await tx
+      .select()
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.executionHostId, hostId),
+          eq(schema.executionCommands.targetSessionId, handle),
+          inArray(schema.executionCommands.kind, [
+            "workspace.publish",
+            "workspace.preserve",
+          ]),
+        ),
+      );
+    const resumed = rows.find(
+      (row) =>
+        row.kind === "workspace.preserve" &&
+        row.payload.claimId === workspace.lifecycleOperationAttemptId,
+    );
+    const claim = await claimLifecycleOperation({
+      database: tx,
+      runId,
+      workspaceId: workspace.id,
+      operation: "archive",
+      expectedRunStatus: run.status,
+      actorUserId,
+      ...(resumed &&
+      resumed.state !== "failed" &&
+      workspace.lifecycleOperationAttemptId
+        ? {
+            replay: {
+              attemptId: workspace.lifecycleOperationAttemptId,
+              assertOwner: async () => {
+                if (
+                  resumed.executionAssignmentId !== assignment.id ||
+                  resumed.payload.generation !== generation
+                )
+                  throw new MaisterError(
+                    "CONFLICT",
+                    "The retained archive belongs to another workspace generation",
+                  );
+              },
+            },
+          }
+        : {}),
+    });
+    const target = {
+      runId,
+      hostId,
+      targetSessionId: handle,
+      assignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+    };
+    let preserve: ExecutionCommand;
+    if (resumed && resumed.payload.claimId === claim.attemptId) {
+      preserve = resumed;
+    } else {
+      const highestFence = rows.reduce((highest, row) => {
+        const fence = row.payload.fence;
+        if (
+          typeof fence !== "number" ||
+          !Number.isSafeInteger(fence) ||
+          fence <= 0
+        )
+          throw new MaisterError(
+            "ACP_PROTOCOL",
+            "A retained workspace fence is invalid",
+          );
+
+        return Math.max(highest, fence);
+      }, 0);
+      if (!Number.isSafeInteger(highestFence + 1))
+        throw new MaisterError(
+          "ACP_PROTOCOL",
+          "Retained workspace fence is exhausted",
+        );
+      preserve = await insertCommand(tx, {
+        ...target,
+        kind: "workspace.preserve",
+        maxAttempts: 3,
+        driverless: true,
+        payload: {
+          generation,
+          claimId: claim.attemptId,
+          fence: highestFence + 1,
+          disposition: "archive",
+          quiescenceId: claim.attemptId,
+        },
+      });
+    }
+
+    return {
+      target,
+      preserve,
+      run,
+      generation,
+      attemptId: claim.attemptId,
+    } as const;
+  });
+  if (reserved.completed) return reserved.completed;
+  const preservation = await settleRetainedWorkspaceCommand(
+    client,
+    reserved.preserve,
+  );
+  if (preservation.state === "failed") {
+    await finalizeLifecycleOperation({
+      database: client,
+      workspaceId: candidate.id,
+      attemptId: reserved.attemptId,
+      state: "failed",
+    });
+    throw new MaisterError(
+      "CONFLICT",
+      "The supervisor could not preserve the addressed workspace",
+    );
+  }
+  const archive = RetainedArchiveResult.safeParse(preservation.result);
+  if (
+    !archive.success ||
+    archive.data.dispositionId !== preservation.id ||
+    archive.data.generation !== reserved.generation
+  )
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "The addressed preservation receipt is inconsistent",
+    );
+  const release = await client.transaction(async (tx) => {
+    const [workspace] = await tx
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, candidate.id))
+      .for("update");
+    const run = await lockAddressedArchiveRun(tx, runId);
+    if (
+      run.status !== reserved.run.status ||
+      run.executionAssignmentId !== reserved.target.assignmentId ||
+      !workspace ||
+      workspace.lifecycleOperationAttemptId !== reserved.attemptId
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The archive claim changed before release",
+      );
+    const actions = await tx
+      .select()
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.kind, "workspace.release"),
+        ),
+      );
+    const retained = actions.find(
+      (action) =>
+        action.payload.dispositionId === preservation.id &&
+        action.state !== "failed",
+    );
+    if (retained) return retained;
+
+    return insertCommand(tx, {
+      ...reserved.target,
+      kind: "workspace.release",
+      maxAttempts: 3,
+      driverless: true,
+      payload: {
+        generation: reserved.generation,
+        claimId: reserved.attemptId,
+        fence: preservation.payload.fence,
+        dispositionId: preservation.id,
+        quiescenceId: preservation.payload.quiescenceId,
+      },
+    });
+  });
+  const released = await settleRetainedWorkspaceCommand(client, release);
+  if (released.state !== "succeeded")
+    throw new MaisterError(
+      "CONFLICT",
+      "The supervisor kept the worktree because its archive no longer proves safe removal",
+      {
+        details: { reason: "retained_disposition_required" },
+      },
+    );
+  const now = new Date();
+  await recordDrop({
+    database: client,
+    runId,
+    runKind: reserved.run.runKind,
+    workspaceId: candidate.id,
+    removedAt: now,
+    expectedRunStatus: reserved.run.status,
+    nextRunStatus: null,
+    archivedAt: now,
+    archivedBranch: null,
+    archivedCommit: archive.data.retainedCommit,
+    preservationOutcome: "snapshot_created",
+    removalKind: "archive",
+    attemptId: reserved.attemptId,
+  });
+
+  return addressedArchiveResult(runId, reserved.run.status, false);
 }
 
 async function archiveWorkbenchForCtx(

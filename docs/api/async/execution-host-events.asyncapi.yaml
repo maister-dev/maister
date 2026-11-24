@@ -93,6 +93,9 @@ components:
         from ../stage-c-workspace.schema.yaml on the same stream. The
         manager ACKs committed contiguous ingest and consumer scheduling.
         Domain application has its own cursor and cannot block this ACK.
+        Retained publication, preservation and release identify their
+        workspace-operation owner. The manager resolves their Run and
+        historical assignment from the exact command before storing the event.
       contentType: application/json
       payload:
         oneOf:

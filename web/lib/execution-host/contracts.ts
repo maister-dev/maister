@@ -37,7 +37,7 @@ import type {
   WorkspaceKind,
 } from "./types";
 import type { RuntimeEventWireEnvelope } from "./runtime-events";
-import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspacePublishRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../../runtime/workspace-prepare";
+import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspaceRetainedRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../../runtime/workspace-prepare";
 import type { WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceCommandReceipt, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../../runtime/workspace-prepare";
 
 // ADR-166 D10: the typed boundary domain code addresses execution through.
@@ -312,7 +312,7 @@ export interface ExecutionHostTransport {
   getWorkspaceReviewFingerprint?(handle: string, input: { generation: number; base: string }): Promise<WorkspaceReviewFingerprint>;
   getWorkspaceLog?(handle: string, query: WorkspaceLogQuery): Promise<WorkspaceEvidenceObject>;
   sendWorkspaceGitCommand?(handle: string, request: WorkspaceCheckpointRequest | WorkspaceRestoreRequest): Promise<void>;
-  sendWorkspacePublication?(request: WorkspacePublishRequest): Promise<void>;
+  sendRetainedWorkspaceCommand?(request: WorkspaceRetainedRequest): Promise<void>;
   getWorkspacePublicationTarget?(handle: string, input: Omit<WorkspacePublicationTarget, "priorTarget">): Promise<WorkspacePublicationTarget>;
   observeWorkspaceRevision?(repositoryId: string, ref: string): Promise<string>;
   resolveWorkspaceRevision?(repositoryId: string, ref: string, pinnedCommit?: string): Promise<WorkspaceRevisionObservation>;
