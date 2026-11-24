@@ -47,7 +47,10 @@ export const canonicalRuntimeObjectProjector: ExecutionEventProjector = {
   project: projectRuntimeObject,
   afterCommit(events) {
     for (const event of events)
-      if (event.payload?.workspaceGitDiff !== undefined)
+      if (
+        event.payload?.workspaceGitDiff !== undefined ||
+        event.payload?.workspaceWorkloadCommandId !== undefined
+      )
         runEventWakeBus.wake(event.runId);
   },
 };

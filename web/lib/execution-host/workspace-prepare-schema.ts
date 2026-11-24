@@ -228,7 +228,7 @@ export const WorkspaceCancelWorkloadPayloadSchema = z
 const workloadObject = z
   .object({ objectId: z.string().uuid(), sha256: digest })
   .strict();
-const workloadResult = z
+export const WorkspaceWorkloadResultSchema = z
   .object({
     generation,
     processOutcome: z.enum([
@@ -309,7 +309,7 @@ export const WorkspaceCommandReceiptSchema = z.union([
   commandResultReceipt(
     "stageCRunWorkload",
     z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget),
-    workloadResult,
+    WorkspaceWorkloadResultSchema,
   ),
   commandResultReceipt(
     "stageCCancelWorkload",

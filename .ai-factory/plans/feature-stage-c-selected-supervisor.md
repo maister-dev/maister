@@ -353,6 +353,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   admission attempt survived both restarts. Passed 16 Web and 26 supervisor
   integration cases and both typechecks.
 
+  The CLI action now accepts an addressed workload with a stable operation
+  key and reads its structured result and streams through the authenticated
+  runtime object catalogue. RED ran the fixture shell on Web and lost the
+  declared output. GREEN ran on the supervisor, read the sealed JSON and
+  left no output file on Web. The same fixture verifies that a quiet accepted
+  command stays under receipt recovery without tripping the event stream
+  silence detector. Passed 25 Web tests and the Web typecheck. The ordinary
+  graph driver and command-check gates still require the addressed call path.
+
 ### C3–C4 — review, board and single-host qualification
 
 - [ ] **T08 · Git / review (after T07 provides sealed evidence and T05H provides owned handles).** Move status/diff/log, mutation detection, Git checkpoint and restore behind the handle. Cover `flows/graph/workspace-checkpoint.ts`, `artifact-content.ts`, board diff readers and human takeover. Scope read authorization to the content returned. Verify dirty and detached states, bounded diff ranges, authorized read and denied cross-project read. Preserve ACP checkpoint separately. Log expected/actual commit and evidence ID.

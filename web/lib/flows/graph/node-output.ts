@@ -115,6 +115,7 @@ export async function readSealedCliOutput(
     runId: string;
     objectId: string;
     sha256: string;
+    signal?: AbortSignal;
     transportForHost?: RuntimeObjectTransportResolver;
   }>,
 ): Promise<RawNodeOutputPayload> {
@@ -122,6 +123,7 @@ export async function readSealedCliOutput(
     db: input.db,
     runId: input.runId,
     objectId: input.objectId,
+    signal: input.signal,
     transportForHost: input.transportForHost,
   });
   if (

@@ -37,9 +37,11 @@ export async function reserveWorkspaceWorkload(
     operationKey: string;
     declarationId: string;
     workload: WorkspaceWorkloadKind;
+    assertDriver?: (tx: Db) => Promise<void>;
   }>,
 ): Promise<ExecutionCommand> {
   return db.transaction(async (tx) => {
+    await input.assertDriver?.(tx);
     await assertWorkspaceRunAuthority(tx, input.runId);
     const [run] = await tx
       .select({ assignmentId: runs.executionAssignmentId, status: runs.status })

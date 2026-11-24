@@ -71,6 +71,7 @@ import {
 } from "./run-context";
 import { runNodeGates } from "./gates-exec";
 import { FlowPromptContinuationPending } from "./prompt-owner";
+import { FlowWorkloadContinuationPending } from "../addressed-workload";
 import { ConsensusGenerationPending } from "./consensus/prompt-owner";
 import { FlowDriverClaimLost, isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
@@ -4149,6 +4150,7 @@ export async function runGraph(
         } catch (err) {
           if (
             err instanceof FlowPromptContinuationPending ||
+            err instanceof FlowWorkloadContinuationPending ||
             err instanceof ConsensusGenerationPending ||
             isProjectionTransactionUnavailable(err) ||
             isFlowDriverClaimLost(err)
@@ -6107,13 +6109,14 @@ export async function runGraph(
     }
     if (
       err instanceof FlowPromptContinuationPending ||
+      err instanceof FlowWorkloadContinuationPending ||
       err instanceof ConsensusGenerationPending ||
       isFencedError(err) ||
       isFlowDriverClaimLost(err)
     ) {
       log2.warn(
         isMaisterError(err) ? { code: err.code, details: err.details } : {},
-        "driver-yielded awaiting durable prompt continuation",
+        "driver-yielded awaiting durable command continuation",
       );
 
       return;

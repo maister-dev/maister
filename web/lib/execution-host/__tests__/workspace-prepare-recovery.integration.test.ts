@@ -24,6 +24,7 @@ import { consumeRuntimeEventStreamOnce } from "../events/consumer";
 import { canonicalLifecycleProjector } from "../events/lifecycle-projector";
 import { projectExecutionEvents } from "../events/projector";
 import { projectCanonicalRuntimeObjects } from "../events/runtime-object-projector";
+import { findStalledEventStreams } from "../events/stream-health";
 import { mintPlacement } from "../placement";
 import { buildEnvelope } from "../ledger";
 import { recoverExecutionCommands } from "../recovery";
@@ -44,7 +45,8 @@ import { stageProjectFlowMemory } from "@/lib/agent-memory-vault/injection";
 import { agentFacadeMcpServerForRun } from "@/lib/agents/launch";
 import { issueProjectVaultNodeToken } from "@/lib/agents/tokens";
 import { closeDb } from "@/lib/db/client";
-import { readSealedCliOutput } from "@/lib/flows/graph/node-output";
+import { cliOutputFilePath } from "@/lib/flows/graph/node-output";
+import { runCliStep } from "@/lib/flows/runner-cli";
 import { loadGitState } from "@/lib/workbench-git/read-model";
 import { workspaces } from "@/lib/db/schema";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
@@ -550,6 +552,41 @@ async function assertAddressedRequirement({
   expect((await reserveWorkspaceWorkload(db, workloadIntent)).id).toBe(
     workload.id,
   );
+  const action = runCliStep(
+    {
+      id: "fixture-check",
+      type: "cli",
+      command:
+        "printf 'check diagnostic'; printf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"",
+    },
+    {
+      runtimeRoot: join(root, "web-runtime"),
+      projectSlug: project.slug,
+      runId,
+      stepId: "fixture-check",
+      attempt: 1,
+      timeoutMs: 5000,
+      workload: { db, ...workloadIntent },
+      context: {
+        task: {
+          id: "fixture-check",
+          title: "Fixture",
+          prompt: "",
+          effectivePrompt: "",
+          clarifications: [],
+          attemptNumber: 1,
+        },
+        run: { id: runId, attemptNumber: 1, projectSlug: project.slug },
+        executor: { id: "fixture", agent: "claude", model: "fixture" },
+        steps: {},
+        env: {},
+        artifacts: {},
+      },
+    },
+  ).then(
+    (result) => ({ result }),
+    (error: unknown) => ({ error }),
+  );
   const workDelivery = await recoverExecutionCommands({
     db,
     transport,
@@ -583,26 +620,24 @@ async function assertAddressedRequirement({
       quiescence: "proved",
     },
   });
-  const objects = appliedWork?.result?.objects as {
-    objectId: string;
-    sha256: string;
-  }[];
-  const workOutput = await readRuntimeObjectContent({
-    db,
-    runId,
-    objectId: objects[0].objectId,
-    transportForHost: async () => transport,
+  expect(await action).toMatchObject({
+    result: {
+      ok: true,
+      stdout: "check diagnostic",
+      originalOutput: { kind: "value", value: { verified: true } },
+    },
   });
-  expect(Buffer.from(workOutput.content.bytes).toString("utf8")).toBe(
-    "check diagnostic",
-  );
-  const checkResult = await readSealedCliOutput({
-    db,
-    runId,
-    ...objects[2],
-    transportForHost: async () => transport,
-  });
-  expect(checkResult).toEqual({ kind: "value", value: { verified: true } });
+  await expect(
+    readFile(
+      cliOutputFilePath({
+        runtimeRoot: join(root, "web-runtime"),
+        projectSlug: project.slug,
+        runId,
+        nodeId: "fixture-check",
+        attempt: 1,
+      }),
+    ),
+  ).rejects.toMatchObject({ code: "ENOENT" });
 
   const crashWork = await reserveWorkspaceWorkload(db, {
     ...workloadIntent,
@@ -654,6 +689,15 @@ async function assertAddressedRequirement({
       now: () => new Date(Date.now() + seconds * 1000),
     });
   try {
+    expect(
+      (
+        await findStalledEventStreams({
+          db,
+          now: new Date(Date.now() + 10_000),
+          stallSeconds: 1,
+        })
+      ).map(({ executionHostId }) => executionHostId),
+    ).not.toContain(host.id);
     supervisor = await supervisor.restart();
     expect((await inspectProcessGroup(group)).state).toBe("active");
     expect(await recoverAt(30)).toMatchObject({ errors: [], redelivered: 1 });
