@@ -364,3 +364,48 @@ it("uses the same coordinate grammar before persistence and after a 0370 upgrade
     await old.stop();
   }
 }, 180_000);
+
+it("upgrades flat package skill inventories using the readiness of each project's candidate providers", async () => {
+  const prior = "0374_flow_link_publication";
+  const old = await startMainPostgresTestDbUpTo(
+    { databaseName: "package_skill_upgrade" },
+    prior,
+  );
+  try {
+    await old.pool.query(`
+      INSERT INTO projects(id,slug,name,repo_path,task_key)
+        SELECT id,id,id,'/tmp/'||id,upper(id) FROM (VALUES ('mixed'),('ready')) s(id);
+      INSERT INTO package_installs(id,source_url,name,version_label,resolved_revision,manifest,manifest_digest,installed_path,package_status,trust_status)
+        VALUES ('pkg','https://example.invalid/pkg','pkg','v1','abc','{"spec":{"capabilities":[{"id":"first"},{"id":"second"}]},"inventory":{"skills":["s"]}}','digest','/tmp/pkg','Installed','trusted');
+      INSERT INTO project_package_attachments(id,project_id,package_install_id,package_name)
+        SELECT id,id,'pkg','pkg' FROM projects;
+      INSERT INTO capability_imports(id,project_id,capability_ref_id,source,version_tag,resolved_revision,manifest_digest,manifest,installed_path,package_status,trust_status,setup_status,package_install_id)
+        SELECT p.id||c.id,p.id,c.id,'local','v1','abc','digest','{}','/tmp/pkg/'||c.id,'Installed','trusted',
+          CASE WHEN p.id='mixed' AND c.id='second' THEN 'pending' ELSE 'done' END,'pkg'
+        FROM projects p CROSS JOIN (VALUES ('first'),('second')) c(id);
+      INSERT INTO capability_records(id,project_id,capability_ref_id,kind,label,source,agents,version,revision,selectable,selected_by_default,material)
+        SELECT 'skill-'||id,id,'s','skill','s','flow-package','[]','v1','abc',true,false,
+          '{"origin":"package-attachment","packageInstallId":"pkg"}' FROM projects;
+    `);
+    await upgradeMainTestDb(old, prior);
+    const result = await old.pool
+      .query(`SELECT id,selectable,(disabled_at IS NULL) AS available,selected_by_default
+      FROM capability_records WHERE id IN ('skill-mixed','skill-ready') ORDER BY id`);
+    expect(result.rows).toEqual([
+      {
+        id: "skill-mixed",
+        selectable: false,
+        available: false,
+        selected_by_default: false,
+      },
+      {
+        id: "skill-ready",
+        selectable: true,
+        available: true,
+        selected_by_default: false,
+      },
+    ]);
+  } finally {
+    await old.stop();
+  }
+}, 180_000);

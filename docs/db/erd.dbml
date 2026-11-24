@@ -2853,6 +2853,20 @@ table project_dependency_setup_receipts {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 }
 
+table project_flow_link_publications {
+  operation_id text [not null]
+  project_id text [not null]
+  flow_ref_id text [not null]
+  workspace_root text [not null]
+  due_at "timestamp with time zone" [not null, default: `now()`]
+  reason text
+
+  indexes {
+    (operation_id, flow_ref_id) [pk]
+    due_at [name: 'project_flow_link_publication_due_idx']
+  }
+}
+
 table project_flow_roles {
   id text [pk, not null]
   project_id text [not null]
@@ -5879,6 +5893,8 @@ ref dependency_retry_owner_fk: project_dependency_attempts.(declaration_id, gene
 ref project_dependency_declarations_project_id_projects_id_fk: project_dependency_declarations.project_id > projects.id [delete: cascade, update: no action]
 
 ref dependency_attachment_owner_fk: project_dependency_declarations.(project_id, effective_attachment_id) > project_package_attachments.(project_id, id) [delete: no action, update: no action]
+
+ref project_flow_link_publications_project_id_projects_id_fk: project_flow_link_publications.project_id > projects.id [delete: cascade, update: no action]
 
 ref project_flow_roles_project_id_projects_id_fk: project_flow_roles.project_id > projects.id [delete: cascade, update: no action]
 

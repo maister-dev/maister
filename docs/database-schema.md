@@ -775,6 +775,7 @@ Multi-flow package grouping above the per-revision substrate. Process contract:
 | `project_dependency_declarations` | Each project owns a desired pin and current generation for a logical dependency. Package heads can refer to one effective attachment in the same project. The effective revision and generation identify the last successful installation. |
 | `project_dependency_attempts` | Each row records the actor and immutable inputs for a specific generation and attempt number. Partial indexes cover due work and expired leases. One running claim per declaration serializes attempts. A unique retry reference records the result of an accepted retry command. Deleting a declaration cascades to its attempts. |
 | `project_dependency_setup_receipts` | A physical setup target has shared dispatch and completion evidence across projects. The claim, execution owner and outcome distinguish a completed effect from one that needs operator recovery. |
+| `project_flow_link_publications` | Pending publication or removal of one project Flow link. Migration 0374 records the operation, workspace and Flow reference with the native change. Workers reconcile current effective rows and retain failed projections with a due time and reason. |
 
 The [project ERD and migration contract](db/projects-domain.md#durable-project-dependency-requests-implemented) describe backfill, deployment and repair.
 

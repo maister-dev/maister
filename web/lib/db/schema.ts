@@ -9029,6 +9029,25 @@ export const projectDependencyAttempts = pgTable(
   }),
 );
 
+// Effective Flow rows and detach decisions commit together with their pending filesystem projections.
+export const projectFlowLinkPublications = pgTable(
+  "project_flow_link_publications",
+  {
+    operationId: text("operation_id").notNull(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    flowRefId: text("flow_ref_id").notNull(),
+    workspaceRoot: text("workspace_root").notNull(),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull().defaultNow(),
+    reason: text("reason"),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.operationId, t.flowRefId] }),
+    due: index("project_flow_link_publication_due_idx").on(t.dueAt),
+  }),
+);
+
 export const projectDependencySetupReceipts = pgTable(
   "project_dependency_setup_receipts",
   {
