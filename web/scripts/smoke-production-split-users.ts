@@ -151,7 +151,7 @@ ${adapterScript}EOF
       const git = (...args) => execFileSync("git", ["-C",project.repoPath,...args],{encoding:"utf8"}).trim();
       await mkdir(join(project.repoPath,"app"),{recursive:true});
       const files = {
-        ".gitignore": "node_modules/\\n.next/\\nnext-env.d.ts\\n*.tsbuildinfo\\n",
+        ".gitignore": "/node_modules\\n.next/\\nnext-env.d.ts\\n*.tsbuildinfo\\n",
         "package.json": JSON.stringify({name:"addressed-next-smoke",private:true}),
         "next.config.mjs": "export default {experimental:{cpus:1}};\\n",
         "tsconfig.json": JSON.stringify({compilerOptions:{target:"ES2022",module:"esnext",moduleResolution:"bundler",jsx:"react-jsx",strict:true,skipLibCheck:true,noEmit:true},include:["app/**/*.tsx"]}),
@@ -170,7 +170,7 @@ ln -s /app/web/node_modules node_modules
 node /app/web/node_modules/typescript/bin/tsc --noEmit
 NEXT_TELEMETRY_DISABLED=1 node /app/web/node_modules/next/dist/bin/next build --webpack
 test -s .next/BUILD_ID
-git add -- acp-marker
+git add -- acp-marker tsconfig.json
 git -c user.name='Stage C' -c user.email=stage-c@maister.local -c commit.gpgsign=false commit -m 'Commit addressed ACP edit'
 printf '%s\\n' '{"build":"passed","typecheck":"passed"}' > "$MAISTER_OUTPUT_FILE"`)}},
          output:{result:{schema:"./schemas/build.json",required:true}},transitions:{success:"done"}}
@@ -797,6 +797,9 @@ ${adapterScript}EOF
     await expect(
       reviewPanel.getByText("acp-marker", { exact: true }).first(),
     ).toBeVisible();
+    const reviewedDiff = await api(`/api/runs/${second.runId}/diff?scope=uncommitted`);
+    assert.equal(reviewedDiff.status, 200, await reviewedDiff.clone().text());
+    assert.equal((await reviewedDiff.json()).diff, "", "the build left uncommitted files");
     const publicationResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname ===

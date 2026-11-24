@@ -727,6 +727,17 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   configured host. Addressed cancel, checkpoint/restore, promotion and
   disposal remain open for G1.
 
+  **C-12 browser delivery slice.** Chrome 158 on Linux arm64 production image
+  `aca24539e` (`sha256:b1df0c9fbc341db84413164302d05ab079bff91ac31713b16ab6c26702f796b3`)
+  repeated both selected-host Next builds. The driver used the matching 0381
+  journal and committed the fixture's Next TypeScript configuration update.
+  The production Review button sent the displayed HEAD and sealed digest.
+  The approved remote branch pointed at that HEAD. The Archive confirmation
+  retained the post-publication untracked bytes in a private commit, then
+  removed the original checkout. The second Linux supervisor was healthy and
+  independent; it had no assignment in this run. This receipt covers manual
+  publication and archive in C-12. The remaining G1 cases still apply.
+
   The deployment and supervisor samples now describe the verified private
   root, repository approval and stable-key pin. The PostgreSQL-only
   production Compose configuration and full documentation validator pass.
