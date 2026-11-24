@@ -29,6 +29,8 @@ export const WorkspacePublishPayloadSchema = z.object({
   }).strict(),
   publication: z.enum(["push", "promote"]),
 }).strict();
+export const WorkspacePublicationTargetSchema = WorkspacePublishPayloadSchema.shape.expected
+  .omit({ head: true }).extend({ generation });
 export const RetainedWorkspacePublishSchema = WorkspacePublishPayloadSchema.extend({
   claimId: z.string().uuid(),
   fence: generation,

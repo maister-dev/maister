@@ -211,6 +211,21 @@ export async function readAddressedWorkspaceReviewFingerprint(
   return transport.getWorkspaceReviewFingerprint(handle, { generation, base });
 }
 
+export async function readAddressedWorkspacePublicationTarget(
+  db: Db,
+  workspace: RetainedWorkspaceRead,
+  input: { remoteId: string; targetRef: string },
+  transport = defaultTransport(),
+) {
+  if (!transport.getWorkspacePublicationTarget)
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "Transport cannot observe a workspace publication target", {
+      details: { reason: "workspace_protocol_unsupported" },
+    });
+  const { handle, generation } = await resolveAddressedWorkspaceRead(db, workspace, transport);
+
+  return transport.getWorkspacePublicationTarget(handle, { ...input, generation });
+}
+
 /** The caller authorizes repository content access before requesting history. */
 export async function readAddressedWorkspaceLog(
   db: Db,

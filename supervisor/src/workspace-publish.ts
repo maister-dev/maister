@@ -1,8 +1,9 @@
 import type {
   WorkspacePublishRequest,
   WorkspacePublishResult,
+  WorkspacePublicationTarget,
 } from "../../runtime/workspace-prepare";
-import type { HostState } from "./host-state";
+import type { HostState, WorkspaceRow } from "./host-state";
 
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
@@ -16,7 +17,11 @@ import {
   executeWorkspaceGit,
   observeWorkspaceTarget,
 } from "./workspace-source";
-import { inspectWorkspace, loadPreparedWorkspace } from "./workspace-status";
+import {
+  inspectWorkspace,
+  loadPreparedWorkspace,
+  observePreparedGitHead,
+} from "./workspace-status";
 
 type PublishInput = Readonly<{
   state: HostState;
@@ -26,6 +31,12 @@ type PublishInput = Readonly<{
   assignmentEpoch: number;
   runId: string;
 }>;
+type PublicationTargetInput = Pick<
+  PublishInput,
+  "state" | "runtimeRoot" | "source"
+> &
+  Omit<WorkspacePublicationTarget, "priorTarget"> &
+  Readonly<{ handle: string }>;
 
 function publicationRefused(
   reason:
@@ -62,6 +73,74 @@ function observedPublication(
   };
 }
 
+async function ownedPublicationGit(
+  input: PublicationTargetInput,
+): Promise<{ workspace: WorkspaceRow; git: readonly string[] }> {
+  const { state, source, handle, generation, remoteId } = input;
+  const prepared = loadPreparedWorkspace(state, handle, generation);
+  if (
+    !prepared ||
+    prepared.mode !== "ownWorktree" ||
+    prepared.workspace.projectSlug !== remoteId
+  )
+    throw publicationRefused(
+      "workspace_rejected",
+      "Publication requires the retained owned Git checkout",
+    );
+
+  const { workspace } = prepared;
+  const cache = join(
+    await realpath(input.runtimeRoot),
+    ".maister",
+    "managed-workspaces",
+    "repositories",
+    workspaceEvidenceDigest(source),
+  );
+  if (workspace.repoPath !== cache || (await realpath(cache)) !== cache)
+    throw publicationRefused(
+      "source_ref_unapproved",
+      "The retained checkout's approved Git source has changed",
+    );
+  await observePreparedGitHead(workspace);
+  const git = ["--no-replace-objects", "-C", workspace.realPath];
+  const approvedPush = await executeWorkspaceGit([
+    ...git,
+    "remote",
+    "get-url",
+    "--push",
+    "--all",
+    "origin",
+  ]);
+  const approvedRead = await executeWorkspaceGit([
+    ...git,
+    "remote",
+    "get-url",
+    "--all",
+    "origin",
+  ]);
+  if (approvedPush !== source || approvedRead !== source)
+    throw publicationRefused(
+      "source_ref_unapproved",
+      "The Git remote no longer matches host configuration",
+    );
+
+  return { workspace, git };
+}
+
+export async function readOwnedPublicationTarget(
+  input: PublicationTargetInput,
+): Promise<WorkspacePublicationTarget> {
+  const { generation, remoteId, source, targetRef } = input;
+  const { git } = await ownedPublicationGit(input);
+
+  return {
+    generation,
+    remoteId,
+    targetRef,
+    priorTarget: await observeWorkspaceTarget(source, targetRef, git),
+  };
+}
+
 /** Bind one fast-forward publication to a private checkout and a retained mutation fence. */
 export async function publishOwnedWorkspace(
   input: PublishInput,
@@ -84,52 +163,17 @@ export async function publishOwnedWorkspace(
         details: { reason: "stale_workspace_claim" },
       },
     );
-  const prepared = loadPreparedWorkspace(state, handle, generation);
-  if (
-    !prepared ||
-    prepared.mode !== "ownWorktree" ||
-    prepared.workspace.runId !== runId ||
-    prepared.workspace.projectSlug !== expected.remoteId ||
-    owner.workspaceGeneration !== generation
-  )
+  const { workspace, git } = await ownedPublicationGit({
+    ...input,
+    handle,
+    generation,
+    remoteId: expected.remoteId,
+    targetRef: expected.targetRef,
+  });
+  if (workspace.runId !== runId || owner.workspaceGeneration !== generation)
     throw publicationRefused(
       "workspace_rejected",
       "Publication requires the retained owned Git checkout",
-    );
-
-  const { workspace } = prepared;
-  const cache = join(
-    await realpath(input.runtimeRoot),
-    ".maister",
-    "managed-workspaces",
-    "repositories",
-    workspaceEvidenceDigest(source),
-  );
-  if (workspace.repoPath !== cache || (await realpath(cache)) !== cache)
-    throw publicationRefused(
-      "source_ref_unapproved",
-      "The retained checkout's approved Git source has changed",
-    );
-  const git = ["--no-replace-objects", "-C", workspace.realPath];
-  const approvedPush = await executeWorkspaceGit([
-    ...git,
-    "remote",
-    "get-url",
-    "--push",
-    "--all",
-    "origin",
-  ]);
-  const approvedRead = await executeWorkspaceGit([
-    ...git,
-    "remote",
-    "get-url",
-    "--all",
-    "origin",
-  ]);
-  if (approvedPush !== source || approvedRead !== source)
-    throw publicationRefused(
-      "source_ref_unapproved",
-      "The Git remote no longer matches host configuration",
     );
 
   const observed = await observeWorkspaceTarget(

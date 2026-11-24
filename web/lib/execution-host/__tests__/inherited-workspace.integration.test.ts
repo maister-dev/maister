@@ -495,6 +495,89 @@ it("C-09 rejects stale rework feedback after an addressed checkout changes and a
   );
 }, 60_000);
 
+it("C-10 publishes and finalizes a host-owned Run through the normal promotion route", async () => {
+  const {
+    db,
+    host,
+    runId,
+    repository,
+    readWorkspace,
+    supervisor: owningHost,
+  } = await prepareWorkspaceFixture();
+  const { executionWorkspaceId: handle, id } = await readWorkspace();
+  if (!handle)
+    throw new Error("The promotion fixture has no retained worktree");
+  const checkout = privateCheckoutPath(owningHost, handle);
+  await writeFile(join(checkout, "README.md"), "reviewed publication\n");
+  await git(checkout, "add", "--", "README.md");
+  await git(checkout, "commit", "-m", "reviewed publication");
+  const head = await git(checkout, "rev-parse", "HEAD");
+  const target = { remote: "origin", remoteBranch: "published-fixture" };
+  await db.transaction(async (tx) => {
+    await tx
+      .update(runs)
+      .set({
+        status: "Review",
+        reviewEnteredAt: new Date(),
+        deliveryPolicySnapshot: {
+          strategy: "publish_branch",
+          push: "on_success",
+          trigger: "manual",
+          targetBranch: "main",
+        },
+      })
+      .where(eq(runs.id, runId));
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+    await tx
+      .update(workspaces)
+      .set({ branchDelivery: { target, error: null } })
+      .where(eq(workspaces.id, id));
+  });
+  startCanonicalProjectionWorker();
+  const { POST: promote } =
+    await import("@/app/api/runs/[runId]/promote/route");
+  const send = () =>
+    promote(
+      new NextRequest(`http://localhost/api/runs/${runId}/promote`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ runId }) },
+    );
+  const reply = await send();
+  const result = await reply.json();
+  expect(reply.status, JSON.stringify(result)).toBe(200);
+  expect(result).toMatchObject({
+    commit: head,
+    mode: "publish_branch",
+    publication: target,
+  });
+  expect(
+    await git(repository, "rev-parse", `refs/heads/${target.remoteBranch}`),
+  ).toBe(head);
+  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  expect(run).toMatchObject({ status: "Done", promotedHeadSha: head });
+  expect(await readWorkspace()).toMatchObject({
+    executionHostId: host.id,
+    promotionState: "done",
+    publishedRemote: target.remote,
+    publishedBranch: target.remoteBranch,
+  });
+  const replay = await send();
+  expect(replay.status).toBe(200);
+  expect(await replay.json()).toEqual(result);
+  expect(
+    await git(
+      repository,
+      "reflog",
+      "show",
+      "--format=%H",
+      `refs/heads/${target.remoteBranch}`,
+    ),
+  ).toBe(head);
+}, 60_000);
+
 it("C-10 projects a publication from the historical owner and holds removal until the outcome is verified", async () => {
   const {
     db,
@@ -643,8 +726,12 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
   expect((await readWorkspace()).preparationAssignmentId).toBe(initial.id);
   expect(await patchOf(workspace)).toBe("");
 
-  await db.update(runSessions).set({ capabilityAgent: "codex" })
-    .where(and(eq(runSessions.runId, runId), eq(runSessions.sessionName, "default")));
+  await db
+    .update(runSessions)
+    .set({ capabilityAgent: "codex" })
+    .where(
+      and(eq(runSessions.runId, runId), eq(runSessions.sessionName, "default")),
+    );
   const execution = createExecutionHosts({ db });
   const acp = await execution.forAssignment({ id: next.id });
   const start = {
@@ -653,14 +740,20 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
   };
   const issued = await acp.createSession(start);
   await acp.checkpoint(issued.hostSessionId);
-  const resumed = await acp.createSession({ ...start, resumeSessionId: issued.acpSessionId });
+  const resumed = await acp.createSession({
+    ...start,
+    resumeSessionId: issued.acpSessionId,
+  });
   try {
     expect(resumed.acpSessionId).toBe(issued.acpSessionId);
     expect(resumed.hostSessionId).not.toBe(issued.hostSessionId);
     expect((await getCommand(db, restore.id))?.result).toMatchObject({
-      checkpointId: checkpoint.id, tree: expect.any(String),
+      checkpointId: checkpoint.id,
+      tree: expect.any(String),
     });
-    expect(acp.assignment.executionWorkspaceId).toBe(workspace.executionWorkspaceId);
+    expect(acp.assignment.executionWorkspaceId).toBe(
+      workspace.executionWorkspaceId,
+    );
   } finally {
     await acp.checkpoint(resumed.hostSessionId);
   }

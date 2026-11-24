@@ -450,6 +450,13 @@ review. Unprovable effect retains the claim and prevents destructive
 cleanup. C-10 exercises a lost response after a real push, target
 divergence and competing preservation/deletion.
 
+Manual branch delivery for an addressed Run derives the dedicated branch
+from the Run's publication metadata and project policy. Web reads the
+approved repository's exact branch tip on the owning supervisor, then
+journals the clean HEAD and target lease before dispatch. An absent target
+allows creation. The canonical host receipt allows the promotion to settle
+and the same operator to replay the completed decision.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential

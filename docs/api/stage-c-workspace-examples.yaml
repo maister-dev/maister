@@ -461,6 +461,17 @@ operationCases:
       request: *a28
       response: *a29
       newEffects: 0
+  stageCGetPublicationTarget:
+    request: { generation: 1, remoteId: project-123, targetRef: refs/heads/review-task }
+    invalidRequest: { generation: 1, remoteId: "https://example.invalid/foreign", targetRef: refs/heads/review-task }
+    response: { generation: 1, remoteId: project-123, targetRef: refs/heads/review-task, priorTarget: null }
+    refusal:
+      status: 409
+      body:
+        code: PRECONDITION
+        message: The checkout has no approved publication remote.
+        details: { reason: source_ref_unapproved }
+      newEffects: 0
   stageCPublish:
     request: &a33
       workspaceProtocol: 1

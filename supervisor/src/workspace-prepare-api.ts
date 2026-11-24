@@ -51,11 +51,11 @@ import { applyFence } from "./execution-fence";
 import { prepareOwnedWorkspace } from "./prepare-owned-workspace";
 import { isSupervisorError, SupervisorError } from "./types";
 import { materializeWorkspaceInputs } from "./workspace-input-materialization";
-import { inspectWorkspace } from "./workspace-status";
+import { inspectWorkspace, loadPreparedWorkspace } from "./workspace-status";
 import { readWorkspaceReviewFingerprint, sealWorkspaceDiff } from "./workspace-diff";
 import { sealWorkspaceLog } from "./workspace-log";
 import { checkpointOwnedWorkspace, restoreOwnedWorkspace, WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
-import { publishOwnedWorkspace } from "./workspace-publish";
+import { publishOwnedWorkspace, readOwnedPublicationTarget } from "./workspace-publish";
 import {
   recoverWorkspaceWorkload,
   runWorkspaceWorkload,
@@ -135,6 +135,10 @@ const logQuery = workspaceQuery.extend({
   head: z.string().regex(GIT_OBJECT_ID).optional(),
 }).refine(({ base, head, cursor, limit }) => (!base && !head) || Boolean(base && head && cursor === undefined && limit === undefined));
 const reviewFingerprintQuery = workspaceQuery.extend({ base: z.string().regex(GIT_OBJECT_ID) });
+const publicationTargetQuery = workspaceQuery.extend({
+  remoteId: opaqueId,
+  targetRef: z.string().refine(isWorkspaceSourceRef),
+});
 const materializeSchema = z
   .object({
     workspaceProtocol: z.literal(1),
@@ -648,6 +652,20 @@ export function registerWorkspacePreparation(args: {
     const result = await readWorkspaceReviewFingerprint(state, { ...parsed.data, handle: handle.data });
 
     return result ?? reply.status(404).send(missingWorkspace);
+  });
+  app.get<StatusRequest>("/v1/workspaces/:id/publication-target", async (req, reply) => {
+    const handle = workspaceHandle.safeParse(req.params.id);
+    const parsed = publicationTargetQuery.safeParse(req.query);
+    if (!handle.success || !parsed.success)
+      return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "Publication target requires a handle, generation, repository and branch"));
+    const { generation, remoteId, targetRef } = parsed.data;
+    const owned = loadPreparedWorkspace(state, handle.data, generation);
+    if (!owned) return reply.status(404).send(missingWorkspace);
+    const source = sources.get(remoteId);
+    if (owned.mode !== "ownWorktree" || owned.workspace.projectSlug !== remoteId || !source)
+      return reply.status(409).send(refusal("PRECONDITION", "source_ref_unapproved", "The workspace has no approved publication source"));
+
+    return readOwnedPublicationTarget({ state, runtimeRoot, source, handle: handle.data, generation, remoteId, targetRef });
   });
   app.get<StatusRequest>("/v1/workspaces/:id/log", async (req, reply) => {
     const handle = workspaceHandle.safeParse(req.params.id);

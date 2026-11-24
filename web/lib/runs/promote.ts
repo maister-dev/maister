@@ -1,6 +1,7 @@
 import "server-only";
 
-import type { Workspace } from "@/lib/db/schema";
+import type { Run, Workspace } from "@/lib/db/schema";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { PublishedTarget } from "@/lib/workbench-git/publication";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { CompletionAuthorization } from "@/lib/auto-promotion/promotion-claim";
@@ -8,10 +9,21 @@ import type { WorkspacePublicationSnapshot } from "../../../runtime/workspace-pu
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, or } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
+import { getAssignmentById } from "@/lib/execution-host/assignments";
+import { getCommand, insertCommand } from "@/lib/execution-host/commands";
+import { defaultTransport } from "@/lib/execution-host/default-transport";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
+import {
+  readAddressedWorkspacePublicationTarget,
+  readAddressedWorkspaceStatus,
+} from "@/lib/execution-host/workspace-preparation";
+import { recoverWorkspacePreparation } from "@/lib/execution-host/workspace-prepare-delivery";
+import { WorkspacePublishPayloadSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { isWorkspaceSourceRef } from "../../../runtime/workspace-prepare";
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
 import { assertNativeProjectPublication } from "@/lib/brain/knowledge-project-publication";
 import {
@@ -21,6 +33,7 @@ import {
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
@@ -781,9 +794,13 @@ async function promoteWorkspaceRun(
     // the shared TREE workspace by `(root_run_id, workspace_mode='shared')`, not its
     // own (absent) row. `own` / scratch keep the run-id lookup.
     const run = await loadRun(tx, runId);
-    const workspace = requireLegacyWorkspacePaths(
-      await loadPromotionWorkspaceForUpdate(tx, run),
+    const retainedWorkspace: Workspace = await loadPromotionWorkspaceForUpdate(
+      tx,
+      run,
     );
+    if (retainedWorkspace.ownershipKind === "host_owned")
+      return reserveAddressedPromotion(tx, run, retainedWorkspace, input, ctx);
+    const workspace = requireLegacyWorkspacePaths(retainedWorkspace);
 
     // A terminal follow-up stays PRECONDITION. A contender that read Review
     // must instead observe the winner's ownership before its changed status/tip.
@@ -1166,7 +1183,9 @@ async function promoteWorkspaceRun(
   }
 
   if (claim.resolvedMode === "publish_branch") {
-    const delivery = await publishWorkspaceDelivery({ runId, db, claim });
+    const delivery = claim.addressedCommand
+      ? await publishAddressedDelivery(db, claim, claim.addressedCommand)
+      : await publishWorkspaceDelivery({ runId, db, claim });
 
     return finalizeWorkspaceDelivery({
       runId,
@@ -1421,7 +1440,36 @@ async function finalizeWorkspaceDelivery(args: {
 
   // ---- Finalize tx: assert the attempt token still matches (§3.2 step 3).
   const result = await db.transaction(async (tx: Db) => {
+    const current: Run | null = claim.addressedCommand
+      ? await loadRunForUpdate(tx, runId)
+      : null;
     const ws = await loadPromotionWorkspaceForUpdate(tx, claim.run);
+    if (
+      current &&
+      current.status === "Done" &&
+      current.promotedHeadSha === commit &&
+      current.executionAssignmentId === claim.run.executionAssignmentId &&
+      ws.promotionState === "done" &&
+      ws.promotionAttemptId === claim.attemptId
+    )
+      return {
+        ok: true as const,
+        mode: claim.responseMode,
+        deliveryPolicy: claim.policy,
+        commit,
+        pullRequestUrl: null,
+        prNumber: null,
+        ...(publication ? { publication } : {}),
+      };
+    if (
+      current &&
+      (current.status !== "Review" ||
+        current.executionAssignmentId !== claim.run.executionAssignmentId)
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The Run changed after its addressed publication was reserved",
+      );
 
     if (
       ws.promotionState !== "claiming" ||
@@ -1742,12 +1790,13 @@ async function finalizeWorkspaceDelivery(args: {
   // must NEVER poison the finalize tx and silently roll back the durable Done
   // flip / promotion_state='done' / assignment close. Best-effort, own
   // connection, only logs on failure.
-  await recordPromotionArtifact({
-    db,
-    run: claim.run,
-    workspace: claim.workspace,
-    baseCommit: claim.baseCommit,
-  });
+  if (!claim.addressedCommand)
+    await recordPromotionArtifact({
+      db,
+      run: claim.run,
+      workspace: claim.workspace,
+      baseCommit: claim.baseCommit,
+    });
 
   return result;
 }
@@ -1764,13 +1813,321 @@ type FlowClaim = {
   baseCommit: string | null;
   autonomous?: CompletionAuthorization | null;
   recovery?: { commit: string; effectAttemptId: string } | null;
+  addressedCommand?: string;
 };
 
 type WorkspaceDelivery = {
   commit: string;
-  diffStat: Awaited<ReturnType<typeof deliveryHistoryStats>>;
+  diffStat: Awaited<ReturnType<typeof deliveryHistoryStats>> | null;
   publication?: PublishedTarget;
 };
+
+async function reserveAddressedPromotion(
+  tx: ExecutionDb,
+  observedRun: Run,
+  workspace: Workspace,
+  input: PromoteRunInput,
+  ctx: PromoteRunContext,
+): Promise<FlowClaim> {
+  // Legacy callers lock the workspace first. Refuse contention instead of
+  // waiting on a Run lock held by another lifecycle operation.
+  const [run] = await tx
+    .select()
+    .from(schemaModule.runs)
+    .where(eq(schemaModule.runs.id, observedRun.id))
+    .for("no key update", { noWait: true })
+    .catch((cause: unknown) => {
+      if (pgErrorOf(cause)?.code === "55P03")
+        throw new MaisterError(
+          "CONFLICT",
+          "The Run is being changed by another operation",
+          { cause },
+        );
+      throw cause;
+    });
+  if (
+    !run?.projectId ||
+    !run.taskId ||
+    (run.status !== "Review" && run.status !== "Done") ||
+    run.workspaceMode === "shared"
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected worktree requires a project task in Review",
+    );
+  await ctx.authorize(run.projectId);
+  await assertNativeProjectPublication(() => tx, {
+    ...run,
+    projectId: run.projectId,
+  });
+  assertNoLiveWorkbenchClaim(workspace);
+  const project = await loadProject(tx, run.projectId);
+  const policy = resolvePromotionPolicy({ input, run, workspace, project });
+  if (
+    policy.strategy !== "publish_branch" ||
+    run.deliveryPolicySnapshot?.strategy !== "publish_branch" ||
+    !isHumanPromotion(ctx) ||
+    isUnattendedPromotion(input)
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Select manual branch delivery at launch to publish this addressed worktree",
+      {
+        details: { reason: "workspace_protocol_unsupported" },
+      },
+    );
+  const {
+    executionHostId,
+    executionWorkspaceId: handle,
+    workspaceGeneration: generation,
+  } = workspace;
+  if (!executionHostId || !handle || !generation || !run.executionAssignmentId)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The Run has no retained addressed checkout",
+    );
+
+  const commands = schemaModule.executionCommands;
+  const [previous] = await tx
+    .select()
+    .from(commands)
+    .where(
+      and(
+        eq(commands.kind, "workspace.publish"),
+        eq(commands.runId, run.id),
+        eq(commands.executionHostId, executionHostId),
+        eq(commands.targetSessionId, handle),
+      ),
+    )
+    .orderBy(desc(sql`(${commands.payload}->>'fence')::bigint`))
+    .limit(1);
+  const base = {
+    run,
+    workspace,
+    resolvedMode: "publish_branch",
+    responseMode: "publish_branch",
+    promotionMode: "publish_branch",
+    policy,
+    resolvedTarget: policy.targetBranch,
+    baseCommit: workspace.baseCommit,
+  } as const;
+  if (
+    workspace.promotionState === "claiming" ||
+    workspace.promotionState === "done"
+  ) {
+    if (
+      !previous ||
+      previous.payload.claimId !== workspace.promotionAttemptId ||
+      !workspace.promotionAttemptId ||
+      workspace.promotionOwnerUserId !== ctx.sessionUser.id ||
+      workspace.targetBranch !== policy.targetBranch ||
+      !workspace.branchDelivery?.target
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "A different operation owns the addressed promotion",
+      );
+
+    return {
+      ...base,
+      attemptId: workspace.promotionAttemptId,
+      addressedCommand: previous.id,
+    };
+  }
+  if (run.status !== "Review")
+    throw new MaisterError(
+      "PRECONDITION",
+      "Only a Run in Review can be published",
+    );
+
+  const readiness = await assertEvidenceReady(run.id, "review", tx);
+  if (!readiness.ready)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Required review evidence is incomplete",
+      {
+        details: { reasons: readiness.reasons },
+      },
+    );
+  const attemptId = randomUUID();
+  const pinned = workspace.branchDelivery?.target;
+  const remote = pinned?.remote ?? workspace.publishedRemote ?? "origin";
+  if (remote !== "origin")
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected supervisor requires the project's approved publication remote",
+    );
+  const remoteBranch =
+    pinned?.remoteBranch ??
+    (await publicBranchForPromotion(
+      tx,
+      { ...base, attemptId },
+      project,
+      remote,
+    ));
+  const targetRef = `refs/heads/${remoteBranch}`;
+  if (
+    !isWorkspaceSourceRef(targetRef) ||
+    [project?.mainBranch, workspace.baseBranch, policy.targetBranch].includes(
+      remoteBranch,
+    )
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Select a dedicated public branch for this Run",
+    );
+  const assignment = await getAssignmentById(tx, run.executionAssignmentId);
+  if (
+    !assignment ||
+    assignment.executionHostId !== executionHostId ||
+    assignment.executionWorkspaceId !== handle ||
+    assignment.runId !== run.id ||
+    assignment.state !== "released"
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "Run execution must release the original workspace before publication",
+    );
+  const status = await readAddressedWorkspaceStatus(tx, workspace);
+  const head = status.workspace.observedCommit;
+  if (
+    status.workspace.mode !== "ownWorktree" ||
+    status.workingTree !== "clean" ||
+    !head
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Commit outstanding changes before publishing the addressed worktree",
+      {
+        details: { reason: "dirty_worktree" },
+      },
+    );
+  const { priorTarget } = await readAddressedWorkspacePublicationTarget(
+    tx,
+    workspace,
+    { remoteId: run.projectId, targetRef },
+  );
+  const target = { remote, remoteBranch };
+  await tx
+    .update(schemaModule.workspaces)
+    .set({
+      promotionState: "claiming",
+      promotionAttemptId: attemptId,
+      promotionClaimedAt: new Date(),
+      promotionOwnerUserId: ctx.sessionUser.id,
+      promotionMode: base.promotionMode,
+      targetBranch: policy.targetBranch,
+      branchDelivery: { target, error: null },
+    })
+    .where(eq(schemaModule.workspaces.id, workspace.id));
+  const previousFence = previous ? previous.payload.fence : 0;
+  if (
+    typeof previousFence !== "number" ||
+    !Number.isSafeInteger(previousFence + 1) ||
+    previousFence < 0
+  )
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "Retained publication fence is invalid",
+    );
+  const command = await insertCommand(tx, {
+    runId: run.id,
+    assignmentId: assignment.id,
+    hostId: executionHostId,
+    assignmentEpoch: assignment.epoch,
+    kind: "workspace.publish",
+    targetSessionId: handle,
+    maxAttempts: 3,
+    driverless: true,
+    payload: {
+      claimId: attemptId,
+      generation,
+      fence: previousFence + 1,
+      publication: "promote",
+      expected: { head, remoteId: run.projectId, targetRef, priorTarget },
+    },
+  });
+
+  return {
+    ...base,
+    workspace: { ...workspace, branchDelivery: { target, error: null } },
+    attemptId,
+    addressedCommand: command.id,
+  };
+}
+
+async function publishAddressedDelivery(
+  db: ExecutionDb,
+  claim: FlowClaim,
+  commandId: string,
+): Promise<WorkspaceDelivery> {
+  const target: PublishedTarget | undefined =
+    claim.workspace.branchDelivery?.target;
+  const command = await getCommand(db, commandId);
+  const request = WorkspacePublishPayloadSchema.safeParse(
+    command && {
+      generation: command.payload.generation,
+      expected: command.payload.expected,
+      publication: command.payload.publication,
+    },
+  );
+  if (
+    !command ||
+    command.runId !== claim.run.id ||
+    command.kind !== "workspace.publish" ||
+    command.payload.claimId !== claim.attemptId ||
+    !request.success ||
+    !target ||
+    request.data.expected.targetRef !== `refs/heads/${target.remoteBranch}`
+  )
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "The retained publication claim is inconsistent",
+    );
+  if (command.state === "queued" && command.attempts === 0)
+    await recoverWorkspacePreparation(
+      db,
+      command,
+      defaultTransport(),
+      new Date(),
+    );
+  const deadline = AbortSignal.timeout(20_000);
+  while (!deadline.aborted) {
+    const applied = await getCommand(db, commandId);
+    if (applied?.state === "succeeded")
+      return {
+        commit: request.data.expected.head,
+        diffStat: claim.run.diffStat ?? null,
+        publication: target,
+      };
+    if (applied?.state === "failed") {
+      const reason = applied.lastError?.details;
+      await markPromotionFailed(db, claim.workspace.id, claim.attemptId, {
+        target,
+        error: "The supervisor refused Git publication",
+      });
+      throw new MaisterError(
+        "CONFLICT",
+        "The supervisor refused Git publication",
+        {
+          details:
+            typeof reason === "object" && reason !== null
+              ? (reason as Record<string, unknown>)
+              : {},
+        },
+      );
+    }
+    if (applied?.transportState === "reconciliation_required") break;
+    await runEventWakeBus.wait(claim.run.id, 500, deadline);
+  }
+  throw new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    "Publication is recorded and awaiting verification on its original supervisor",
+    {
+      details: { reason: "effect_unconfirmed", commandId },
+    },
+  );
+}
 
 async function branchDeliveryTarget(
   db: Db,
@@ -2193,10 +2550,13 @@ async function publicBranchForPromotion(
     legacyPrHead:
       (claim.workspace.prUrl ?? null) !== null &&
       (claim.workspace.publishedBranch ?? null) === null,
-    upstream: await branchUpstream(
-      claim.workspace.parentRepoPath,
-      claim.workspace.branch,
-    ),
+    upstream:
+      claim.workspace.ownershipKind === "host_owned"
+        ? null
+        : await branchUpstream(
+            claim.workspace.parentRepoPath,
+            claim.workspace.branch,
+          ),
   }).name;
 }
 

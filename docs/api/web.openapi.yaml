@@ -8914,6 +8914,12 @@ paths:
         base commit, resolved policy snapshot, and default target branch are
         derived from server state.
 
+        An addressed task Run with manual branch delivery publishes its
+        committed HEAD to the approved dedicated branch on the selected
+        supervisor. Web records the claim before dispatch and finalizes after
+        the supervisor proves the resulting remote SHA. Repeating the same
+        owner's request returns the retained result without a second push.
+
         M18 compatibility modes `local_merge`, `rebase_merge`, and
         `pull_request` map to ADR-085 delivery strategies `merge`,
         `rebase_merge`, and `pull_request`. ADR-085 also adds optional

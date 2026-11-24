@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
-import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspacePublishRequest, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
+import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspacePublishRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
@@ -61,7 +61,7 @@ import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
-import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceEvidenceObjectSchema, WorkspaceReviewFingerprintSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceEvidenceObjectSchema, WorkspacePublicationTargetSchema, WorkspaceReviewFingerprintSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
@@ -1944,6 +1944,26 @@ export function sendWorkspaceGitCommand(handle: string, input: WorkspaceCheckpoi
 
 export function sendWorkspacePublication(input: WorkspacePublishRequest): Promise<void> {
   return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(input.owner.workspaceHandle)}/publication`, input);
+}
+
+export async function getWorkspacePublicationTarget(
+  handle: string,
+  input: Omit<WorkspacePublicationTarget, "priorTarget">,
+): Promise<WorkspacePublicationTarget> {
+  const query = new URLSearchParams({ ...input, generation: String(input.generation) });
+  const result = await request<unknown>({
+    method: "GET",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/publication-target?${query}`,
+    ctx: "getWorkspacePublicationTarget",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const parsed = WorkspacePublicationTargetSchema.safeParse(result.body);
+  if (!parsed.success || parsed.data.generation !== input.generation ||
+    parsed.data.remoteId !== input.remoteId || parsed.data.targetRef !== input.targetRef)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned a different publication target");
+
+  return parsed.data;
 }
 
 export function cancelWorkspaceWorkload(handle: string, targetCommandId: string, input: WorkspaceCancelWorkloadRequest): Promise<void> {

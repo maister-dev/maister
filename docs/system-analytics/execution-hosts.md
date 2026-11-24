@@ -1160,8 +1160,11 @@ terminal write verifies the remote SHA and emits a receipt without pushing
 again. An unresolved effect holds the writer fence for reconciliation. Web
 accepts the terminal event after assignment release only when the immutable
 manager command, retained owner, host receipt, and verified target agree.
-The normal Web promotion, sync and disposition entry points remain part of
-the Stage C lifecycle work.
+The normal Web promotion route uses this flow for manual branch delivery.
+It requires current project authority, a Review-ready Run and a clean
+addressed checkout. Web reserves the dedicated branch, returns the verified
+delivery on retry and changes Review to Done once. Sync and disposition
+remain part of the Stage C lifecycle work.
 
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable

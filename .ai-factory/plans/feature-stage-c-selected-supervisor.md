@@ -603,8 +603,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   and proves one push across restart by counting reflog entries. It also
   refuses a changed target. The Web integration reserves a command after
   assignment release, rejects a mismatched claim and concurrent removal, then
-  verifies the Git target and folds the matching host receipt. The production
-  promotion route, sync and preserve-before-delete still need their witnesses.
+  verifies the Git target and folds the matching host receipt.
+
+  The normal Web promotion route now handles the manual branch-delivery
+  strategy for an addressed Run. RED refused the pathless workspace.
+  GREEN derived the approved target, delivered a real Git commit, moved
+  Review to Done, and returned the same response on replay. The remote
+  reflog proved one update. Sync, other promotion strategies and
+  preserve-before-delete still need their witnesses.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure
   while enumerating local agent materialization roots. The existing discovery

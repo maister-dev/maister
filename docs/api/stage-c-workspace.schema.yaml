@@ -106,6 +106,7 @@ x-operations:
     implementedProfile:
       owner: workspaceOperation
       publication: [push, promote]
+  stageCGetPublicationTarget: { method: GET, path: "/v1/workspaces/{id}/publication-target", request: PublicationTargetQuery, response: PublicationTarget, status: 200 }
   stageCPreserve:
     method: POST
     path: /v1/workspaces/{id}/preserve
@@ -596,6 +597,23 @@ definitions:
         anyOf:
           - { $ref: "#/definitions/GitObjectId" }
           - { type: "null" }
+  PublicationTargetQuery:
+    type: object
+    additionalProperties: false
+    required: [generation, remoteId, targetRef]
+    properties:
+      generation: *a1
+      remoteId: *a3
+      targetRef: { $ref: "#/definitions/GitRef" }
+  PublicationTarget:
+    type: object
+    additionalProperties: false
+    required: [generation, remoteId, targetRef, priorTarget]
+    properties:
+      generation: *a1
+      remoteId: *a3
+      targetRef: { $ref: "#/definitions/GitRef" }
+      priorTarget: *a7
   SyncPayload:
     type: object
     additionalProperties: false

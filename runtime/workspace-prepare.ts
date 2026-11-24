@@ -232,6 +232,12 @@ export type WorkspacePublishResult = Readonly<{
     observedTarget: string;
   }>;
 }>;
+export type WorkspacePublicationTarget = Readonly<{
+  generation: number;
+  remoteId: string;
+  targetRef: string;
+  priorTarget: string | null;
+}>;
 
 export type WorkspaceRecord = Readonly<{
   handle: string;
