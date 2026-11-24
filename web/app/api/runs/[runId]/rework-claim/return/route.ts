@@ -15,6 +15,7 @@ import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { resolveRunPlacementHost } from "@/lib/execution-host/resolver";
 import {
   getCurrentRequiredForGitArtifacts,
   recordArtifact,
@@ -340,6 +341,8 @@ export async function POST(
 
     // ---- Phase 2b: ledger + AFTER-side flip (ONE transaction) --------------
     try {
+      const placementHost = await resolveRunPlacementHost(db, runId);
+
       await db.transaction(async (tx: Db) => {
         await recordTakeoverReturn({
           runId,
@@ -425,7 +428,10 @@ export async function POST(
           );
         }
 
-        const flipped = await markReturnedToRunning(runId, { db: tx });
+        const flipped = await markReturnedToRunning(runId, {
+          db: tx,
+          placement: { host: placementHost },
+        });
 
         if (!flipped.ok) {
           throw new MaisterError(

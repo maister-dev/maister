@@ -11,19 +11,27 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { executionHosts } from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   getAssignmentById,
   mintAssignment,
 } from "@/lib/execution-host/assignments";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { listCommandsForRun } from "@/lib/execution-host/commands";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
+import { mintPlacement } from "@/lib/execution-host/placement";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
-import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import {
+  localHost,
+  resetResolverForTests,
+} from "@/lib/execution-host/resolver";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
+import { runReconcileSweep } from "@/lib/reconcile";
+import { teardownLiveSessionsForRuns } from "@/lib/runs/session-teardown";
+import { markAbandoned } from "@/lib/runs/state-transitions";
 import {
   seedLocalHost,
   seedLocalPackage,
@@ -143,12 +151,9 @@ beforeAll(async () => {
       },
     },
   });
-  const probe = await hosts.forRun(
-    await seedRun(testDatabase.db, { projectId: project.id }),
-    { reason: "launch" },
-  );
+  const resolved = await localHost({ db, transport: hosts.transport });
 
-  hostId = probe.host.id;
+  hostId = resolved.id;
 }, 180_000);
 
 afterAll(async () => {
@@ -163,6 +168,119 @@ afterAll(async () => {
 });
 
 describe("workspace adoption (real supervisor)", () => {
+  it("adopts a genuinely shared Git worktree and tears down on the assigned supervisor", async () => {
+    const hostKey = "adoption-remote-test";
+    const remote = await startRealSupervisor({
+      workspaceRoots: [sup.runtimeRoot],
+      fixtureArgs: ["--hang"],
+      env: { MAISTER_EXECUTION_HOST_KEY: hostKey },
+    });
+
+    try {
+      vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", hostKey);
+      vi.stubEnv("MAISTER_EXECUTION_HOST_SHARED_WORKSPACE", "1");
+      vi.stubEnv(
+        "MAISTER_EXECUTION_HOST_ENDPOINTS",
+        JSON.stringify({ [hostKey]: remote.url }),
+      );
+      const runId = await seedRun(testDatabase.db, {
+        projectId: project.id,
+        runKind: "flow",
+      });
+      const worktreePath = await addWorktree(
+        project.repoPath,
+        path.join(sup.runtimeRoot, "wt-remote"),
+        "maister/remote",
+      );
+
+      await seedWorkspace(testDatabase.db, {
+        runId,
+        projectId: project.id,
+        worktreePath,
+        parentRepoPath: project.repoPath,
+      });
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      let host: Awaited<ReturnType<typeof localHost>>;
+
+      try {
+        const [selected, concurrent] = await Promise.all([
+          localHost({ db }),
+          localHost({ db }),
+        ]);
+
+        expect(concurrent.id).toBe(selected.id);
+        expect(
+          fetchSpy.mock.calls.filter(([url]) =>
+            String(url).startsWith(`${remote.url}/health?`),
+          ),
+        ).toHaveLength(1);
+        host = selected;
+      } finally {
+        fetchSpy.mockRestore();
+      }
+      const boundHosts = createExecutionHosts({ db });
+      const assignment = await db.transaction((tx) =>
+        mintPlacement(tx, { runId, reason: "launch", host }),
+      );
+      const client = await boundHosts.forAssignment(assignment);
+      const workspace = await client.ensureWorkspace();
+      const session = await client.createSession(CREATE_PAYLOAD);
+
+      expect(host.kind).toBe("remote_direct");
+      expect(workspace).toMatch(/^ws_[0-9a-f]{32}$/);
+      expect(await boundHosts.local().listSessionsForRun(runId)).toEqual([]);
+      expect(await client.sessionsForRun()).toEqual([
+        expect.objectContaining({
+          status: "live",
+          sessionId: session.sessionId,
+        }),
+      ]);
+      // Removing the placement preference does not change the current assignment.
+      vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", undefined);
+      vi.spyOn(boundHosts.local(), "listSessions").mockRejectedValue(
+        new MaisterError("EXECUTOR_UNAVAILABLE", "fixture loopback outage"),
+      );
+      const activeSweep = await runReconcileSweep({
+        db,
+        executionHosts: boundHosts,
+        runFlow: vi.fn(),
+      });
+
+      expect(activeSweep).toMatchObject({ candidates: 1, crashed: 0 });
+      await teardownLiveSessionsForRuns([runId], {
+        logLabel: "shared-worktree test",
+        executionHosts: boundHosts,
+      });
+      expect(
+        (await client.sessionsForRun()).filter((s) => s.status === "live"),
+      ).toHaveLength(0);
+      const orphan = await client.createSession({
+        ...CREATE_PAYLOAD,
+        stepId: "s2",
+      });
+
+      // Commit the terminal owner as if Web stopped before physically tearing the session down.
+      await expect(markAbandoned(runId, { db })).resolves.toEqual({ ok: true });
+      const sweep = await runReconcileSweep({
+        db,
+        executionHosts: boundHosts,
+      });
+
+      expect(sweep).toMatchObject({ orphanSessionsReaped: 1, candidates: 0 });
+      expect(await client.sessionsForRun()).not.toContainEqual(
+        expect.objectContaining({
+          status: "live",
+          sessionId: orphan.sessionId,
+        }),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      await stopRuntimeEventConsumers();
+      await remote.kill();
+      resetResolverForTests();
+    }
+  }, 120_000);
+
   it("K1: a flow run adopts its worktree as git_worktree once; the handle is stored and re-used", async () => {
     const runId = await seedRun(testDatabase.db, {
       projectId: project.id,

@@ -2563,8 +2563,8 @@ export async function fakeExecutionHosts(
     });
   }
 
-  // Every implicit resolution in this process (a claim transition minting
-  // through `localHost({db: tx})`, a route's `createExecutionHosts({db})`)
+  // Every implicit resolution in this process (a pre-claim host resolution,
+  // a route's `createExecutionHosts({db})`)
   // now reaches the fake instead of the real wire — and the resolver memo is
   // warm, so a suite's one-shot db fault never lands on a host registration.
   setDefaultTransportForTests(fake.transport);
@@ -3281,6 +3281,7 @@ export function memoryExecutionHosts(fake: FakeExecutionHost): ExecutionHosts {
 
       return { client, admin };
     },
+    inventoryForRun: (runId) => admin.listSessionsForRun(runId),
     preferred: async () => admin,
     local: () => admin,
   };

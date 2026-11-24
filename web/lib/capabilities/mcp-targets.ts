@@ -23,6 +23,52 @@ export const mcpTargetSchema = z
 
 export type AgentMcpTarget = z.infer<typeof mcpTargetSchema>;
 
+export function platformMcpTargetRecordId(refId: string): string {
+  return `platform:${refId}`;
+}
+
+/** Preserve retained projection IDs when an explicitly bound live server acquires a projection. */
+export function matchesAgentMcpTarget(
+  retained: AgentMcpTarget | undefined,
+  current: AgentMcpTarget,
+  binding: McpBindingInput | undefined,
+): boolean {
+  return (
+    retained !== undefined &&
+    retained.source === current.source &&
+    retained.revision === current.revision &&
+    retained.materialSha256 === current.materialSha256 &&
+    (retained.recordId === current.recordId ||
+      (current.source === "platform" &&
+        binding?.enabled === true &&
+        binding.targetKind === "platform" &&
+        binding.targetId === current.refId &&
+        retained.recordId === platformMcpTargetRecordId(current.refId)))
+  );
+}
+
+export function eligibleAgentMcpRecord(
+  refId: string,
+  catalog: readonly CapabilityCatalogRecord[],
+  binding: McpBindingInput | undefined,
+): CapabilityCatalogRecord | undefined {
+  const record = pickMcpWinner(
+    catalog.filter(
+      (row) => row.kind === "mcp" && row.capabilityRefId === refId,
+    ),
+    binding,
+  )?.record;
+
+  if (
+    binding &&
+    record &&
+    binding.targetId !== (record.source === "platform" ? refId : record.id)
+  )
+    return undefined;
+
+  return record;
+}
+
 /** PostgreSQL JSONB omits absent optional descriptor and overlay fields. Both admission and dispatch hash that representation. */
 function definedOptions(
   record: Record<string, unknown>,
@@ -42,20 +88,9 @@ export function agentMcpTargets(
   return [...new Set(refs)]
     .flatMap((refId) => {
       const binding = bindings.find((row) => row.refId === refId);
-      const record = pickMcpWinner(
-        catalog.filter(
-          (row) => row.kind === "mcp" && row.capabilityRefId === refId,
-        ),
-        binding,
-      )?.record;
+      const record = eligibleAgentMcpRecord(refId, catalog, binding);
 
-      if (
-        !record ||
-        (binding &&
-          binding.targetId !==
-            (record.source === "platform" ? refId : record.id))
-      )
-        return [];
+      if (!record) return [];
       // Readiness is host-specific telemetry. Only executable configuration belongs to the target witness.
       const { readiness: _readiness, ...material } = record.material;
 

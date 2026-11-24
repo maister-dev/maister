@@ -654,7 +654,7 @@ export async function activatePersistedAgentQuestion(
 
   const hosts = deps.executionHosts ?? createExecutionHosts({ db });
   const terminate = await terminateSourceSession(pending.runId, db, {
-    sessions: () => hosts.local().listSessionsForRun(pending.runId),
+    sessions: () => hosts.inventoryForRun(pending.runId),
     hosts,
   }).catch(async (error: unknown) => {
     // ADR-166 E-EH-11: a fenced teardown belongs to a superseded generation —
@@ -880,7 +880,7 @@ export async function recoverPendingAgentQuestions(args: {
         .where(eq(runs.id, row.runId));
 
       if (!source) continue;
-      const inventory = await hosts.local().listSessionsForRun(row.runId);
+      const inventory = await hosts.inventoryForRun(row.runId);
 
       if (
         TERMINAL_SOURCE_STATUSES.has(source.status) &&

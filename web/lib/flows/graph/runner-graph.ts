@@ -265,6 +265,7 @@ import {
 } from "@/lib/execution-host";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import {
   checksFromSnapshot,
   dirtyResolveFromSnapshot,
@@ -3466,10 +3467,10 @@ export async function runGraph(
           await import("@/lib/services/flow-node-question");
         const assignmentId = opts.driver.claim.assignmentId;
 
-        await db.transaction((tx: Db) =>
+        checkpointed = await db.transaction((tx: Db) =>
           settleFlowNodeQuestionWait(tx, runId, assignmentId),
         );
-        needsInput = true;
+        needsInput = !checkpointed;
         break;
       }
       if (pendingDurableResumeNodeId === node.id)
@@ -6497,6 +6498,7 @@ export async function runGraph(
         });
 
       if (rows.length > 0) {
+        await closeFlowNodeQuestions(tx, runId, "graph flow crashed");
         await releaseAssignmentForRun(tx, runId, "run_terminal");
         await emitProjectFlowWebhook({
           db: tx,
@@ -6587,6 +6589,7 @@ export async function runGraph(
                 isNull(nodeAttempts.endedAt),
               ),
             );
+        await closeFlowNodeQuestions(tx, runId, "graph flow failed");
         await releaseAssignmentForRun(tx, runId, "run_terminal");
         await emitProjectFlowWebhook({
           db: tx,

@@ -7,7 +7,11 @@ import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { librarianTurns, runs } from "@/lib/db/schema";
-import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
+import {
+  getLatestAssignment,
+  releaseAssignmentForRun,
+} from "@/lib/execution-host/assignments";
+import { getHostById } from "@/lib/execution-host/hosts";
 import { mintPlacement } from "@/lib/execution-host/placement";
 import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
 import {
@@ -79,7 +83,7 @@ export type LibrarianResumeClaim =
  * and the turn stays `admitted`, for the pool promotion to pick up. */
 export async function claimLibrarianResumeInTransaction(
   tx: Db,
-  input: { runId: string; turnId: string; host?: ExecutionHost },
+  input: { runId: string; turnId: string; host: ExecutionHost },
 ): Promise<LibrarianResumeClaim> {
   await takeSchedulerLock(tx);
   const [turn] = await tx
@@ -107,6 +111,25 @@ export async function claimLibrarianResumeInTransaction(
 
     return { claimed: false, reason: "pool_full" };
   }
+  const previous = await getLatestAssignment(tx, input.runId);
+  const previousHost = previous
+    ? await getHostById(tx, previous.executionHostId)
+    : null;
+  const host =
+    previousHost?.kind === "remote_direct" ? previousHost : input.host;
+
+  if (
+    (previous && !previousHost) ||
+    host.retiredAt ||
+    host.readinessReason === "identity_changed"
+  ) {
+    log.warn(
+      { runId: input.runId, turnId: input.turnId, assignmentId: previous?.id },
+      "librarian claim refused: previous supervisor identity is unavailable",
+    );
+
+    return { claimed: false, reason: "not_claimable" };
+  }
   const [claimed] = await tx
     .update(runs)
     .set({ status: "Running", checkpointAt: null })
@@ -130,7 +153,7 @@ export async function claimLibrarianResumeInTransaction(
   const assignment = await mintPlacement(tx, {
     runId: input.runId,
     reason: "librarian_turn",
-    host: input.host,
+    host,
   });
 
   log.info(

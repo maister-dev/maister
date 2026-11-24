@@ -27,15 +27,25 @@ import {
 import {
   answerFlowNodeQuestion,
   currentFlowNodeAnswer,
-  observeFlowNodeAnswerDelivery,
 } from "@/lib/services/flow-node-answer";
+import {
+  projectCommittedFlowNodeAnswers,
+  recoverPersistedFlowNodeAnswers,
+} from "@/lib/db/flow-node-answer-delivery";
 import { markNodeSucceeded } from "@/lib/flows/graph/ledger";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import { admitNodePrompt } from "@/lib/flows/graph/node-prompt-owner";
 import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
 import { respondToHitl } from "@/lib/services/hitl";
-import { markResumed } from "@/lib/runs/state-transitions";
+import {
+  abandonRunInTransaction,
+  markResumed,
+} from "@/lib/runs/state-transitions";
 import { issueFlowQuestionNodeToken } from "@/lib/agents/tokens";
 import { captureFlowQuestionSource } from "@/lib/execution-host/flow-question-source";
+import { markHostReadiness, retireHost } from "@/lib/execution-host/hosts";
+import { executionHosts as registeredHosts } from "@/lib/db/schema";
+import { runPass2 } from "@/lib/runs/keepalive-sweeper";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import {
   seedLocalHost,
@@ -75,7 +85,7 @@ afterAll(async () => {
   await database?.stop();
 });
 
-it("IT-ASK-03 / IT-ASK-04 captures the requesting node's accepted turn when the Run pointer names its sibling", async () => {
+it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from their exact checkpoint witnesses", async () => {
   const fake = createFakeExecutionHost();
   const projectId = await seedProject(database.db);
 
@@ -420,6 +430,106 @@ it("IT-ASK-03 / IT-ASK-04 captures the requesting node's accepted turn when the 
         path: "payment",
       }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+    for (const refusal of [
+      "responder revoked",
+      "source host retired",
+      "source host offline",
+    ] as const) {
+      await expect(
+        db.transaction(async (tx) => {
+          if (refusal === "responder revoked")
+            await tx
+              .update(projectMembers)
+              .set({ role: "viewer" })
+              .where(eq(projectMembers.userId, human.id));
+          else if (refusal === "source host retired") {
+            await retireHost(tx, installed.host.id);
+            await expect(
+              markResumed(runId, {
+                db: tx,
+                placement: { host: installed.host, transport: fake.transport },
+              }),
+            ).rejects.toMatchObject({
+              code: "CONFLICT",
+              details: { reason: "node_question_checkpoint_unavailable" },
+            });
+          } else {
+            await markHostReadiness(
+              tx,
+              installed.host.id,
+              "unavailable",
+              "network",
+            );
+            await recoverFlowNodeQuestions(tx, installed.hosts);
+            expect(
+              (await tx.select().from(runs).where(eq(runs.id, runId)))[0]
+                .resumeRequestedAt,
+            ).toBeInstanceOf(Date);
+            await tx
+              .update(registeredHosts)
+              .set({ lastSeenAt: new Date(0) })
+              .where(eq(registeredHosts.id, installed.host.id));
+            await tx
+              .update(hitlRequests)
+              .set({ flowAnswerAcceptedAt: new Date(0) })
+              .where(eq(hitlRequests.id, reviewQuestion));
+          }
+
+          await recoverFlowNodeQuestions(tx, installed.hosts);
+          const [waiting] = await tx
+            .select()
+            .from(runs)
+            .where(eq(runs.id, runId));
+          const [accepted] = await tx
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.id, reviewQuestion));
+
+          expect(waiting.resumeRequestedAt).toBeNull();
+          expect(accepted).toMatchObject({
+            response: { path: "cart" },
+            flowAnswerUserId: human.id,
+            flowAnswerAcceptedAt: expect.any(Date),
+            respondedAt: null,
+            supersededAt: null,
+          });
+          if (refusal === "responder revoked") {
+            await tx
+              .update(projectMembers)
+              .set({ role: "member" })
+              .where(eq(projectMembers.userId, human.id));
+            await recoverFlowNodeQuestions(tx, installed.hosts);
+            expect(
+              (await tx.select().from(runs).where(eq(runs.id, runId)))[0],
+            ).toMatchObject({
+              currentStepId: "review",
+              resumeRequestedAt: expect.any(Date),
+            });
+          } else {
+            await tx
+              .update(runs)
+              .set({ checkpointAt: new Date(0) })
+              .where(eq(runs.id, runId));
+            expect(await runPass2(tx)).toBe(1);
+            expect(
+              (
+                await tx
+                  .select()
+                  .from(hitlRequests)
+                  .where(eq(hitlRequests.id, reviewQuestion))
+              )[0],
+            ).toMatchObject({
+              response: { path: "cart" },
+              flowAnswerUserId: human.id,
+              flowAnswerAcceptedAt: accepted.flowAnswerAcceptedAt,
+              respondedAt: null,
+              supersededAt: expect.any(Date),
+            });
+          }
+          throw rollbackWitness;
+        }),
+      ).rejects.toBe(rollbackWitness);
+    }
     const [designer] = await db
       .insert(users)
       .values({ email: "designer@example.test", accountStatus: "active" })
@@ -450,14 +560,11 @@ it("IT-ASK-03 / IT-ASK-04 captures the requesting node's accepted turn when the 
     ).rejects.toBe(rollbackWitness);
     // Inspect alternate terminal/replacement races at this same committed checkpoint.
 
-    for (const race of ["stop", "replace"] as const) {
+    for (const race of ["abandon", "replace"] as const) {
       await expect(
         db.transaction(async (tx) => {
-          if (race === "stop")
-            await tx
-              .update(runs)
-              .set({ status: "Abandoned" })
-              .where(eq(runs.id, runId));
+          if (race === "abandon")
+            expect(await abandonRunInTransaction(tx, runId)).toBe(true);
           else
             await tx.insert(nodeAttempts).values({
               id: randomUUID(),
@@ -520,7 +627,9 @@ it("IT-ASK-03 / IT-ASK-04 captures the requesting node's accepted turn when the 
       );
 
     expect(checkpoints).toHaveLength(2);
-    await observeFlowNodeAnswerDelivery(db, source.flowQuestion.commandId);
+    await projectCommittedFlowNodeAnswers(db, runId, [
+      source.flowQuestion.commandId,
+    ]);
     expect(
       (
         await db
@@ -587,8 +696,62 @@ it("IT-ASK-03 / IT-ASK-04 captures the requesting node's accepted turn when the 
           }),
       };
 
-      fake.loseResponseOnce("startPrompt");
-      await nextClient.prompt(next.hostSessionId, prompt, options);
+      if (qid === stepQuestion) {
+        await db.execute(sql`CREATE FUNCTION block_test_node_answer_delivery() RETURNS trigger
+          LANGUAGE plpgsql AS $$ BEGIN
+            IF OLD.responded_at IS NULL AND NEW.responded_at IS NOT NULL THEN
+              RAISE EXCEPTION 'test answer projection unavailable';
+            END IF;
+            RETURN NEW;
+          END $$`);
+        await db.execute(sql`CREATE TRIGGER block_test_node_answer_delivery
+          BEFORE UPDATE ON hitl_requests FOR EACH ROW EXECUTE FUNCTION block_test_node_answer_delivery()`);
+        try {
+          fake.loseResponseOnce("startPrompt");
+          const successor = await nextClient.prompt(
+            next.hostSessionId,
+            prompt,
+            options,
+          );
+          const [command] = await db
+            .select()
+            .from(executionCommands)
+            .where(eq(executionCommands.id, successor.commandId));
+
+          expect(command.acceptedAt).toBeInstanceOf(Date);
+          await fake.waitForCanonicalEvents();
+          await db.transaction(async (tx) => {
+            await tx
+              .select({ id: runs.id })
+              .from(runs)
+              .where(eq(runs.id, runId))
+              .for("no key update");
+            await closeFlowNodeQuestions(tx, runId, "test terminal closure");
+          });
+          const [undelivered] = await db
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.id, qid));
+
+          expect(undelivered.respondedAt).toBeNull();
+          expect(undelivered.supersededAt).toBeNull();
+          await db
+            .update(nodeAttempts)
+            .set({ actionResume: null })
+            .where(eq(nodeAttempts.id, target.id));
+        } finally {
+          await db.execute(
+            sql`DROP TRIGGER block_test_node_answer_delivery ON hitl_requests`,
+          );
+          await db.execute(
+            sql`DROP FUNCTION block_test_node_answer_delivery()`,
+          );
+        }
+        await expect(recoverPersistedFlowNodeAnswers(db)).resolves.toBe(1);
+      } else {
+        fake.loseResponseOnce("startPrompt");
+        await nextClient.prompt(next.hostSessionId, prompt, options);
+      }
       await expect
         .poll(
           async () =>

@@ -17,6 +17,7 @@ vi.mock("undici", async (importOriginal) => {
 });
 
 import {
+  callSupervisorAt,
   checkSupervisorDiagnostics,
   checkSupervisorHealth,
   createSessionEnveloped,
@@ -228,6 +229,39 @@ describe("createSessionEnveloped", () => {
       code: "EXECUTOR_UNAVAILABLE",
     });
   });
+});
+
+it("reports an unreadable pinned TLS credential as configuration, before an HTTP request", async () => {
+  vi.stubEnv(
+    "MAISTER_EXECUTION_HOST_TLS_CA_FILE",
+    "/no-such-maister-host-ca.pem",
+  );
+  vi.stubEnv(
+    "MAISTER_EXECUTION_HOST_TLS_CERT_FILE",
+    "/no-such-maister-web.pem",
+  );
+  vi.stubEnv("MAISTER_EXECUTION_HOST_TLS_KEY_FILE", "/no-such-maister-web.key");
+
+  try {
+    const target = "https://supervisor.example.invalid";
+
+    await expect(
+      callSupervisorAt(target, checkSupervisorHealth),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: {
+        reason: "execution_host_tls_file_unreadable",
+        variable: "MAISTER_EXECUTION_HOST_TLS_CA_FILE",
+      },
+    });
+    await expect(callSupervisorAt(target, listSessions)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(undiciFetchSpy).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 describe("listSessions", () => {

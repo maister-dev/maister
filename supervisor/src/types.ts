@@ -853,6 +853,7 @@ export type WorkspaceRule = (typeof WORKSPACE_RULES)[number];
 
 export type SupervisorErrorDetails = {
   reason?: ReasonToken;
+  artifactDigest?: string;
   outputFailure?:
     | "producer_retained_limit"
     | "producer_chunk_limit"

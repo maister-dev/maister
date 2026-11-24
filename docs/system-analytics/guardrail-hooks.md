@@ -704,6 +704,10 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
 
 ## Phase-0 spec audit (T0.5 — `capability_guard` ADR-130, EXIT GATE)
 
+This record uses ADR-130's original seven-class inventory. The current
+[Flow settings contract](flow-settings.md#domain-entities) exposes six authorable
+classes and retains the `skills` runtime cell for pinned legacy reads.
+
 Adversarial self-review of all Phase-0 artifacts (ADR-130, this SDD, `flow-settings.md`,
 `capabilities.md`, `supervisor.openapi.yaml`, `supervisor-sse.asyncapi.yaml` +
 `web-runs.asyncapi.yaml`, `configuration.md`, `agents.md`, `getting-started.md`, the

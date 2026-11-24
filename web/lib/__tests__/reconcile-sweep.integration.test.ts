@@ -773,7 +773,7 @@ describe("runReconcileSweep (integration)", () => {
     const { assignment } = await hosts.forRun(runId, {
       reason: "recover",
     });
-    const scopedProbe = vi.spyOn(hosts.local(), "listSessionsForRun");
+    const scopedProbe = vi.spyOn(hosts, "inventoryForRun");
     const release = Promise.withResolvers<void>();
     const arrivals = new Set<"worker" | "reconcile">();
     const completed = new Set<"worker" | "reconcile">();

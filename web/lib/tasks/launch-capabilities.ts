@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { FlowDeliverySnapshot } from "@/lib/capabilities/package-delivery";
+import type { PackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 import type { Db } from "@/lib/execution-host/db";
 import type { ResolvedCapabilitySet } from "@/lib/db/schema";
 
@@ -9,6 +10,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
 import { capabilityRecords, capabilityImports } from "@/lib/db/schema";
 import { capturePackageDelivery } from "@/lib/capabilities/capture-package-delivery";
+import { includeCapturedPlatformMcpTargets } from "@/lib/capabilities/package-delivery";
 import { buildResolvedCapabilitySet } from "@/lib/capabilities/resolver";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { retryDigest } from "@/lib/agents/retry-guards";
@@ -119,6 +121,7 @@ export async function resolveTaskLaunchCapabilities(
     flowManifest: unknown;
     historical?: true;
   },
+  captureDelivery: PackageDeliveryCapture = capturePackageDelivery,
 ): Promise<{
   resolvedCapabilitySet: ResolvedCapabilitySet;
   capabilityResolutionDigest: string;
@@ -167,8 +170,10 @@ export async function resolveTaskLaunchCapabilities(
 
   const delivery = input.historical
     ? undefined
-    : await capturePackageDelivery(db, {
-        ...input,
+    : await captureDelivery(db, {
+        projectId: input.projectId,
+        flowPackageInstallId: input.flowPackageInstallId,
+        flowManifest: input.flowManifest,
         nonPackageMcpRefs: records
           .filter(
             (r) =>
@@ -182,7 +187,7 @@ export async function resolveTaskLaunchCapabilities(
   return {
     resolvedCapabilitySet: {
       ...buildResolvedCapabilitySet({
-        records,
+        records: includeCapturedPlatformMcpTargets(records, delivery),
         flowRevisionId: input.flowRevisionId,
         flowOrigin: input.flowSource.startsWith("/") ? "authored" : "git",
         mcpBindings: bindings,

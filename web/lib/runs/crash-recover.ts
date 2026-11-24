@@ -2,7 +2,7 @@ import "server-only";
 
 import type { FlowActionCompletion } from "@/lib/flows/graph/action-completion";
 
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -443,7 +443,17 @@ export async function closeCrashedNodeAttempts(
       and(
         eq(nodeAttempts.runId, input.runId),
         eq(nodeAttempts.nodeId, input.nodeId),
-        eq(nodeAttempts.status, "Running"),
+        or(
+          eq(nodeAttempts.status, "Running"),
+          and(
+            eq(nodeAttempts.status, "NeedsInput"),
+            sql`${nodeAttempts.actionResume}->>'kind'='node_question' AND EXISTS (
+              SELECT 1 FROM hitl_requests q WHERE q.id=${nodeAttempts.actionResume}->>'questionId'
+                AND q.run_id=${nodeAttempts.runId} AND q.flow_node_attempt_id=${nodeAttempts.id}
+                AND q.superseded_at IS NOT NULL AND q.responded_at IS NULL
+            )`,
+          ),
+        ),
         isNull(nodeAttempts.endedAt),
       ),
     )

@@ -44,7 +44,7 @@ export async function teardownLiveSessionsForRuns(
 
     try {
       records = [
-        ...(await hosts.local().listSessionsForRun(runId)),
+        ...(await hosts.inventoryForRun(runId)),
         ...(opts.records ?? []).filter(
           (record) => record.runId === runId && record.status === "live",
         ),

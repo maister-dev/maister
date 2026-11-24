@@ -103,7 +103,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "lib/execution-host/remote-tls.ts",
       "manager-flow-state",
       "Read the web manager's TLS identity and CA from the operator-configured credential files.",
-      [["assignedTlsDispatcher", "node:fs.readFileSync", "read"]],
+      [["readTlsCredential", "node:fs.readFileSync", "read"]],
     ),
     ...classified(
       "lib/local-packages/sync.ts",
@@ -148,12 +148,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Read the adopted package roots to pin the skill inventory at admission.",
       [
         [
-          "capturePackageDelivery",
+          "capturePackageDeliveryFiles",
           "../runtime/package-skill-tree.ts#packageSkillSourceDigest",
           "wrapper",
         ],
-        ["capturePackageDelivery", "node:fs/promises.lstat", "stat"],
-        ["capturePackageDelivery", "node:fs/promises.readdir", "list"],
+        ["capturePackageDeliveryFiles", "node:fs/promises.lstat", "stat"],
+        ["capturePackageDeliveryFiles", "node:fs/promises.readdir", "list"],
       ],
     ),
     ...classified(
@@ -233,6 +233,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Read and apply reviewed package draft changes and their recovery journal under the draft lock.",
       [
         ["applyCatalogPreview", "lib/atomic.ts#atomicWriteJson", "wrapper"],
+        [
+          "inspectChange",
+          "lib/local-packages/paths.ts#resolveWithinWorkingDir",
+          "wrapper",
+        ],
+        ["inspectChange", "node:fs/promises.lstat", "stat"],
         ["optionalText", "node:fs/promises.readFile", "read"],
         ["previewCatalogImport", "lib/atomic.ts#atomicWriteJson", "wrapper"],
         ["previewCatalogImport", "node:fs/promises.lstat", "stat"],
@@ -244,15 +250,13 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "lib/local-packages/paths.ts#resolveWithinWorkingDir",
           "wrapper",
         ],
-        ["readDraft", "node:fs/promises.lstat", "stat"],
+        ["readRegularDraftFile", "node:fs/promises.lstat", "stat"],
+        ["readRegularDraftFile", "node:fs/promises.readFile", "read"],
         ["reconcileCatalogApply", "lib/atomic.ts#atomicWriteJson", "wrapper"],
         ["reconcileCatalogApply", "lib/atomic.ts#atomicWriteText", "wrapper"],
-        [
-          "reconcileCatalogApply",
-          "lib/local-packages/paths.ts#resolveWithinWorkingDir",
-          "wrapper",
-        ],
+        ["reconcileCatalogApply", "node:fs/promises.realpath", "stat"],
         ["reconcileCatalogApply", "node:fs/promises.rm", "remove"],
+        ["removeDeletedDraftCatalog", "node:fs/promises.rm", "remove"],
         ["walk", "node:fs.createReadStream", "read"],
         ["walk", "node:fs/promises.readdir", "list"],
       ],
@@ -2399,7 +2403,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["cleanCopyExcludingGit", "node:fs/promises.cp", "write"],
         ["<object>.filter", "node:fs/promises.lstat", "stat"],
         ["exportWorkingDir", "node:fs/promises.mkdtemp", "write"],
-        ["deleteLocalPackage", "node:fs/promises.rm", "remove"],
+        ["deleteLockedLocalPackage", "node:fs/promises.rm", "remove"],
         ["walk", "node:fs/promises.readdir", "list"],
         ["readFileContent", "node:fs/promises.readFile", "read"],
         ["writeWorkingDirFile", "node:fs/promises.mkdir", "write"],
@@ -3321,7 +3325,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers(
     "lib/capabilities/capture-package-delivery.ts",
     "repository-worktree",
-    [["capturePackageDelivery", false]],
+    [["capturePackageDelivery", false], ["preparePackageDeliveryCapture", false]],
   ),
   ...wrappers("lib/capabilities/package-skills.ts", "repository-worktree", [
     ["materializePackageSessionSkills", true],
@@ -3337,6 +3341,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
       ["readCatalogOperation", false],
       ["readCatalogRequestReceipt", false],
       ["reconcileCatalogApply", false],
+      ["removeDeletedDraftCatalog", false],
     ],
   ),
   ...wrappers("lib/db/canonical-sql.ts", "build-tooling", [

@@ -9,6 +9,7 @@ import { expect, it, vi } from "vitest";
 import { assignedTlsDispatcher } from "../remote-tls";
 import { createExecutionHosts } from "../client";
 import { mintPlacement } from "../placement";
+import { localHost } from "../resolver";
 import { stopRuntimeEventConsumers } from "../events/consumer";
 
 import { mcpTransportFromMaterial } from "@/lib/capabilities/agent-map";
@@ -34,6 +35,7 @@ it("E2E-HST-01 binds real ACP tool calls and preparation receipts to B then clea
       vi.stubEnv("MAISTER_EXECUTION_HOST_TLS_CA_FILE", lab.certFile);
       vi.stubEnv("MAISTER_EXECUTION_HOST_TLS_CERT_FILE", lab.certFile);
       vi.stubEnv("MAISTER_EXECUTION_HOST_TLS_KEY_FILE", lab.keyFile);
+      vi.stubEnv("MAISTER_EXECUTION_HOST_SHARED_WORKSPACE", "1");
       vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", "/fixtures/local-maister-mcp");
       const endpoints: Record<string, string> = {};
 
@@ -48,10 +50,12 @@ it("E2E-HST-01 binds real ACP tool calls and preparation receipts to B then clea
           JSON.stringify(endpoints),
         );
         vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", key);
+        const host = await localHost({ db });
         const assignment = await db.transaction((tx) =>
           mintPlacement(tx as unknown as Db, {
             runId,
             reason: index === 0 ? "launch" : "recover",
+            host,
           }),
         );
 

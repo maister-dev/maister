@@ -188,10 +188,24 @@ sequenceDiagram
 
 Search approved sources as the editor types and discard superseded replies, including after clear. Choosing a result opens an exact-revision preview. Apply writes the selected tree, notices or MCP descriptor into the locked draft. Authors choose package skill sharing (initially on), individual MCP sharing (initially off) and package-agent skill/MCP references. A check at cut rejects dangling references. [Run inventory and examples](capabilities.md#project-run-capability-inventory)
 
+The `catalogOwner` route guard requires a signed-in installation member and an
+active draft, with `editSettings` for a project-owned draft. Before requesting
+preview source bytes, the route checks that this actor owns the supplied live
+`sessionId` lock. The preview rechecks the lock under the package lease before
+recording the draft base and reviewed bytes. The [draft publication contract](local-packages.md#draft-publication-and-recovery)
+owns apply, replay and recovery.
+
+| Boundary | Checks and observable outcome |
+| --- | --- |
+| Source approval | `searchCatalog` consults configured repositories and the official MCP Registry. `resolveCatalogSource` rejects an unapproved source or wrong source kind before fetch. A `skills.sh` link resolves through its approved repository. Search distinguishes an empty result from rate-limited and unavailable sources. |
+| Outbound metadata | `jsonFromCatalog` requires HTTPS and an approved origin, resolves public addresses and pins connections, rejects redirects, and caps each JSON response at 4 MiB. |
+| Pinned bundle | `resolveCatalogSource` validates the exact commit and each Git blob hash and length. Before reading blobs it rejects unsafe path segments, Unicode/case collisions and unsupported file types. Limits are the lesser of the configured import budgets and 200 files, 512 KiB per file and 2 MiB total. The preview retains UTF-8 companion files and notices. |
+| Review and execution | `reviewMcp` validates declared transport and npm publisher/version metadata for the supported formats. The preview returns the reviewed pin and, for npm stdio, the SHA-256 `artifactDigest` used for host approval. Search is read-only and preview and apply persist declarative data. The assigned Supervisor independently prepares approved distributions at dispatch. |
+
 ## Expectations
 
-- **CAT-01:** (Implemented) Eligible editors must be able to resolve approved sources to a pinned reviewable result.
-- **CAT-02:** (Implemented) Only the result for the current query may be displayed after a later query or clear.
+- **CAT-01:** (Implemented) The catalog routes must return a pinned, reviewable import to an eligible editor only after the authorization, source, network and content checks above, with `IT-CAT-01` verifying approved pins and notices, empty or unavailable sources, and rejection of unrepresentable content before draft writes.
+- **CAT-02:** (Implemented) The Studio editor must ignore late search or preview responses after a new selection or clear and must let the editor apply, edit and cut a skill and an MCP so that a second project attaching the same cut receives the exact companion bytes and MCP declaration verified by `E2E-CAT-02`.
 
 The following bullets are copied verbatim from SDD §7.1 (RFC-2119 spirit, each
 testable):

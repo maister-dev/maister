@@ -1082,6 +1082,7 @@ export function LocalPackageEditor({
                 packageId={packageId}
                 readOnly={readOnly}
                 saveLabel={labels.home.save}
+                sessionId={sessionId}
                 onCatalogApplied={onAssistantActivity}
                 onCompareElement={
                   divergence

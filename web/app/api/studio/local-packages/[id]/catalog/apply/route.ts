@@ -12,7 +12,7 @@ import {
   applyCatalogPreview,
   readCatalogRequestReceipt,
 } from "@/lib/local-packages/catalog-operation";
-import { assertUserHoldsLock } from "@/lib/local-packages/lock";
+import { assertEditorHoldsLock } from "@/lib/local-packages/lock";
 
 export async function POST(
   req: NextRequest,
@@ -21,17 +21,23 @@ export async function POST(
   try {
     const { id } = await params;
     const owner = await catalogOwner(id);
-    const body = applyBody.parse(await req.json());
+    const { sessionId, ...body } = applyBody.parse(await req.json());
+    const assertEditor = () =>
+      assertEditorHoldsLock(id, owner.actorId, sessionId);
 
-    await assertUserHoldsLock(id, owner.actorId);
+    await assertEditor();
     const receipt = await withCatalogReceipt(
       id,
       async () => {
-        await assertUserHoldsLock(id, owner.actorId);
+        await assertEditor();
 
         return applyCatalogPreview(owner, body);
       },
-      () => readCatalogRequestReceipt(owner, body),
+      async () => {
+        await assertEditor();
+
+        return readCatalogRequestReceipt(owner, body);
+      },
     );
 
     return NextResponse.json(receipt, {

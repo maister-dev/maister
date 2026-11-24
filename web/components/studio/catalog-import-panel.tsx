@@ -10,6 +10,7 @@ import type {
 } from "@/lib/local-packages/catalog-contract";
 import type { ReactElement } from "react";
 
+import { Button, Input, ListBox, SearchField, Select } from "@heroui/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
@@ -22,6 +23,8 @@ import {
   inlineSelectHref,
   skillScreenHref,
 } from "@/lib/local-packages/composition";
+import { readApiErrorBody } from "@/lib/api-error";
+import { useOptionalFeedback } from "@/components/feedback/feedback-provider";
 
 type Origin = {
   sourceId: string;
@@ -53,25 +56,116 @@ function readOrigins(
 }
 async function response<T>(req: Promise<Response>): Promise<T> {
   const res = await req;
-  const data = await res.json();
 
-  if (!res.ok) throw new Error(data.message ?? String(res.status));
+  if (!res.ok) {
+    const failure = await readApiErrorBody(res);
 
-  return data as T;
+    if (failure?.code === "UNAUTHENTICATED")
+      throw new CatalogRequestError("signIn");
+    if (failure?.code === "UNAUTHORIZED")
+      throw new CatalogRequestError("forbidden");
+    if (failure?.code === "PASSWORD_CHANGE_REQUIRED")
+      throw new CatalogRequestError("passwordChange");
+    switch (res.status) {
+      case 404:
+        throw new CatalogRequestError("itemUnavailable");
+      case 410:
+        throw new CatalogRequestError("previewExpired");
+      case 429:
+        throw new CatalogRequestError("rateLimit");
+      case 503:
+        throw new CatalogRequestError("unavailable");
+    }
+    if (failure?.code === "CONFLICT")
+      throw new CatalogRequestError(
+        failure.details?.reason === "operation_in_progress" ||
+          failure.details?.reason === "operation_busy"
+          ? "operationBusy"
+          : "draftChanged",
+      );
+    if (failure?.code === "CONFIG")
+      throw new CatalogRequestError("invalidImport");
+    throw new CatalogRequestError("error");
+  }
+
+  return (await res.json()) as T;
 }
-const btn =
-  "rounded-md border border-line bg-ivory px-3 py-1.5 text-sm text-ink disabled:opacity-50";
-const field =
-  "rounded-md border border-line bg-paper px-2 py-1 text-sm text-ink";
+
+type CatalogFailure =
+  | "error"
+  | "signIn"
+  | "forbidden"
+  | "itemUnavailable"
+  | "previewExpired"
+  | "rateLimit"
+  | "unavailable"
+  | "invalidImport"
+  | "operationBusy"
+  | "draftChanged"
+  | "passwordChange";
+
+class CatalogRequestError extends Error {
+  constructor(readonly failure: CatalogFailure) {
+    super(failure);
+  }
+}
+
+function resultKey(result: SearchResult): string {
+  return `${result.sourceId}/${result.resultId}`;
+}
+
+function CatalogSelect({
+  label,
+  options,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}): ReactElement {
+  return (
+    <Select
+      aria-label={label}
+      className="min-w-32"
+      isDisabled={disabled}
+      placeholder={label}
+      selectedKey={value || null}
+      variant="secondary"
+      onSelectionChange={(key) => {
+        if (typeof key === "string") onChange(key);
+      }}
+    >
+      <Select.Trigger>
+        <Select.Value />
+        <Select.Indicator />
+      </Select.Trigger>
+      <Select.Popover>
+        <ListBox>
+          {options.map((option) => (
+            <ListBox.Item key={option.value} id={option.value}>
+              {option.label}
+            </ListBox.Item>
+          ))}
+        </ListBox>
+      </Select.Popover>
+    </Select>
+  );
+}
 
 export function CatalogImportPanel({
   packageId,
+  sessionId,
   kind,
   files,
   dirty,
   onApplied,
 }: {
   packageId: string;
+  sessionId: string;
   kind: CatalogKind;
   files: AuthoredFlowPackageFile[];
   dirty: boolean;
@@ -79,6 +173,7 @@ export function CatalogImportPanel({
 }): ReactElement {
   const t = useTranslations("studio.catalog");
   const router = useRouter();
+  const feedback = useOptionalFeedback();
   const base =
     "/api/studio/local-packages/" + encodeURIComponent(packageId) + "/catalog";
   const [open, setOpen] = useState(false);
@@ -90,11 +185,15 @@ export function CatalogImportPanel({
     {},
   );
   const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const requestKey = useRef("");
   const alive = useRef(true);
+  const searchEpoch = useRef(0);
+  const previewRequest = useRef<AbortController | null>(null);
   const manifest = parsePackageManifest(
     files.find((f) => f.path === PACKAGE_MANIFEST_FILENAME)?.content ?? "",
   );
@@ -105,17 +204,28 @@ export function CatalogImportPanel({
     roots.length === 1 ? roots[0] : roots.length > 1 ? "" : "capability",
   );
   const origins = readOrigins(files, kind);
+  const resultItems = data?.results ?? [];
+
+  function clearPreview(): void {
+    previewRequest.current?.abort();
+    previewRequest.current = null;
+    setPreviewing(false);
+    setPreview(null);
+    setChoices({});
+  }
 
   useEffect(() => {
     alive.current = true;
 
     return () => {
       alive.current = false;
+      previewRequest.current?.abort();
     };
   }, []);
   useEffect(() => {
     if (!open || !q.trim()) return;
     const controller = new AbortController();
+    const epoch = searchEpoch.current;
     const timeout = setTimeout(() => {
       void response<SearchResponse>(
         fetch(base + "/search?" + new URLSearchParams({ kind, q }), {
@@ -123,14 +233,14 @@ export function CatalogImportPanel({
         }),
       )
         .then((reply) => {
-          if (!controller.signal.aborted) {
+          if (!controller.signal.aborted && epoch === searchEpoch.current) {
             setData(reply);
             setSearching(false);
           }
         })
-        .catch((e: Error) => {
-          if (!controller.signal.aborted) {
-            setError(e.message);
+        .catch((e) => {
+          if (!controller.signal.aborted && epoch === searchEpoch.current) {
+            setError(t(e instanceof CatalogRequestError ? e.failure : "error"));
             setSearching(false);
           }
         });
@@ -140,18 +250,20 @@ export function CatalogImportPanel({
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [base, kind, open, q]);
+  }, [base, kind, open, q, t]);
   function query(value: string): void {
+    searchEpoch.current++;
+    clearPreview();
     setQ(value);
     setData(null);
     setSelected(null);
-    setPreview(null);
     setError("");
     setSearching(Boolean(value.trim()));
+    setLoadingMore(false);
   }
   function choose(item: SearchResult): void {
     setSelected(item);
-    setPreview(null);
+    clearPreview();
     setError("");
     const slug = item.name
       .split("/")
@@ -176,37 +288,45 @@ export function CatalogImportPanel({
     destination: string;
     importId?: string;
   }): Promise<void> {
-    setBusy(true);
+    clearPreview();
+    const controller = new AbortController();
+
+    previewRequest.current = controller;
+    setPreviewing(true);
     setError("");
-    setPreview(null);
-    setChoices({});
     try {
       const refreshed = await response<CatalogPreview>(
         fetch(base + "/preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind, ...item }),
+          body: JSON.stringify({ kind, sessionId, ...item }),
+          signal: controller.signal,
         }),
       );
 
-      if (alive.current) {
+      if (!controller.signal.aborted) {
         setPreview(refreshed);
         requestKey.current = crypto.randomUUID();
       }
     } catch (e) {
-      if (alive.current) setError(e instanceof Error ? e.message : t("error"));
+      if (!controller.signal.aborted)
+        setError(t(e instanceof CatalogRequestError ? e.failure : "error"));
     } finally {
-      if (alive.current) setBusy(false);
+      if (previewRequest.current === controller) {
+        previewRequest.current = null;
+        setPreviewing(false);
+      }
     }
   }
   async function apply(): Promise<void> {
     if (!preview || dirty) return;
-    setBusy(true);
+    setApplying(true);
     setError("");
     try {
       const payload = {
         previewId: preview.previewId,
         expectedDraftBase: preview.expectedDraftBase,
+        sessionId,
         requestKey: requestKey.current,
         resolutions: Object.entries(choices).map(([path, use]) => ({
           path,
@@ -225,10 +345,31 @@ export function CatalogImportPanel({
         receipt = await response<CatalogReceipt>(
           fetch(base + "/operations/" + receipt.operationId),
         );
-      if (receipt.state !== "applied") throw new Error(t("pending"));
+      if (!alive.current) return;
+      if (receipt.state === "aborted") {
+        clearPreview();
+        setError(
+          t(
+            receipt.reason === "approval_revoked"
+              ? "approvalRevoked"
+              : "draftChanged",
+          ),
+        );
+
+        return;
+      }
+      if (receipt.state !== "applied") {
+        setError(t("pending"));
+
+        return;
+      }
       if (alive.current) {
         const stem = preview.destination.split("/").at(-1)!;
 
+        feedback?.success({
+          mutationId: receipt.operationId,
+          message: t("applied"),
+        });
         setOpen(false);
         onApplied();
         router.push(
@@ -238,24 +379,34 @@ export function CatalogImportPanel({
         );
       }
     } catch (e) {
-      if (alive.current) setError(e instanceof Error ? e.message : t("error"));
+      if (alive.current) {
+        const failure = e instanceof CatalogRequestError ? e.failure : "error";
+
+        if (
+          failure === "previewExpired" ||
+          failure === "draftChanged" ||
+          failure === "itemUnavailable"
+        )
+          clearPreview();
+        setError(t(failure));
+      }
     } finally {
-      if (alive.current) setBusy(false);
+      if (alive.current) setApplying(false);
     }
   }
   if (!open)
     return (
-      <button
-        className={btn}
+      <Button
         data-testid="catalog-open"
-        type="button"
-        onClick={() => {
+        size="sm"
+        variant="secondary"
+        onPress={() => {
           setOpen(true);
           query("");
         }}
       >
         {t("open")}
-      </button>
+      </Button>
     );
 
   return (
@@ -265,23 +416,30 @@ export function CatalogImportPanel({
       data-testid="catalog-panel"
     >
       <div className="flex gap-2">
-        <input
+        <SearchField
           aria-label={t("search")}
-          className={field + " grow"}
-          disabled={busy}
-          placeholder={t("search")}
-          type="search"
+          className="min-w-0 grow"
+          isDisabled={applying}
           value={q}
-          onChange={(e) => query(e.target.value)}
-        />
-        <button
-          className={btn}
-          disabled={busy}
-          type="button"
-          onClick={() => setOpen(false)}
+          onChange={query}
+        >
+          <SearchField.Group>
+            <SearchField.SearchIcon />
+            <SearchField.Input placeholder={t("search")} />
+            <SearchField.ClearButton />
+          </SearchField.Group>
+        </SearchField>
+        <Button
+          isDisabled={applying}
+          size="sm"
+          variant="ghost"
+          onPress={() => {
+            query("");
+            setOpen(false);
+          }}
         >
           {t("close")}
-        </button>
+        </Button>
       </div>
       {dirty ? <p role="status">{t("dirty")}</p> : null}
       {searching ? <p role="status">{t("searching")}</p> : null}
@@ -294,32 +452,49 @@ export function CatalogImportPanel({
             {t(s.state === "rate_limited" ? "rateLimit" : "unavailable")}
           </p>
         ))}
-      {data?.results.length ? (
-        <ul className="max-h-44 overflow-y-auto">
-          {data.results.map((r) => (
-            <li key={r.sourceId + "/" + r.resultId}>
-              <button
-                className={btn}
-                disabled={busy}
-                type="button"
-                onClick={() => choose(r)}
+      {q.trim() ? (
+        <div aria-busy={searching || loadingMore} data-testid="catalog-results">
+          <ListBox
+            disallowEmptySelection
+            aria-label={t("results")}
+            className="max-h-44 overflow-y-auto"
+            disabledKeys={applying ? resultItems.map(resultKey) : undefined}
+            items={resultItems}
+            selectedKeys={selected ? [resultKey(selected)] : []}
+            selectionMode="single"
+            onSelectionChange={(keys) => {
+              if (keys === "all") return;
+              const [key] = keys;
+              const item = resultItems.find(
+                (result) => resultKey(result) === key,
+              );
+
+              if (item) choose(item);
+            }}
+          >
+            {(r) => (
+              <ListBox.Item
+                id={resultKey(r)}
+                textValue={`${r.name} · ${r.publisher}`}
               >
                 {r.name} · {r.publisher}
-              </button>
-            </li>
-          ))}
-        </ul>
+              </ListBox.Item>
+            )}
+          </ListBox>
+        </div>
       ) : null}
       {data?.nextCursor ? (
-        <button
-          className={btn}
-          disabled={busy}
-          type="button"
-          onClick={async () => {
+        <Button
+          isDisabled={applying}
+          isPending={loadingMore}
+          size="sm"
+          variant="secondary"
+          onPress={async () => {
             const cursor = data.nextCursor;
+            const epoch = searchEpoch.current;
 
-            if (!cursor) return;
-            setBusy(true);
+            if (!cursor || loadingMore) return;
+            setLoadingMore(true);
             try {
               const next = await response<SearchResponse>(
                 fetch(
@@ -327,58 +502,58 @@ export function CatalogImportPanel({
                 ),
               );
 
-              if (alive.current)
+              if (alive.current && epoch === searchEpoch.current)
                 setData({
                   ...next,
                   results: [...data.results, ...next.results],
                 });
             } catch (e) {
-              if (alive.current)
-                setError(e instanceof Error ? e.message : t("error"));
+              if (alive.current && epoch === searchEpoch.current)
+                setError(
+                  t(e instanceof CatalogRequestError ? e.failure : "error"),
+                );
             } finally {
-              if (alive.current) setBusy(false);
+              if (alive.current && epoch === searchEpoch.current)
+                setLoadingMore(false);
             }
           }}
         >
           {t("more")}
-        </button>
+        </Button>
       ) : null}
       {selected ? (
         <div className="flex flex-wrap gap-2">
           {kind === "skill" && roots.length > 1 ? (
-            <select
-              aria-label={t("root")}
-              className={field}
-              disabled={busy}
+            <CatalogSelect
+              disabled={applying}
+              label={t("root")}
+              options={roots.map((value) => ({ value, label: value }))}
               value={root}
-              onChange={(e) => {
-                setRoot(e.target.value);
-                setPreview(null);
+              onChange={(value) => {
+                setRoot(value);
+                clearPreview();
               }}
-            >
-              <option value="">{t("root")}</option>
-              {roots.map((r) => (
-                <option key={r}>{r}</option>
-              ))}
-            </select>
+            />
           ) : null}
           <label>
             {t("localName")}{" "}
-            <input
-              className={field}
-              disabled={busy}
+            <Input
+              disabled={applying}
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
-                setPreview(null);
+                clearPreview();
               }}
             />
           </label>
-          <button
-            className={btn}
-            disabled={busy || dirty || !name || (!root && kind === "skill")}
-            type="button"
-            onClick={() =>
+          <Button
+            isDisabled={
+              applying || dirty || !name || (!root && kind === "skill")
+            }
+            isPending={previewing}
+            size="sm"
+            variant="secondary"
+            onPress={() =>
               void review({
                 sourceId: selected.sourceId,
                 selector: selected.resultId,
@@ -390,16 +565,16 @@ export function CatalogImportPanel({
             }
           >
             {t("preview")}
-          </button>
+          </Button>
         </div>
       ) : null}
       {origins.map((origin) => (
-        <button
+        <Button
           key={origin.importId}
-          className={btn}
-          disabled={busy || dirty}
-          type="button"
-          onClick={() =>
+          isDisabled={applying || dirty}
+          size="sm"
+          variant="secondary"
+          onPress={() =>
             void review({
               sourceId: origin.sourceId,
               selector: origin.selector,
@@ -409,8 +584,9 @@ export function CatalogImportPanel({
           }
         >
           {t("update")} · {origin.destination}
-        </button>
+        </Button>
       ))}
+      {previewing ? <p role="status">{t("previewing")}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {preview ? (
         <div className="space-y-2" data-testid="catalog-preview">
@@ -429,6 +605,15 @@ export function CatalogImportPanel({
           <p className="break-all font-mono text-xs">
             SHA-256 {preview.digest}
           </p>
+          {preview.artifactDigest ? (
+            <div data-testid="catalog-artifact-digest">
+              <p className="font-medium">{t("artifactDigest")}</p>
+              <code className="break-all text-xs">
+                {preview.artifactDigest}
+              </code>
+              <p className="text-ink-2">{t("artifactDigestNote")}</p>
+            </div>
+          ) : null}
           {preview.notices.length ? (
             <p>
               {t("notices")}: {preview.notices.join(", ")}
@@ -475,39 +660,36 @@ export function CatalogImportPanel({
                 </pre>
               ) : null}
               {file.change === "conflict" ? (
-                <select
-                  aria-label={t("resolve") + " " + file.path}
-                  className={field}
+                <CatalogSelect
+                  disabled={applying}
+                  label={t("resolve") + " " + file.path}
+                  options={[
+                    { value: "upstream", label: t("upstream") },
+                    { value: "draft", label: t("draft") },
+                  ]}
                   value={choices[file.path] ?? ""}
-                  onChange={(e) => {
-                    const value = e.target.value;
-
+                  onChange={(value) => {
                     if (value === "upstream" || value === "draft")
                       setChoices((c) => ({ ...c, [file.path]: value }));
                   }}
-                >
-                  <option value="">{t("resolve")}</option>
-                  <option value="upstream">{t("upstream")}</option>
-                  <option value="draft">{t("draft")}</option>
-                </select>
+                />
               ) : null}
             </details>
           ))}
-          <button
-            className={btn}
+          <Button
             data-testid="catalog-apply"
-            disabled={
-              busy ||
+            isDisabled={
               dirty ||
               preview.files.some(
                 (f) => f.change === "conflict" && !choices[f.path],
               )
             }
-            type="button"
-            onClick={() => void apply()}
+            isPending={applying}
+            size="sm"
+            onPress={() => void apply()}
           >
             {t("apply")}
-          </button>
+          </Button>
         </div>
       ) : null}
     </section>

@@ -155,7 +155,7 @@ async function loadSupervisorSessionMap(
     const records: SupervisorSessionRecord[] = [];
 
     for (const runId of new Set(runIds))
-      records.push(...(await hosts.local().listSessionsForRun(runId)));
+      records.push(...(await hosts.inventoryForRun(runId)));
     const map = new Map<string, SupervisorSessionRecord>();
 
     for (const rec of records) {

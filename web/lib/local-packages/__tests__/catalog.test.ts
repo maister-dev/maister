@@ -95,6 +95,41 @@ describe("reviewed Studio import", () => {
     ).rejects.toThrow();
   });
 
+  it("IT-CAT-01 reuses a verified blob within one review while keeping every member and its size check", async () => {
+    const member = tree[1];
+    let reads = 0;
+    const resolve = (size: number) =>
+      resolveCatalogSource(
+        {
+          kind: "skill",
+          sourceId: "anthropic-skills",
+          selector: "skills/design",
+        },
+        async (url) => {
+          if (url.pathname.includes("/git/trees/"))
+            return {
+              truncated: false,
+              tree: [
+                ...tree,
+                { ...member, path: "skills/design/repeat.md", size },
+              ],
+            };
+          if (url.pathname.endsWith("/git/blobs/" + member.sha)) reads++;
+
+          return read(url);
+        },
+      );
+
+    const resolved = await resolve(member.size);
+
+    expect(resolved.files["repeat.md"]).toBe(resolved.files["companion.md"]);
+    expect(reads).toBe(1);
+    await expect(resolve(member.size + 1)).rejects.toMatchObject({
+      status: 422,
+    });
+    expect(reads).toBe(2);
+  });
+
   it("IT-CAT-03 applies one reviewed tree, recovers a lost reply and detects local changes before update", async () => {
     draft = path.join(
       await mkdtemp(path.join(tmpdir(), "maister-catalog-")),
@@ -211,6 +246,48 @@ describe("reviewed Studio import", () => {
         "utf8",
       ),
     ).toBe(skill + "Local note");
+  });
+
+  it("IT-CAT-03 refuses a destination collision before creating an origin or overwriting a local companion", async () => {
+    draft = path.join(
+      await mkdtemp(path.join(tmpdir(), "maister-catalog-")),
+      "worktree",
+    );
+    const destination = "capability/skills/design";
+    const local = path.join(draft, destination, "companion.md");
+    const manifest = "schemaVersion: 1\nname: demo\nflows: []\n";
+
+    await mkdir(path.dirname(local), { recursive: true });
+    await writeFile(path.join(draft, "maister-package.yaml"), manifest);
+    await writeFile(local, "unrelated local bytes");
+    const source = await resolveCatalogSource(
+      {
+        kind: "skill",
+        sourceId: "anthropic-skills",
+        selector: "skills/design",
+      },
+      read,
+    );
+
+    await expect(
+      previewCatalogImport(
+        { workingDir: draft, packageId: "draft", actorId: "editor" },
+        source,
+        destination,
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(readFile(local, "utf8")).resolves.toBe(
+      "unrelated local bytes",
+    );
+    await expect(
+      readFile(path.join(draft, "maister-package.yaml"), "utf8"),
+    ).resolves.toBe(manifest);
+    await expect(
+      readFile(path.join(draft, destination, "SKILL.md")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(path.join(path.dirname(draft), ".maister-catalog")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
@@ -333,14 +410,20 @@ it("IT-CAT-01 distinguishes empty, partial and limited sources before accepting 
   ).rejects.toMatchObject({ status: 429 });
 });
 
-it.each(["symlink", "oversize", "integrity"] as const)(
+it.each(["symlink", "oversize", "integrity", "collision"] as const)(
   "IT-CAT-01 refuses %s while resolving upstream bytes",
   async (fault) => {
+    let blobReads = 0;
     const controlled: CatalogClient = async (url) => {
-      if (url.pathname.includes("/git/trees/"))
+      if (url.pathname.includes("/git/trees/")) {
+        const members =
+          fault === "collision"
+            ? [...tree, { ...tree[1], path: "skills/design/Companion.md" }]
+            : tree;
+
         return {
           truncated: false,
-          tree: tree.map((e) =>
+          tree: members.map((e) =>
             e.path.endsWith("companion.md")
               ? {
                   ...e,
@@ -353,8 +436,12 @@ it.each(["symlink", "oversize", "integrity"] as const)(
               : e,
           ),
         };
-      if (fault === "integrity" && url.pathname.includes("/git/blobs/"))
-        return { encoding: "base64", content: "c3dhcHBlZA==" };
+      }
+      if (url.pathname.includes("/git/blobs/")) {
+        blobReads++;
+        if (fault === "integrity")
+          return { encoding: "base64", content: "c3dhcHBlZA==" };
+      }
 
       return read(url);
     };
@@ -369,6 +456,7 @@ it.each(["symlink", "oversize", "integrity"] as const)(
         controlled,
       ),
     ).rejects.toMatchObject({ status: 422 });
+    if (fault === "collision") expect(blobReads).toBe(0);
   },
 );
 
@@ -430,6 +518,7 @@ it("IT-CAT-01 reviews immutable npm metadata and rejects lifecycle hooks, missin
       "mcps/design.yaml",
     ),
   ).resolves.toMatchObject({
+    artifactDigest: result.mcp?.distribution?.artifactDigest,
     runnerCompatibility: {
       transport: "stdio",
       compatibleAdapters: ["claude", "codex", "gemini", "opencode", "mimo"],

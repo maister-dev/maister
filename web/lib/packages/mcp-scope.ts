@@ -20,6 +20,7 @@ const log = pino({
 
 export type McpScope = "project" | "package";
 export type AttachmentMcpScope = {
+  packageName: string;
   refId: string;
   attachmentId: string;
   installId: string;
@@ -45,7 +46,7 @@ export async function readPackageMcpScopes(
   flowPackageInstallId: string | null = null,
 ): Promise<AttachmentMcpScope[]> {
   const result = await database.execute(sql`
-    SELECT a.id AS "attachmentId", p.id AS "installId", a.scope_revision AS revision,
+    SELECT a.id AS "attachmentId", a.package_name AS "packageName", p.id AS "installId", a.scope_revision AS revision,
            m.declaration->>'id' AS "refId", d.declared, COALESCE(o.scope, d.declared) AS effective,
            CASE WHEN o.scope IS NULL THEN 'package' ELSE 'override' END AS origin,
            COALESCE(o.scope = 'project', p.manifest->'spec'->'delivery'->>'version' = '1' AND d.declared = 'project', false) AS "sharedWithAgents"

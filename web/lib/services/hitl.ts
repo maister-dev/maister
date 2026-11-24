@@ -54,6 +54,7 @@ import {
 } from "@/lib/flows/graph/ledger";
 import { maxOperatorRestarts } from "@/lib/instance-config";
 import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
+import { resolveRunPlacementHost } from "@/lib/execution-host/resolver";
 import {
   createResumeBackoff,
   RESUME_STUCK_FAILURES,
@@ -313,6 +314,10 @@ async function claimGraphResumeSlot(
   runId: string,
   executionHosts?: ExecutionHosts,
 ): Promise<"ready" | "queued" | "noop"> {
+  const placementHost = await resolveRunPlacementHost(db, runId, {
+    transport: executionHosts?.transport,
+  });
+
   return db.transaction(async (tx: any) => {
     await takeSchedulerLock(tx);
 
@@ -343,7 +348,7 @@ async function claimGraphResumeSlot(
 
     const resumed = await markResumed(runId, {
       db: tx,
-      placement: { transport: executionHosts?.transport },
+      placement: { host: placementHost },
     });
 
     if (!resumed.ok) return "noop";

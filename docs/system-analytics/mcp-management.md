@@ -344,6 +344,13 @@ adoption, including when the new package setting happens to match it. Adoption
 removes overrides for refs the release dropped. The attachment revision
 protects concurrent adoption and scope edits.
 
+The scope PUT authorizes package management in the URL project.
+`setPackageMcpScope` locks that project's attachment and verifies both
+`expectedInstallId` and `expectedRevision` before writing the `(attachmentId,
+refId)` override. `scope: null` removes the override and returns the effective
+package default. A stale pin or revision returns `409 CONFLICT`, and a missing
+attachment or ref returns `404`.
+
 A project agent instance can add connected MCPs and remove those local
 additions. Inherited package declarations remain in its profile. Disabling a
 runtime binding withholds the server or fails a required dependency. Legacy
@@ -352,7 +359,7 @@ visibility alone supplies no extra MCPs to standalone agents. [Session inventory
 
 ## Expectations
 
-- **CAP-02:** (Implemented) A surviving MCP override must belong to exactly one project attachment and logical ref across adoption.
+- **CAP-02:** (Implemented) For an authorized maintainer holding the current adopted pin and scope revision, the scope PUT must save or clear only the requested attachment's logical ref, with `IT-CAP-02` verifying independent projects, shared and private overrides, reset, adoption, rollback and detach.
 
 1. A `project_mcp_bindings` row MUST be unique on `(project_id, ref_id)`; an enabled binding's target MUST win over `SOURCE_PRECEDENCE`, and a disabled binding MUST make the ref unresolvable in that project. (Implemented)
 2. An **absent** binding MUST leave resolution exactly as today (grandfather) — zero behavior change for any project without bindings. (Implemented)

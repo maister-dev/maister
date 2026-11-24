@@ -282,7 +282,7 @@ cell.
 | `tools` | `capability_guard` **tool-name allow-list** at the ACP seam (identity from `_meta.claudeCode.toolName ?? title`) | **enforced** (all adapters; evidence-gated at launch) |
 | `mcps` | `capability_guard` **MCP-server allow-list** at the ACP seam (server from `mcp__<server>__<tool>`) | **enforced** (all adapters; evidence-gated at launch) |
 | `hooks` | supervisor guardrail interceptor (ADR-108) | **enforced** (all adapters; label corrected) |
-| `skills` | materialized skill/instruction files — not tool calls | instructed (permanent — not seam-interceptable) |
+| `skills` (legacy runtime cell) | Materialized instructions for pinned legacy settings. New Flow authoring uses package skill delivery. | instructed |
 | `restrictions` | path-based `mustNotTouch` deny-sets → post-hoc `mutation-check` gate | instructed (permanent — a path deny-set is not a tool-identity allow-list) |
 | `permissionMode` | `settings.local.json` `permissions.defaultMode` (claude-only, unverified) | instructed (permanent — 3-valued enum, not a tool-identity allow-list) |
 | `workspaceAccess` | the platform-agent L1–L3 read-only stack (agent runs only; not wired to the flow seam) | instructed (follow-up — flow-node `workspaceAccess → readOnlySession` not yet delivered) |
@@ -336,12 +336,16 @@ materialization target"; this section states only what this domain requires.
   (FR-E5), never a hard `CONFIG`. See [agents.md](agents.md).
 - **Scratch policy = broad (FR-C3).** For scratch runs, materialize **all**
   enabled+trusted+runner-supported skills + subagents as **files** (lazy-loaded
-  by the agent — do NOT inline instructions into the prompt); **MCP stays
-  selected/defaults** (each stdio MCP is a process). Flow packages supply their skill files. Flow nodes can declare MCP requirements.
+  by the agent). `loadScratchCapabilityCatalog` applies effective attachment
+  scope before both launcher defaults and dispatch. Project-shared package MCPs
+  default to selected. Package-private MCPs require explicit selection, and a
+  disabled project binding suppresses its default. Attached revisions predating
+  scope retain their legacy implicit sharing.
 - **Standalone package-agent materialization uses the pinned package.** A
-  standalone `run_kind='agent'` session materializes every skill-kind capability
-  from the same project-pinned package install that supplied the effective
-  `maister-agents/<stem>.md` definition. The source roots are
+  standalone `run_kind='agent'` session materializes the skill selection from
+  the same project-pinned package install that supplied the effective
+  `maister-agents/<stem>.md` definition. An omitted selection includes every
+  skill in that package. The source roots are
   `manifest.spec.capabilities[*].path/skills`, not a flat package-root
   `skills/` directory and not the newest catalog projection. Claude sessions
   also materialize capability-local `agents/` from those member roots into
@@ -373,7 +377,7 @@ At admission the Run captures every attached package revision. Run preparation s
 | Session-agent node | Agent package selection, different owning Flow package and other shared libraries | Agent declaration, effective project-link additions and project-shared refs. Explicit node selection can narrow optional local refs. Refusing a required agent ref fails preflight. |
 | Standalone project agent | Agent package selection | Agent declaration, project-link additions and project-shared refs |
 
-Omitted agent skill selection includes the entire agent package. An empty list suppresses that package's entire contribution, even if it shares skills. Deduplicate identical package-qualified content. For equal slugs prefer selected agent content, then the owning Flow, then a unique shared library. Two distinct equally ranked shared providers fail preflight with both source IDs. Native MCP configuration and ACP must receive the same deduplicated server set. A required unavailable binding fails before session creation. An additional unavailable ref carries the existing withheld reason.
+Omitted agent skill selection includes the entire agent package. An empty list suppresses that package's entire contribution, even if it shares skills. For equal slugs prefer selected agent content, then the owning Flow, then a shared library. Equally ranked shared libraries with the same sealed companion-tree digest deduplicate to the provider ordered first by package name and install ID. Missing or different digests at equal precedence fail preflight with both source IDs. Native MCP configuration and ACP must receive the same deduplicated server set. A required unavailable binding fails before session creation. An additional unavailable ref carries the existing withheld reason.
 
 A project with `core` (shared), `design` (private, Figma scoped to package) and `development` (private) pins all three. A development node sees development and core skills and no Figma. A design Flow binding a designer from design sees the selected design skills plus core. A child development Flow invoked from design receives development and core. A standalone designer with an empty skill list sees zero package skills. Disabling Figma stops a node requiring Figma and withholds it from a node where it is optional. A release or override change during execution leaves the captured selection intact. Recheck current authorization at dispatch and resume.
 
@@ -381,10 +385,10 @@ For versioned Flow delivery the supervisor checks the selected tree digest and p
 
 ## Expectations
 
-- **CAP-01:** New Flow authoring must reject retired node skill settings and retain the pinned legacy read path.
-- **CAP-03:** (Implemented) Each session must receive its frozen effective inventory from the Run capture according to the project Run inventory table.
-- **CAP-04:** (Implemented) Each bound node must own an isolated ACP session and adapter discovery view across interruption.
-- **CAP-06:** (Designed) Project routing must allow a design and a development Run in the same project without either session receiving private resources of the other package.
+- **CAP-01:** (Implemented) The Studio package validator must refuse `settings.skills` and `settings.enforcement.skills` for new Flow revisions, with `IT-CAP-01` verifying both refusals and the retained parser for a pinned legacy Run.
+- **CAP-03:** (Implemented) The session delivery resolver must combine the Run's captured pins, author selections and attached scopes according to the inventory table, with `IT-CAP-03` covering standalone, child and bound/unbound routing, empty versus omitted selections, shared deduplication and required MCP refusal.
+- **CAP-04:** (Implemented) The session materializer must give each bound node its own ACP handle and adapter discovery root, with `IT-CAP-04` checking distinct sibling views and same-attempt recovery of that handle.
+- **CAP-06:** (Implemented) In one project, a design Flow and a development Flow must receive their own private capabilities and the shared core, with `E2E-CAP-06` observing the design tool and prototype after Inbox recovery, the coding Run without the design server, and a separate standalone agent Run inventory.
 
 These are the steady-state invariants the materialization code MUST satisfy
 (Designed — they hold once that work lands, not before).

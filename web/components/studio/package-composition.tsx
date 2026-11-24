@@ -7,6 +7,7 @@ import type { PackageBom } from "@/lib/queries/package-bom";
 import type { CompositionKind } from "@/lib/local-packages/composition";
 import type { ReactElement, ReactNode } from "react";
 
+import { Button, Checkbox, Label } from "@heroui/react";
 import { useMemo, useState } from "react";
 import { parseDocument, stringify } from "yaml";
 import { useSearchParams } from "next/navigation";
@@ -94,6 +95,7 @@ type TFn = ReturnType<typeof useTranslations>;
 // parent which holds the draft).
 export function PackageComposition({
   packageId,
+  sessionId,
   name,
   bom,
   fileCount,
@@ -112,6 +114,7 @@ export function PackageComposition({
   onCompareElement,
 }: {
   packageId: string;
+  sessionId: string;
   name: string;
   bom: PackageBom;
   fileCount: number;
@@ -255,25 +258,28 @@ export function PackageComposition({
 
       {!readOnly && activeTab === "skills" && manifestFile && parsed?.ok ? (
         <div className="flex items-center gap-3">
-          <label>
-            <input
-              checked={delivery?.shareSkills !== false}
-              type="checkbox"
-              onChange={(e) => {
-                const { doc } = catalogManifest(manifestFile.content);
+          <Checkbox
+            isSelected={delivery?.shareSkills !== false}
+            onChange={(selected) => {
+              const { doc } = catalogManifest(manifestFile.content);
 
-                doc.setIn(["delivery", "shareSkills"], e.target.checked);
-                onDraftFilesChange(
-                  upsertPackageFile(draftFiles, manifestFile.path, String(doc)),
-                );
-              }}
-            />{" "}
-            {t("catalog.shareSkills")}
-          </label>
+              doc.setIn(["delivery", "shareSkills"], selected);
+              onDraftFilesChange(
+                upsertPackageFile(draftFiles, manifestFile.path, String(doc)),
+              );
+            }}
+          >
+            <Checkbox.Content>
+              <Checkbox.Control>
+                <Checkbox.Indicator />
+              </Checkbox.Control>
+              <Label>{t("catalog.shareSkills")}</Label>
+            </Checkbox.Content>
+          </Checkbox>
           {dirty ? (
-            <button type="button" onClick={onSaveDraft}>
+            <Button size="sm" onPress={onSaveDraft}>
               {saveLabel}
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}
@@ -284,6 +290,7 @@ export function PackageComposition({
           files={draftFiles}
           kind={activeTab === "skills" ? "skill" : "mcp"}
           packageId={packageId}
+          sessionId={sessionId}
           onApplied={() => onCatalogApplied?.()}
         />
       ) : null}

@@ -2,7 +2,7 @@ import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { reconcileCatalogApply } from "./catalog-operation";
@@ -153,16 +153,33 @@ export async function assertHoldsLock(
   sessionId: string,
   db?: Db,
 ): Promise<void> {
+  await assertLiveSessionLock(id, eq(lp.lockedBySession, sessionId), db);
+}
+
+// Catalog mutations carry both the authenticated editor and the lock token;
+// a token from an earlier tab or another user does not authorize a draft edit.
+export async function assertEditorHoldsLock(
+  id: string,
+  userId: string,
+  sessionId: string,
+  db?: Db,
+): Promise<void> {
+  await assertLiveSessionLock(
+    id,
+    sql`${lp.lockedBySession} = ${sessionId} AND ${lp.lockedByUserId} = ${userId}`,
+    db,
+  );
+}
+
+async function assertLiveSessionLock(
+  id: string,
+  predicate: SQL,
+  db?: Db,
+): Promise<void> {
   const rows = await resolveDb(db)
     .select({ id: lp.id })
     .from(lp)
-    .where(
-      and(
-        eq(lp.id, id),
-        eq(lp.lockedBySession, sessionId),
-        sql`${lp.lockExpiresAt} > now()`,
-      ),
-    );
+    .where(and(eq(lp.id, id), predicate, sql`${lp.lockExpiresAt} > now()`));
 
   if (rows.length === 0) {
     throw new MaisterError(

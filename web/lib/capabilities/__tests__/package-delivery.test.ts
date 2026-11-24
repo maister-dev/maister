@@ -109,6 +109,35 @@ describe("IT-CAP-03/04 package delivery", () => {
     );
     expect(sessionNameForPackageNode(run, "build", "main")).toBe("main");
   });
+
+  it("deduplicates equal shared skill trees with a stable source pin and refuses different trees", () => {
+    const digest = "a".repeat(64);
+    const sharedDesign = {
+      ...design,
+      shareSkills: true,
+      skillDigests: { common: digest },
+    };
+    const sharedCore = { ...core, skillDigests: { common: digest } };
+    const resolve = (packages: FlowDeliverySnapshot["packages"]) =>
+      resolvePackageSession({ ...run, packages }, "build").skills.find(
+        (skill) => skill.slug === "common",
+      );
+
+    expect(resolve([sharedDesign, sharedCore, dev])).toMatchObject({
+      installId: "core1",
+      digest,
+    });
+    expect(resolve([sharedCore, sharedDesign, dev])).toEqual(
+      resolve([sharedDesign, sharedCore, dev]),
+    );
+    expect(() =>
+      resolve([
+        sharedCore,
+        { ...sharedDesign, skillDigests: { common: "b".repeat(64) } },
+        dev,
+      ]),
+    ).toThrow(/common.*core.*design/);
+  });
 });
 
 it("hashes executable HTTP and stdio targets with JSONB-equivalent optional metadata and overlays", () => {

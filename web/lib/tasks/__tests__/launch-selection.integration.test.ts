@@ -2,7 +2,7 @@ import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -17,9 +17,12 @@ import {
   vi,
 } from "vitest";
 
+import * as packageSkillTree from "../../../../runtime/package-skill-tree";
+
 import {
   flows,
   capabilityRecords,
+  capabilityImports,
   projectMcpBindings,
   flowRevisions,
   tasks,
@@ -28,11 +31,15 @@ import {
   workspaces,
   runSessions,
   domainEvents,
+  packageInstalls,
 } from "@/lib/db/schema";
 import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import {
   acceptInteractiveTaskLaunch,
   acceptConcurrentInteractiveTaskLaunch,
+  commitPreparedTaskLaunch,
+  interactiveTaskLaunchAuthority,
+  prepareTaskLaunchRequest,
   taskLaunchSettingsToken,
 } from "@/lib/tasks/launch-intent";
 import {
@@ -65,7 +72,11 @@ import { addTaskRelation } from "@/lib/social/relations";
 import { prepareTaskQualification } from "@/lib/tasks/qualification";
 import { qualificationFixture } from "@/test-support/task-qualification";
 import { countLiveAutoFlowRuns } from "@/lib/scheduler/c2-eligibility";
-import { acceptedTaskLaunchExecution } from "@/lib/tasks/launch-execution";
+import {
+  acceptedTaskLaunchExecution,
+  assertFrozenTaskLaunchCurrent,
+} from "@/lib/tasks/launch-execution";
+import { preparePackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 import {
   launchRun,
   launchRunStaged,
@@ -2224,9 +2235,9 @@ it("CAP-03 dispatches the same materialized Run after an attachment and an adopt
     packageInstallId: original.id,
   });
   const row = await task();
-  const accepted = await acceptInteractiveTaskLaunch(
+  const prepared = await prepareTaskLaunchRequest(
     db,
-    await interactiveTaskLaunchPrincipal(),
+    interactiveTaskLaunchAuthority(await interactiveTaskLaunchPrincipal()),
     {
       taskId: row.id,
       expectedTaskRevision: row.revision,
@@ -2235,6 +2246,66 @@ it("CAP-03 dispatches the same materialized Run after an attachment and an adopt
     },
     randomUUID(),
   );
+
+  if (prepared.kind !== "prepared")
+    throw new Error("Expected fresh launch preparation");
+  const skillHashes = vi.spyOn(packageSkillTree, "packageSkillSourceDigest");
+
+  try {
+    await db
+      .update(packageInstalls)
+      .set({ trustStatus: "untrusted" })
+      .where(eq(packageInstalls.id, original.id));
+    await expect(commitPreparedTaskLaunch(db, prepared)).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "launch_settings_changed" },
+    });
+    expect(
+      await db
+        .select({ id: taskLaunchIntents.id })
+        .from(taskLaunchIntents)
+        .where(eq(taskLaunchIntents.taskId, row.id)),
+    ).toEqual([]);
+  } finally {
+    await db
+      .update(packageInstalls)
+      .set({ trustStatus: "trusted" })
+      .where(eq(packageInstalls.id, original.id));
+  }
+  const accepted = await commitPreparedTaskLaunch(db, prepared);
+
+  expect(skillHashes).not.toHaveBeenCalled();
+  skillHashes.mockRestore();
+  const [intent] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, accepted.intentId));
+  const [bundle] = await db
+    .select({ installedPath: capabilityImports.installedPath })
+    .from(capabilityImports)
+    .where(eq(capabilityImports.packageInstallId, original.id));
+  const skillPath = path.join(
+    bundle.installedPath,
+    "skills",
+    "selected-library",
+    "SKILL.md",
+  );
+  const bytes = await readFile(skillPath);
+
+  try {
+    await writeFile(skillPath, "Changed after acceptance");
+    await expect(
+      assertFrozenTaskLaunchCurrent(
+        db,
+        intent,
+        preparePackageDeliveryCapture().prepare,
+      ),
+    ).rejects.toMatchObject({
+      details: { reason: "launch_capabilities_changed" },
+    });
+  } finally {
+    await writeFile(skillPath, bytes);
+  }
   const bound = await prepareTaskLaunchIntent(db, accepted.intentId);
 
   expect(bound.state).toBe("run_bound");
@@ -2295,7 +2366,14 @@ it("CAP-03 dispatches the same materialized Run after an attachment and an adopt
     reason: decision.reason,
   }).toEqual({ committed: true, reason: null });
   await expect
-    .poll(async () => (await read()).status, { timeout: 10_000 })
-    .toBe("Review");
+    .poll(
+      async () => {
+        const current = await read();
+
+        return { status: current.status, driverToken: current.flowDriverToken };
+      },
+      { timeout: 10_000 },
+    )
+    .toEqual({ status: "Review", driverToken: null });
   expect((await read()).resolvedCapabilitySet).toEqual(frozen);
 });

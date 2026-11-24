@@ -344,7 +344,10 @@ a version to make it available for project adoption. **Update from source**
 compares later upstream changes with the previous import and local edits.
 
 An MCP preview lists the runner adapters that support the reviewed transport.
-Launch still checks readiness and trust for the selected runner and host.
+For npm/stdio it also shows the SHA-256 descriptor digest used for host
+approval. Launch checks readiness and trust for the selected runner and host.
+If an interrupted apply reports a changed draft or withdrawn source approval,
+review the current draft and open a new preview.
 
 The package sharing controls govern which other sessions receive its skills
 and MCPs. Select a package agent’s skills and MCP references in the agent

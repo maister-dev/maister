@@ -47,8 +47,8 @@ context.
 
 - **Project type:** Next.js control plane with a separate supervisor daemon.
   The default local deployment shares the host filesystem (ADR-023).
-  Registered remote supervisors use operator-provisioned workspace paths
-  through the same typed execution-host boundary (ADR-166).
+  Pinned remote supervisors use identical operator-mounted workspace paths
+  through the same typed execution-host boundary (ADR-166, ADR-219).
 - **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI
   v3 · Tailwind 4 · Drizzle ORM · Postgres 16 · ACP (Zed-standard) via
   separate `supervisor/` daemon · Node `child_process.spawn` for agent
@@ -58,8 +58,8 @@ context.
   plugin engine, multi-executor (claude + codex), workspace lifecycle,
   ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
   (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
-- **Scale:** one local supervisor by default. The operator can select a
-  pinned remote host for new assignments. The global cap is
+- **Scale:** one local supervisor by default. With shared workspace paths
+  explicitly enabled, the operator can select a pinned remote host for new assignments. The global cap is
   `MAISTER_MAX_CONCURRENT_RUNS=6`.
 - **Key factors:**
   - ACP is the executor interface — the multi-executor pool is inherent,

@@ -42,7 +42,11 @@ import {
 
 import * as schemaModule from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
-import { acquireLock, assertHoldsLock } from "@/lib/local-packages/lock";
+import {
+  acquireLock,
+  assertHoldsLock,
+  withWorkingDirLock,
+} from "@/lib/local-packages/lock";
 import { settlePendingFlowAssistantActions } from "@/lib/studio/flow-assistant/turn";
 import { classifyRunReconcile, runReconcileSweep } from "@/lib/reconcile";
 import { assertRunScratchMetadataInvariant } from "@/lib/runs/run-kind-invariants";
@@ -1362,14 +1366,34 @@ describe("flow assistant action journal (S2.9)", () => {
     const fresh = await getLocalPackage(seeded.pkg.id, db as never);
 
     expect((await diffWorkingDir(fresh!)).changedCount).toBe(0);
-    const applied = await settlePendingFlowAssistantActions({
-      db: db as never,
-      localPackage: fresh!,
-      runId: seeded.runId,
-      lockGeneration: seeded.sessionId,
-      assertCanApply: () =>
-        assertHoldsLock(seeded.pkg.id, seeded.sessionId, db as never),
-    });
+    const settle = () =>
+      settlePendingFlowAssistantActions({
+        db: db as never,
+        localPackage: fresh!,
+        runId: seeded.runId,
+        lockGeneration: seeded.sessionId,
+        assertCanApply: () =>
+          assertHoldsLock(seeded.pkg.id, seeded.sessionId, db as never),
+      });
+
+    // The catalog or cut holds the same lease. A retained intent must stay
+    // pending, and the draft must stay clean until its next recovery pass.
+    await withWorkingDirLock(
+      seeded.pkg.id,
+      async () => {
+        expect(await settle()).toBeNull();
+        const [pending] = await db
+          .select({ state: schema.flowAssistantActions.state })
+          .from(schema.flowAssistantActions)
+          .where(eq(schema.flowAssistantActions.runId, seeded.runId));
+
+        expect(pending.state).toBe("pending");
+        expect((await diffWorkingDir(fresh!)).changedCount).toBe(0);
+      },
+      db as never,
+    );
+
+    const applied = await settle();
 
     expect(applied?.status).toBe("applied");
     const [row] = await db

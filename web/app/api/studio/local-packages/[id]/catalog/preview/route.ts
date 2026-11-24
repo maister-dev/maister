@@ -10,7 +10,7 @@ import { previewBody } from "@/lib/local-packages/catalog-contract";
 import { resolveCatalogSource } from "@/lib/local-packages/catalog-sources";
 import { previewCatalogImport } from "@/lib/local-packages/catalog-operation";
 import {
-  assertUserHoldsLock,
+  assertEditorHoldsLock,
   withWorkingDirLock,
 } from "@/lib/local-packages/lock";
 
@@ -22,15 +22,18 @@ export async function POST(
     const { id } = await params;
     const owner = await catalogOwner(id);
 
-    await assertUserHoldsLock(id, owner.actorId);
-    const body = previewBody.parse(await req.json());
+    const { sessionId, ...body } = previewBody.parse(await req.json());
+    const assertEditor = () =>
+      assertEditorHoldsLock(id, owner.actorId, sessionId);
+
+    await assertEditor();
     const selector =
       body.importId && body.sourceId === "mcp-registry"
         ? body.selector.slice(0, body.selector.lastIndexOf("@")) + "@latest"
         : body.selector;
     const source = await resolveCatalogSource({ ...body, selector });
     const preview = await withWorkingDirLock(id, async () => {
-      await assertUserHoldsLock(id, owner.actorId);
+      await assertEditor();
 
       return previewCatalogImport(
         owner,

@@ -115,6 +115,12 @@ Regions, top to bottom:
    longer see renders an unavailable marker; the owner's own messages always
    render. Arriving messages never move a reader who scrolled up; a
    **Jump to latest** control appears instead.
+   Private questions appear inline on the originating turn. While the turn
+   records its checkpoint, the card shows a waiting state. Once open, it
+   offers the requested fields and **Send answer**. The card distinguishes
+   queued, delivered and closed answers. Validation keeps the owner's draft
+   available, and a closed or changed question refreshes the card from the
+   conversation. Errors use localized instructions.
 4. **Queued messages** — chips for messages waiting behind the running turn,
    each with **Withdraw** while still queued.
 5. **Composer** — text area, **Send**, and **Stop response** (stops the
@@ -180,7 +186,10 @@ analytics documents linked below; this list names the feeds.
   `DELETE /api/librarian/messages/{id}` (withdraw a queued message) ·
   `POST /api/librarian/turns/current/stop` · `POST /api/librarian/read-cursor`.
 - `POST /api/librarian/cards/{id}/decide` (`accept | reject`,
-  `expectedRevision?`) — the only path for human-only actions.
+  `expectedRevision?`) — confirms or rejects a proposed action.
+- `POST /api/librarian/cards/{id}/answer` (`answer`) — records the owner's
+  response to an open private question. `202` means queued and `200` means
+  delivered. The conversation stream supplies subsequent card state.
 - `GET|POST|PATCH|DELETE /api/librarian/memory[/{id}]` — the Memory dialog.
 - `POST /api/librarian/reset` · `GET /api/librarian/history/clear-preview` ·
   `POST /api/librarian/history/clear` (`previewDigest`).

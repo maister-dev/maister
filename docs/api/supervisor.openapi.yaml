@@ -125,7 +125,7 @@ paths:
           description: Prepared receipt
           content:
             application/json:
-              example: {"hostId": "design-host", "commandId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c", "assignmentEpoch": 1, "artifactDigest": "1111111111111111111111111111111111111111111111111111111111111111", "runtime": "v24.15.0", "cacheHit": false}
+              example: {"hostId": "design-host", "commandId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c", "assignmentEpoch": 1, "artifactDigest": "8305c831a9caf531d83ad8e7a31cda9ecb993a58d45410eb68da6204cdb7d688", "runtime": "v24.15.0", "cacheHit": false}
               schema:
                 type: object
                 additionalProperties: false
@@ -158,9 +158,15 @@ paths:
                   cacheHit:
                     type: boolean
         "409":
-          description: Invalid envelope or descriptor, stale assignment, denied approval, unsupported package or runtime, or failed integrity.
+          description: Invalid envelope or descriptor, stale assignment, denied approval, unsupported package or runtime, or failed integrity. A host approval refusal includes the exact reviewed descriptor digest in details.artifactDigest.
           content:
             application/json:
+              example:
+                code: PRECONDITION
+                message: Approve reviewed MCP descriptor 8305c831a9caf531d83ad8e7a31cda9ecb993a58d45410eb68da6204cdb7d688 in MAISTER_MCP_ALLOWED_DIGESTS on this host
+                details:
+                  reason: mcp_distribution_untrusted
+                  artifactDigest: 8305c831a9caf531d83ad8e7a31cda9ecb993a58d45410eb68da6204cdb7d688
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
         "503":
           description: Host storage or the registry is unavailable.
@@ -171,7 +177,7 @@ paths:
         required: true
         content:
           application/json:
-            example: {"command": {"id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c", "kind": "mcp.prepare", "issuedAt": "2026-11-24T12:00:00Z"}, "fence": {"hostKey": "design-host", "assignmentId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "assignmentEpoch": 1, "runId": "design-run"}, "payload": {"registryName": "io.example/design", "packageName": "@example/design-mcp", "version": "1.2.3", "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==", "executable": "design-mcp", "artifactDigest": "1111111111111111111111111111111111111111111111111111111111111111", "runtime": "node", "refId": "design"}}
+            example: {"command": {"id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c", "kind": "mcp.prepare", "issuedAt": "2026-11-24T12:00:00Z"}, "fence": {"hostKey": "design-host", "assignmentId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "assignmentEpoch": 1, "runId": "design-run"}, "payload": {"registryName": "io.example/design", "packageName": "@example/design-mcp", "version": "1.2.3", "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==", "executable": "design-mcp", "artifactDigest": "8305c831a9caf531d83ad8e7a31cda9ecb993a58d45410eb68da6204cdb7d688", "runtime": "node", "refId": "design"}}
             schema:
               type: object
               additionalProperties: false
@@ -5209,6 +5215,10 @@ components:
         the web-tier `MaisterError.details`.
       properties:
         reason: { $ref: "#/components/schemas/ReasonToken" }
+        artifactDigest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Descriptor SHA-256 to review on the selected host when the reason is mcp_distribution_untrusted.
         outputFailure:
           type: string
           enum:

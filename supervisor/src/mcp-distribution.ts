@@ -1,5 +1,5 @@
 import type { McpDistribution } from "../../runtime/mcp-distribution";
-import type { ReasonToken } from "./types";
+import type { ReasonToken, SupervisorErrorDetails } from "./types";
 
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -29,6 +29,9 @@ const satisfiesNode: (version: string, range: string) => boolean =
 const installerInstance = randomUUID();
 const maxArchiveBytes = 16 * 1024 * 1024;
 const maxUnpackedBytes = 64 * 1024 * 1024;
+const maxOtherStageReclaims = 16;
+const stagedDirectoryPattern =
+  /^([a-f0-9]{64})\.stage-(\d+)-([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})-[A-Za-z0-9]{6}$/;
 const log = pino({
   name: "mcp-install",
   level: process.env.LOG_LEVEL ?? "info",
@@ -43,10 +46,16 @@ type PrepareOptions = {
   fetchArchive?: (distribution: McpDistribution) => Promise<Uint8Array>;
 };
 
-function refusal(reason: ReasonToken, message: string): SupervisorError {
-  log.warn({ reason }, "MCP distribution refused");
+function refusal(
+  reason: ReasonToken,
+  message: string,
+  context?: Pick<SupervisorErrorDetails, "artifactDigest">,
+): SupervisorError {
+  const details = { reason, ...context };
 
-  return new SupervisorError("PRECONDITION", message, { details: { reason } });
+  log.warn(details, "MCP distribution refused");
+
+  return new SupervisorError("PRECONDITION", message, { details });
 }
 
 function safeRelative(name: string): boolean {
@@ -351,36 +360,44 @@ async function verifyTree(
   return count;
 }
 
-/** A killed installer may leave a staging directory. Never reclaim a live competing writer. */
+function stageOwnerIsLive(pid: number, instance: string): boolean {
+  if (pid === process.pid) return instance === installerInstance;
+  try {
+    process.kill(pid, 0);
+
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+
+    if (code === "EPERM") return true;
+    if (code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+/** A cold install also reclaims a bounded number of stages for other digests in its runtime cache. */
 async function reclaimDeadStages(
   parent: string,
   digest: string,
 ): Promise<void> {
-  const prefix = digest + ".stage-";
+  let otherReclaimed = 0;
 
   for (const entry of await readdir(parent, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
-    const match = /^(\d+)-([0-9a-f-]{36})-[A-Za-z0-9]+$/.exec(
-      entry.name.slice(prefix.length),
-    );
+    if (!entry.isDirectory()) continue;
+    const match = stagedDirectoryPattern.exec(entry.name);
 
     if (!match) continue;
-    const pid = Number(match[1]);
+    const [, artifactDigest, pidText, instance] = match;
+    const other = artifactDigest !== digest;
+    const pid = Number(pidText);
 
+    if (other && otherReclaimed >= maxOtherStageReclaims) continue;
     if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 0x7fffffff) continue;
-    if (pid === process.pid && match[2] !== installerInstance) {
-      await rm(join(parent, entry.name), { recursive: true, force: true });
-      continue;
-    }
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
+    if (stageOwnerIsLive(pid, instance)) continue;
 
-      if (code === "EPERM") continue;
-      if (code !== "ESRCH") throw error;
-      await rm(join(parent, entry.name), { recursive: true, force: true });
-    }
+    await rm(join(parent, entry.name), { recursive: true, force: true });
+    if (other) otherReclaimed++;
+    log.debug({ artifactDigest, pid }, "Reclaimed dead MCP installation stage");
   }
 }
 
@@ -486,7 +503,8 @@ export async function prepareMcpDistribution(
   if (!options.allowedDigests.includes(d.artifactDigest))
     throw refusal(
       "mcp_distribution_untrusted",
-      "MCP artifact digest is not approved on this host",
+      `Approve reviewed MCP descriptor ${d.artifactDigest} in MAISTER_MCP_ALLOWED_DIGESTS on this host`,
+      { artifactDigest: d.artifactDigest },
     );
   options.assertCurrent();
   const dest = join(

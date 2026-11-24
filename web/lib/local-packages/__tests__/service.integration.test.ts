@@ -65,6 +65,7 @@ import {
   applyCatalogPreview,
   previewCatalogImport,
   readCatalogOperation,
+  readCatalogRequestReceipt,
 } from "@/lib/local-packages/catalog-operation";
 import { cutLocalPackageVersion } from "@/lib/local-packages/versions";
 import {
@@ -356,6 +357,7 @@ describe("local-packages substrate (integration)", () => {
     "revoked_mid_apply",
     "after_receipt",
     "divergent_draft",
+    "divergent_touched_file",
   ] as const)(
     "IT-CAT-03 serializes a cut and recovers %s under the shared DB lease",
     async (boundary) => {
@@ -416,7 +418,8 @@ describe("local-packages substrate (integration)", () => {
             (boundary === "before_first_file" && writes === 1) ||
             ((boundary === "between_files" ||
               boundary === "revoked_mid_apply" ||
-              boundary === "divergent_draft") &&
+              boundary === "divergent_draft" ||
+              boundary === "divergent_touched_file") &&
               writes === 2)
           )
             await intercept();
@@ -445,19 +448,48 @@ describe("local-packages substrate (integration)", () => {
         receiptFault.mockRestore();
       }
       expect(observedCut).toBe(true);
+      const committedBeforeEdit =
+        boundary === "after_receipt"
+          ? await readCatalogRequestReceipt(owner, request)
+          : null;
+      const previousCatalogSources = process.env.MAISTER_STUDIO_CATALOG_REPOS;
+
       if (boundary === "revoked_mid_apply" || boundary === "after_receipt")
         vi.stubEnv("MAISTER_STUDIO_CATALOG_REPOS", "[]");
       try {
-        if (boundary === "divergent_draft") {
-          const unrelated = join(pkg.workingDir, "unexpected.md");
+        const skillFile = join(pkg.workingDir, root, "SKILL.md");
+        const independentEdit = "Independent edit";
+        const touched = boundary === "divergent_touched_file";
+        const touchedContent = Buffer.from([0x80, 0xff, 0]);
+        const diverged = boundary === "divergent_draft" || touched;
+        const unrelated = join(pkg.workingDir, "unexpected.md");
 
-          await writeFile(unrelated, "Independent edit");
-          await expect(
-            cutLocalPackageVersion(pkg, { db }),
-          ).rejects.toMatchObject({ status: 409 });
-          await rm(unrelated);
+        if (boundary === "divergent_draft") {
+          await writeFile(unrelated, independentEdit);
         }
+        if (touched) await writeFile(skillFile, touchedContent);
+        if (boundary === "after_receipt")
+          await writeFile(skillFile, independentEdit);
         if (boundary === "revoked_mid_apply") {
+          const abortFault = vi
+            .spyOn(atomic, "atomicWriteJson")
+            .mockImplementation(async (file, value) => {
+              await journalWrite(file, value);
+              if (file.endsWith("/pending.json"))
+                throw new Error("interrupted after abort decision");
+            });
+
+          try {
+            await expect(cutLocalPackageVersion(pkg, { db })).rejects.toThrow(
+              "interrupted after abort decision",
+            );
+            await expect(readFile(skillFile, "utf8")).resolves.toBe(
+              source.files["SKILL.md"],
+            );
+          } finally {
+            abortFault.mockRestore();
+            vi.stubEnv("MAISTER_STUDIO_CATALOG_REPOS", previousCatalogSources);
+          }
           // The next cut takes the same lease, restores every prior byte, and can cut the old commit.
           const cut = await cutLocalPackageVersion(pkg, { db });
 
@@ -468,24 +500,61 @@ describe("local-packages substrate (integration)", () => {
               "utf8",
             ),
           ).toBe(manifestBefore);
-          await expect(
-            stat(join(pkg.workingDir, root, "SKILL.md")),
-          ).rejects.toMatchObject({ code: "ENOENT" });
-          await expect(
-            withWorkingDirLock(
-              pkg.id,
-              () => applyCatalogPreview(owner, request),
-              db,
-            ),
-          ).rejects.toMatchObject({ status: 403 });
+          await expect(stat(skillFile)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
         } else {
-          // Reconciliation rolls all bytes forward before the ordinary dirty-tree guard executes.
           await expect(
             cutLocalPackageVersion(pkg, { db }),
           ).rejects.toMatchObject({ code: "PRECONDITION" });
+        }
+        if (diverged || boundary === "revoked_mid_apply") {
+          const aborted = await withWorkingDirLock(
+            pkg.id,
+            () => applyCatalogPreview(owner, request),
+            db,
+          );
+
+          expect(aborted).toMatchObject({
+            state: "aborted",
+            reason: diverged ? "draft_changed" : "approval_revoked",
+          });
           expect(
-            await readFile(join(pkg.workingDir, root, "SKILL.md"), "utf8"),
-          ).toBe(source.files["SKILL.md"]);
+            await readCatalogOperation(owner, aborted.operationId),
+          ).toEqual(aborted);
+          await expect(
+            readFile(join(pkg.workingDir, "maister-package.yaml"), "utf8"),
+          ).resolves.toBe(manifestBefore);
+          await expect(
+            stat(join(pkg.workingDir, root, "reference.md")),
+          ).rejects.toMatchObject({ code: "ENOENT" });
+          if (touched) {
+            await expect(readFile(skillFile)).resolves.toEqual(touchedContent);
+          } else if (diverged) {
+            await expect(readFile(unrelated, "utf8")).resolves.toBe(
+              independentEdit,
+            );
+            await expect(stat(skillFile)).rejects.toMatchObject({
+              code: "ENOENT",
+            });
+          }
+          await expect(
+            withWorkingDirLock(
+              pkg.id,
+              () =>
+                applyCatalogPreview(owner, {
+                  ...request,
+                  previewId: randomUUID(),
+                }),
+              db,
+            ),
+          ).rejects.toMatchObject({ status: 409 });
+        } else {
+          expect(await readFile(skillFile, "utf8")).toBe(
+            boundary === "after_receipt"
+              ? independentEdit
+              : source.files["SKILL.md"],
+          );
           expect(
             await readFile(join(pkg.workingDir, root, "reference.md"), "utf8"),
           ).toBe("Reference");
@@ -495,6 +564,9 @@ describe("local-packages substrate (integration)", () => {
             db,
           );
 
+          expect(replay.state).toBe("applied");
+          if (boundary === "after_receipt")
+            expect(replay).toEqual(committedBeforeEdit);
           expect(await readCatalogOperation(owner, replay.operationId)).toEqual(
             replay,
           );
@@ -779,16 +851,80 @@ describe("local-packages substrate (integration)", () => {
     expect(all.some((p) => p.id === pkgId)).toBe(true);
   });
 
-  it("delete removes the row and the working dir", async () => {
+  it("delete removes only the owning draft and its receipts after the package writer releases its lease", async () => {
     const pkg = await createLocalPackage({
       name: "Throwaway Pack",
       createdBy: userId,
       db,
     });
+    const sibling = (await getLocalPackage(pkgId, db))!;
+    const applySkill = async (draft: LocalPackage) => {
+      const owner = {
+        packageId: draft.id,
+        workingDir: draft.workingDir,
+        actorId: userId,
+      };
+      const preview = await previewCatalogImport(
+        owner,
+        {
+          kind: "skill",
+          sourceId: "anthropic-skills",
+          sourceUrl:
+            "https://github.com/anthropics/skills/tree/main/skills/delete-witness",
+          selector: "skills/delete-witness",
+          publisher: "anthropics",
+          pin: "b".repeat(40),
+          name: "delete-witness",
+          files: {
+            "SKILL.md":
+              "---\nname: delete-witness\ndescription: A receipt fixture\n---\nReceipt",
+          },
+          notices: [],
+          configuration: [],
+        },
+        "capability/skills/delete-witness",
+      );
+      const receipt = await withWorkingDirLock(
+        draft.id,
+        () =>
+          applyCatalogPreview(owner, {
+            previewId: preview.previewId,
+            expectedDraftBase: preview.expectedDraftBase,
+            requestKey: "owned-receipt",
+          }),
+        db,
+      );
+
+      return { owner, receipt };
+    };
+    const own = await applySkill(pkg);
+    const other = await applySkill(sibling);
+
+    await withWorkingDirLock(
+      pkg.id,
+      async () => {
+        await expect(deleteLocalPackage(pkg.id, db)).rejects.toMatchObject({
+          code: "CONFLICT",
+          details: { reason: "operation_in_progress" },
+        });
+        await expect(
+          readCatalogOperation(own.owner, own.receipt.operationId),
+        ).resolves.toEqual(own.receipt);
+      },
+      db,
+    );
 
     await deleteLocalPackage(pkg.id, db);
     expect(await getLocalPackage(pkg.id, db)).toBeNull();
-    await expect(stat(pkg.workingDir)).rejects.toBeTruthy();
+    await expect(stat(pkg.workingDir)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      readCatalogOperation(own.owner, own.receipt.operationId),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      readCatalogOperation(other.owner, other.receipt.operationId),
+    ).resolves.toEqual(other.receipt);
     // the archived package's working dir is untouched by the active-list query
     expect((await stat(workingDir)).isDirectory()).toBe(true);
   });

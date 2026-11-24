@@ -13,6 +13,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { requireFlowWorktree } from "@/lib/execution-host/legacy-workspace";
+import { resolveRunPlacementHost } from "@/lib/execution-host/resolver";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { transitionNodeId } from "@/lib/flows/graph/transition-target";
 import {
@@ -373,6 +374,8 @@ export async function POST(
     // second request can pass Phase 1; the loser is caught here when the CAS
     // finds the row already Running ({ok:false} → PRECONDITION → 409).
     try {
+      const placementHost = await resolveRunPlacementHost(db, runId);
+
       await db.transaction(async (tx: Db) => {
         if (addressed) {
           const [current] = await tx
@@ -491,7 +494,10 @@ export async function POST(
           );
         }
 
-        const flipped = await markReturnedToRunning(runId, { db: tx });
+        const flipped = await markReturnedToRunning(runId, {
+          db: tx,
+          placement: { host: placementHost },
+        });
 
         if (!flipped.ok) {
           // Lost the AFTER-side CAS (a concurrent return already flipped it).

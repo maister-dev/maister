@@ -42,6 +42,39 @@ export type PackageSkillWitness = {
   digest?: string;
 };
 
+type CapabilityIdentity = {
+  capabilityRefId: string;
+  kind: string;
+  source: string;
+  revision: string | null;
+};
+
+export function includeCapturedPlatformMcpTargets(
+  records: readonly CapabilityIdentity[],
+  delivery: FlowDeliverySnapshot | undefined,
+): CapabilityIdentity[] {
+  return [
+    ...records,
+    ...(delivery?.targets ?? [])
+      .filter(
+        (target) =>
+          target.source === "platform" &&
+          !records.some(
+            (record) =>
+              record.kind === "mcp" &&
+              record.source === target.source &&
+              record.capabilityRefId === target.refId,
+          ),
+      )
+      .map((target) => ({
+        capabilityRefId: target.refId,
+        kind: "mcp",
+        source: target.source,
+        revision: target.revision,
+      })),
+  ];
+}
+
 export function sessionNameForPackageNode(
   delivery: FlowDeliverySnapshot | undefined,
   nodeId: string,
@@ -99,22 +132,34 @@ export function resolvePackageSession(
   }
   for (const ref of bound?.mcpRefs ?? []) localMcps.add(ref);
   const selected = Array.from(skills, ([slug, { pins }]) => {
-    if (pins.length !== 1)
+    const ordered = [...pins].sort((a, b) => {
+      if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+      if (a.installId !== b.installId)
+        return a.installId < b.installId ? -1 : 1;
+
+      return 0;
+    });
+    const pin = ordered[0]!;
+    const digest = pin.skillDigests?.[slug];
+
+    if (
+      ordered.length > 1 &&
+      (!digest ||
+        ordered.some((owner) => owner.skillDigests?.[slug] !== digest))
+    )
       throw new MaisterError(
         "CONFIG",
-        `Skill "${slug}" is provided by multiple shared packages: ${pins
-          .map((p) => p.name)
-          .sort()
+        `Skill "${slug}" is provided by multiple shared packages: ${ordered
+          .map((p) => `${p.name} (${p.installId})`)
           .join(", ")}`,
       );
-    const pin = pins[0]!;
 
     return {
       slug,
       packageName: pin.name,
       installId: pin.installId,
       revision: pin.revision,
-      ...(pin.skillDigests?.[slug] ? { digest: pin.skillDigests[slug] } : {}),
+      ...(digest ? { digest } : {}),
     };
   }).sort((a, b) => a.slug.localeCompare(b.slug));
 

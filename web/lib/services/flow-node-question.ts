@@ -34,6 +34,7 @@ import {
   latestFlowQuestionAttempt,
   readScopedFlowQuestionPrompt,
   recoverEligibleFlowQuestionHeads,
+  refreshFlowQuestionCheckpointHosts,
 } from "@/lib/execution-host/flow-question-source";
 import { nodePermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
@@ -689,6 +690,7 @@ export async function recoverFlowNodeQuestions(
   db: Db,
   hosts: ExecutionHosts,
 ): Promise<number> {
+  await refreshFlowQuestionCheckpointHosts(db);
   await recoverEligibleFlowQuestionHeads(db);
   const candidates = await db.execute(sql`WITH pending AS (
     SELECT id FROM hitl_requests WHERE flow_node_attempt_id IS NOT NULL AND activation_state='pending_termination' AND superseded_at IS NULL

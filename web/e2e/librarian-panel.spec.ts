@@ -346,6 +346,24 @@ test("E2E-ASK-02 owner answers a private question from the transcript with the k
 
     await expect(input).toHaveValue("Checkout");
     await input.fill("Custom mobile checkout");
+    await page.route(
+      `**/api/librarian/cards/${cardId}/answer`,
+      (route) =>
+        route.fulfill({
+          status: 503,
+          json: {
+            code: "EXECUTOR_UNAVAILABLE",
+            message: "Private runner diagnostic",
+          },
+        }),
+      { times: 1 },
+    );
+    await question.getByRole("button", { name: "Send answer" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(question.getByRole("alert")).toHaveText(
+      "Executor unavailable",
+    );
+    await expect(input).toHaveValue("Custom mobile checkout");
     await question.getByRole("button", { name: "Send answer" }).focus();
     await page.keyboard.press("Enter");
     await expect(question).toContainText("Answer queued");

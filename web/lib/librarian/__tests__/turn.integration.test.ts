@@ -23,6 +23,7 @@ import {
   librarianTurns,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import {
   admitNextLibrarianTurn,
   submitOwnerMessage,
@@ -298,11 +299,49 @@ describe("IT-LCV-04 part 3: a turn round-trips through its own prompt owner", ()
     expect(prompts.at(-1)).toContain("what is on my plate?");
   });
 
+  it("commits terminal turn evidence before an unavailable host prevents successor admission", async () => {
+    const ownerId = await seedActiveUser(db);
+    const gate = gatedPrompt();
+    const sent = await send(ownerId, "hold this turn");
+    const turnId = sent.turn!.id;
+
+    await gate.entered;
+    try {
+      fake.setHealth({
+        kind: "unavailable",
+        reason: "network",
+        message: "fixture supervisor is unavailable",
+      });
+      resetResolverForTests();
+
+      await expect(
+        librarianRuntime.endLibrarianTurn(db as unknown as Db, turnId, {
+          status: "failed",
+          reason: "deadline",
+        }),
+      ).resolves.toBe(true);
+      expect((await turnRow(turnId)).status).toBe("failed");
+      expect(await tokenRevoked(turnId)).toBe(true);
+      expect((await conversationState(ownerId)).run_status).toBe(
+        "NeedsInputIdle",
+      );
+    } finally {
+      fake.setHealth(null);
+      try {
+        await fakeExecutionHosts(db, { fake });
+      } finally {
+        gate.release();
+      }
+    }
+  });
+
   it("IT-LAU-11 (send site): the session is MCP-only, auto-approved, never readOnlySession", async () => {
     vi.stubEnv(
       "MAISTER_ADDITIONAL_EXECUTION_HOSTS",
       '[{"hostKey":"eh_supervisor_b","url":"https://supervisor-b.example.invalid"}]',
     );
+    vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", "supervisor-b");
+    vi.stubEnv("MAISTER_EXECUTION_HOST_SHARED_WORKSPACE", "1");
     vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", "/fixtures/local-maister-mcp");
     const ownerId = await seedActiveUser(db);
 

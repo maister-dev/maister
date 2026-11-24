@@ -538,8 +538,6 @@ async function reducePromptEvidence(
     "prompt-evidence-agreed",
   );
 
-  await observeNodeSuccessor(tx, row);
-
   return { disposition: "settled", command: row };
 }
 
@@ -565,7 +563,6 @@ export async function recordPromptEvent(
       acceptedAt: command.acceptedAt ?? event.occurredAt,
       transportState: "acknowledged",
     });
-    await observeNodeSuccessor(tx, command);
 
     return {
       disposition: "waiting",
@@ -753,7 +750,6 @@ export async function depositPromptReceipt(
         acceptedAt: command.acceptedAt ?? new Date(),
         transportState: "acknowledged",
       });
-      await observeNodeSuccessor(tx, command);
 
       return {
         disposition: "waiting" as const,
@@ -850,24 +846,4 @@ export async function reconcileStoredPromptEvidence(
   if (result.disposition !== "waiting") commandSignals.wake(commandId);
 
   return result;
-}
-
-async function observeNodeSuccessor(
-  tx: Db,
-  command: ExecutionCommand,
-): Promise<void> {
-  const owner = command.ownerRef;
-
-  if (
-    command.ownerKind !== "flow_node_attempt" ||
-    !owner ||
-    !("variant" in owner) ||
-    owner.variant !== "node" ||
-    owner.promptOrdinal === 0
-  )
-    return;
-  const { observeFlowNodeAnswerDelivery } =
-    await import("@/lib/services/flow-node-answer");
-
-  await observeFlowNodeAnswerDelivery(tx, command.id);
 }

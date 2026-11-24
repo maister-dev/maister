@@ -12,7 +12,7 @@
  * is still producing and the re-prompt would double-spend that turn.
  *
  * Deliberately pure and import-free: liveness is a PROBE the caller performs
- * (`hosts.local().listSessionsForRun(runId)`), never a column, and a caller whose probe
+ * (`hosts.inventoryForRun(runId)`), never a column, and a caller whose probe
  * throws must yield the candidate rather than pass a guessed value here.
  */
 export type CrashRecoverRoute = "recover" | "reattach" | "wait";

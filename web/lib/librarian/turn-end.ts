@@ -2,11 +2,12 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { LibrarianTurnFailureReason } from "./types";
+import type { LibrarianTurnStarter } from "./pool";
 
 import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
-import { admitNextTurnInTransaction, type AdmittedTurn } from "./admission";
+import { admitNextLibrarianTurn } from "./admission";
 import { revokeLibrarianTurnToken } from "./authority";
 import {
   appendConversationMessage,
@@ -18,8 +19,6 @@ import {
 } from "./questions";
 import { turnSourceProjectIds } from "./disclosed-context";
 import { applyLibrarianPark } from "./park";
-import { dispatchLibrarianTurn, type LibrarianTurnStarter } from "./pool";
-import { readLibrarianSettings } from "./settings";
 import { queueLibrarianSummary, writeLibrarianSummary } from "./summary";
 
 import {
@@ -28,10 +27,8 @@ import {
   librarianTurns,
   runs,
 } from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
-import { localHost } from "@/lib/execution-host/resolver";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { promoteNextPending } from "@/lib/scheduler";
-import { admitNextLibrarianTurn } from "@/lib/librarian/admission";
 
 const log = pino({
   name: "librarian.turn",
@@ -48,7 +45,6 @@ export type LibrarianTurnFinish = Readonly<{
   runId: string | null;
   conversationId: string;
   parked: boolean;
-  next: AdmittedTurn | null;
 }>;
 
 /** A system line in the conversation: a stable code the panel localizes. */
@@ -61,8 +57,8 @@ export function librarianSystemCode(end: LibrarianTurnEnd): string | null {
 
 /** ADR-185 D3/D19: the ONE turn-end transaction. Under the conversation lock:
  * the turn reaches its terminal status exactly once, the reply or a system
- * line lands, the token dies, the run parks, and the next queued turn is
- * admitted. Returns null when another path already ended the turn. */
+ * line lands, the token dies, and the run parks. The successor is admitted
+ * after commit. Returns null when another path already ended the turn. */
 export async function finishLibrarianTurnInTransaction(
   tx: Db,
   input: {
@@ -169,7 +165,6 @@ export async function finishLibrarianTurnInTransaction(
       runId,
       conversationId: turn.conversationId,
       parked: true,
-      next: null,
     };
   }
   const [ended] = await tx
@@ -226,16 +221,6 @@ export async function finishLibrarianTurnInTransaction(
     await queueLibrarianSummary(tx, locked.conversation, turn.segmentId);
   const runId = locked.conversation.runId;
   const park = runId ? await applyLibrarianPark(tx, runId) : { parked: false };
-  const settings = await readLibrarianSettings(tx);
-  const next =
-    settings.availability === "ready" && settings.runner
-      ? await admitNextTurnInTransaction(tx, {
-          locked,
-          runner: settings.runner,
-          host: await localHost({ db: tx }),
-          now,
-        })
-      : null;
   const durationMs = turn.startedAt
     ? now.getTime() - turn.startedAt.getTime()
     : null;
@@ -269,7 +254,6 @@ export async function finishLibrarianTurnInTransaction(
     runId,
     conversationId: locked.conversation.id,
     parked: park.parked,
-    next,
   };
 }
 
@@ -281,17 +265,25 @@ export async function afterLibrarianTurnFinished(
   start?: LibrarianTurnStarter,
 ): Promise<void> {
   if (!finish) return;
-  if (finish.next?.started) {
-    // A turn runs for minutes; its start is never awaited by the one before.
-    void dispatchLibrarianTurn(finish.next.turnId, start);
 
-    return;
+  try {
+    const admitted = await admitNextLibrarianTurn(finish.conversationId, {
+      db,
+      start,
+    });
+
+    if (admitted?.started) return;
+    if (finish.parked) await promoteNextPending({ db, pool: "librarian" });
+  } catch (error) {
+    if (!isMaisterError(error) || error.code !== "EXECUTOR_UNAVAILABLE")
+      throw error;
+    log.warn(
+      {
+        turnId: finish.turnId,
+        conversationId: finish.conversationId,
+        reason: error.details?.reason,
+      },
+      "librarian successor admission deferred until execution host is available",
+    );
   }
-  const admitted = await admitNextLibrarianTurn(finish.conversationId, {
-    db,
-    start,
-  });
-
-  if (admitted?.started) return;
-  if (finish.parked) await promoteNextPending({ db, pool: "librarian" });
 }

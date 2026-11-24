@@ -1,13 +1,17 @@
 import "server-only";
 
 import type { ActiveRunSession } from "@/lib/runs/active-run-session";
+import type { ExecutionHost } from "@/lib/db/schema";
 import type { SQL } from "drizzle-orm";
 import type { Db } from "./db";
 import type { z } from "zod";
 
 import { and, eq, isNull, sql } from "drizzle-orm";
+import pino from "pino";
 
 import { nodePermissionSourceSchema } from "./flow-permission-source";
+import { getHostById } from "./hosts";
+import { registerRemoteHost } from "./remote-direct";
 
 import {
   hitlRequests,
@@ -16,7 +20,13 @@ import {
   runSessionIncarnations,
   runSessions,
 } from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import { MaisterError, isMaisterError } from "@/lib/errors";
+import { needsInputIdleTtlHours } from "@/lib/runs/keepalive-ttl";
+
+const log = pino({
+  name: "flow-question-source",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 export type FlowQuestionSource = Readonly<{
   supervisorSessionId: string;
@@ -280,29 +290,133 @@ export async function loadCurrentFlowNodeQuestionSession(
 
 /** Current accepted answers for the correlated Run. Callers order them by first acceptance. */
 function eligibleFlowQuestionAnswers() {
-  return sql`SELECT q.step_id,q.flow_answer_accepted_at,q.id FROM hitl_requests q
+  return sql`SELECT q.step_id,q.flow_answer_accepted_at,q.id,prior.execution_host_id,
+        host.readiness='ready' AS host_ready FROM hitl_requests q
     JOIN node_attempts n ON n.id=q.flow_node_attempt_id AND n.run_id=q.run_id
     JOIN users u ON u.id=q.flow_answer_user_id
+    JOIN execution_assignments prior ON prior.id=n.action_resume->>'sourceAssignmentId' AND prior.run_id=q.run_id
+      AND prior.state='released' AND prior.released_reason='checkpointed'
+    JOIN execution_hosts host ON host.id=prior.execution_host_id AND host.retired_at IS NULL
+      AND host.readiness_reason IS DISTINCT FROM 'identity_changed'
+    JOIN execution_commands checkpoint ON checkpoint.id=n.action_resume->>'checkpointCommandId'
+      AND checkpoint.kind='session.checkpoint' AND checkpoint.state='succeeded' AND checkpoint.run_id=prior.run_id
+      AND checkpoint.execution_assignment_id=prior.id AND checkpoint.assignment_epoch=prior.epoch
+    JOIN run_session_incarnations incarnation ON incarnation.id=n.action_resume->>'sourceIncarnationId'
+      AND incarnation.run_id=prior.run_id AND incarnation.execution_assignment_id=prior.id
+      AND incarnation.host_session_id=checkpoint.target_session_id AND incarnation.state IN ('checkpointed','exited')
+      AND incarnation.acp_session_id=n.action_resume->>'resumeSessionId'
     WHERE q.run_id=${runs.id} AND q.activation_state='active' AND q.responded_at IS NULL AND q.superseded_at IS NULL
-      AND q.flow_answer_accepted_at IS NOT NULL AND n.action_resume->>'questionId'=q.id AND n.status='NeedsInput'
+      AND q.flow_answer_accepted_at IS NOT NULL AND n.action_resume->>'kind'='node_question'
+      AND n.action_resume->>'questionId'=q.id AND n.status='NeedsInput'
+      AND (host.readiness<>'unavailable' OR greatest(q.flow_answer_accepted_at,host.last_seen_at)
+        > clock_timestamp()-${needsInputIdleTtlHours()} * interval '1 hour')
       AND NOT EXISTS (SELECT 1 FROM node_attempts newer WHERE newer.run_id=n.run_id AND newer.node_id=n.node_id AND newer.attempt>n.attempt)
       AND u.account_status='active' AND NOT u.must_change_password AND
       (u.role='admin' OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=${runs.projectId} AND m.user_id=u.id AND m.role IN ('owner','admin','member')))`;
 }
 
-/** An obsolete or unauthorized node answer cannot occupy the first capacity-queue position. */
-export function currentFlowQuestionResumeEligible() {
-  return sql`(NOT EXISTS (SELECT 1 FROM hitl_requests q WHERE q.run_id=${runs.id} AND q.step_id=${runs.currentStepId}
-    AND q.flow_node_attempt_id IS NOT NULL AND q.activation_state='active' AND q.responded_at IS NULL AND q.superseded_at IS NULL)
-    OR EXISTS (${eligibleFlowQuestionAnswers()} AND q.step_id=${runs.currentStepId}))`;
+function hasCurrentFlowQuestionHead(): SQL {
+  return sql`EXISTS (SELECT 1 FROM hitl_requests q WHERE q.run_id=${runs.id} AND q.step_id=${runs.currentStepId}
+    AND q.flow_node_attempt_id IS NOT NULL AND q.activation_state='active' AND q.responded_at IS NULL AND q.superseded_at IS NULL)`;
 }
 
-/** A revoked responder or replaced visit must not prevent an already accepted sibling from resuming. */
+/** An obsolete or unauthorized node answer cannot occupy the first capacity-queue position. */
+export function currentFlowQuestionResumeEligible() {
+  return sql`(NOT ${hasCurrentFlowQuestionHead()} OR EXISTS (
+    ${eligibleFlowQuestionAnswers()} AND q.step_id=${runs.currentStepId} AND host.readiness='ready'))`;
+}
+
+/** The scheduler may only reassign a question to the host that acknowledged the source checkpoint. */
+export async function loadFlowQuestionCheckpointHost(
+  db: Db,
+  runId: string,
+): Promise<
+  | { kind: "not_flow_question" }
+  | { kind: "blocked" }
+  | { kind: "ready"; host: ExecutionHost }
+> {
+  const [source] = (
+    await db.execute<{ execution_host_id: string | null }>(sql`
+    SELECT candidate.execution_host_id FROM runs
+    LEFT JOIN LATERAL (${eligibleFlowQuestionAnswers()}
+      AND q.step_id=${runs.currentStepId} ORDER BY q.flow_answer_accepted_at,q.id LIMIT 1) candidate ON true
+    WHERE runs.id=${runId} AND ${hasCurrentFlowQuestionHead()}
+  `)
+  ).rows;
+
+  if (!source) return { kind: "not_flow_question" };
+  if (!source.execution_host_id) return { kind: "blocked" };
+  const host = await getHostById(db, source.execution_host_id);
+
+  if (!host || host.retiredAt || host.readiness !== "ready")
+    return { kind: "blocked" };
+
+  return { kind: "ready", host };
+}
+
+/** Refresh only pinned hosts still needed by an authorized parked answer. */
+export async function refreshFlowQuestionCheckpointHosts(
+  db: Db,
+): Promise<void> {
+  const { rows } = await db.execute<{ host_key: string }>(sql`
+    SELECT remote.host_key FROM execution_hosts remote
+    WHERE remote.kind='remote_direct' AND remote.retired_at IS NULL
+      AND remote.updated_at<clock_timestamp()-interval '10 seconds'
+      AND EXISTS (SELECT 1 FROM runs WHERE runs.status='NeedsInputIdle'
+        AND EXISTS (${eligibleFlowQuestionAnswers()} AND host.id=remote.id))
+    ORDER BY remote.updated_at,remote.id LIMIT 4
+  `);
+
+  await Promise.all(
+    rows.map(async ({ host_key: hostKey }) => {
+      try {
+        await registerRemoteHost(db, hostKey);
+      } catch (error) {
+        if (isMaisterError(error) && error.code === "EXECUTOR_UNAVAILABLE") {
+          log.debug(
+            { hostKey, reason: error.details?.reason },
+            "Flow question checkpoint host is not ready",
+          );
+
+          return;
+        }
+        log.warn(
+          { hostKey, err: error },
+          "Flow question checkpoint host probe failed",
+        );
+      }
+    }),
+  );
+}
+
+/** Prefer an eligible sibling. An answer that cannot currently be delivered must not disable the wait TTL. */
 export async function recoverEligibleFlowQuestionHeads(db: Db): Promise<void> {
-  await db.execute(sql`WITH replacements AS (
+  const repaired = await db.execute<{
+    id: string;
+    queued: boolean;
+  }>(sql`WITH replacements AS (
     SELECT runs.id,candidate.step_id FROM runs
-    CROSS JOIN LATERAL (${eligibleFlowQuestionAnswers()} ORDER BY q.flow_answer_accepted_at,q.id LIMIT 1) AS candidate
-    WHERE runs.status='NeedsInputIdle' AND runs.resume_requested_at IS NOT NULL AND NOT ${currentFlowQuestionResumeEligible()}
-    ORDER BY runs.resume_requested_at,runs.id LIMIT 30 FOR NO KEY UPDATE OF runs SKIP LOCKED
-  ) UPDATE runs SET current_step_id=replacements.step_id FROM replacements WHERE runs.id=replacements.id`);
+    LEFT JOIN LATERAL (${eligibleFlowQuestionAnswers()}
+      ORDER BY (host.readiness='ready') DESC,q.flow_answer_accepted_at,q.id LIMIT 1) AS candidate ON true
+    WHERE runs.status='NeedsInputIdle' AND ${hasCurrentFlowQuestionHead()} AND (
+      (runs.resume_requested_at IS NOT NULL AND (
+        NOT EXISTS (${eligibleFlowQuestionAnswers()} AND q.step_id=${runs.currentStepId})
+        OR (candidate.host_ready AND NOT ${currentFlowQuestionResumeEligible()})
+      ))
+      OR (runs.resume_requested_at IS NULL AND candidate.step_id IS NOT NULL)
+    )
+    ORDER BY runs.resume_requested_at NULLS FIRST,runs.id LIMIT 30 FOR NO KEY UPDATE OF runs SKIP LOCKED
+  ) UPDATE runs SET
+    current_step_id=coalesce(replacements.step_id,runs.current_step_id),
+    resume_requested_at=CASE WHEN replacements.step_id IS NULL THEN NULL
+      ELSE coalesce(runs.resume_requested_at,clock_timestamp()) END
+    FROM replacements WHERE runs.id=replacements.id
+    RETURNING runs.id,runs.resume_requested_at IS NOT NULL AS queued`);
+
+  for (const change of repaired.rows) {
+    log.info(
+      { runId: change.id, queued: change.queued },
+      "Flow question resume queue reconciled",
+    );
+  }
 }

@@ -7,6 +7,7 @@ import { is } from "drizzle-orm";
 import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino, { type Logger } from "pino";
 
+import { getLatestAssignment } from "./assignments";
 import { getHostById } from "./hosts";
 import { ensureAdditionalExecutionDataPlane, ensureLocalExecutionDataPlane } from "./event-plane";
 import { ensureAdditionalExecutionHost, ensureLocalExecutionHost } from "./registrar";
@@ -99,15 +100,19 @@ export async function localHost(
   ) {
     return state.memo.host;
   }
-  // A claim may resolve a host inside its own transaction. Neither a background
-  // consumer nor the shared memo may outlive that transaction's connection/data.
-  // The next pooled issuer activates ingestion after the claim commits.
+  // A transaction may read a registration. Observe the process and start
+  // ingestion only on a pooled connection outside the claim.
   if (is(opts.db, NodePgTransaction)) {
-    const result = await ensureLocalExecutionHost(opts);
+    const host = await findActiveLocalHost(opts.db);
 
-    if (result.status !== "registered") throw hostUnavailableError(result);
+    if (!host || host.readiness !== "ready")
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "No ready local execution host is registered for the claim",
+        { details: { reason: "execution_host_unregistered_for_claim" } },
+      );
 
-    return result.host;
+    return host;
   }
   if (state.inflight) return state.inflight;
 
@@ -137,7 +142,7 @@ export function hostIdentityMismatchError(args: {
 }): MaisterError {
   return new MaisterError(
     "EXECUTOR_UNAVAILABLE",
-    `assignment ${args.assignmentId} belongs to execution host ${args.assignmentHostKey}, which is no longer the local host`,
+    `assignment ${args.assignmentId} belongs to execution host ${args.assignmentHostKey}, whose identity is no longer current`,
     {
       details: {
         reason: HOST_IDENTITY_MISMATCH_REASON,
@@ -276,4 +281,17 @@ export async function hostForAssignment(
   }
 
   return host;
+}
+
+/** Resolve a resume or return on its previous host before locking the Run. */
+export async function resolveRunPlacementHost(
+  db: Db,
+  runId: string,
+  opts: Pick<ResolveHostOptions, "transport" | "logger"> = {},
+): Promise<ExecutionHost> {
+  const previous = await getLatestAssignment(db, runId);
+
+  return previous
+    ? hostForAssignment(db, previous, opts)
+    : localHost({ ...opts, db });
 }

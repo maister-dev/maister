@@ -625,9 +625,18 @@ The [specialist runtime contract](specialist-runtime.md) owns implemented compan
 
 The reviewed company binding grants explicit installation reach as described in the [specialist runtime contract](specialist-runtime.md#installation-agent-authority-implemented--adr-211). It resolves a separate installation vault using the [agent memory contract](agent-memory.md).
 
+### Project agent persona and MCP additions (Implemented)
+
+| Operation | Authority and enforcement | Observable result |
+| --- | --- | --- |
+| Inspect adopted persona | `getAgentDefinitionView` requires repository-file read permission and resolves the attached package pin. | Readers receive the effective and adopted package text. A difference after line-ending normalization exposes the accessible divergence icon, tooltip and read-only diff. |
+| Save or restore persona | The project-link PATCH requires `editSettings` and `readRepoFiles`. `updateAgentLink` checks `expectedInstallId` under the attachment lock and compares `schedulesRevision` in the link update. | A nonblank override is stored with normalized line endings. `promptOverride: null` restores use of the package text. A stale adoption pin or link revision returns `409 CONFLICT` and rolls back the write. |
+| Save MCP additions | The same PATCH atomically replaces the link's `additionalMcpRefs` after `connectedAgentMcpRefs` validates their current project catalog and bindings. | The saved list contains unique logical refs. An enabled trusted platform target selected by the project's binding can satisfy the package requirement using its same canonical ref. Clearing the additions leaves inherited package declarations and shared project refs in the effective selection. |
+| Launch or retry | `captureProjectAgentProfile` records the exact pin, prompt digest and origin, link revision and selected refs when a standalone manual or triggered launch or a session-bound Flow node consumes the profile. | New launches see the effective saved profile. Existing Runs and retries read their frozen witnesses. Dispatch and resume still check current binding authority, trust and runner support. |
+
 ## Expectations
 
-- **CAP-05:** (Implemented) Updating one active project link must affect only that instance on subsequent launches and preserve the adopted source.
+- **CAP-05:** (Implemented) The project-link PATCH must update only the addressed instance after the permission and revision checks above, with `IT-CAP-05` verifying stale-write rejection, isolated persistence and exact execution inputs and `E2E-CAP-05` verifying keyboard use, diff, save and restore in both locales.
 
 - Identity MUST be package-qualified `<packageName>:<stem>` (packageName =
   `package_installs.name`); registration MUST scan

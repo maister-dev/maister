@@ -13,8 +13,10 @@ import { resolveEffectiveAgentDefinition } from "./effective";
 
 import {
   agentMcpTargets,
+  eligibleAgentMcpRecord,
   mcpTargetSchema,
 } from "@/lib/capabilities/mcp-targets";
+import { withBoundPlatformMcpRecords } from "@/lib/capabilities/bound-platform-mcps";
 import { loadSelectableCapabilities } from "@/lib/capabilities/resolver";
 import {
   loadProjectMcpBindings,
@@ -53,6 +55,7 @@ export type ProjectAgentProfile = z.infer<typeof linkProfileSchema>;
 
 export {
   agentMcpTargets,
+  matchesAgentMcpTarget,
   type AgentMcpTarget,
 } from "@/lib/capabilities/mcp-targets";
 
@@ -185,11 +188,15 @@ export async function availableAgentMcpCatalog(
     loadSelectableCapabilities(projectId, db),
     db.execute(sql`
     SELECT c.id FROM capability_records c WHERE c.project_id=${projectId} AND c.kind='mcp' AND ${trustedAgentMcpOwner}
-  `),
+    `),
   ]);
   const allowed = new Set(eligible.rows.map((row) => row.id));
 
-  return catalog.filter((row) => row.kind === "mcp" && allowed.has(row.id));
+  return withBoundPlatformMcpRecords(
+    db,
+    projectId,
+    catalog.filter((row) => row.kind === "mcp" && allowed.has(row.id)),
+  );
 }
 
 /** Connected means a live project/package capability or the active target of this project's binding. */
@@ -197,21 +204,20 @@ export async function connectedAgentMcpRefs(
   db: SqlTransaction,
   projectId: string,
 ): Promise<string[]> {
-  const { rows } = await db.execute(sql`
-    SELECT DISTINCT c.capability_ref_id AS ref
-    FROM capability_records c
-    LEFT JOIN project_mcp_bindings b ON b.project_id=c.project_id AND b.ref_id=c.capability_ref_id
-    LEFT JOIN platform_mcp_servers p ON c.source='platform' AND p.id=c.capability_ref_id
-    WHERE c.project_id=${projectId} AND c.kind='mcp' AND c.selectable AND c.disabled_at IS NULL AND ${trustedAgentMcpOwner}
-      AND (c.material->>'requirement') IS DISTINCT FROM 'true'
-      AND (b.id IS NULL OR (b.enabled AND b.target_kind=CASE c.source
-        WHEN 'flow-package' THEN 'package' ELSE c.source END
-        AND b.target_id = CASE WHEN c.source='platform' THEN c.capability_ref_id ELSE c.id END))
-      AND (c.source <> 'platform' OR (b.enabled AND p.enabled AND p.trust_status IN ('trusted','trusted_by_policy')))
-    ORDER BY ref
-  `);
+  const [catalog, bindings] = await Promise.all([
+    availableAgentMcpCatalog(db, projectId),
+    loadProjectMcpBindings(projectId, db),
+  ]);
 
-  return rows.map((row) => capabilityRefIdSchema.parse(row.ref));
+  return [...new Set(catalog.map((row) => row.capabilityRefId))]
+    .filter((ref) => {
+      const binding = bindings.find((row) => row.refId === ref);
+      const record = eligibleAgentMcpRecord(ref, catalog, binding);
+
+      return !!record && (record.source !== "platform" || !!binding);
+    })
+    .map((ref) => capabilityRefIdSchema.parse(ref))
+    .sort();
 }
 
 /** Capture the same attachment and link generation under which admission commits. */

@@ -1,9 +1,11 @@
 "use client";
 
 import type { AttachmentMcpScope } from "@/lib/packages/mcp-scope";
+import type { ApiErrorBody } from "@/lib/api-error";
 import type { MatchCandidate } from "@/components/board/panels/mcp-bind-dialogs";
 import type { ReactElement } from "react";
 
+import { ListBox, Select } from "@heroui/react";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -16,6 +18,8 @@ import {
   MatchDialog,
   OverlayDialog,
 } from "@/components/board/panels/mcp-bind-dialogs";
+import { useOptionalFeedback } from "@/components/feedback/feedback-provider";
+import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 
 export type { ProjectMcpRow };
 
@@ -104,7 +108,9 @@ export function McpPanel({
   projectServers = [],
 }: McpPanelProps): ReactElement {
   const t = useTranslations("mcpPanel");
+  const tApiErrors = useTranslations("apiErrors");
   const router = useRouter();
+  const feedback = useOptionalFeedback();
   const [pending, startTransition] = useTransition();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ProjectMcpRow | null>(null);
@@ -188,7 +194,14 @@ export function McpPanel({
     return undefined; // package: free-form slots (server validates)
   };
 
-  const act = (key: string, fn: () => Promise<Response>): void => {
+  const act = (
+    key: string,
+    fn: () => Promise<Response>,
+    scopeFeedback?: {
+      success: () => void;
+      failure: (body: ApiErrorBody) => string;
+    },
+  ): void => {
     setBusyRef(key);
     setError(null);
     startTransition(async () => {
@@ -196,22 +209,18 @@ export function McpPanel({
         const res = await fn();
 
         if (!res.ok) {
-          const payload = (await res.json().catch(() => null)) as {
-            code?: string;
-            message?: string;
-          } | null;
+          const body = await readApiErrorBody(res);
 
           setError(
-            `${t("actionFailed")}: ${payload?.message ?? payload?.code ?? res.status}`,
+            scopeFeedback?.failure(body) ?? apiErrorText(body, tApiErrors),
           );
 
           return;
         }
+        scopeFeedback?.success();
         router.refresh();
-      } catch (err) {
-        setError(
-          `${t("actionFailed")}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+      } catch {
+        setError(tApiErrors("requestFailed"));
       } finally {
         setBusyRef(null);
       }
@@ -236,6 +245,39 @@ export function McpPanel({
       }),
     );
 
+  function saveScope(
+    row: AttachmentMcpScope,
+    scope: "inherit" | "package" | "project",
+  ): void {
+    const address = `/api/projects/${encodeURIComponent(slug)}/packages/${encodeURIComponent(row.attachmentId)}/mcps/${encodeURIComponent(row.refId)}/scope`;
+    const key = `${row.attachmentId}/${row.refId}`;
+
+    act(
+      key,
+      () =>
+        fetch(address, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            scope: scope === "inherit" ? null : scope,
+            expectedRevision: row.revision,
+            expectedInstallId: row.installId,
+          }),
+        }),
+      {
+        success: () =>
+          feedback?.success({
+            mutationId: `${address}:${row.installId}:${row.revision}`,
+            message: t("scopeSaved"),
+          }),
+        failure: (body) =>
+          body?.code === "CONFLICT" && body.details?.reason !== "operation_busy"
+            ? t("scopeChanged")
+            : apiErrorText(body, tApiErrors),
+      },
+    );
+  }
+
   // Probe drives the supervisor handshake AND surfaces its result: a 200 may
   // still carry `{ok:false, reason}` (handshake failed), and a non-200 is a
   // trust-gate/precondition refusal — both are shown inline, never swallowed.
@@ -255,9 +297,7 @@ export function McpPanel({
         const payload = (await res.json().catch(() => null)) as {
           ok?: boolean;
           latencyMs?: number;
-          reason?: string;
           code?: string;
-          message?: string;
         } | null;
 
         setProbeResults((prev) => ({
@@ -271,19 +311,17 @@ export function McpPanel({
                 }
               : {
                   ok: false,
-                  detail:
-                    payload?.reason ??
-                    payload?.message ??
-                    payload?.code ??
-                    String(res.status),
+                  detail: res.ok
+                    ? t("probeFailed")
+                    : apiErrorText(payload, tApiErrors),
                 },
         }));
-      } catch (err) {
+      } catch {
         setProbeResults((prev) => ({
           ...prev,
           [refId]: {
             ok: false,
-            detail: err instanceof Error ? err.message : String(err),
+            detail: tApiErrors("requestFailed"),
           },
         }));
       } finally {
@@ -328,50 +366,61 @@ export function McpPanel({
       ) : null}
 
       {isAdmin && packageScopes.length > 0 ? (
-        <fieldset className="mb-5 flex flex-col gap-2" disabled={busy}>
+        <fieldset aria-busy={busy} className="mb-5 flex flex-col gap-2">
           <legend>{t("packageScope")}</legend>
-          {packageScopes.map((row) => (
-            <label
-              key={row.attachmentId + "/" + row.refId}
-              className="flex items-center gap-2"
-            >
-              <span>{row.refId}</span>
-              <select
-                aria-label={t("scopeFor", { ref: row.refId })}
-                value={row.origin === "override" ? row.effective : "inherit"}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
+          {packageScopes.map((row) => {
+            const scope = row.origin === "override" ? row.effective : "inherit";
+            const label = `${row.packageName} / ${row.refId}`;
 
-                  act("scope:" + row.refId, () =>
-                    fetch(
-                      `/api/projects/${encodeURIComponent(slug)}/packages/${encodeURIComponent(row.attachmentId)}/mcps/${encodeURIComponent(row.refId)}/scope`,
-                      {
-                        method: "PUT",
-                        headers: { "content-type": "application/json" },
-                        body: JSON.stringify({
-                          scope: value === "inherit" ? null : value,
-                          expectedRevision: row.revision,
-                          expectedInstallId: row.installId,
-                        }),
-                      },
-                    ),
-                  );
-                }}
+            return (
+              <div
+                key={row.attachmentId + "/" + row.refId}
+                className="flex flex-wrap items-center gap-2"
               >
-                <option value="inherit">
-                  {t("inheritScope", {
-                    scope: t(
-                      row.declared === "project"
-                        ? "scopeProject"
-                        : "scopePackage",
-                    ),
-                  })}
-                </option>
-                <option value="package">{t("scopePackage")}</option>
-                <option value="project">{t("scopeProject")}</option>
-              </select>
-            </label>
-          ))}
+                <span>{label}</span>
+                <Select
+                  aria-label={t("scopeFor", { ref: label })}
+                  className="w-full max-w-64"
+                  isDisabled={busy}
+                  selectedKey={scope}
+                  variant="secondary"
+                  onSelectionChange={(key) => {
+                    if (
+                      (key === "inherit" ||
+                        key === "package" ||
+                        key === "project") &&
+                      key !== scope
+                    )
+                      saveScope(row, key);
+                  }}
+                >
+                  <Select.Trigger>
+                    <Select.Value />
+                    <Select.Indicator />
+                  </Select.Trigger>
+                  <Select.Popover>
+                    <ListBox>
+                      <ListBox.Item id="inherit">
+                        {t("inheritScope", {
+                          scope: t(
+                            row.declared === "project"
+                              ? "scopeProject"
+                              : "scopePackage",
+                          ),
+                        })}
+                      </ListBox.Item>
+                      <ListBox.Item id="package">
+                        {t("scopePackage")}
+                      </ListBox.Item>
+                      <ListBox.Item id="project">
+                        {t("scopeProject")}
+                      </ListBox.Item>
+                    </ListBox>
+                  </Select.Popover>
+                </Select>
+              </div>
+            );
+          })}
         </fieldset>
       ) : null}
       {requirements.length > 0 ? (

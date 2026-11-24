@@ -74,6 +74,10 @@ import { tasks, projects, taskLaunchIntents, runs } from "@/lib/db/schema";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { MaisterError, isMaisterError } from "@/lib/errors";
+import {
+  preparePackageDeliveryCapture,
+  type PackageDeliveryCapture,
+} from "@/lib/capabilities/capture-package-delivery";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { requiresLaunchUnattended } from "@/lib/runs/execution-policy";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
@@ -228,6 +232,7 @@ export type PreparedTaskLaunch = Readonly<{
   resolved: ResolvedTaskLaunchSettings;
   metadataToken: string;
   placement: TaskLaunchPlacement | null;
+  recheckPackageDelivery: PackageDeliveryCapture;
   baseCommit: string | null;
   currentBaseCommit: string | null;
 }>;
@@ -280,6 +285,7 @@ async function resolveSettingsForAuthority(
   project: typeof projects.$inferSelect,
   request: TaskLaunchRequest,
   authority: LaunchAcceptanceAuthority,
+  captureDelivery?: PackageDeliveryCapture,
 ): Promise<ResolvedTaskLaunchSettings> {
   if (
     !authority.serverSource &&
@@ -295,13 +301,20 @@ async function resolveSettingsForAuthority(
       authority.handoffOriginalRun,
     );
   if (!authority.serverSource)
-    return resolveTaskLaunchSettings(db, task, project, request);
+    return resolveTaskLaunchSettings(
+      db,
+      task,
+      project,
+      request,
+      captureDelivery,
+    );
   const settings = await resolveSourceTaskLaunchSettings(
     db,
     task,
     project,
     request,
     authority.serverSource,
+    captureDelivery,
   );
 
   return settings;
@@ -313,6 +326,7 @@ async function resolveSourceTaskLaunchSettings(
   project: typeof projects.$inferSelect,
   request: TaskLaunchRequest,
   source: TaskLaunchServerSource,
+  captureDelivery?: PackageDeliveryCapture,
 ): Promise<ResolvedTaskLaunchSettings> {
   if (source.snapshot.execution.agentId && !source.snapshot.execution.flowId)
     return resolveServerAgentTaskLaunchSettings(
@@ -324,7 +338,13 @@ async function resolveSourceTaskLaunchSettings(
     );
   if (["budget_restart", "agent_retry"].includes(source.snapshot.kind))
     return {
-      ...(await resolveTaskLaunchSettings(db, task, project, request)),
+      ...(await resolveTaskLaunchSettings(
+        db,
+        task,
+        project,
+        request,
+        captureDelivery,
+      )),
       serverExecution: source.snapshot,
     };
 
@@ -334,6 +354,7 @@ async function resolveSourceTaskLaunchSettings(
     project,
     sourceFlowSelection(request, source),
     source.snapshot,
+    captureDelivery,
   );
 }
 
@@ -358,6 +379,7 @@ async function resolvePreparedSettingsForAuthority(
         project,
         request,
         prepared.authority,
+        prepared.recheckPackageDelivery,
       );
 }
 
@@ -588,12 +610,14 @@ export async function prepareTaskLaunchRequest(
       projectId: initial.project.id,
       taskId: initial.task.id,
     });
+  const packageDelivery = preparePackageDeliveryCapture();
   const target = await resolveSettingsForAuthority(
     db,
     initial.task,
     initial.project,
     request,
     acceptanceAuthority,
+    packageDelivery.prepare,
   );
   const flowAssets =
     target.kind === "flow"
@@ -662,6 +686,7 @@ export async function prepareTaskLaunchRequest(
     resolved,
     metadataToken: target.resolutionToken,
     placement,
+    recheckPackageDelivery: packageDelivery.recheck,
     baseCommit,
     currentBaseCommit,
   };

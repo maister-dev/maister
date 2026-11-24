@@ -3,6 +3,7 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import { z } from "zod";
 
 const bounded = z.string().min(1).max(256);
+const editSession = z.string().trim().min(1).max(256);
 
 export const catalogKind = z.enum(["skill", "mcp"]);
 export type CatalogKind = z.infer<typeof catalogKind>;
@@ -15,6 +16,7 @@ export const searchQuery = z
   .strict();
 export const previewBody = z
   .object({
+    sessionId: editSession,
     kind: catalogKind,
     sourceId: bounded,
     selector: z.string().min(1).max(2048),
@@ -24,6 +26,7 @@ export const previewBody = z
   .strict();
 export const applyBody = z
   .object({
+    sessionId: editSession,
     previewId: z.string().uuid(),
     expectedDraftBase: z.string().regex(/^[a-f0-9]{64}$/),
     requestKey: z.string().min(1).max(128),
@@ -67,6 +70,7 @@ export type CatalogPreview = {
   importId: string;
   pin: string;
   digest: string;
+  artifactDigest: string | null;
   expectedDraftBase: string;
   files: ReviewFile[];
   affectedRefs: string[];
@@ -81,8 +85,9 @@ export type CatalogPreview = {
   sourceUrl: string;
   destination: string;
 };
-export type CatalogReceipt = {
-  operationId: string;
-  state: "applied" | "pending";
-  draftDigest?: string;
-};
+export type CatalogAbortReason = "draft_changed" | "approval_revoked";
+export type CatalogReceipt = { operationId: string } & (
+  | { state: "pending" }
+  | { state: "applied"; draftDigest: string }
+  | { state: "aborted"; reason: CatalogAbortReason }
+);

@@ -41,6 +41,7 @@ import {
   primeResolverForTests,
   resetResolverForTests,
 } from "@/lib/execution-host/resolver";
+import { registerRemoteHost } from "@/lib/execution-host/remote-direct";
 import { resetRuntimeEventConsumersForTests } from "@/lib/execution-host/events/consumer";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { seedProject, seedRun } from "@/test-support/execution-host-seed";
@@ -133,6 +134,28 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string) {
   ]);
 }
 
+async function remoteReadiness(hostId: string): Promise<
+  | {
+      readiness: string;
+      readinessReason: string | null;
+      updatedAt: Date;
+      lastSeenAt: Date | null;
+    }
+  | undefined
+> {
+  return (
+    await db
+      .select({
+        readiness: fullSchema.executionHosts.readiness,
+        readinessReason: fullSchema.executionHosts.readinessReason,
+        updatedAt: fullSchema.executionHosts.updatedAt,
+        lastSeenAt: fullSchema.executionHosts.lastSeenAt,
+      })
+      .from(fullSchema.executionHosts)
+      .where(eq(fullSchema.executionHosts.id, hostId))
+  )[0];
+}
+
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "eh_registrar_test",
@@ -159,6 +182,21 @@ afterEach(() => {
 });
 
 describe("registrar (real supervisor)", () => {
+  it("requires an explicit shared-workspace topology before starting remote placements", async () => {
+    vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", "supervisor-remote");
+    vi.stubEnv("MAISTER_EXECUTION_HOST_SHARED_WORKSPACE", undefined);
+    vi.stubEnv("MAISTER_EXECUTION_HOST_ENDPOINTS", "{}");
+
+    try {
+      await expect(localHost({ db })).rejects.toMatchObject({
+        code: "CONFIG",
+        details: { reason: "remote_shared_workspace_required" },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("G1: first boot → one row, readiness ready, protocolVersion 1", async () => {
     const result = await ensureLocalExecutionHost({ db });
 
@@ -812,3 +850,55 @@ describe("registrar (real supervisor)", () => {
     );
   }, 60_000);
 });
+
+it("publishes a pinned remote supervisor outage and re-observes a restart on the same host", async () => {
+  const hostKey = "registrar-remote-readiness";
+  let remote = await startRealSupervisor({
+    env: { MAISTER_EXECUTION_HOST_KEY: hostKey },
+  });
+
+  try {
+    vi.stubEnv(
+      "MAISTER_EXECUTION_HOST_ENDPOINTS",
+      JSON.stringify({ [hostKey]: remote.url }),
+    );
+    const ready = await registerRemoteHost(db, hostKey);
+
+    expect(ready.readiness).toBe("ready");
+    await remote.stop();
+    await expect(registerRemoteHost(db, hostKey)).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      details: { reason: "execution_host_unavailable" },
+    });
+    expect(await remoteReadiness(ready.id)).toMatchObject({
+      readiness: "unavailable",
+      readinessReason: "network",
+      lastSeenAt: ready.lastSeenAt,
+    });
+    const stale = new Date(0);
+
+    await db
+      .update(fullSchema.executionHosts)
+      .set({ updatedAt: stale })
+      .where(eq(fullSchema.executionHosts.id, ready.id));
+    await expect(registerRemoteHost(db, hostKey)).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+    });
+    const refreshed = await remoteReadiness(ready.id);
+
+    expect(refreshed?.updatedAt.getTime()).toBeGreaterThan(stale.getTime());
+    expect(refreshed?.lastSeenAt).toEqual(ready.lastSeenAt);
+    remote = await startRealSupervisor(remote.options);
+    const restored = await registerRemoteHost(db, hostKey);
+
+    expect(restored.id).toBe(ready.id);
+    expect(restored.lastBootId).not.toBe(ready.lastBootId);
+    expect(await remoteReadiness(ready.id)).toMatchObject({
+      readiness: "ready",
+      readinessReason: null,
+    });
+  } finally {
+    vi.unstubAllEnvs();
+    await remote.kill();
+  }
+}, 120_000);

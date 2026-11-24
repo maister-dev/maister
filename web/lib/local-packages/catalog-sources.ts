@@ -360,18 +360,18 @@ export async function searchCatalog(
 const notice =
   /(?:^|\/)(?:licen[cs]e|copying|(?:third_party_)?notices?)(?:[. _-].*)?$/i;
 
+type VerifiedBlob = { size: number; content: string };
+
 async function readBlob(
   repo: string,
-  entry: TreeEntry,
+  sha: string,
   read: CatalogClient,
-): Promise<string> {
+): Promise<VerifiedBlob> {
   const blob = z
     .object({ encoding: z.literal("base64"), content: z.string() })
     .parse(
       await read(
-        new URL(
-          "https://api.github.com/repos/" + repo + "/git/blobs/" + entry.sha,
-        ),
+        new URL("https://api.github.com/repos/" + repo + "/git/blobs/" + sha),
       ),
     );
   const bytes = Buffer.from(blob.content, "base64");
@@ -380,7 +380,7 @@ async function readBlob(
     .update(bytes)
     .digest("hex");
 
-  if (bytes.length !== entry.size || actual !== entry.sha)
+  if (actual !== sha)
     throw new CatalogError(422, "Catalog blob integrity mismatch");
   let content: string;
 
@@ -394,7 +394,7 @@ async function readBlob(
   if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content))
     throw new CatalogError(422, "Catalog bundle contains binary content");
 
-  return content;
+  return { content, size: bytes.length };
 }
 
 export async function resolveCatalogSource(
@@ -477,8 +477,18 @@ export async function resolveCatalogSource(
 
   if (size > Math.min(importMaxBytes(), 2 * 1024 * 1024))
     throw new CatalogError(422, "Catalog bundle exceeds total size limit");
-  for (const { entry, file } of members)
-    files[file] = await readBlob(source.repo, entry, read);
+  const blobs = new Map<string, VerifiedBlob>();
+
+  // Git can reference the same immutable blob from several distinct member paths.
+  for (const { entry, file } of members) {
+    const blob =
+      blobs.get(entry.sha) ?? (await readBlob(source.repo, entry.sha, read));
+
+    if (blob.size !== entry.size)
+      throw new CatalogError(422, "Catalog blob integrity mismatch");
+    blobs.set(entry.sha, blob);
+    files[file] = blob.content;
+  }
   const pinned: PinnedCatalogSource = {
     kind: input.kind,
     sourceId: source.id,

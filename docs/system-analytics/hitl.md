@@ -814,7 +814,7 @@ fields:
     default: false
 ```
 
-### Ordinary Flow attempt questions (Implemented)
+### Ordinary Flow attempt questions (Implemented, ADR-220)
 
 ```mermaid
 stateDiagram-v2
@@ -823,23 +823,25 @@ stateDiagram-v2
   Open --> AnswerAccepted: current recipient claims answer
   AnswerAccepted --> Delivered: owned resume receipt
   AnswerAccepted --> AnswerAccepted: reconcile uncertain command
-  CheckpointPending --> Closed: stop or supersession
-  Open --> Closed: stop or supersession
-  AnswerAccepted --> Closed: proved undelivered and cancelled
+  CheckpointPending --> Closed: terminal Run or replaced attempt
+  Open --> Closed: terminal Run or replaced attempt
+  AnswerAccepted --> Closed: terminal Run or replaced attempt
   Delivered --> [*]
   Closed --> [*]
 ```
 
 The node’s credential identifies its project, Run, attempt, assignment and prompt ordinal. The server captures the accepted prompt command and incarnation and commits the original checkpoint command before contacting its supervisor. Successful checkpoint evidence and the closed incarnation open one human assignment and revoke the issuing credential. Run detail and Inbox read the same question. The Run keeps its slot while siblings can work. A rejected checkpoint leaves the original prompt owner eligible to apply its real result. Replacing the attempt closes any unactivated question without creating human work.
 
-The response transaction locks the Run, attempt and question in order and verifies the human’s current project membership. It claims one answer and queues its original visit. An identical submission from the same responder replays. The scheduler reacquires capacity, verifies the prior host and approved checkpoint and restores the same ACP handle. Accepted successor prompt evidence marks delivery. A host restart or lost acknowledgement can be reconciled from the existing command. The node’s normal result advances the graph. A stop or replacement fences an undelivered answer.
+The response transaction locks the Run, attempt and question in order and verifies the human’s current project membership. It claims one answer and queues its original visit. An identical submission from the same responder replays. The scheduler reacquires capacity, verifies the prior host and approved checkpoint and restores the same ACP handle. The canonical command ledger commits successor acceptance before the answer delivery projection runs. The projector and the recovery sweep match the immutable Run, attempt, ordinal, assignment and original ACP handle. A failed delivery projection logs a warning and can repair itself even after the attempt advances. The node’s normal result advances the graph.
+
+Stop, crash, manual abandonment and expiry close outstanding Flow questions in the transaction that settles the Run or its terminal disposition. The close stamps `superseded_at` and system-closes the Inbox work. Undelivered questions retain their existing response fields. When an accepted responder loses authority or the original host has been retired, recovery clears the impossible promotion head and tries another eligible visit. With no remaining eligible answer the ordinary idle deadline applies. Recovery refreshes the readiness of pinned checkpoint hosts outside the transaction. A temporarily unavailable host remains retryable within the configured idle window.
 
 ## Expectations
 
 - **ASK-01:** (Implemented) The current execution credential must determine the owner and allowed question origin on every ask.
 The canonical Run stream records the separate accepted and delivered transitions under stable event IDs. A reconnect replays both in order. The browser refreshes the current authorized read model from these notifications. When a queued answer loses current authority, the recovery sweep selects the oldest still-authorized answer for another parked visit in the Run.
 
-- **ASK-04:** (Implemented) An accepted answer may resume only its original recoverable attempt after checking current authority and assignment.
+- **ASK-04:** (Implemented) A resumed driver must recheck current responder authority, the original checkpoint and the assignment fence before sending the accepted answer to the same ACP session. Tests cover wrong or revoked owners, lost acknowledgement, unavailable ownership, a failed independent delivery projection, and replay after the resume pointer advances.
 
 - HITL kind is exactly `permission | form | human | infra_recovery |
 budget_breach | hook_trip | node_interrupt` (on `hitl_requests.kind`); the three

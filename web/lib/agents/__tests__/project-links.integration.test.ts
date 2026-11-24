@@ -24,7 +24,14 @@ import {
   updateAgentLink,
 } from "@/lib/agents/project-links";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
+import {
+  captureProjectAgentProfile,
+  connectedAgentMcpRefs,
+} from "@/lib/agents/project-instance-profile";
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import { resolveAgentProfileMcpServers } from "@/lib/agents/launch";
 import * as schemaModule from "@/lib/db/schema";
+import { connectPlatform } from "@/lib/mcp/binding-service";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -39,6 +46,100 @@ let db: NodePgDatabase;
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 const fx = { projectId: "", agentId: "test-pkg:platform-helper" };
+
+it("saves and materializes a package MCP requirement bound to a live platform target", async () => {
+  const ref = "instance-bound-requirement";
+  const effective = await resolveEffectiveAgentDefinition(fx, db);
+
+  await attachAgent(fx, db);
+  try {
+    await db.insert(schema.platformMcpServers).values({
+      id: ref,
+      transport: "http",
+      url: "https://example.test/bound-instance",
+      enabled: true,
+      trustStatus: "trusted",
+    });
+    await db.insert(schema.capabilityRecords).values({
+      id: randomUUID(),
+      projectId: fx.projectId,
+      capabilityRefId: ref,
+      kind: "mcp",
+      source: "flow-package",
+      label: ref,
+      agents: ["claude"],
+      enforceability: "instructed",
+      material: {
+        packageInstallId: effective.packageInstallId,
+        requirement: true,
+      },
+    });
+    await connectPlatform(fx.projectId, ref, undefined, null, db);
+    await updateAgentLink(
+      {
+        ...fx,
+        patch: {
+          expectedInstallId: effective.packageInstallId,
+          schedulesRevision: 1,
+          additionalMcpRefs: [ref],
+        },
+      },
+      db,
+    );
+    const captured = await db.transaction((tx) =>
+      captureProjectAgentProfile(tx, {
+        ...fx,
+        packageName: effective.packageName,
+        packageInstallId: effective.packageInstallId,
+        definition: effective.parsed,
+      }),
+    );
+    const dispatch = {
+      db,
+      projectId: fx.projectId,
+      capabilityProfile: { mcps: captured.additionalMcpRefs },
+      frozenTargets: captured.mcpTargets,
+      capabilityAgent: "claude",
+      execTrust: "trusted" as const,
+      runId: randomUUID(),
+    };
+
+    expect(await resolveAgentProfileMcpServers(dispatch)).toMatchObject([
+      { name: ref, url: "https://example.test/bound-instance" },
+    ]);
+    await db.insert(schema.capabilityRecords).values({
+      id: randomUUID(),
+      projectId: fx.projectId,
+      capabilityRefId: ref,
+      kind: "mcp",
+      source: "platform",
+      label: ref,
+      agents: ["claude"],
+      enforceability: "enforced",
+      material: { transport: "http", url: "https://example.test/stale" },
+    });
+    expect(await resolveAgentProfileMcpServers(dispatch)).toMatchObject([
+      { name: ref, url: "https://example.test/bound-instance" },
+    ]);
+    await db
+      .update(schema.platformMcpServers)
+      .set({ enabled: false })
+      .where(eq(schema.platformMcpServers.id, ref));
+    expect(await connectedAgentMcpRefs(db, fx.projectId)).not.toContain(ref);
+    expect(await resolveAgentProfileMcpServers(dispatch)).toEqual([]);
+  } finally {
+    await pool.query(
+      "DELETE FROM project_mcp_bindings WHERE project_id=$1 AND ref_id=$2",
+      [fx.projectId, ref],
+    );
+    await pool.query(
+      "DELETE FROM capability_records WHERE project_id=$1 AND capability_ref_id=$2",
+      [fx.projectId, ref],
+    );
+    await pool.query("DELETE FROM platform_mcp_servers WHERE id=$1", [ref]);
+    await detachAgent(fx, db);
+  }
+});
 
 // ADR-156: read the grant straight off the COLUMN. The view projection is
 // already covered elsewhere; what is not covered is that the aggregating PATCH

@@ -66,10 +66,10 @@ is unchanged by the typed-settings layer.
   shape; `human` carries decision/role/takeover shape; `cli` / `check` carry the
   command shape. Optional on every node type. Lives in the pinned
   `flow_revisions.manifest` (persisted; see [runs-domain ERD](../db/runs-domain.md)).
-- **Capability class** — one of the seven capability-bearing settings subject to
-  the `enforcement` intent: `mcps`, `tools`, `restrictions`,
-  `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Implemented — ADR-108;
-  see "Hook engine capability class" below).
+- **Capability class** — one of six authorable settings subject to the
+  `enforcement` intent (`mcps`, `tools`, `restrictions`, `permissionMode`,
+  `workspaceAccess`, `hooks`), or the `skills` class read from a pinned legacy
+  revision or retained enforcement snapshot.
 - **`enforcement` intent** — per-class `strict | instruct | off`, default
   `instruct`, declared by the flow author in `settings.enforcement`.
 - **`ENFORCEABILITY_BY_AGENT`** — the static, code-constant table
@@ -135,58 +135,45 @@ path, not a per-adapter flag — so the static table is **uniform** across adapt
 adapter's `capabilityEnforcement` smoke `=== "ok"`. So gemini/opencode/mimo (and
 claude/codex before their smoke is cached) **refuse launch via the evidence gate**,
 not via an `instructed` table cell — the honesty guarantee is the gate, never a
-false-enforce (ADR-032). The remaining four classes stay `instructed`, each for a
-**documented, permanent** reason (they have no tool-identity seam mechanism). No
-`TODO(M14)` remains.
+false-enforce (ADR-032). The three other authorable classes and the retained
+legacy `skills` cell stay `instructed` because their delivery lacks a
+tool-identity seam mechanism.
 
-> **MCP note (ADR-130, 2026-07-11).** Per-session MCP config **is** materialized
-> today (delivered via `settings.local.json` + ACP `mcpServers`, ADR-044), so the
-> `mcps` cells being `instructed` reflect only the un-flipped *enforcement of
-> declared limits*, not a missing materialization path. Orthogonally, MCP
-> Management v2 makes `platform_mcp_servers.trust_status` **load-bearing at
-> materialization**: an untrusted platform MCP is withheld from the materialized
-> executable set (reason `platform-untrusted`) regardless of this enforcement
-> flip — see [mcp-management.md](mcp-management.md). Whether the `instructed →
-> enforced` flip lands is owned by the enforcement-flip work (ADR-042); this note
-> changes no `ENFORCEABILITY_BY_AGENT` cell.
+> **MCP delivery.** Per-session materialization supplies native settings and ACP
+> `mcpServers`. The `capability_guard` interceptor enforces declared limits.
+> Materialization also withholds untrusted platform MCPs with reason
+> `platform-untrusted`. See [MCP management](mcp-management.md).
 
-| agent → class | `mcps` | `tools` | `restrictions` | `permissionMode` | `workspaceAccess` |
-| ------------- | ------ | ------- | -------------- | ---------------- | ----------------- |
-| `claude`      | **enforced** | **enforced** | instructed | instructed | instructed |
-| `codex`       | **enforced** | **enforced** | instructed | instructed | instructed |
-| `gemini`      | **enforced** | **enforced** | instructed | instructed | instructed |
-| `opencode`    | **enforced** | **enforced** | instructed | instructed | instructed |
-| `mimo`        | **enforced** | **enforced** | instructed | instructed | instructed |
+| agent → class | `mcps` | `tools` | `restrictions` | `permissionMode` | `workspaceAccess` | `hooks` |
+| ------------- | ------ | ------- | -------------- | ---------------- | ----------------- | ------- |
+| `claude`      | **enforced** | **enforced** | instructed | instructed | instructed | **enforced** |
+| `codex`       | **enforced** | **enforced** | instructed | instructed | instructed | **enforced** |
+| `gemini`      | **enforced** | **enforced** | instructed | instructed | instructed | **enforced** |
+| `opencode`    | **enforced** | **enforced** | instructed | instructed | instructed | **enforced** |
+| `mimo`        | **enforced** | **enforced** | instructed | instructed | instructed | **enforced** |
 
-(`hooks` is a sixth class, also **`enforced`** for all five — see the hook-engine
-section below.)
+The runtime table also retains `skills: "instructed"` for legacy reads. The
+authoring validator rejects both `settings.skills` and
+`settings.enforcement.skills`. See [CAP-01](capabilities.md#expectations).
 
 ```ts
-// FROZEN — web/lib/flows/enforcement.ts (ADR-130). `tools`/`mcps`/`hooks` enforced
-// via the adapter-agnostic capability_guard seam; per-adapter admission is the
-// async launch evidence gate (capabilityEnforcement smoke), NOT the table.
+// FROZEN — web/lib/flows/enforcement.ts (ADR-130), with the retained skills cell.
+const SEAM_ENFORCED_ROW: Record<CapabilityClass, Capability> = {
+  mcps: "enforced",
+  tools: "enforced",
+  skills: "instructed",
+  restrictions: "instructed",
+  permissionMode: "instructed",
+  workspaceAccess: "instructed",
+  hooks: "enforced",
+};
+
 export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
-  claude: {
-    mcps: "enforced",              // capability_guard MCP-server allow-list (evidence-gated at launch)
-    tools: "enforced",             // capability_guard tool-name allow-list (evidence-gated at launch)
-    restrictions: "instructed",    // path-based mustNotTouch deny-sets (mutation-check gate), not tool identity
-    permissionMode: "instructed",  // claude-only defaultMode delivery, end-to-end constraint unverified (spike 0.10)
-    workspaceAccess: "instructed", // not delivered to the seam on the flow path (no readOnlySession); follow-up
-    hooks: "enforced",             // supervisor-enforced at the ACP seam (ADR-108); label corrected by ADR-130
-  },
-  codex: {
-    mcps: "enforced",
-    tools: "enforced",
-    restrictions: "instructed",
-    permissionMode: "instructed",
-    workspaceAccess: "instructed",
-    hooks: "enforced",
-  },
-  // gemini / opencode / mimo: identical (adapter-agnostic). Admission is the
-  // per-adapter capabilityEnforcement evidence gate at launch, not the table.
-  gemini: { /* … same as above … */ },
-  opencode: { /* … same as above … */ },
-  mimo: { /* … same as above … */ },
+  claude: { ...SEAM_ENFORCED_ROW },
+  codex: { ...SEAM_ENFORCED_ROW },
+  gemini: { ...SEAM_ENFORCED_ROW },
+  opencode: { ...SEAM_ENFORCED_ROW },
+  mimo: { ...SEAM_ENFORCED_ROW },
 };
 ```
 
@@ -323,14 +310,14 @@ EN + RU keys.
 
 ## Hook engine capability class (Implemented — ADR-108)
 
-The **seventh** capability class `hooks` ([ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation))
+The authorable capability class `hooks` ([ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation))
 declares the per-tool-call guardrail rules (`path_guard` / `repetition` /
 `no_progress`) enforced at the supervisor↔ACP seam. Full design:
 [`guardrail-hooks.md`](guardrail-hooks.md). Engine floor: a node/agent declaring
 `hooks` requires `compat.engine_min >= 1.8.0`.
 
-`hooks` is `enforced` for every agent in `ENFORCEABILITY_BY_AGENT` (a 7th column,
-all `enforced` — corrected by ADR-130):
+`hooks` is `enforced` for every agent in `ENFORCEABILITY_BY_AGENT` as specified
+by ADR-130.
 
 | agent → class | `hooks` |
 | ------------- | ------- |

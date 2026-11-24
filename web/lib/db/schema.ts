@@ -8582,6 +8582,12 @@ export const hitlRequests = pgTable(
             AND (
               (${t.supersededByHitlRequestId} IS NOT NULL AND ${t.supersededByRunId} IS NULL)
               OR (${t.supersededByHitlRequestId} IS NULL AND ${t.supersededByRunId} IS NOT NULL)
+              OR (
+                ${t.flowNodeAttemptId} IS NOT NULL
+                AND ${t.respondedAt} IS NULL
+                AND ${t.supersededByHitlRequestId} IS NULL
+                AND ${t.supersededByRunId} IS NULL
+              )
             )
           )
         )

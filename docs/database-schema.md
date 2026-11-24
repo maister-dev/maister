@@ -21,7 +21,7 @@ supported.
 
 ## Studio package delivery, project agent profiles and human questions
 
-Apply main-line migrations 0369–0373 before starting the new writers. The Brain lineage is unchanged. Historical rows use the previous read path when the new fields are absent.
+Apply main-line migrations 0369–0374 before starting the new writers. Historical rows use the previous read path when the new fields are absent.
 
 | Migration | Durable state and ownership |
 | --- | --- |
@@ -30,6 +30,7 @@ Apply main-line migrations 0369–0373 before starting the new writers. The Brai
 | 0371 | Existing host and command checks admit `remote_direct` and `mcp.prepare`. Assignment, epoch and operation evidence stay on the execution ledgers. The execution host stores the installed artifact bytes. |
 | 0372 | A private question card references the exact turn, conversation and segment through a composite foreign key. A unique request key and a partial unique index allow replay and one pending question per turn. The accepted answer and delivery timestamp distinguish submission from continuation. |
 | 0373 | A Flow question references its Run and node attempt together. A partial unique index admits one question per attempt and prompt ordinal. Separate fields record the accepted answer and its responder. The action resume record links to the checkpoint, source command, incarnation and assignment. |
+| 0374 | An undelivered Flow node question can close with `superseded_at` and empty successor fields. The accepted answer, if any, remains immutable. Task questions and permission continuation retain their existing successor checks. |
 
 Adopting an earlier package revision changes the attachment for future executions. Existing Run inventory, retry snapshots and retained questions keep their captured owners and pins. Deployment rollback must retain these columns and stop new writers before running readers that predate the new question and command kinds.
 
@@ -4402,7 +4403,12 @@ together encode the delivery state of an HITL row:
 | set        | `NULL`        | Claimed — user's intent stored under a row-level `SELECT ... FOR UPDATE`, but the durable side-effect (supervisor `requestPermission` resolve, or `input-<stepId>.json` write) has not been acknowledged yet. Retryable from this state with the SAME payload (idempotent). |
 | set        | set           | Delivered. Same-payload retries return `200`; a retry that finds `runs.status = 'NeedsInput'` re-queues the runner wake-up so a process crash between commit and the original microtask cannot strand the run.                                                              |
 | set, with `_closed` | set  | Closed without delivery (`permission` only, 2026-09-27 review fix): a same-payload retry is refused with the close reason's refusal (409 / 410), never `200`.                                                                                                              |
-| `NULL`     | set           | Closed unanswered: a boundary (the crash projection, the keep-alive TTL abandon, a terminal finalization, a scratch idle resume retiring an earlier session's request) closed a request nobody answered. A retry answers `409 not_awaiting_input` (2026-09-28 review fix). |
+| `NULL`     | set           | A legacy request was closed without an answer, for example by crash projection, keep-alive TTL abandon, terminal finalization or scratch idle resume. A retry answers `409 not_awaiting_input`. |
+
+For a Flow node question, `responded_at` records delivery of an accepted
+answer. Stop, crash, TTL or attempt replacement can close an undelivered
+question by setting `superseded_at` and closing its assignment in the owning
+transaction. A closed question with an accepted response retains that response.
 
 Conflicting-payload submissions are rejected with `409` at the CAS
 step — they never reach the side-effect. Permission rows additionally

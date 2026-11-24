@@ -4,6 +4,7 @@ import type { FlowDeliverySnapshot } from "@/lib/capabilities/package-delivery";
 import type { Db } from "@/lib/execution-host/db";
 import { transportForSelectedHostId } from "@/lib/execution-host/default-transport";
 import type { CapabilityBundleSource } from "@/lib/capabilities/materialize-bundle";
+import type { PackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 import type { TaskAdmissionSnapshot } from "./qualification-types";
 import type {
   TaskLaunchClaim,
@@ -65,6 +66,7 @@ import {
   runs,
 } from "@/lib/db/schema";
 import { retryDigest } from "@/lib/agents/retry-guards";
+import { preparePackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { snapshotRunner } from "@/lib/acp-runners/resolve";
@@ -156,6 +158,7 @@ export function assertAcceptedTaskLaunchExecution(
 export async function assertFrozenTaskLaunchCurrent(
   db: Db,
   intent: typeof taskLaunchIntents.$inferSelect,
+  captureDelivery: PackageDeliveryCapture,
 ): Promise<void> {
   const settings = intent.settingsSnapshot;
 
@@ -302,14 +305,18 @@ export async function assertFrozenTaskLaunchCurrent(
 
     return;
   }
-  const capabilities = await resolveTaskLaunchCapabilities(db, {
-    projectId: intent.projectId,
-    flowRevisionId: settings.flowRevisionId,
-    flowSource: revision.source,
-    flowPackageInstallId: settings.packageInstallId ?? flow.packageInstallId,
-    flowManifest: revision.manifest,
-    historical: settings.resolvedCapabilitySet?.delivery ? undefined : true,
-  });
+  const capabilities = await resolveTaskLaunchCapabilities(
+    db,
+    {
+      projectId: intent.projectId,
+      flowRevisionId: settings.flowRevisionId,
+      flowSource: revision.source,
+      flowPackageInstallId: settings.packageInstallId ?? flow.packageInstallId,
+      flowManifest: revision.manifest,
+      historical: settings.resolvedCapabilitySet?.delivery ? undefined : true,
+    },
+    captureDelivery,
+  );
 
   if (
     capabilities.capabilityResolutionDigest !==
@@ -564,7 +571,9 @@ export async function acceptedTaskLaunchExecution(
   const intent = await lockedTaskLaunchClaim(db, claim);
   const { identity } = claim;
 
-  await assertFrozenTaskLaunchCurrent(db, intent);
+  const packageDelivery = preparePackageDeliveryCapture();
+
+  await assertFrozenTaskLaunchCurrent(db, intent, packageDelivery.prepare);
   await assertFrozenTaskLaunchRepository(db, intent);
   const settings = intent.settingsSnapshot;
 
@@ -603,7 +612,11 @@ export async function acceptedTaskLaunchExecution(
   const assertCurrent = async (connection: Db): Promise<void> => {
     const current = await lockedTaskLaunchClaim(connection, claim);
 
-    await assertFrozenTaskLaunchCurrent(connection, current);
+    await assertFrozenTaskLaunchCurrent(
+      connection,
+      current,
+      packageDelivery.recheck,
+    );
   };
   const verifyWorkspace = (): Promise<void> =>
     assertTaskLaunchCheckoutIdentity(intent);

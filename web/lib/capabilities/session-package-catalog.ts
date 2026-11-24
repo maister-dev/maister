@@ -16,7 +16,8 @@ import {
   pinCatalogToSnapshot,
   type McpBindingInput,
 } from "./resolver";
-import { agentMcpTargets } from "./mcp-targets";
+import { agentMcpTargets, matchesAgentMcpTarget } from "./mcp-targets";
+import { withBoundPlatformMcpRecords } from "./bound-platform-mcps";
 
 import {
   loadProjectMcpBindings,
@@ -64,7 +65,11 @@ export async function resolveCurrentPackageSessionCatalog(
 }> {
   const { snapshot, delivery } = input;
   const live = pinCatalogToSnapshot(
-    await loadSelectableCapabilities(input.projectId, db),
+    await withBoundPlatformMcpRecords(
+      db,
+      input.projectId,
+      await loadSelectableCapabilities(input.projectId, db),
+    ),
     snapshot,
   );
   const retained = delivery.packages.filter(
@@ -144,6 +149,13 @@ export async function resolveCurrentPackageSessionCatalog(
     if (!delivery.targets) return true;
     const before = delivery.targets.find((t) => t.refId === ref),
       current = now.find((t) => t.refId === ref);
+
+    if (current?.source === "platform")
+      return matchesAgentMcpTarget(
+        before,
+        current,
+        input.bindings.find((binding) => binding.refId === ref),
+      );
 
     return (
       !!before &&

@@ -89,6 +89,7 @@ function render(
 
   return renderToStaticMarkup(
     createElement(PackageComposition, {
+      sessionId: "session-1",
       packageId: "pkg1",
       name: "my-pkg",
       bom,

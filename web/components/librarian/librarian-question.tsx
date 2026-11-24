@@ -2,6 +2,7 @@
 
 import type { LibrarianMessageDto } from "@/lib/librarian/view";
 
+import { Button } from "@heroui/react";
 import { useState, type FormEvent, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
 
@@ -9,6 +10,7 @@ import {
   FormFieldControl,
   coerceFormFieldValue,
 } from "@/components/board/hitl-decision-controls";
+import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 
 type PrivateQuestion = NonNullable<LibrarianMessageDto["card"]>;
 
@@ -20,31 +22,42 @@ export function LibrarianQuestion({
   onSubmitted: () => Promise<void>;
 }): ReactElement {
   const t = useTranslations("librarian");
+  const tApiErrors = useTranslations("apiErrors");
   const [values, setValues] = useState<ReadonlyMap<string, string>>(
     () => new Map(),
   );
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const idPrefix = "private-question-" + card.id;
 
-  async function submit(event: FormEvent) {
+  async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
     if (busy || card.state !== "open") return;
     setBusy(true);
-    setError(false);
+    setError(null);
     try {
       const answer: Record<string, unknown> = Object.create(null);
 
-      for (const field of card.schema.fields) {
-        const raw = values.get(field.name) ?? "";
+      try {
+        for (const field of card.schema.fields) {
+          const raw = values.get(field.name) ?? "";
 
-        if (!field.required && raw === "") continue;
-        if (field.type === "boolean" && !["true", "false"].includes(raw))
-          throw new Error("Invalid boolean answer");
-        answer[field.name] =
-          field.type === "object" || field.type === "array"
-            ? JSON.parse(raw)
-            : coerceFormFieldValue(field.type, raw);
+          if (!field.required && raw === "") continue;
+          if (field.type === "boolean" && !["true", "false"].includes(raw)) {
+            setError(t("questionError"));
+
+            return;
+          }
+          answer[field.name] =
+            field.type === "object" || field.type === "array"
+              ? JSON.parse(raw)
+              : coerceFormFieldValue(field.type, raw);
+        }
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        setError(t("questionError"));
+
+        return;
       }
       const response = await fetch(
         "/api/librarian/cards/" + encodeURIComponent(card.id) + "/answer",
@@ -55,10 +68,29 @@ export function LibrarianQuestion({
         },
       );
 
-      if (!response.ok) setError(true);
+      if (!response.ok) {
+        const failure = await readApiErrorBody(response);
+        const reason = failure?.details?.reason;
+
+        if (reason === "question_closed" || reason === "not_found") {
+          setError(t("questionUnavailable"));
+          await onSubmitted();
+        } else if (failure?.code === "CONFLICT") {
+          setError(t("questionChanged"));
+          await onSubmitted();
+        } else {
+          setError(
+            failure?.code === "CONFIG" || reason === "json_body_too_large"
+              ? t("questionError")
+              : apiErrorText(failure, tApiErrors),
+          );
+        }
+
+        return;
+      }
       await onSubmitted();
     } catch {
-      setError(true);
+      setError(tApiErrors("requestFailed"));
     } finally {
       setBusy(false);
     }
@@ -93,18 +125,20 @@ export function LibrarianQuestion({
               }
             />
           ))}
-          <button
-            className="self-start rounded border border-line px-3 py-1"
-            disabled={
+          <Button
+            className="self-start"
+            isDisabled={
               busy ||
               card.schema.fields.some(
                 (field) => field.required && !values.get(field.name)?.trim(),
               )
             }
+            isPending={busy}
+            size="sm"
             type="submit"
           >
             {t("questionSubmit")}
-          </button>
+          </Button>
         </>
       ) : (
         <>
@@ -136,7 +170,7 @@ export function LibrarianQuestion({
           </span>
         </>
       )}
-      {error && <p role="alert">{t("questionError")}</p>}
+      {error && <p role="alert">{error}</p>}
     </form>
   );
 }

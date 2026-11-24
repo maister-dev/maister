@@ -23,6 +23,7 @@ import {
   recordPromptEvent,
 } from "@/lib/execution-host/prompt-evidence";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { projectCommittedFlowNodeAnswers } from "@/lib/db/flow-node-answer-delivery";
 import {
   executionAssignments,
   runs,
@@ -129,13 +130,22 @@ export const canonicalPromptProjector: ExecutionEventProjector = {
   prepare: preparePromptEvidence,
   consumerName: CANONICAL_PROJECTION_CONSUMERS.prompt,
   project: projectPromptCommand,
-  afterCommit: (events) => {
+  afterCommit: async (events, db) => {
+    const promptCommands = new Set<string>();
+
     for (const event of events) {
       if (event.eventType !== "session.command") continue;
       const commandId = event.payload?.commandId;
 
-      if (typeof commandId === "string") commandSignals.wake(commandId);
+      if (typeof commandId !== "string") continue;
+      commandSignals.wake(commandId);
+      if (event.payload?.kind === "session.prompt")
+        promptCommands.add(commandId);
     }
+    if (events[0])
+      await projectCommittedFlowNodeAnswers(db, events[0].runId, [
+        ...promptCommands,
+      ]);
   },
 };
 

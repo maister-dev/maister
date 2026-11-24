@@ -28,7 +28,10 @@ import { WORKSPACE_FLOW_ASSET_DIRECTORY } from "../../../runtime/workspace-input
 
 import { requireReadyDeclaredFlowRunner } from "@/lib/acp-runners/declared-flow-runner";
 import { capturePackageDelivery } from "@/lib/capabilities/capture-package-delivery";
-import { sessionNameForPackageNode } from "@/lib/capabilities/package-delivery";
+import {
+  includeCapturedPlatformMcpTargets,
+  sessionNameForPackageNode,
+} from "@/lib/capabilities/package-delivery";
 import { runnerAdmissionError } from "@/lib/flows/runner-admission-error";
 import { isAutomaticTaskLaunchDrain } from "@/lib/tasks/launch-capacity";
 import {
@@ -1948,33 +1951,32 @@ async function* executeFlowLaunch(
         project.id,
         _db as never,
       );
+      const delivery = accepted
+        ? undefined
+        : await capturePackageDelivery(_db, {
+            projectId: project.id,
+            flowPackageInstallId:
+              input.packagePin?.packageInstallId ?? flow.packageInstallId ?? null,
+            flowManifest: manifest,
+            nonPackageMcpRefs: snapshotRecords
+              .filter(
+                (r) =>
+                  r.kind === "mcp" &&
+                  r.selectedByDefault &&
+                  r.source !== "flow-package",
+              )
+              .map((r) => r.capabilityRefId),
+          });
       const resolvedCapabilitySet =
-        accepted?.settings.resolvedCapabilitySet ??
-        buildResolvedCapabilitySet({
-          records: snapshotRecords,
-          flowRevisionId: revision.id,
-          flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
-          mcpBindings: snapshotMcpBindings,
-        });
-
-      if (!accepted) {
-        const delivery = await capturePackageDelivery(_db, {
-          projectId: project.id,
-          flowPackageInstallId:
-            input.packagePin?.packageInstallId ?? flow.packageInstallId ?? null,
-          flowManifest: manifest,
-          nonPackageMcpRefs: snapshotRecords
-            .filter(
-              (r) =>
-                r.kind === "mcp" &&
-                r.selectedByDefault &&
-                r.source !== "flow-package",
-            )
-            .map((r) => r.capabilityRefId),
-        });
-
-        if (delivery) resolvedCapabilitySet.delivery = delivery;
-      }
+        accepted?.settings.resolvedCapabilitySet ?? {
+          ...buildResolvedCapabilitySet({
+            records: includeCapturedPlatformMcpTargets(snapshotRecords, delivery),
+            flowRevisionId: revision.id,
+            flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
+            mcpBindings: snapshotMcpBindings,
+          }),
+          ...(delivery ? { delivery } : {}),
+        };
 
       log.debug(
         {

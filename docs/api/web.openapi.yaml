@@ -338,7 +338,7 @@ paths:
     post:
       operationId: previewDraftCatalog
       summary: Review exact upstream bytes and draft destination
-      description: Requires the catalog search permissions and current draft edit lock. Preview resolves only approved sources and binds the exact pin, destination and draft base to the editor. MCP previews list compatible runner adapters for the reviewed transport. Launch checks runner readiness and MCP approval independently.
+      description: Requires catalog search permission and the authenticated editor's current draft edit session. Preview resolves only approved sources and binds the exact pin, destination and draft base to the editor and draft. MCP previews list compatible runner adapters for the reviewed transport. Launch also checks runner readiness and host approval.
       security:
         - sessionCookie: []
       parameters:
@@ -354,7 +354,7 @@ paths:
           description: Pinned preview
           content:
             application/json:
-              example: {"previewId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "importId": "1111111111111111111111111111111111111111111111111111111111111111", "publisher": "com.example", "sourceUrl": "https://registry.modelcontextprotocol.io/v0.1/servers/com.example%2Fdesign/versions/1.0.0", "destination": "mcps/design.yaml", "pin": "1.0.0", "digest": "1111111111111111111111111111111111111111111111111111111111111111", "expectedDraftBase": "2222222222222222222222222222222222222222222222222222222222222222", "notices": [], "files": [], "affectedRefs": [], "configuration": ["Streamable HTTP", "https://example.com/mcp"], "runnerCompatibility": {"transport": "http", "compatibleAdapters": ["claude", "codex", "gemini", "opencode", "mimo"]}, "expiresAt": "2026-11-24T12:15:00Z"}
+              example: {"previewId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "importId": "1111111111111111111111111111111111111111111111111111111111111111", "publisher": "com.example", "sourceUrl": "https://registry.modelcontextprotocol.io/v0.1/servers/com.example%2Fdesign/versions/1.0.0", "destination": "mcps/design.yaml", "pin": "1.0.0", "digest": "1111111111111111111111111111111111111111111111111111111111111111", "artifactDigest": null, "expectedDraftBase": "2222222222222222222222222222222222222222222222222222222222222222", "notices": [], "files": [], "affectedRefs": [], "configuration": ["Streamable HTTP", "https://example.com/mcp"], "runnerCompatibility": {"transport": "http", "compatibleAdapters": ["claude", "codex", "gemini", "opencode", "mimo"]}, "expiresAt": "2026-11-24T12:15:00Z"}
               schema:
                 type: object
                 additionalProperties: false
@@ -366,6 +366,7 @@ paths:
                   - destination
                   - pin
                   - digest
+                  - artifactDigest
                   - expectedDraftBase
                   - notices
                   - files
@@ -388,6 +389,11 @@ paths:
                   digest:
                     type: string
                     pattern: ^[a-f0-9]{64}$
+                  artifactDigest:
+                    type: string
+                    nullable: true
+                    pattern: ^[a-f0-9]{64}$
+                    description: SHA-256 digest of the reviewed npm descriptor for the host allowlist. Null for skills and HTTP MCPs.
                   expectedDraftBase:
                     type: string
                     pattern: ^[a-f0-9]{64}$
@@ -503,16 +509,18 @@ paths:
         required: true
         content:
           application/json:
-            example: {"kind": "skill", "sourceId": "anthropic-skills", "selector": "skills/frontend-design", "destination": "capability/skills/frontend-design"}
+            example: {"sessionId": "studio-session-1", "kind": "skill", "sourceId": "anthropic-skills", "selector": "skills/frontend-design", "destination": "capability/skills/frontend-design"}
             schema:
               type: object
               additionalProperties: false
               required:
+                - sessionId
                 - kind
                 - sourceId
                 - selector
                 - destination
               properties:
+                sessionId: {type: string, minLength: 1, maxLength: 256}
                 kind:
                   type: string
                   enum:
@@ -538,7 +546,7 @@ paths:
     post:
       operationId: applyDraftCatalog
       summary: Apply the reviewed preview under the draft lock
-      description: Requires the current draft edit lock and rechecks the approved source. The preview and replay receipt are bound to the authenticated editor and draft.
+      description: Requires the current authenticated editor's draft edit session and rechecks source approval. A journalled exact replay returns its prior terminal receipt. An aborted operation requires a new preview and request key.
       security:
         - sessionCookie: []
       parameters:
@@ -551,11 +559,14 @@ paths:
             maxLength: 256
       responses:
         "200":
-          description: The reviewed draft and its digest are committed.
+          description: The operation has a terminal applied or aborted receipt.
           content:
             application/json:
               example: {"operationId": "1111111111111111111111111111111111111111111111111111111111111111", "state": "applied", "draftDigest": "2222222222222222222222222222222222222222222222222222222222222222"}
-              schema: { $ref: "#/components/schemas/CatalogAppliedReceipt" }
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/CatalogAppliedReceipt" }
+                  - { $ref: "#/components/schemas/CatalogAbortedReceipt" }
         "202":
           description: Recoverable operation in progress.
           content:
@@ -608,15 +619,17 @@ paths:
         required: true
         content:
           application/json:
-            example: {"previewId": "565e4210-f5cf-4ef5-9479-65139d920f69", "expectedDraftBase": "1111111111111111111111111111111111111111111111111111111111111111", "requestKey": "apply-a"}
+            example: {"sessionId": "studio-session-1", "previewId": "565e4210-f5cf-4ef5-9479-65139d920f69", "expectedDraftBase": "1111111111111111111111111111111111111111111111111111111111111111", "requestKey": "apply-a"}
             schema:
               type: object
               additionalProperties: false
               required:
+                - sessionId
                 - previewId
                 - expectedDraftBase
                 - requestKey
               properties:
+                sessionId: {type: string, minLength: 1, maxLength: 256}
                 previewId:
                   type: string
                   format: uuid
@@ -678,6 +691,7 @@ paths:
                 oneOf:
                   - { $ref: "#/components/schemas/CatalogPendingReceipt" }
                   - { $ref: "#/components/schemas/CatalogAppliedReceipt" }
+                  - { $ref: "#/components/schemas/CatalogAbortedReceipt" }
         "401":
           description: Authentication required
           content:
@@ -690,11 +704,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
-        "409":
-          description: Recovery found independently edited draft bytes. An active writer can still return its pending receipt to the original editor.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "404":
           description: Resource unavailable
           content:
@@ -4436,6 +4445,10 @@ paths:
         sibling-repo mounts this agent's runs materialize). The attachment is
         the consent event for both: an agent run has no launching user, so the
         project admin performing this PATCH is the human in the loop.
+
+        Changes to `promptOverride` or `additionalMcpRefs` also require
+        `readRepoFiles` on the project and the current link revision and
+        adopted install ID.
       operationId: patchProjectAgentLink
       parameters:
         - name: slug
@@ -4594,6 +4607,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
           description: No attachment for this (project, agent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: The project agent link revision or adopted package installation changed. Reload the link before editing and retry against its current revision and install identity.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -26641,6 +26659,14 @@ components:
         operationId: {type: string, pattern: '^[a-f0-9]{64}$'}
         state: {type: string, enum: [applied]}
         draftDigest: {type: string, pattern: '^[a-f0-9]{64}$'}
+    CatalogAbortedReceipt:
+      type: object
+      additionalProperties: false
+      required: [operationId, state, reason]
+      properties:
+        operationId: {type: string, pattern: '^[a-f0-9]{64}$'}
+        state: {type: string, enum: [aborted]}
+        reason: {type: string, enum: [draft_changed, approval_revoked]}
     CatalogPendingReceipt:
       type: object
       additionalProperties: false

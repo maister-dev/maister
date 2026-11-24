@@ -1,4 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { ExecutionHost } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
@@ -37,6 +38,7 @@ import {
 
 let database: StartedPostgresTestDb;
 let db: NodePgDatabase;
+let placementHost: ExecutionHost;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
@@ -71,7 +73,7 @@ async function completeTurn(turnId: string) {
 beforeAll(async () => {
   database = await startMainPostgresTestDb({ databaseName: "librarian_park" });
   db = database.db as unknown as NodePgDatabase;
-  await fakeExecutionHosts(db);
+  ({ host: placementHost } = await fakeExecutionHosts(db));
   await seedLibrarianPlatform(db);
 }, 180_000);
 
@@ -124,7 +126,11 @@ describe("IT-LCV-05 part 2: park frees the slot; the claim takes it back", () =>
     const ownerId = await seedActiveUser(db);
     const { runId, turnId } = await runAndTurn(ownerId);
     const claim = await db.transaction((tx) =>
-      claimLibrarianResumeInTransaction(tx as unknown as Db, { runId, turnId }),
+      claimLibrarianResumeInTransaction(tx as unknown as Db, {
+        runId,
+        turnId,
+        host: placementHost,
+      }),
     );
 
     expect(claim).toEqual({ claimed: false, reason: "not_claimable" });
@@ -159,6 +165,7 @@ describe("IT-LCV-05 part 2: park frees the slot; the claim takes it back", () =>
       claimLibrarianResumeInTransaction(tx as unknown as Db, {
         runId,
         turnId: nextTurn,
+        host: placementHost,
       }),
     );
 

@@ -417,11 +417,7 @@ export function ScratchLauncher({
           payload.reasoningEfforts.find((option) => option.selectedByDefault)
             ?.id ?? "high",
         );
-        setMcpIds(
-          payload.capabilities.defaultSelectedMcpIds.length > 0
-            ? payload.capabilities.defaultSelectedMcpIds
-            : selectedDefaults(payload.capabilities.mcps),
-        );
+        setMcpIds(payload.capabilities.defaultSelectedMcpIds);
         setRuleIds(selectedDefaults(payload.capabilities.rules));
         setAgentDefinitionIds(
           selectedDefaults(payload.capabilities.agentDefinitions),

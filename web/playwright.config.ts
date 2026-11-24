@@ -129,6 +129,7 @@ export default defineConfig({
       // default is :3000 — the DEV server — so without this the e2e
       // coordinator's delegate call leaves the harness entirely and fails.
       MAISTER_API_BASE_URL: BASE_URL,
+      MAISTER_E2E_CATALOG_FIXTURE: "1",
       // M19 cron-gc auth gate (see e2e/m19-reconcile-gc.spec.ts). Also gates the
       // outbound-webhooks drain trigger (POST /api/cron/tick).
       MAISTER_CRON_TOKEN,

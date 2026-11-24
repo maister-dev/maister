@@ -1326,7 +1326,7 @@ export async function runWorkspaceReconciliationSweep(
       }
       const runId = candidate.workspace?.runId ?? candidate.provenance?.runId;
       const liveSessions = runId
-        ? await hosts.local().listSessionsForRun(runId)
+        ? await hosts.inventoryForRun(runId)
         : [];
 
       if (candidate.workspace !== null) {

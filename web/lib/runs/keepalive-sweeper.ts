@@ -37,6 +37,8 @@ import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, agentTurns } from "@/lib/db/schema";
 import { specialistRunLinks } from "@/lib/db/schema";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
+import { needsInputIdleTtlHours } from "@/lib/runs/keepalive-ttl";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { commandStreamLost } from "@/lib/execution-host/events/stream-health";
@@ -148,22 +150,8 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const DEFAULT_NEEDS_INPUT_IDLE_TTL_HOURS = 24;
 const PER_TICK_LIMIT = 50;
 const PER_PASS_CONCURRENCY = 4;
-
-function needsInputIdleTtlHours(): number {
-  const raw = process.env.MAISTER_NEEDSINPUTIDLE_TTL_HOURS;
-
-  if (!raw) return DEFAULT_NEEDS_INPUT_IDLE_TTL_HOURS;
-  const parsed = Number.parseInt(raw, 10);
-
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return DEFAULT_NEEDS_INPUT_IDLE_TTL_HOURS;
-  }
-
-  return parsed;
-}
 
 // ADR-166: the run's live host session, read through the client bound to its
 // assignment. It is deliberately NOT narrowed by stepId. A session's stepId is
@@ -492,7 +480,11 @@ export async function runPass2(db: Db): Promise<number> {
       const updated = await tx
         .update(runs)
         .set({ status: "Abandoned", endedAt: new Date() })
-        .where(and(eq(runs.id, row.id), eq(runs.status, "NeedsInputIdle")))
+        .where(and(
+          eq(runs.id, row.id),
+          eq(runs.status, "NeedsInputIdle"),
+          isNull(runs.resumeRequestedAt),
+        ))
         .returning({
           id: runs.id,
           projectId: runs.projectId,
@@ -527,8 +519,14 @@ export async function runPass2(db: Db): Promise<number> {
           response: closedAnswerResponse("session_ended", closedAt),
         })
         .where(
-          and(eq(hitlRequests.runId, row.id), isNull(hitlRequests.respondedAt)),
+          and(
+            eq(hitlRequests.runId, row.id),
+            isNull(hitlRequests.respondedAt),
+            isNull(hitlRequests.flowNodeAttemptId),
+          ),
         );
+      if (updated[0].runKind === "flow")
+        await closeFlowNodeQuestions(tx, row.id, "run abandon deadline expired");
 
       // ADR-097: a project-less local-package run has no project to attribute
       // these project-scoped events to — skip the emits (its terminal row is

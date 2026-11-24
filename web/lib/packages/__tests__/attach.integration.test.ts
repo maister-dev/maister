@@ -49,7 +49,7 @@ import {
   readPackageMcpScopes,
   setPackageMcpScope,
 } from "@/lib/packages/mcp-scope";
-import { resolveBindTarget } from "@/lib/mcp/binding-service";
+import { connectPlatform, resolveBindTarget } from "@/lib/mcp/binding-service";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -2450,6 +2450,50 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
   expect((await resolveCurrentPackageSessionCatalog(db, action)).mcps).toEqual(
     sketch.mcps,
   );
+  const refId = "tool-design-mcp";
+
+  await db.insert(schema.platformMcpServers).values({
+    id: refId,
+    transport: "http",
+    url: "https://platform.example.test/mcp",
+    enabled: true,
+    trustStatus: "trusted",
+  });
+  const binding = await connectPlatform(projectId, refId, undefined, null, db);
+  const bound = await resolveTaskLaunchCapabilities(
+    db as unknown as Parameters<typeof resolveTaskLaunchCapabilities>[0],
+    {
+      projectId,
+      flowRevisionId: "accepted",
+      flowSource: "/studio",
+      flowPackageInstallId: releases["tool-dev"]!,
+      flowManifest: graph,
+    },
+  );
+  const boundAction = {
+    ...action,
+    snapshot: bound.resolvedCapabilitySet,
+    delivery: bound.resolvedCapabilitySet.delivery!,
+    bindings: [binding],
+  };
+
+  expect(
+    (await resolveCurrentPackageSessionCatalog(db, boundAction)).catalog,
+  ).toContainEqual(
+    expect.objectContaining({
+      capabilityRefId: refId,
+      source: "platform",
+      material: expect.objectContaining({
+        url: "https://platform.example.test/mcp",
+      }),
+    }),
+  );
+  await db
+    .delete(schema.projectMcpBindings)
+    .where(eq(schema.projectMcpBindings.id, binding.id));
+  await db
+    .delete(schema.platformMcpServers)
+    .where(eq(schema.platformMcpServers.id, refId));
   const designRoot = sources["tool-design"]!;
   const manifestPath = join(designRoot, "maister-package.yaml");
 

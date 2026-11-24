@@ -29,11 +29,7 @@ export async function mintPlacement(
   input: {
     runId: string;
     reason: PlacementReason;
-    host?: ExecutionHost;
-    // Resolution db when the memo is cold; defaults to the caller's tx (a
-    // registrar savepoint inside the claim — rare, memoized 30 s otherwise).
-    db?: Db;
-    transport?: ExecutionHostTransport;
+    host: ExecutionHost;
     now?: Date;
     logger?: Logger;
   },
@@ -58,7 +54,7 @@ export async function mintPlacement(
       "EXECUTOR_UNAVAILABLE",
       "The prepared workspace's execution host is retired",
     );
-  if (owner && input.host && input.host.id !== owner.host.id)
+  if (owner && input.host.id !== owner.host.id)
     throw new MaisterError(
       "CONFLICT",
       "The prepared workspace belongs to another execution host",
@@ -66,14 +62,9 @@ export async function mintPlacement(
         details: { reason: "workspace_preparation_changed" },
       },
     );
-  const host =
-    owner?.host ??
-    input.host ??
-    (await localHost({ db: input.db ?? tx, transport: input.transport }));
-
   return mintAssignment(tx, {
     runId: input.runId,
-    hostId: host.id,
+    hostId: input.host.id,
     reason: input.reason,
     now: input.now,
     logger: input.logger,

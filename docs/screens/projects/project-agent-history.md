@@ -20,6 +20,15 @@ Enter from the project Agents summary or project tabs; history rows link to run 
 
 Header: pinned identity, safe configuration provenance, retained/active counts and last launched/completed outcome. URL tabs: History, Attempts, Memory, Definition, Settings. Separate 25/max100 keyset cursors. Definition and Memory are permission-gated. Settings uses the existing modal. History remains after detach; settings/memory edits do not.
 
+The Definition tab shows the effective prompt and the inherited MCP servers
+for the attached agent. When the prompt differs from its package, an icon
+with the **Compare with package prompt** tooltip opens the inline diff.
+Users with `editSettings` can edit or restore the prompt and manage instance
+MCP additions from the connected project references. Inherited references are
+shown separately. **Save changes** writes both edits together against the
+loaded package pin and settings revision. A stale save keeps the draft and
+prompts the user to reload. A successful save gives a check-mark notification.
+
 The Memory tab browses current notes by path and shows revisions for the
 selected note. Links retain the selected path, page or revision in the URL.
 Readers with `readRepoFiles` can view content. Users with `editSettings` can

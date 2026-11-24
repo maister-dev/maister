@@ -37,6 +37,7 @@ import { installationEnforcementProfile } from "../../../runtime/installation-ag
 
 import {
   agentMcpTargets,
+  matchesAgentMcpTarget,
   availableAgentMcpCatalog,
   type AgentMcpTarget,
   captureProjectAgentProfile,
@@ -4249,11 +4250,10 @@ export async function resolveAgentProfileMcpServers(args: {
       .filter((candidate) => {
         const retained = targets.get(candidate.refId);
 
-        return (
-          retained?.recordId === candidate.recordId &&
-          retained.source === candidate.source &&
-          retained.revision === candidate.revision &&
-          retained.materialSha256 === candidate.materialSha256
+        return matchesAgentMcpTarget(
+          retained,
+          candidate,
+          mcpBindings.find((binding) => binding.refId === candidate.refId),
         );
       })
       .map((target) => target.refId);

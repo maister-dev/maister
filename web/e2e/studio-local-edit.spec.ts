@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -885,7 +886,7 @@ test("UX-03A/B Fit View and keyboard location keep eleven editor nodes reachable
   await expect(transform).toHaveAttribute("style", minimapCamera!);
 });
 
-test("E2E-CAT-02 reviews a skill and MCP from empty tabs, cuts edited bytes and attaches the release", async ({
+test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill and MCP to two projects", async ({
   page,
 }) => {
   test.setTimeout(180000);
@@ -909,73 +910,35 @@ test("E2E-CAT-02 reviews a skill and MCP from empty tabs, cuts edited bytes and 
     localPackage: { id },
   } = await created.json();
   const base = "/api/studio/local-packages/" + id;
-  let releaseOld: () => void = () => {};
-  const oldGate = new Promise<void>((resolve) => {
-    releaseOld = resolve;
-  });
+  const oldSearch = Promise.withResolvers<void>();
+  const oldSearchFinished = Promise.withResolvers<void>();
+  const oldPreview = Promise.withResolvers<void>();
+  const oldPreviewFinished = Promise.withResolvers<void>();
 
+  // Delay browser delivery while the production API performs search and review.
   await page.route("**/catalog/search?**", async (route) => {
-    const query = new URL(route.request().url()).searchParams;
-    const q = query.get("q")!;
-    const kind = query.get("kind");
+    const old = new URL(route.request().url()).searchParams.get("q") === "old";
+    const response = await route.fetch();
 
-    if (q === "old") await oldGate;
-    const sourceId = kind === "skill" ? "anthropic-skills" : "mcp-registry";
-
-    await route.fulfill({
-      json: {
-        results: [
-          {
-            sourceId,
-            resultId:
-              kind === "skill" ? "skills/design" : "com.example/design@1.0.0",
-            name: q,
-            publisher: "fixture",
-            kind,
-          },
-        ],
-        sources: [{ sourceId, state: "available" }],
-        nextCursor: null,
-      },
-    });
+    if (old) await oldSearch.promise;
+    await route.fulfill({ response });
+    if (old) oldSearchFinished.resolve();
   });
   await page.route("**/catalog/preview", async (route) => {
-    const { kind, destination } = route.request().postDataJSON();
-    const { working_dir, locked_by_user_id } = await withE2EDb(async (pool) => {
-      const result = await pool.query<{
-        working_dir: string;
-        locked_by_user_id: string;
-      }>(
-        "select working_dir,locked_by_user_id from local_packages where id=$1",
-        [id],
-      );
+    const { destination } = route.request().postDataJSON();
+    const old = destination.endsWith("/old-preview");
+    const response = await route.fetch();
 
-      return result.rows[0];
-    });
-    const bytes = execFileSync(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        "--import",
-        "./scripts/_register-shim.mjs",
-        "./e2e/_seed/studio-catalog-preview.ts",
-        working_dir,
-        id,
-        locked_by_user_id,
-        kind,
-        destination,
-      ],
-      { encoding: "utf8" },
-    );
-
-    await route.fulfill({ json: JSON.parse(bytes) });
+    if (old) await oldPreview.promise;
+    await route.fulfill({ response });
+    if (old) oldPreviewFinished.resolve();
   });
   for (const kind of ["skills", "mcps"]) {
     await page.goto("/studio/edit/" + id + "?tab=" + kind);
     await page.getByTestId("catalog-open").click();
     const panel = page.getByTestId("catalog-panel");
     const search = panel.getByRole("searchbox");
+    const results = panel.getByRole("listbox", { name: "Catalog results" });
 
     if (kind === "skills") {
       const requested = page.waitForRequest(
@@ -986,22 +949,56 @@ test("E2E-CAT-02 reviews a skill and MCP from empty tabs, cuts edited bytes and 
 
       await search.fill("old");
       await requested;
+      await expect(panel.getByTestId("catalog-results")).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
       await search.fill("intermediate");
-      await panel
-        .getByRole("button", { name: "intermediate · fixture" })
+      await results
+        .getByRole("option", { name: "intermediate · fixture" })
         .waitFor();
       await search.fill("");
-      releaseOld();
+      oldSearch.resolve();
+      await oldSearchFinished.promise;
+      await expect(results).toHaveCount(0);
+
+      await search.fill("unavailable");
+      await results
+        .getByRole("option", { name: "unavailable · fixture" })
+        .click();
+      await expect(panel.getByRole("alert")).toHaveText(
+        "The catalog item or draft is unavailable.",
+      );
       await expect(
-        panel.getByRole("button", { name: "old · fixture" }),
+        panel.getByText("Catalog item unavailable", { exact: true }),
       ).toHaveCount(0);
+
+      const requestedPreview = page.waitForRequest(
+        (r) =>
+          r.url().endsWith("/catalog/preview") &&
+          r.postDataJSON()?.destination.endsWith("/old-preview"),
+      );
+
+      await search.fill("old-preview");
+      await results
+        .getByRole("option", { name: "old-preview · fixture" })
+        .click();
+      await requestedPreview;
     }
     await search.fill("design");
-    await panel.getByRole("button", { name: "design · fixture" }).click();
+    await results
+      .getByRole("option", {
+        name:
+          kind === "skills"
+            ? "design · fixture"
+            : "com.example/design · com.example",
+        exact: true,
+      })
+      .click();
     const preview = page.getByTestId("catalog-preview");
 
     await expect(preview).toContainText(
-      kind === "skills" ? "companion.md" : "https://example.com/mcp",
+      kind === "skills" ? "companion.md" : "maister-e2e-design-mcp@1.0.0",
     );
     if (kind === "mcps") {
       await expect(
@@ -1013,8 +1010,32 @@ test("E2E-CAT-02 reviews a skill and MCP from empty tabs, cuts edited bytes and 
       await expect(preview).toContainText(
         "Transport support only. Launch still checks runner readiness and MCP approval.",
       );
+      const integrity =
+        "sha512-" +
+        createHash("sha512").update("fixture archive").digest("base64");
+      const artifactDigest = createHash("sha256")
+        .update(
+          JSON.stringify([
+            "com.example/design",
+            "maister-e2e-design-mcp",
+            "1.0.0",
+            integrity,
+            "design-mcp",
+          ]),
+        )
+        .digest("hex");
+
+      await expect(
+        preview.getByTestId("catalog-artifact-digest"),
+      ).toContainText(artifactDigest);
     } else {
+      oldPreview.resolve();
+      await oldPreviewFinished.promise;
+      await expect(preview).toContainText("capability/skills/design");
       await expect(preview.getByText("Compatible runner adapters")).toHaveCount(
+        0,
+      );
+      await expect(preview.getByTestId("catalog-artifact-digest")).toHaveCount(
         0,
       );
     }
@@ -1056,33 +1077,56 @@ test("E2E-CAT-02 reviews a skill and MCP from empty tabs, cuts edited bytes and 
   });
 
   expect(commit.ok(), await commit.text()).toBeTruthy();
-  const project = loadFixtures().byKey.board;
+  const { board, scratch } = loadFixtures().byKey;
   const cut = await page.request.post(base + "/cut-version", {
-    data: { attachToProjectId: project.projectId },
+    data: { attachToProjectId: board.projectId },
   });
 
   expect(cut.ok(), await cut.text()).toBeTruthy();
   const { installId } = await cut.json();
+  const attachment = await page.request.post(
+    `/api/projects/${scratch.projectSlug}/packages`,
+    { data: { packageInstallId: installId } },
+  );
+
+  expect(attachment.ok(), await attachment.text()).toBeTruthy();
   const installed = await withE2EDb(
     async (pool) =>
       (
-        await pool.query<{ installed_path: string }>(
-          "select pi.installed_path from package_installs pi join project_package_attachments pa on pa.package_install_id=pi.id where pi.id=$1 and pa.project_id=$2",
-          [installId, project.projectId],
+        await pool.query<{ installed_path: string; project_id: string }>(
+          "select pi.installed_path, pa.project_id from package_installs pi join project_package_attachments pa on pa.package_install_id=pi.id where pi.id=$1 and pa.project_id=any($2::text[])",
+          [installId, [board.projectId, scratch.projectId]],
         )
-      ).rows[0],
+      ).rows,
   );
 
-  expect(readFileSync(join(installed.installed_path, filePath), "utf8")).toBe(
-    "Updated checkout journey",
+  expect(installed.map((row) => row.project_id).sort()).toEqual(
+    [board.projectId, scratch.projectId].sort(),
   );
-  expect(
-    readFileSync(
-      join(installed.installed_path, "maister-package.yaml"),
-      "utf8",
-    ),
-  ).toContain("https://example.com/mcp");
-  expect(
-    readFileSync(join(installed.installed_path, "mcps/design.yaml"), "utf8"),
-  ).toContain("scope: project");
+  for (const { installed_path } of installed) {
+    expect(readFileSync(join(installed_path, filePath), "utf8")).toBe(
+      "Updated checkout journey",
+    );
+    expect(
+      readFileSync(join(installed_path, "maister-package.yaml"), "utf8"),
+    ).toContain("packageName: maister-e2e-design-mcp");
+    expect(
+      readFileSync(join(installed_path, "mcps/design.yaml"), "utf8"),
+    ).toContain("scope: project");
+  }
+
+  await page.goto(`/projects/${scratch.projectSlug}?tab=mcps`);
+  const scope = page.getByRole("button", {
+    name: new RegExp(`Sharing for ${name} / design`),
+  });
+
+  await expect(scope).toContainText("Use package setting (Entire project)");
+  await scope.click();
+  await page
+    .getByRole("option", { name: "Owning package", exact: true })
+    .click();
+  await expect(
+    page.getByText("MCP sharing saved", { exact: true }),
+  ).toBeVisible();
+  await expect(scope).toContainText("Owning package");
 });

@@ -338,6 +338,8 @@ export type ExecutionHosts = {
   // `forAssignment` when the caller carries the assignment id, else `forRun`,
   // paired with the admin client — the ONE composition every driver binds.
   executionFor(runId: string, opts?: BindRunOptions): Promise<ExecutionBinding>;
+  // Read the active or released host inventory without minting a placement.
+  inventoryForRun(runId: string): Promise<SupervisorSessionRecord[]>;
   local(): HostAdminClient;
   preferred(): Promise<HostAdminClient>;
 };
@@ -1521,6 +1523,13 @@ export function createExecutionHosts(
         client,
         admin: adminForRun(runId, transportForExecutionHost(client.host, defaultHostTransport)),
       };
+    },
+    async inventoryForRun(runId) {
+      const previous = await getLatestAssignment(dbOf(), runId);
+
+      return previous
+        ? (await forAssignment(previous)).sessionsForRun()
+        : admin.listSessionsForRun(runId);
     },
     local() {
       return admin;

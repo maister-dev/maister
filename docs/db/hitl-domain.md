@@ -347,4 +347,8 @@ change.
 
 ## Package and agent delivery
 
-An ordinary Flow question belongs to its exact Run, attempt, turn and epoch. [Migration sequence and constraints](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions)
+An ordinary Flow question belongs to its exact Run, attempt, turn and epoch.
+`flow_answer_accepted_at` records the authorized answer. `responded_at` records
+delivery proved by the successor prompt. An undelivered question can close
+with `superseded_at` and empty successor fields. The closing transaction also
+system-closes any active assignment. See the [migration sequence and constraints](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions).

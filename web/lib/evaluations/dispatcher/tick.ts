@@ -387,7 +387,7 @@ async function stopReapedJudgeRun(
   hosts: ExecutionHosts,
 ): Promise<void> {
   try {
-    const live = (await hosts.local().listSessionsForRun(runId)).filter(
+    const live = (await hosts.inventoryForRun(runId)).filter(
       (session) => session.status === "live" && session.runId === runId,
     );
 

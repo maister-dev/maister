@@ -64,7 +64,11 @@ import {
 } from "@/lib/execution-host/runtime-object-response";
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
-import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import {
+  isMaisterError,
+  MaisterError,
+  type MaisterErrorCode,
+} from "@/lib/errors";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceEvidenceObjectSchema, WorkspacePublicationTargetSchema, WorkspacePullRequestStatusSchema, WorkspaceReviewFingerprintSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import {
@@ -843,6 +847,8 @@ function unknownOutcomeError(
 }
 
 function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
+  if (isMaisterError(err) && err.code === "CONFIG") return err;
+
   return unknownOutcomeError(
     err,
     ctx,
@@ -906,6 +912,7 @@ export async function checkSupervisorHealth(
       signal: controller.signal,
     });
   } catch (err) {
+    if (isMaisterError(err) && err.code === "CONFIG") throw err;
     const message = err instanceof Error ? err.message : String(err);
 
     return {
@@ -990,6 +997,7 @@ export async function checkSupervisorDiagnostics(
       signal: controller.signal,
     });
   } catch (err) {
+    if (isMaisterError(err) && err.code === "CONFIG") throw err;
     const message = err instanceof Error ? err.message : String(err);
 
     return {

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type {
+  CatalogAbortReason,
   CatalogPreview,
   CatalogReceipt,
   ReviewFile,
@@ -11,7 +12,14 @@ import type { PinnedCatalogSource } from "./catalog-sources";
 import { isDeepStrictEqual } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, readdir, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+} from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
@@ -36,11 +44,12 @@ import {
   mcpTransportsForAdapter,
 } from "@/lib/acp-runners/adapter-support";
 import { atomicWriteJson, atomicWriteText } from "@/lib/atomic";
+import { isMaisterError } from "@/lib/errors";
 
 type Owner = { workingDir: string; actorId: string; packageId: string };
 type Draft = Pick<Owner, "workingDir" | "packageId">;
 type Change = { path: string; before: string | null; after: string | null };
-type Request = z.infer<typeof applyBody>;
+type Request = Omit<z.infer<typeof applyBody>, "sessionId">;
 const log = pino({
   name: "studio-catalog-operation",
   level: process.env.LOG_LEVEL ?? "info",
@@ -82,6 +91,7 @@ type Journal = {
   kind: PinnedCatalogSource["kind"];
   changes: Change[];
   receipt: CatalogReceipt;
+  abortReason?: CatalogAbortReason;
 };
 function internal(draft: Draft, part: string): string {
   return path.join(
@@ -91,6 +101,11 @@ function internal(draft: Draft, part: string): string {
     part,
   );
 }
+
+export async function removeDeletedDraftCatalog(draft: Draft): Promise<void> {
+  await rm(internal(draft, ""), { recursive: true, force: true });
+}
+
 function originPath(id: string): string {
   return "catalog-origins/" + safeId.parse(id) + ".json";
 }
@@ -105,17 +120,29 @@ async function optionalText(filename: string): Promise<string | null> {
 async function readDraft(draft: Draft, name: string): Promise<string | null> {
   const file = await resolveWithinWorkingDir(draft.workingDir, name);
 
+  return readRegularDraftFile(file, name);
+}
+
+async function readRegularDraftFile(
+  file: string,
+  name: string,
+): Promise<string | null> {
   try {
     const stat = await lstat(file);
 
     if (!stat.isFile() || stat.size > 4 * 1024 * 1024)
       throw new CatalogError(422, "Unsupported draft file: " + name);
+    const bytes = await readFile(file);
+    const content = bytes.toString("utf8");
+
+    if (!Buffer.from(content, "utf8").equals(bytes))
+      throw new CatalogError(422, "Draft file is not UTF-8: " + name);
+
+    return content;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
   }
-
-  return optionalText(file);
 }
 async function draftFileDigests(root: string): Promise<Map<string, string>> {
   const entries = new Map<string, string>();
@@ -412,6 +439,7 @@ export async function previewCatalogImport(
     importId,
     pin: source.pin,
     digest,
+    artifactDigest: source.mcp?.distribution?.artifactDigest ?? null,
     expectedDraftBase: treeDigest(draftIndex),
     affectedRefs: await affectedReferences(
       owner,
@@ -481,81 +509,155 @@ function operationFile(owner: Draft, id: string): string {
   return internal(owner, "operations/" + safeId.parse(id) + ".json");
 }
 
-// Called under the same package-wide lease as cut, save and commit. Roll forward
-// only an authorized journal whose paths still have the reviewed old or new state.
+type InspectedChange = {
+  change: Change;
+  file: string;
+  current: string | null;
+};
+
+async function inspectChange(
+  draft: Draft,
+  root: string,
+  change: Change,
+): Promise<InspectedChange | null> {
+  try {
+    const file = await resolveWithinWorkingDir(draft.workingDir, change.path);
+
+    if (!file.startsWith(root + path.sep)) return null;
+    // A replacement symlink or non-directory is an independent edit, even
+    // when its target inside the working dir contains the exact reviewed bytes.
+    for (
+      let parent = path.dirname(file);
+      parent !== root;
+      parent = path.dirname(parent)
+    ) {
+      try {
+        if (!(await lstat(parent)).isDirectory()) return null;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+
+    return {
+      change,
+      file,
+      current: await readRegularDraftFile(file, change.path),
+    };
+  } catch (error) {
+    if (
+      (error instanceof CatalogError && error.status === 422) ||
+      (isMaisterError(error) && error.code === "PRECONDITION") ||
+      (error as NodeJS.ErrnoException).code === "ENOTDIR"
+    )
+      return null;
+    throw error;
+  }
+}
+
+async function matchesReviewedBase(
+  draft: Draft,
+  journal: Journal,
+): Promise<boolean> {
+  try {
+    return (
+      (await draftDigest(draft.workingDir, journal.changes)) ===
+      journal.expectedDraftBase
+    );
+  } catch (error) {
+    if (error instanceof CatalogError && error.status === 422) return false;
+    throw error;
+  }
+}
+
+// Called under the same package-wide lease as cut, save, commit and assistant
+// apply. The receipt commits the outcome. Before that point an abort compensates
+// only exact journaled bytes and leaves independently changed paths untouched.
 export async function reconcileCatalogApply(draft: Draft): Promise<void> {
   const pendingFile = internal(draft, "pending.json");
   const raw = await optionalText(pendingFile);
 
   if (raw === null) return;
   const journal = JSON.parse(raw) as Journal;
-  const completed = await optionalText(
-    operationFile(draft, journal.receipt.operationId),
-  );
+  const { operationId } = journal.receipt;
+  const receiptFile = operationFile(draft, operationId);
+  const completed = await optionalText(receiptFile);
 
   if (completed !== null) {
-    // The durable applied receipt is the commit point; later policy changes govern new work.
-    const committed = JSON.parse(completed) as { receipt: CatalogReceipt };
-
-    if (committed.receipt.draftDigest !== (await draftDigest(draft.workingDir)))
-      throw new CatalogError(
-        409,
-        "Published catalog receipt differs from the draft",
-      );
     await rm(pendingFile);
 
     return;
   }
-  if (
-    (await draftDigest(draft.workingDir, journal.changes)) !==
-    journal.expectedDraftBase
-  )
-    throw new CatalogError(409, "Draft diverged outside the reviewed import");
-  const approved = isApprovedSource(
-    journal.sourceId,
-    journal.sourceUrl,
-    journal.kind,
-  );
+  const root = await realpath(draft.workingDir);
+  const unchanged: InspectedChange[] = [];
+  const independentPaths: string[] = [];
 
   for (const change of journal.changes) {
-    const current = await readDraft(draft, change.path);
+    const inspected = await inspectChange(draft, root, change);
 
-    if (current !== change.before && current !== change.after)
-      throw new CatalogError(
-        409,
-        "Catalog reconciliation found an independently modified file: " +
-          change.path,
-      );
+    if (
+      inspected &&
+      (inspected.current === change.before ||
+        inspected.current === change.after)
+    )
+      unchanged.push(inspected);
+    else independentPaths.push(change.path);
   }
-  for (const change of journal.changes) {
-    const desired = approved ? change.after : change.before;
-    const file = await resolveWithinWorkingDir(draft.workingDir, change.path);
+  let abortReason = journal.abortReason;
 
+  if (!abortReason) {
+    if (!isApprovedSource(journal.sourceId, journal.sourceUrl, journal.kind))
+      abortReason = "approval_revoked";
+    else if (
+      independentPaths.length > 0 ||
+      !(await matchesReviewedBase(draft, journal))
+    )
+      abortReason = "draft_changed";
+  }
+
+  // Persist the decision before compensation so that another crash or approval
+  // change cannot turn a partially compensated operation into a publish.
+  if (abortReason && !journal.abortReason)
+    await atomicWriteJson(pendingFile, { ...journal, abortReason });
+
+  for (const { change, file, current } of abortReason
+    ? unchanged.reverse()
+    : unchanged) {
+    const desired = abortReason ? change.before : change.after;
+
+    if (current === desired) continue;
     if (desired === null) await rm(file, { force: true });
     else await atomicWriteText(file, desired);
   }
-  if (approved) {
-    const receipt: CatalogReceipt = {
-      ...journal.receipt,
-      state: "applied",
-      draftDigest: await draftDigest(draft.workingDir),
-    };
+  const receipt: CatalogReceipt = abortReason
+    ? { operationId, state: "aborted", reason: abortReason }
+    : {
+        operationId,
+        state: "applied",
+        draftDigest: await draftDigest(draft.workingDir),
+      };
 
-    await atomicWriteJson(operationFile(draft, receipt.operationId), {
-      actorId: journal.actorId,
-      requestDigest: journal.requestDigest,
-      receipt,
-    });
-  }
+  await atomicWriteJson(receiptFile, {
+    actorId: journal.actorId,
+    requestDigest: journal.requestDigest,
+    receipt,
+  });
   await rm(pendingFile);
-  log.info(
-    {
-      packageId: draft.packageId,
-      operationId: journal.receipt.operationId,
-      approved,
-    },
-    "Reconciled catalog apply",
-  );
+  if (abortReason) {
+    log.warn(
+      {
+        packageId: draft.packageId,
+        operationId,
+        abortReason,
+        independentPaths,
+      },
+      "Catalog apply compensated",
+    );
+  } else {
+    log.info(
+      { packageId: draft.packageId, operationId },
+      "Catalog apply reconciled",
+    );
+  }
 }
 
 type StoredOperation = Pick<Journal, "actorId" | "requestDigest" | "receipt">;

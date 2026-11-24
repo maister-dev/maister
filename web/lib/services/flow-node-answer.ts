@@ -53,6 +53,7 @@ async function authorizeResponder(
     throw new MaisterError(
       "UNAUTHORIZED",
       "Question responder is no longer active",
+      { details: { reason: "node_question_responder_revoked" } },
     );
   if (user.role === "admin") return;
   const [member] = await tx
@@ -70,6 +71,7 @@ async function authorizeResponder(
     throw new MaisterError(
       "UNAUTHORIZED",
       "Current project membership cannot answer this question",
+      { details: { reason: "node_question_responder_revoked" } },
     );
 }
 
@@ -113,6 +115,7 @@ function assertQuestionOwner(
     throw new MaisterError(
       "CONFLICT",
       "Question no longer owns the original checkpointed attempt",
+      { details: { reason: "node_question_resume_conflict" } },
     );
 }
 
@@ -335,6 +338,7 @@ export async function authorizeFlowNodeAnswerResume(
     throw new MaisterError(
       "CONFLICT",
       "The parked attempt requires its accepted answer before resumption",
+      { details: { reason: "node_question_resume_conflict" } },
     );
   await assertLatestAttempt(tx, attempt);
   assertQuestionOwner(attempt, question);
@@ -342,16 +346,19 @@ export async function authorizeFlowNodeAnswerResume(
   const proof =
     await tx.execute(sql`SELECT checkpoint.id FROM execution_commands checkpoint
       JOIN execution_assignments prior ON prior.id=checkpoint.execution_assignment_id AND prior.run_id=checkpoint.run_id
+      JOIN execution_hosts host ON host.id=prior.execution_host_id AND host.retired_at IS NULL AND host.readiness='ready'
       JOIN run_session_incarnations inc ON inc.id=${resume.sourceIncarnationId} AND inc.run_id=prior.run_id AND inc.execution_assignment_id=prior.id
       AND inc.host_session_id=checkpoint.target_session_id AND inc.acp_session_id=${resume.resumeSessionId} AND inc.state IN ('checkpointed','exited')
       WHERE checkpoint.id=${resume.checkpointCommandId} AND checkpoint.kind='session.checkpoint' AND checkpoint.state='succeeded'
         AND prior.id=${resume.sourceAssignmentId} AND prior.run_id=${run.id} AND prior.execution_host_id=${assignment.executionHostId}
-        AND prior.state='released' AND prior.released_reason='checkpointed' AND prior.epoch<${assignment.epoch} AND prior.epoch=checkpoint.assignment_epoch`);
+        AND prior.state='released' AND prior.released_reason='checkpointed' AND prior.epoch<${assignment.epoch} AND prior.epoch=checkpoint.assignment_epoch
+      FOR SHARE OF host`);
 
   if (!proof.rows.length)
     throw new MaisterError(
       "CONFLICT",
       "The host has no matching prior checkpoint",
+      { details: { reason: "node_question_checkpoint_unavailable" } },
     );
   await tx
     .update(nodeAttempts)
@@ -397,49 +404,4 @@ export async function currentFlowNodeAnswer(
   await authorizeResponder(tx, run.projectId, question.flowAnswerUserId);
 
   return { question, attempt };
-}
-
-/** An accepted successor prompt is the delivery receipt even when the HTTP or host acknowledgement was lost. */
-export async function observeFlowNodeAnswerDelivery(
-  db: Db,
-  commandId: string,
-): Promise<void> {
-  await db.transaction(async (tx) => {
-    const updated =
-      await tx.execute(sql`UPDATE hitl_requests q SET responded_at=clock_timestamp() FROM execution_commands c, node_attempts n
-    WHERE c.id=${commandId} AND c.kind='session.prompt' AND c.owner_kind='flow_node_attempt' AND c.owner_ref->>'variant'='node'
-    AND c.state IN ('accepted','succeeded') AND c.run_id=q.run_id AND n.run_id=c.run_id
-    AND c.owner_ref->>'nodeAttemptId'=q.flow_node_attempt_id AND q.flow_node_attempt_id=n.id
-    AND c.owner_ref->'promptOrdinal'=to_jsonb((q.schema->'flowQuestion'->>'promptOrdinal')::int+1)
-    AND c.execution_assignment_id=n.execution_assignment_id AND n.action_resume->>'questionId'=q.id
-    AND q.flow_answer_accepted_at IS NOT NULL AND q.superseded_at IS NULL AND q.responded_at IS NULL
-    RETURNING q.id,q.run_id,q.step_id,q.flow_node_attempt_id,c.execution_host_id`);
-    const delivery = updated.rows[0];
-
-    if (!delivery) return;
-    await appendManagerRunStreamEvent(tx, {
-      runId: String(delivery.run_id),
-      sourceKey: `flow-node-question:${delivery.id}:delivered`,
-      event: {
-        type: "hitl.responded",
-        data: {
-          hitlRequestId: delivery.id,
-          nodeId: delivery.step_id,
-          state: "delivered",
-        },
-      },
-    });
-    await notifyNodeQuestionChanged(tx, String(delivery.run_id));
-    log.info(
-      {
-        questionId: delivery.id,
-        runId: delivery.run_id,
-        nodeAttemptId: delivery.flow_node_attempt_id,
-        hostId: delivery.execution_host_id,
-        commandId,
-        state: "delivered",
-      },
-      "Host accepted the answered node prompt",
-    );
-  });
 }

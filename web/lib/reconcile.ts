@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { SQL } from "drizzle-orm";
 import type {
   CrashReason,
   StateTransitionResult,
@@ -24,6 +25,7 @@ import {
   asc,
   desc,
   eq,
+  exists,
   inArray,
   isNotNull,
   isNull,
@@ -42,7 +44,13 @@ import {
 import { cleanupRunMaterializations } from "@/lib/capabilities/cleanup";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
+import {
+  executionAssignments as executionAssignmentRows,
+  executionHosts as executionHostRows,
+  runSessionIncarnations,
+  runs as runRows,
+  RUN_SYNC_TERMINAL_PHASES,
+} from "@/lib/db/schema";
 import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
 import {
   NO_PROMPT_EVIDENCE,
@@ -59,6 +67,7 @@ import { reconcileGraceSeconds } from "@/lib/instance-config";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import { routeCrashRecover } from "@/lib/runs/crash-recover-route";
+import { reconcileClosedFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import {
   isTerminalRunStatus,
   TERMINAL_RUN_STATUSES,
@@ -106,7 +115,6 @@ const log = pino({
 
 const PER_TICK_LIMIT = 100;
 const PER_PASS_CONCURRENCY = 4;
-
 // Server-owned liveness key: a session's (runId, stepId). It no longer backs the
 // in-flight guard — that reads `liveByRun`, because a session's stepId is a label
 // the host rewrites per prompt (see the comment at the guard). Its only remaining
@@ -919,6 +927,7 @@ async function runWithConcurrency<T>(
 async function checkWorkspaceHandles(args: {
   db: Db;
   hosts: ExecutionHosts;
+  assignmentScope?: SQL<boolean>;
 }): Promise<number> {
   let lost = 0;
 
@@ -934,6 +943,7 @@ async function checkWorkspaceHandles(args: {
         and(
           eq(executionAssignments.state, "active"),
           isNotNull(executionAssignments.executionWorkspaceId),
+          args.assignmentScope,
         ),
       )
       .limit(500)) as Array<{
@@ -1078,6 +1088,73 @@ async function reapAbandonedRunSessions(args: {
   });
 
   return reaped;
+}
+
+/** Find remote orphan candidates through the current release and its owned session. */
+async function remoteAbandonedRunSessions(
+  db: ExecutionDb,
+  hosts: ExecutionHosts,
+): Promise<SupervisorSessionRecord[]> {
+  const candidates = await db
+    .select({ runId: runRows.id, assignmentId: executionAssignmentRows.id })
+    .from(runRows)
+    .innerJoin(
+      executionAssignmentRows,
+      eq(runRows.executionAssignmentId, executionAssignmentRows.id),
+    )
+    .innerJoin(
+      executionHostRows,
+      eq(executionAssignmentRows.executionHostId, executionHostRows.id),
+    )
+    .where(
+      and(
+        eq(runRows.status, "Abandoned"),
+        sql`${executionHostRows.transport}->>'role' = 'secondary'`,
+        inArray(executionAssignmentRows.state, ["active", "released"]),
+        exists(
+          db
+            .select({ id: runSessionIncarnations.id })
+            .from(runSessionIncarnations)
+            .where(
+              and(
+                eq(runSessionIncarnations.runId, runRows.id),
+                eq(
+                  runSessionIncarnations.executionAssignmentId,
+                  executionAssignmentRows.id,
+                ),
+                inArray(runSessionIncarnations.state, ["created", "active"]),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(asc(runRows.endedAt), asc(runRows.id))
+    .limit(PER_TICK_LIMIT);
+  const records: SupervisorSessionRecord[] = [];
+
+  await runWithConcurrency(
+    candidates,
+    PER_PASS_CONCURRENCY,
+    async (candidate) => {
+      try {
+        const client = await hosts.forAssignment({
+          id: candidate.assignmentId,
+        });
+
+        records.push(...(await client.sessionsForRun()));
+      } catch (error) {
+        log.warn(
+          {
+            ...candidate,
+            code: isMaisterError(error) ? error.code : undefined,
+          },
+          "reconcile: remote orphan inventory unavailable; left for retry",
+        );
+      }
+    },
+  );
+
+  return records;
 }
 
 // Latest node_attempts.started_at for a run (the grace anchor alongside
@@ -1320,7 +1397,10 @@ async function crashUnownedCli(
   });
 }
 
-async function loadCandidates(db: Db): Promise<CandidateRow[]> {
+async function loadCandidates(
+  db: Db,
+  runScope?: SQL<boolean>,
+): Promise<CandidateRow[]> {
   const retainedSpecialistWait = sql<boolean>`(${runs.status}='NeedsInput' AND ${runs.runKind}='agent'
     AND ${runs.executionAssignmentId} IS NOT NULL
     AND EXISTS(SELECT 1 FROM specialist_run_links link WHERE link.run_id=${runs.id}
@@ -1386,6 +1466,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       .where(
         and(
           eq(runs.projectId, project.id),
+          runScope,
           or(
             inArray(runs.status, ["Running", "WaitingOnChildren"]),
             retainedSpecialistWait,
@@ -1425,6 +1506,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       .where(
         and(
           eq(runs.projectId, project.id),
+          runScope,
           inArray(runs.status, [
             "Pending",
             "Waiting",
@@ -1513,6 +1595,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
     .where(
       and(
         isNull(runs.projectId),
+        runScope,
         or(
           inArray(runs.status, ["Running", "WaitingOnChildren"]),
           retainedSpecialistWait,
@@ -1580,6 +1663,7 @@ async function loadActiveSyncAttemptRunIds(
 }
 
 async function closeTerminalRunAssignments(db: Db): Promise<number> {
+  await reconcileClosedFlowNodeQuestions(db);
   const rows: Array<{ runId: string }> = await db
     .select({ runId: assignments.runId })
     .from(assignments)
@@ -1806,6 +1890,15 @@ export async function runReconcileSweep(
       { err: err instanceof Error ? err.message : String(err) },
       "reconcile: plan-review handoff recovery failed — continuing sweep",
     );
+  }
+
+  try {
+    const { recoverPersistedFlowNodeAnswers } =
+      await import("@/lib/db/flow-node-answer-delivery");
+
+    await recoverPersistedFlowNodeAnswers(db as unknown as ExecutionDb);
+  } catch (error) {
+    log.warn({ err: error }, "Flow node answer receipt recovery unavailable");
   }
 
   try {
