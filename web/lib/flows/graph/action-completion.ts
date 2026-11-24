@@ -35,8 +35,8 @@ export type FlowActionCompletion = Readonly<{
   originalOutput: RawNodeOutputPayload;
 }>;
 
-/** Capture a local action before gates. Its file channel is read once so
- * continuation does not depend on later workspace contents or run it again.
+/** Capture the action before gates. Use sealed host output when it exists,
+ * or read the legacy file once before the attempt can resume.
  */
 export async function persistLocalActionCompletion<
   T extends StepResult,
@@ -50,12 +50,14 @@ export async function persistLocalActionCompletion<
   projectSlug: string;
   attempt: number;
 }): Promise<T> {
-  const originalOutput: RawNodeOutputPayload = input.node.output?.result
-    ? await readCliOutputFile(
-        cliOutputFilePath({ ...input, nodeId: input.node.id }),
-        nodeOutputMaxBytes(),
-      )
-    : { kind: "absent" };
+  const originalOutput: RawNodeOutputPayload =
+    input.result.originalOutput ??
+    (input.node.output?.result
+      ? await readCliOutputFile(
+          cliOutputFilePath({ ...input, nodeId: input.node.id }),
+          nodeOutputMaxBytes(),
+        )
+      : { kind: "absent" });
   const { ok, stdout, vars, errorCode, errorReason, exitCode, acpSessionId } =
     input.result;
   const completion: FlowActionCompletion = {

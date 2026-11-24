@@ -180,8 +180,12 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
   await mkdir(join(root, "flow", "scripts"), { recursive: true });
   await writeFile(
     installedScript,
-    "#!/bin/sh\ntest \"$(cat acp-marker)\" = 'written by addressed ACP' && printf 'from owning host' > graph-marker && cat graph-marker\n",
+    "#!/bin/sh\nset -eu\ntest \"$(cat acp-marker)\" = 'written by addressed ACP'\nprintf 'from owning host' > graph-marker\ncat graph-marker\nprintf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"\n",
     { mode: 0o755 },
+  );
+  await writeFile(
+    join(root, "flow", "result.json"),
+    JSON.stringify({ schemaVersion: 1, fields: [{ name: "verified", type: "boolean", required: true }] }),
   );
   const command = '"$MAISTER_FLOW_DIR/scripts/check.sh"';
   const manifest = {
@@ -203,6 +207,7 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
         id: "work",
         type: "cli",
         action: { command },
+        output: { result: { schema: "./result.json", required: true } },
         pre_finish: {
           gates: [
             {
@@ -318,15 +323,18 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
     parentRepoPath: null,
   });
   expect(await tryStartRun(runId, { db })).toMatchObject({ started: false });
+  const projectEvidence = async (): Promise<void> => {
+    await projectCanonicalRuntimeObjects({ db, runId });
+    await projectExecutionEvents({
+      db,
+      projector: canonicalLifecycleProjector,
+      runId,
+    });
+  };
   const applyCommand = async (commandId: string): Promise<void> => {
     await vi.waitFor(
       async () => {
-        await projectCanonicalRuntimeObjects({ db, runId });
-        await projectExecutionEvents({
-          db,
-          projector: canonicalLifecycleProjector,
-          runId,
-        });
+        await projectEvidence();
         expect(await getCommand(db, commandId)).toMatchObject({
           state: "succeeded",
         });
@@ -379,14 +387,17 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
   const driving = startDriver(AbortSignal.timeout(20_000));
   try {
     for (const declaration of ["node:", "gate:"]) {
-      const queued = await vi.waitFor(() => findDeclaration(declaration), {
-        timeout: 3_000,
+      const queued = await vi.waitFor(async () => {
+        await projectEvidence();
+        return findDeclaration(declaration);
+      }, {
+        timeout: 6_000,
       });
       if (declaration === "node:") expect(queued.id).toBe(commandId);
       await applyCommand(queued.id);
     }
     await vi.waitFor(async () => {
-      await projectCanonicalRuntimeObjects({ db, runId });
+      await projectEvidence();
       expect(
         await db.select({ status: runs.status }).from(runs).where(eq(runs.id, runId)),
       ).toEqual([{ status: "Review" }]);
@@ -396,12 +407,12 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
   }
   expect(
     await db
-      .select({ status: nodeAttempts.status, stdout: nodeAttempts.stdout })
+      .select({ status: nodeAttempts.status, stdout: nodeAttempts.stdout, vars: nodeAttempts.vars })
       .from(nodeAttempts)
       .where(
         and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, "work")),
       ),
-  ).toEqual([{ status: "Succeeded", stdout: "from owning host" }]);
+  ).toMatchObject([{ status: "Succeeded", stdout: "from owning host", vars: { verified: true } }]);
   const [editAttempt] = await db
     .select({
       status: nodeAttempts.status,

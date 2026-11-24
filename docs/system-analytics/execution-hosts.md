@@ -997,7 +997,9 @@ The graph driver uses that attempt ID for the CLI operation and the persisted
 evaluation ID for a command-check gate. A new driver for the same assignment
 can resume either operation with its existing receipt. Web applies the action
 or gate result after the terminal receipt proves process-group retirement and
-its output references resolve to the same Run and assignment. Both operations
+its output references resolve to the same Run and assignment. The graph
+persists the sealed JSON payload when it records action completion, so
+re-entry validates that payload through the declared form schema. Both operations
 address the Git checkout by its retained workspace handle. If a CLI or
 check action references `MAISTER_FLOW_DIR`, admission freezes the installed
 Flow files and executable bits within the input limits. The supervisor

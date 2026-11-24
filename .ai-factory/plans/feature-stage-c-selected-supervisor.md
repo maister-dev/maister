@@ -411,6 +411,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   focused cases across the runs). The in-flight recovery grace and receipt
   application still govern any uncertain delivery.
 
+  Production Chrome on `d5a4a6aed` captured a zero-exit supervisor process
+  group and three sealed output objects after real typecheck and Next build.
+  RED then failed at graph output validation because action completion
+  replaced the host result with an absent Web-side file. GREEN retains
+  the sealed JSON in the graph completion record and drives the verified
+  result through recovery, the gate and Review. Ten integration cases
+  passed, including the existing local output path.
+
 ### C3–C4 — review, board and single-host qualification
 
 - [ ] **T08 · Git / review (after T07 provides sealed evidence and T05H provides owned handles).** Move status/diff/log, mutation detection, Git checkpoint and restore behind the handle. Cover `flows/graph/workspace-checkpoint.ts`, `artifact-content.ts`, board diff readers and human takeover. Scope read authorization to the content returned. Verify dirty and detached states, bounded diff ranges, authorized read and denied cross-project read. Preserve ACP checkpoint separately. Log expected/actual commit and evidence ID.
