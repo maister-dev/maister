@@ -46,7 +46,7 @@ async function privateDirectory(parent: string, name: string): Promise<string> {
   return path;
 }
 
-async function prepareGitWorktree(args: {
+export async function prepareGitWorktree(args: {
   source: string;
   managedRoot: string;
   workspacePath: string;

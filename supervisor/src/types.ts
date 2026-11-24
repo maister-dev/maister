@@ -1456,6 +1456,7 @@ export type SessionRecord = {
   // via hooksConfig — read-only is the mount's whole point) and the prompt
   // preamble. Absent/empty → both are inert.
   contextMounts?: ContextMount[];
+  workspacePackageInstructions?: string;
   runtimeOutputObjectIds?: string[];
   // ADR-157: the mount preamble is rendered onto the FIRST prompt of this
   // session only. A resume rebuilds this record, so a respawn re-grounds.

@@ -367,6 +367,7 @@ import {
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import { captureWorkspaceBundles } from "@/lib/execution-host/workspace-input-capture";
+import { captureAddressedAgentContexts } from "@/lib/context-mounts/addressed-capture";
 import {
   observeSelectedWorkspaceRevision,
   reserveHostWorkspace,
@@ -1894,11 +1895,14 @@ async function launchAgentRunWithAdmission(
   let initialAssignmentId: string | null = null;
   const allocateAndPersist = async (): Promise<boolean> => {
     const workspaceInputs = hostPreparesWorkspace
-      ? await captureWorkspaceBundles(_db as ExecutionDb, {
-          projectId: input.projectId,
-          runId,
-          intentId: acceptedExecution?.intent.id,
-        })
+      ? [
+          ...await captureAddressedAgentContexts(_db as ExecutionDb, input.projectId, input.agentId),
+          ...await captureWorkspaceBundles(_db as ExecutionDb, {
+            projectId: input.projectId,
+            runId,
+            intentId: acceptedExecution?.intent.id,
+          }),
+        ]
       : [];
     let worktreePath: string | null = null;
     let branch: string | null = null;

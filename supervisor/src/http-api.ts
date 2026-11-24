@@ -1661,6 +1661,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     if (chatHitlId) entry.emitter.on(SESSION_EVENT_CHANNEL, chatListener);
     entry.record.readOnlyTurn = body.readOnlyTurn === true;
     const mountPreamble = takeContextMountPreamble(entry.record);
+    const workspacePreamble = entry.record.workspacePackageInstructions;
+    entry.record.workspacePackageInstructions = undefined;
+    const preamble = [mountPreamble, workspacePreamble].filter(Boolean).join("\n\n");
 
     if (mountPreamble) {
       logger.info(
@@ -1686,7 +1689,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           stepId: body.stepId,
           prompt: body.prompt,
           contentBlocks,
-          preamble: mountPreamble ?? undefined,
+          preamble: preamble || undefined,
           isUserCancel: () => entry.record.cancelRequested === true,
           checkpointStopReason: () =>
             entry.intentionalShutdown &&
@@ -2977,11 +2980,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           // ADR-166 D7: cwd, confinement roots, run dir, and mounts all derive
           // from the adopted handle (server state) — the single path-derivation
           // site.
-          const workspace: WorkspaceResolution = workspaces.resolveForSession(
+          const resolvedWorkspace = workspaces.resolveForSession(
             request.executionWorkspaceId,
             { stepId: request.stepId },
           );
-          await verifyWorkspaceSessionInputs(hostState, request.executionWorkspaceId, runtimeRoot);
+          const workspaceInputs = await verifyWorkspaceSessionInputs(
+            hostState, request.executionWorkspaceId, runtimeRoot, request.stepId,
+          );
+          const workspace: WorkspaceResolution = workspaceInputs === undefined
+            ? resolvedWorkspace
+            : { ...resolvedWorkspace, ...workspaceInputs };
           const mcpServers = workspaceSessionMcpServers(
             hostState, request.executionWorkspaceId, request.mcpServers,
           );

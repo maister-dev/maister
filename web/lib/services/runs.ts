@@ -154,6 +154,7 @@ import { localHost, mintPlacement } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import { captureWorkspaceBundles } from "@/lib/execution-host/workspace-input-capture";
+import { captureAddressedFlowContexts } from "@/lib/context-mounts/addressed-capture";
 import {
   observeSelectedWorkspaceRevision,
   reserveHostWorkspace,
@@ -2010,12 +2011,23 @@ async function* executeFlowLaunch(
         );
 
       const workspaceInputs = hostPreparesWorkspace
-        ? await captureWorkspaceBundles(_db as ExecutionDb, {
-            projectId: project.id,
-            runId,
-            intentId: accepted?.intent.id,
-            acceptedBundles: accepted?.settings.capabilityBundles,
-          })
+        ? [
+            ...await captureAddressedFlowContexts(
+              _db as ExecutionDb,
+              Array.from(compiled.nodes.values(), (node) => ({
+                stepId: node.id,
+                repositories: capabilityBearingSettings(node.nodeType, node.settings)
+                  ?.context_repos,
+              })),
+              agentId ? null : ctx.actorUserId,
+            ),
+            ...await captureWorkspaceBundles(_db as ExecutionDb, {
+              projectId: project.id,
+              runId,
+              intentId: accepted?.intent.id,
+              acceptedBundles: accepted?.settings.capabilityBundles,
+            }),
+          ]
         : [];
       await _db.transaction(async (tx: any) => {
         await accepted?.beginBinding(tx);

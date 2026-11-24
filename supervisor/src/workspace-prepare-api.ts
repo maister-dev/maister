@@ -469,6 +469,7 @@ export function registerWorkspacePreparation(args: {
             state,
             objects,
             runtimeRoot,
+            sources,
             assertOwner,
           }),
       });

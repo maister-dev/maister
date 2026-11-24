@@ -186,6 +186,17 @@ retains its receipt and rechecks the saved bytes before ACP creation. Web
 records completion only after the canonical receipt has been applied. A package
 installation replaced after capture cannot substitute different bytes.
 
+For an addressed Flow, Web checks the launching user's `readRepoFiles`
+grant before the supervisor observes each approved sibling ref. An addressed
+Agent uses the active attachment's approved declarations. Web verifies those
+grants again before delivery and session admission. The supervisor checks
+out the captured commit into a private context directory, clears file write
+bits and attaches only the current step's mounts to the ACP write guard.
+The session receives the verified packaged skill paths on its first prompt.
+Adapter processes inherit host plumbing and adapter-specific settings from a
+bounded allow-list. Explicit runner configuration and the run-scoped facade
+credential retain their separate channels.
+
 The manager resolves approved package, skill, instructions, capabilities,
 memory references and mounted context revisions. The supervisor verifies
 the captured digests, stages the inputs in a private directory and publishes

@@ -276,9 +276,23 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   spawn, and replays its original receipt. The recording ACP fixture
   verified the host-local facade command, expected Web origin and
   scoped token fields. The 53 Web and 22 supervisor integration cases
-  cover this boundary and adjacent regressions. Context repositories,
-  adapter-facing package projection, and the actual facade call under
-  current vault authority still require C-07 evidence.
+  cover this boundary and adjacent regressions.
+
+  **C-07 context, package and vault checkpoint.** Separate RED checks
+  found a missing sibling checkout, missing packaged skill instructions
+  on the ACP wire, and an unrelated ambient secret in the adapter child.
+  GREEN with real Git, PostgreSQL, the selected supervisor and local ACP
+  fixtures verified that the branch can advance while the host keeps its
+  pinned sibling commit. Revoking the Flow's sibling membership blocks
+  delivery before any input command. The selected session receives its
+  context with file write bits cleared and the ACP write guard armed, and
+  its first prompt carries the sealed skill path. An actual facade
+  subprocess called the manager's vault route under the bound Run
+  token. The same token received `agent_memory_disabled` after the
+  current attachment changed. The 29 Web and 22 supervisor integration
+  cases, both typechecks and the contract and docs validators passed.
+  Host-side persistence of per-node adapter settings and the main
+  graph driver cutover still require evidence.
 - [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
 
 ### C3–C4 — review, board and single-host qualification

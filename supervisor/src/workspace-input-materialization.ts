@@ -5,6 +5,7 @@ import type {
 } from "../../runtime/workspace-prepare";
 import type { HostState, HostRuntimeObjectRow } from "./host-state";
 import type { RuntimeObjectRegistry } from "./runtime-objects";
+import type { ContextMount } from "./types";
 
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -35,6 +36,11 @@ import {
 
 import { withSqliteFileLock } from "./sqlite-file-lock";
 import { SupervisorError } from "./types";
+import {
+  loadWorkspaceContextMounts,
+  materializeWorkspaceContextInputs,
+  readWorkspaceContextInputs,
+} from "./workspace-context-inputs";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 
@@ -148,11 +154,45 @@ async function retainedInputManifest(
 }
 
 /** Apply the same generation verification at the final local side-effect boundary. */
+type WorkspaceSessionInputs = Readonly<{
+  ownershipKind: "host_owned";
+  contextMounts: ContextMount[];
+  packageInstructions?: string;
+}>;
+
+function packagedSkillInstructions(
+  directory: string,
+  files: InputManifest["files"],
+): string | undefined {
+  const packageSkills = files
+    .flatMap(({ path }) => {
+      const match =
+        /^bundles\/(\d+)\/skills\/([a-z0-9]+(?:-[a-z0-9]+)*)\/SKILL\.md$/.exec(
+          path,
+        );
+
+      return match ? [{ order: Number(match[1]), slug: match[2], path }] : [];
+    })
+    .sort((left, right) => left.order - right.order);
+  const selected = new Map<string, string>();
+
+  for (const { slug, path } of packageSkills)
+    if (!selected.has(slug)) selected.set(slug, path);
+  if (selected.size === 0) return undefined;
+
+  return [
+    "## Packaged skills",
+    `Read packaged instructions from the verified input root ${JSON.stringify(directory)}. Resolve companion files relative to each SKILL.md.`,
+    ...Array.from(selected, ([slug, path]) => `- ${slug}: \`${path}\``),
+  ].join("\n");
+}
+
 export async function verifyWorkspaceSessionInputs(
   state: HostState,
   handle: string,
   runtimeRoot: string,
-): Promise<void> {
+  stepId: string,
+): Promise<WorkspaceSessionInputs | undefined> {
   const retained = state.getWorkspaceExecutionState(handle);
 
   if (!retained?.inputDigest) return;
@@ -167,15 +207,14 @@ export async function verifyWorkspaceSessionInputs(
   try {
     const workspace = state.getWorkspace(handle);
     if (!workspace) throw rejectInput("workspace input owner disappeared");
-    const directory = join(
+    const runDir = join(
       await realpath(runtimeRoot),
       ".maister",
       workspace.projectSlug,
       "runs",
       workspace.runId,
-      "inputs",
-      retained.materializationDigest,
     );
+    const directory = join(runDir, "inputs", retained.materializationDigest);
 
     await canonicalDirectory(directory);
     const manifest = await retainedInputManifest(
@@ -187,6 +226,19 @@ export async function verifyWorkspaceSessionInputs(
         "retained workspace input manifest no longer matches its prepared input identity",
       );
     await verifyPublishedInputs(directory, manifest);
+
+    const contextMounts = await loadWorkspaceContextMounts({
+      runDir,
+      manifestDigest: retained.materializationDigest,
+      contexts: await readWorkspaceContextInputs(directory, manifest.files),
+      stepId,
+    });
+
+    return {
+      ownershipKind: "host_owned",
+      contextMounts,
+      packageInstructions: packagedSkillInstructions(directory, manifest.files),
+    };
   } catch (cause) {
     throw new SupervisorError(
       "PRECONDITION",
@@ -233,9 +285,11 @@ export async function materializeWorkspaceInputs(args: {
   state: HostState;
   objects: RuntimeObjectRegistry;
   runtimeRoot: string;
+  sources: ReadonlyMap<string, string>;
   assertOwner: () => void;
 }): Promise<MaterializedWorkspaceInputs> {
-  const { handle, request, state, objects, runtimeRoot, assertOwner } = args;
+  const { handle, request, state, objects, runtimeRoot, sources, assertOwner } =
+    args;
   const { generation, manifestDigest, objects: references } = request.payload;
   const workspace = state.getWorkspace(handle);
   const retained = state.getWorkspaceExecutionState(handle);
@@ -357,6 +411,14 @@ export async function materializeWorkspaceInputs(args: {
       }
       await verifyPublishedInputs(destination, manifest);
     }
+    await materializeWorkspaceContextInputs({
+      runDir,
+      runtimeRoot: canonicalRoot,
+      manifestDigest,
+      contexts: await readWorkspaceContextInputs(destination, manifest.files),
+      sources,
+      assertOwner,
+    });
     assertOwner();
     state.recordWorkspaceMaterialization(handle, generation, manifestDigest);
 

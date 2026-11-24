@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { EXECUTION_HOST_KEY_HEADER } from "../../../runtime/execution-host-address";
+import { WORKSPACE_CONTEXT_INPUT } from "../../../runtime/workspace-context-input";
 import type {
   PreparedWorkspace,
   WorkspacePrepareInput,
@@ -23,6 +24,7 @@ import type {
 
 import {
   bootHost,
+  completePrompt,
   cleanupRuntimeRoot,
   createBody,
   envelope,
@@ -91,6 +93,16 @@ async function sealInput(
 it("C-07 materializes the exact sealed input manifest under its workspace generation", async () => {
   const root = await mkdtemp(join(tmpdir(), "stage-c-workspace-inputs-"));
   roots.push(root);
+  const contextSource = join(root, "context-source");
+  git(root, "init", "-b", "main", contextSource);
+  await writeFile(join(contextSource, "context.md"), "# pinned context");
+  git(contextSource, "add", "--", "context.md");
+  git(contextSource, "commit", "-m", "context");
+  const contextRevision = git(contextSource, "rev-parse", "HEAD");
+  vi.stubEnv(
+    "MAISTER_WORKSPACE_REPOSITORIES",
+    JSON.stringify({ "sibling-id": contextSource }),
+  );
   const host = await bootHost({
     runtimeRoot: root,
     fixture: "mock-acp-record-newsession.mjs",
@@ -114,12 +126,31 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
   });
   expect(host.registry.list()).toEqual([]);
   const bytes = "# frozen instructions\n";
+  const skillPath = "bundles/0/skills/pinned-skill/SKILL.md";
   const sealed = await sealInput(
     host,
     prepared.owner,
     "capability_instructions",
     bytes,
   );
+  const context = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    JSON.stringify([
+      {
+        stepId: "step-1",
+        repositoryId: "sibling-id",
+        slug: "sibling",
+        ref: "main",
+        declaredRef: null,
+        commit: contextRevision,
+      },
+    ]),
+  );
+  await writeFile(join(contextSource, "context.md"), "# newer context");
+  git(contextSource, "add", "--", "context.md");
+  git(contextSource, "commit", "-m", "advance context");
   const manifest = await sealInput(
     host,
     prepared.owner,
@@ -127,7 +158,10 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
     JSON.stringify({
       version: 1,
       workspaceInputDigest: inputDigest,
-      files: [{ path: "instructions.md", ...sealed }],
+      files: [
+        { path: skillPath, ...sealed },
+        { path: WORKSPACE_CONTEXT_INPUT, ...context },
+      ],
     }),
   );
   const commandId = randomUUID();
@@ -142,7 +176,7 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
     payload: {
       generation,
       manifestDigest: manifest.sha256,
-      objects: [manifest, sealed],
+      objects: [manifest, sealed, context],
     },
   };
   const route = `/v1/workspaces/${handle}/materialization`;
@@ -152,7 +186,7 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
     command: { ...request.command, id: tampered },
     payload: {
       ...request.payload,
-      objects: [manifest, { ...sealed, sha256: "0".repeat(64) }],
+      objects: [manifest, { ...sealed, sha256: "0".repeat(64) }, context],
     },
   };
   expect((await addressedRequest(host, route, tamperedRequest)).status).toBe(
@@ -188,12 +222,7 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
   });
   const workspace = host.hostState.getWorkspace(handle);
   if (!workspace) throw new Error("prepared workspace does not exist");
-  const file = join(
-    workspace.runDir,
-    "inputs",
-    manifest.sha256,
-    "instructions.md",
-  );
+  const file = join(workspace.runDir, "inputs", manifest.sha256, skillPath);
   expect(await readFile(file, "utf8")).toBe(bytes);
   expect((await stat(file)).mode & 0o222).toBe(0);
   const replay = await addressedRequest(host, route, request);
@@ -243,9 +272,11 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
   });
   expect(host.registry.list()).toEqual([]);
   const record = join(root, "newsession-record.json");
+  const recordedPrompt = join(root, "prompt-record.json");
   const configuredFacade = join(root, "fixture-facade");
   vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", configuredFacade);
   vi.stubEnv("MOCK_ACP_NEWSESSION_RECORD_PATH", record);
+  vi.stubEnv("MOCK_ACP_PROMPT_RECORD_PATH", recordedPrompt);
   vi.stubEnv("UNRELATED_MCP_TOKEN", "fixture-private-value");
   const spawned = await postJson(
     host.url + "/sessions",
@@ -253,6 +284,15 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
       "session.create",
       prepared.owner,
       createBody(handle, {
+        executor: {
+          agent: "claude",
+          model: "claude-sonnet-4-6",
+          env: {
+            MOCK_ACP_NEWSESSION_RECORD_PATH: record,
+            MOCK_ACP_PROMPT_RECORD_PATH: recordedPrompt,
+            MOCK_ACP_ENV_PROBE: "UNRELATED_MCP_TOKEN",
+          },
+        },
         mcpServers: [
           {
             name: "maister",
@@ -272,8 +312,29 @@ it("C-07 materializes the exact sealed input manifest under its workspace genera
     ),
   );
   expect(spawned.status).toBe(201);
+  const mounts = host.registry.get(String(spawned.body.sessionId))?.record
+    .contextMounts;
+  expect(mounts).toMatchObject([{ slug: "sibling", commit: contextRevision }]);
+  const mounted = mounts?.[0]?.path;
+  if (!mounted)
+    throw new Error("addressed session did not receive its declared sibling");
+  expect(await readFile(join(mounted, "context.md"), "utf8")).toBe(
+    "# pinned context",
+  );
+  expect((await stat(join(mounted, "context.md"))).mode & 0o222).toBe(0);
+  const prompt = await completePrompt(
+    host,
+    String(spawned.body.sessionId),
+    envelope("session.prompt", prepared.owner, {
+      stepId: "step-1",
+      prompt: "Follow the packaged skill.",
+    }),
+  );
+  expect(prompt.status).toBe(200);
+  expect(await readFile(recordedPrompt, "utf8")).toContain(skillPath);
   expect(JSON.parse(await readFile(record, "utf8"))).toMatchObject({
     cwd: workspace.path,
+    probePresent: false,
     mcpServers: [
       {
         name: "maister",

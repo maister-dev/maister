@@ -2,6 +2,7 @@ import type { HostState } from "./host-state";
 import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { Logger } from "pino";
 import type { WorkspaceResolution } from "./workspace-registry";
+import { workspaceAdapterEnvironment } from "./workspace-adapter-environment";
 import type { Readable } from "node:stream";
 import type { SessionRegistry } from "./registry";
 
@@ -99,6 +100,7 @@ export type ChildEnvRequest = Pick<
 export function buildChildEnv(
   request: ChildEnvRequest,
   opts: {
+    hostEnvironment?: NodeJS.ProcessEnv;
     contextMounts?: ContextMount[];
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
@@ -120,7 +122,7 @@ export function buildChildEnv(
       : {};
 
   return {
-    ...process.env,
+    ...(opts.hostEnvironment ?? process.env),
     ...(request.executor.env ?? {}),
     ...(request.adapterLaunch?.env ?? {}),
     ...(opts.capabilityProfilePath
@@ -192,6 +194,10 @@ export async function spawnSession(
     }
 
     const childEnv = buildChildEnv(request, {
+      hostEnvironment:
+        workspace.ownershipKind === "host_owned"
+          ? workspaceAdapterEnvironment(adapterRuntime.id, process.env)
+          : undefined,
       contextMounts: workspace.contextMounts,
       capabilityProfilePath: opts.runtimeObjectEnv?.capabilityProfilePath,
       capabilityInstructionsPath:
@@ -402,6 +408,7 @@ export async function spawnSession(
       // with the mounts the web tier materialized for this session.
       contextMounts: workspace.contextMounts,
       runtimeOutputObjectIds: opts.runtimeObjectEnv?.outputObjectIds,
+      workspacePackageInstructions: workspace.packageInstructions,
       capabilityDenyCount: 0,
       capabilityPendingWriteIds: new Set<string>(),
       repeatCount: 0,

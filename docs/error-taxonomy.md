@@ -959,3 +959,11 @@ and offers retry. See [agent memory](system-analytics/agent-memory.md#human-cata
 Timeout, stale and autonomous refusal are recorded decisions with typed
 reasons. An uncertain host or provider read preserves the existing deadline
 and grants no delivery authority.
+
+## Addressed workspace input refusals
+
+| Reason | Effect |
+| --- | --- |
+| `workspace_preparation_pending` | Session creation returns `PRECONDITION` and leaves the reserved Run without a child until the selected host's input receipt is applied. |
+| `workspace_input_changed` | The supervisor refuses to spawn when verification of the retained manifest, its files or the authorized context checkout fails. |
+| `workspace_context_authority_required` | Web refuses a context declaration whose launching user or current agent attachment lacks authority. A removed project membership retains the existing `launch_authority_revoked` reason. |

@@ -18,6 +18,8 @@ import * as acp from "@agentclientprotocol/sdk/unstable";
 import { serveAgent } from "./acp-agent-app.mjs";
 
 const RECORD_PATH = process.env.MOCK_ACP_NEWSESSION_RECORD_PATH ?? null;
+const PROMPT_RECORD_PATH = process.env.MOCK_ACP_PROMPT_RECORD_PATH ?? null;
+const ENV_PROBE = process.env.MOCK_ACP_ENV_PROBE ?? null;
 
 class RecordingAgent {
   constructor(connection) {
@@ -35,7 +37,13 @@ class RecordingAgent {
     if (RECORD_PATH) {
       writeFileSync(
         RECORD_PATH,
-        JSON.stringify({ cwd: params.cwd, mcpServers: params.mcpServers }),
+        JSON.stringify({
+          cwd: params.cwd,
+          mcpServers: params.mcpServers,
+          ...(ENV_PROBE
+            ? { probePresent: Object.hasOwn(process.env, ENV_PROBE) }
+            : {}),
+        }),
       );
     }
 
@@ -74,7 +82,9 @@ class RecordingAgent {
     /* no-op */
   }
 
-  async prompt() {
+  async prompt(params) {
+    if (PROMPT_RECORD_PATH)
+      writeFileSync(PROMPT_RECORD_PATH, JSON.stringify(params.prompt));
     return { stopReason: "end_turn" };
   }
 }
@@ -84,10 +94,7 @@ const stream = acp.ndJsonStream(
   Readable.toWeb(process.stdin),
 );
 
-serveAgent(
-  (connToAgent) => new RecordingAgent(connToAgent),
-  stream,
-);
+serveAgent((connToAgent) => new RecordingAgent(connToAgent), stream);
 
 process.on("SIGTERM", () => process.exit(143));
 process.on("SIGINT", () => process.exit(130));

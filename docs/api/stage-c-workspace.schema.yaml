@@ -450,9 +450,27 @@ definitions:
               type: string
               maxLength: 240
               pattern: '^[A-Za-z0-9_.-]{1,128}(/[A-Za-z0-9_.-]{1,128})*$'
-              description: Relative UTF-8 file name. Dot segments, .git and case-folded or prefix collisions are rejected.
+              description: Relative UTF-8 file name. Dot segments, .git, .workspace-inputs.json and case-folded or prefix collisions are rejected. The optional context-repositories.json names frozen sibling contexts and uses WorkspaceContextInputs.
             objectId: { type: string, format: uuid }
             sha256: *a6
+  WorkspaceContextInputs:
+    description: The manager approves each sibling under the current user grant or agent attachment. Paths are resolved on the supervisor after source and SHA verification. At most eight distinct slugs per step.
+    type: array
+    maxItems: 64
+    items:
+      type: object
+      additionalProperties: false
+      required: [ stepId, repositoryId, slug, ref, declaredRef, commit ]
+      properties:
+        stepId: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.-]+$' }
+        repositoryId: *a3
+        slug: { type: string, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+        ref: { type: string, minLength: 1, maxLength: 255 }
+        declaredRef:
+          anyOf:
+            - { type: string, minLength: 1, maxLength: 255 }
+            - { type: 'null' }
+        commit: *a4
   MaterializePayload:
     type: object
     additionalProperties: false

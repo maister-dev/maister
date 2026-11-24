@@ -29,6 +29,8 @@ export type WorkspaceResolution = {
   runDir: string;
   logPath: string;
   contextMounts?: ContextMount[];
+  ownershipKind?: "host_owned";
+  packageInstructions?: string;
 };
 
 export type ResolveForSessionInput = {
