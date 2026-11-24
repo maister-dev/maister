@@ -38,6 +38,13 @@ export async function readProjectDeclarations(
           )) THEN 'setup_failed'
         WHEN coalesce(pi.package_status, fr.package_status, c.package_status) <> 'Installed' THEN 'unresolved'
         WHEN coalesce(pi.trust_status, f.trust_status, c.trust_status) = 'untrusted' THEN 'awaiting_trust'
+        WHEN fr.setup_status = 'pending' OR c.setup_status = 'pending' OR
+          (pi.id IS NOT NULL AND (
+            EXISTS (SELECT 1 FROM flows mf JOIN flow_revisions mr ON mr.id=mf.enabled_revision_id
+              WHERE mf.project_id=d.project_id AND mf.package_install_id=pi.id AND mr.setup_status='pending')
+            OR EXISTS (SELECT 1 FROM capability_imports mc WHERE mc.project_id=d.project_id
+              AND mc.package_install_id=pi.id AND mc.setup_status='pending')
+          )) THEN 'setup_pending'
         ELSE 'installed' END AS readiness
     FROM project_dependency_declarations d
     LEFT JOIN LATERAL (

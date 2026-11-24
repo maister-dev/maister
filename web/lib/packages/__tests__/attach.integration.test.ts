@@ -17,6 +17,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { parse as parseYaml } from "yaml";
+
+import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import { readAndValidateFormSchemaDoc } from "@/lib/config";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -1889,7 +1892,11 @@ describe("package trust fan-out across projects (integration)", () => {
   it("trusting a revision fans to EVERY attached project (platform-wide by design, ADR-088)", async () => {
     const fanDir = await mkdtemp(join(tmpdir(), "attach-fan-"));
 
-    await buildMinimalPackage(fanDir, { name: "fanpkg", flowId: "fan-flow" });
+    await buildMinimalPackage(fanDir, {
+      name: "fanpkg",
+      flowId: "fan-flow",
+      mcpId: "fan-mcp",
+    });
     const p1 = await seedProject("fan-p1");
     const p2 = await seedProject("fan-p2");
     const installed = await installPackageRevision({
@@ -1913,7 +1920,31 @@ describe("package trust fan-out across projects (integration)", () => {
       db,
     });
 
+    const visible = async () =>
+      (
+        await testDatabase.pool.query(
+          "SELECT project_id FROM capability_records WHERE project_id=ANY($1) AND capability_ref_id='fan-mcp' AND selectable AND disabled_at IS NULL ORDER BY project_id",
+          [[p1, p2]],
+        )
+      ).rows.map((row) => row.project_id);
+
+    expect(await visible()).toEqual([]);
+    const consumingFlow = {
+      ...parseYaml(FLOW_YAML("fan-consumer")),
+      mcps: ["fan-mcp"],
+    };
+
+    await expect(
+      assertProjectFlowCapabilities(testDatabase.db, p1, consumingFlow),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "flow_capability_unavailable", ref: "fan-mcp" },
+    });
     await trustPackageRevision({ packageInstallId: installed.id, db });
+    expect(await visible()).toEqual([p1, p2].sort());
+    await expect(
+      assertProjectFlowCapabilities(testDatabase.db, p1, consumingFlow),
+    ).resolves.toBeUndefined();
 
     for (const projectIdN of [p1, p2]) {
       const rows = await db

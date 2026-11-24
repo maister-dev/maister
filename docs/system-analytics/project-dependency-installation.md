@@ -10,11 +10,12 @@ Registration accepts a repository after source preparation and validation. Each 
 
 - A declaration identifies a desired dependency by project, kind and logical manifest ID. Its immutable generation contains its coordinates, ordinal and kind-specific settings. A package pin can be edited before its first successful resolution.
 - An attempt belongs to one declaration generation. It records the authorizing actor, lease, stage, resolved material, outcome and actionable diagnostic. Migrated attachments have an effective revision and no synthetic attempt.
+- Managed local packages, Flows and capabilities derive the content witness and published bytes from one private snapshot. Package and Flow manifests are read from that snapshot. A standalone capability retains its historical path-based revision. A matching cache seal still requires the source-owned files to be present and intact. Generated setup outputs can coexist with those files. Package member attachment, reinstallation and checkpointed recovery verify the entire package root, including unexpected nested files. For pre-witness packages, a local content revision identifies the original bytes; a remote source must resolve to the recorded revision before its members are staged.
 - The effective attachment and its members retain the runtime trust, setup and enablement decisions. Only eligible material may be used for a new run. Existing runs retain their snapshots.
 
 ## States
 
-A worker persists intent before external effects. Only safe, bounded transient failures are requeued automatically.
+A worker persists intent before external effects. Lease renewal, publication and settlement require an unexpired claim measured by the database clock. The worker rechecks the authorizing account after fetch and checks its claim after waiting for the physical cache lock, before publishing staged material. Only safe, bounded transient failures are requeued automatically.
 
 ```mermaid
 stateDiagram-v2
@@ -23,6 +24,7 @@ stateDiagram-v2
     Running --> Succeeded: observe effect
     Running --> Failed: known failure
     Running --> RecoveryRequired: uncertain setup
+    Succeeded --> Pending: trusted material requires setup
     Failed --> Pending: accepted retry or edit
     RecoveryRequired --> Succeeded: matching completion receipt
     RecoveryRequired --> Pending: authorized replay after quiescence
@@ -77,6 +79,21 @@ These acceptance criteria cover registration, dependency realization, recovery a
 An unreachable remote or invalid member manifest fails its declaration. An invalid project manifest still fails registration. A late attempt may update its own history but cannot publish a superseded generation. A known failure supports explicit retry. A lost response to an already accepted retry replays its original receipt. An uncertain setup can be rerun only after checking completion evidence, proving owner quiescence and receiving a fresh authorized recovery decision.
 
 Package edits affect Postgres immediately. Settings → Git previews the desired pins, including unresolved remote pins. Status, preview and publication share the same validation basis. A local commit and any subsequent push have separate confirmation and evidence.
+
+If setup is unfinished after an accepted package trust decision, the response
+identifies the affected project and declaration. Settings retains the decision
+across reload and distinguishes pending execution, known failure and an uncertain
+outcome. A replay reservation belongs to the current generation. Superseding
+or detaching it before dispatch allows another current owner to request
+recovery. A recorded dispatch still requires proof of completion or an
+authorized recovery decision after the previous process stops. Recovery checks
+the original script digest before starting another process.
+
+Admission, bundle capture and worktree preparation use the same effective,
+trusted, setup-ready inputs. An independent Flow can run while a sibling's
+import awaits trust. The sibling's files enter the worktree only after that
+import becomes eligible. A missing declared Flow runner requires a ready
+binding before enabling or launching that Flow.
 
 ## Linked artifacts
 

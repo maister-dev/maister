@@ -7,6 +7,7 @@ import type { ProjectCoordinatorFlowSnapshot } from "./types";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { requireReadyDeclaredFlowRunner } from "@/lib/acp-runners/declared-flow-runner";
 import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import {
   resolveFlowRef,
@@ -112,6 +113,8 @@ export async function loadProjectCoordinatorProvider(
       },
     );
   await assertProjectFlowCapabilities(tx, projectId, stored.manifest);
+  await requireReadyDeclaredFlowRunner(tx, flow.id);
+
   const resultContract = await resolveFlowExportContract({
     flowRefId: flow.flowRefId,
     manifest: stored.manifest,

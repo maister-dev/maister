@@ -26,6 +26,8 @@ import {
   runCapabilityRevisionSetup,
 } from "@/lib/capabilities/import";
 import { getDb } from "@/lib/db/client";
+import { localDirectoryPath } from "@/lib/runtime-file-url";
+import { lockProjectWriteGrant } from "@/lib/project-action-authority";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -53,18 +55,30 @@ import {
   assertPackageMemberOwnership,
   lockDependencyProject,
   recordManualPackage,
+  manualPackageHead,
+  installedPackageCoordinates,
+  assertOperatorPin,
+  type PackageCoordinates,
   removePackageDeclaration,
   type DependencyTransaction,
 } from "@/lib/project-dependencies/package-writes";
 import {
   assertCapabilityMemberOwnership,
+  refreshPackageCapabilityTrust,
   reconcileDependencyCatalog,
 } from "@/lib/project-dependencies/catalog";
 import {
   reconcileProjectFlowLinks,
   validateProjectFlowLink,
 } from "@/lib/project-dependencies/flow-links";
-import { withSetupDatabase } from "@/lib/project-dependencies/setup";
+import { prepareDependencyFlow } from "@/lib/project-dependencies/prepare-flow";
+import {
+  enqueueTrustedSetup,
+  finishTrustedSetup,
+} from "@/lib/project-dependencies/post-trust-store";
+import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
+import { settlePreparedPackageSetups } from "@/lib/project-dependencies/stage-setup";
+import { withSettledSetups } from "@/lib/project-dependencies/setup";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see flows.ts).
 const {
@@ -97,6 +111,65 @@ export type PackageInstallManifest = {
   sourceSubpath?: string;
   contentWitness?: string;
 };
+
+/** Package roots never run setup; their extracted members have separate caches. */
+async function verifyPackageBytes(
+  directory: string,
+  witness: string,
+): Promise<void> {
+  const actual = await localDirectoryContentDigest(
+    directory,
+    new Set([".git"]),
+  ).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") materialConflict();
+    throw error;
+  });
+
+  if (actual !== witness) materialConflict();
+}
+
+export async function verifyCachedPackage(
+  install: PackageMaterial,
+): Promise<boolean> {
+  const witness = manifestOf(install).contentWitness;
+
+  if (witness) {
+    await verifyPackageBytes(install.installedPath, witness);
+
+    return true;
+  }
+  if (localDirectoryPath(install.sourceUrl) === null) return false;
+  // A pre-upgrade local package's revision used the whole original directory.
+  const original = await localDirectoryContentDigest(install.installedPath);
+
+  if (original.slice(0, 40) !== install.resolvedRevision) materialConflict();
+
+  return true;
+}
+
+async function verifyPackageMemberSource(
+  install: PackageMaterial,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (await verifyCachedPackage(install)) return;
+  const original = await resolvePackageSource({
+    source: install.sourceUrl,
+    version: install.versionLabel,
+    path: manifestOf(install).sourceSubpath,
+    signal,
+  });
+
+  try {
+    if (original.resolvedRevision !== install.resolvedRevision)
+      materialConflict();
+    await verifyPackageBytes(
+      install.installedPath,
+      await localDirectoryContentDigest(original.pkgRoot, new Set([".git"])),
+    );
+  } finally {
+    await original.cleanup();
+  }
+}
 
 function packageCachePath(name: string, resolvedRevision: string): string {
   // `name` is capabilityRefId-shaped (validated at manifest load); the
@@ -251,6 +324,7 @@ export async function installPackageRevision(opts: {
   sourceLocalPackageId?: string;
   sourceCommitSha?: string;
   onResolve?: (revision: string) => Promise<void>;
+  authorizePublication?: (tx: Db) => Promise<void>;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
@@ -304,6 +378,9 @@ export async function installPackageRevision(opts: {
     const witness = await hashMaterial(resolved.pkgRoot);
     const cachePath = packageCachePath(name, resolved.resolvedRevision);
     const installed = await database.transaction(async (db: any) => {
+      const beforePublish = () => opts.authorizePublication?.(db);
+
+      await beforePublish();
       await db.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${cachePath}, 0))`,
       );
@@ -347,10 +424,29 @@ export async function installPackageRevision(opts: {
         const existingManifest = manifestOf(existing);
         const resolvedSchemaDir = join(resolved.pkgRoot, "schemas");
 
-        // Older installed package revisions predate package-root schema
-        // materialization. Re-enter each immutable member install against the
-        // freshly resolved source, then restore the package cache's shared
-        // schemas before callers reuse the package revision.
+        // Repair shared schemas from the resolved source, then verify the entire
+        // package before any member is read from the installed directory.
+        await beforePublish();
+        await repairPackageRootSchemaCache({
+          sourceSchemaDir: resolvedSchemaDir,
+          cachedSchemaDir: join(existing.installedPath, "schemas"),
+        });
+        await verifyPackageBytes(existing.installedPath, witness);
+        await publishMaterial({
+          beforePublish,
+          revision: resolved.resolvedRevision,
+          source: resolved.pkgRoot,
+          target: cachePath,
+          digest: witness,
+          hash: hashMaterial,
+          hasHistoricalOwner: async () => true,
+        });
+        if (!existingManifest.contentWitness) {
+          await db
+            .update(packageInstalls)
+            .set({ manifest: { ...existingManifest, contentWitness: witness } })
+            .where(eq(packageInstalls.id, existing.id));
+        }
         for (const flow of existingManifest.spec.flows) {
           await installRevision({
             source: join(existing.installedPath, flow.path),
@@ -361,13 +457,9 @@ export async function installPackageRevision(opts: {
             resultProfiles: existingManifest.spec.result_profiles,
             db,
             signal: opts.signal,
+            authorizePublication: opts.authorizePublication,
           });
         }
-        await repairPackageRootSchemaCache({
-          sourceSchemaDir: resolvedSchemaDir,
-          cachedSchemaDir: join(existing.installedPath, "schemas"),
-        });
-
         log.info(
           {
             id: existing.id,
@@ -383,7 +475,7 @@ export async function installPackageRevision(opts: {
           versionLabel: existing.versionLabel,
           resolvedRevision: existing.resolvedRevision,
           reused: true,
-          manifest: manifestOf(existing),
+          manifest: { ...existingManifest, contentWitness: witness },
         };
       }
 
@@ -432,6 +524,7 @@ export async function installPackageRevision(opts: {
       }
 
       await publishMaterial({
+        beforePublish,
         revision: resolved.resolvedRevision,
         source: resolved.pkgRoot,
         target: cachePath,
@@ -451,6 +544,7 @@ export async function installPackageRevision(opts: {
           resultProfiles: resolved.manifest.result_profiles,
           db,
           signal: opts.signal,
+          authorizePublication: opts.authorizePublication,
         });
       }
 
@@ -490,8 +584,16 @@ export async function installPackageRevision(opts: {
       };
     });
 
-    if (!installed.reused)
-      await projectInstalledMembers(installed.id, name, database);
+    if (!installed.reused) {
+      if (opts.authorizePublication) {
+        const authorize = opts.authorizePublication;
+
+        await database.transaction(async (tx: Db) => {
+          await authorize(tx);
+          await projectInstalledMembers(installed.id, name, tx);
+        });
+      } else await projectInstalledMembers(installed.id, name, database);
+    }
 
     return installed;
   } catch (err) {
@@ -720,6 +822,14 @@ async function writeIngestionRecords(
     );
   }
 
+  const usable =
+    install.packageStatus === "Installed" &&
+    ["trusted", "trusted_by_policy"].includes(install.trustStatus);
+  const eligibility = {
+    selectable: usable,
+    disabledAt: usable ? null : new Date(),
+  };
+
   for (const record of records) {
     await tx
       .insert(capabilityRecords)
@@ -735,9 +845,8 @@ async function writeIngestionRecords(
         agents: ["claude", "codex", "gemini", "opencode", "mimo"],
         enforceability: "instructed",
         selectedByDefault: true,
-        selectable: true,
+        ...eligibility,
         material: record.material,
-        disabledAt: null,
         updatedAt: new Date(),
       })
       .onConflictDoUpdate({
@@ -752,8 +861,7 @@ async function writeIngestionRecords(
           version: install.versionLabel,
           revision: install.resolvedRevision,
           material: record.material,
-          selectable: true,
-          disabledAt: null,
+          ...eligibility,
           updatedAt: new Date(),
         },
       });
@@ -789,7 +897,7 @@ async function deleteIngestionRecords(
 }
 
 type PackageMaterial = typeof schemaModule.packageInstalls.$inferSelect;
-type PreparedMembers = {
+export type PreparedMembers = {
   flows: ReadonlyMap<string, InstalledRevision>;
   capabilities: ReadonlyMap<string, PreparedCapability>;
 };
@@ -808,9 +916,13 @@ export async function preparePackageMembers(
   projectId: string,
   install: PackageMaterial,
   roleRefs: readonly string[] | undefined,
-  signal: AbortSignal,
+  signal: AbortSignal | undefined,
+  authorizePublication: (tx: Db) => Promise<void>,
 ): Promise<PreparedMembers> {
   const spec = manifestOf(install).spec;
+
+  if (spec.flows.length || spec.capabilities.length)
+    await verifyPackageMemberSource(install, signal);
   const flows = new Map<string, InstalledRevision>();
   const capabilities = new Map<string, PreparedCapability>();
 
@@ -825,6 +937,7 @@ export async function preparePackageMembers(
         resultProfiles: spec.result_profiles,
         db,
         signal,
+        authorizePublication,
       }),
     );
   }
@@ -837,6 +950,7 @@ export async function preparePackageMembers(
         projectId,
         db,
         signal,
+        authorizePublication,
       }),
     );
   }
@@ -886,6 +1000,7 @@ async function wireMembers(
       opts.install.trustStatus,
     );
 
+    await prepareDependencyFlow(tx, opts.projectId, result);
     memberFlows.push(result);
   }
 
@@ -975,7 +1090,13 @@ export type AttachResult = {
 // imports + MCP/restriction ingestion + the attachment + group FK links.
 // The project link is reconciled from committed state. Reviewed Git export
 // reads the declaration independently of the effective attachment.
+type PackageActorGrant = {
+  userId: string;
+  action: "managePackages" | "manageLocalPackages";
+};
+
 type AttachPackageOptions = {
+  actorGrant?: PackageActorGrant;
   preparedMembers?: PreparedMembers;
   projectId: string;
   projectSlug: string;
@@ -993,22 +1114,162 @@ type RecordAttachment = (
   install: Parameters<typeof recordManualPackage>[3],
 ) => Promise<void>;
 
-async function applyManualPackageMutation<T>(
-  db: ReturnType<typeof getDb>,
-  target: { projectId: string; workspaceRoot?: string },
-  mutate: (tx: DependencyTransaction) => Promise<T>,
-): Promise<T> {
-  const result = await withSetupDatabase(db, () =>
-    db.transaction(async (tx) => {
-      const result = await mutate(tx);
+/** Capture the available attachment and the declaration that this manual command
+ * would adopt. Recheck both before each physical dispatch and final publication. */
+export async function prepareManualPackageMutation(
+  db: Db,
+  opts: AttachPackageOptions & { attachmentId?: string },
+  requestedPin?: PackageCoordinates,
+) {
+  const [install] = await db
+    .select()
+    .from(schemaModule.packageInstalls)
+    .where(eq(schemaModule.packageInstalls.id, opts.packageInstallId));
 
-      if (result) await reconcileDependencyCatalog(tx, target.projectId);
+  if (!install) return null;
+  if (install.packageStatus !== "Installed")
+    throw new MaisterError(
+      "PRECONDITION",
+      `package install ${install.id} is ${install.packageStatus}, not Installed`,
+    );
+  const spec = manifestOf(install).spec;
+  const coordinates =
+    requestedPin ??
+    installedPackageCoordinates({ ...install, manifest: manifestOf(install) });
+  const read = async (tx: Db) => {
+    await lockDependencyProject(tx, opts.projectId);
+    const grant = opts.actorGrant;
+
+    if (
+      grant &&
+      !(await lockProjectWriteGrant(tx, opts.projectId, grant.userId, [
+        grant.action,
+      ]))
+    )
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Current package management permission is required.",
+        {
+          details: { reason: "authority_revoked" },
+        },
+      );
+    const [attachment] = await tx
+      .select()
+      .from(schemaModule.projectPackageAttachments)
+      .where(
+        and(
+          eq(schemaModule.projectPackageAttachments.projectId, opts.projectId),
+          opts.attachmentId
+            ? eq(schemaModule.projectPackageAttachments.id, opts.attachmentId)
+            : eq(
+                schemaModule.projectPackageAttachments.packageName,
+                install.name,
+              ),
+        ),
+      );
+
+    if (attachment && attachment.packageName !== install.name)
+      throw new MaisterError(
+        "PRECONDITION",
+        `install ${install.id} is package "${install.name}", attachment is "${attachment.packageName}"`,
+      );
+    if (attachment && !opts.attachmentId)
+      throw new MaisterError(
+        "CONFLICT",
+        `package name "${install.name}" is already attached to this project — rename the fork to attach it beside the upstream`,
+        {
+          details: { reason: "package_name_taken", packageName: install.name },
+        },
+      );
+    const head = await manualPackageHead(
+      tx,
+      opts.projectId,
+      attachment?.id ?? null,
+      install.name,
+      coordinates,
+    );
+
+    if (requestedPin) assertOperatorPin(head?.desired, requestedPin);
+
+    return { attachment, head };
+  };
+  const expected = await db.transaction(read);
+
+  if (opts.attachmentId && !expected.attachment) return null;
+  const assertCurrent = async (tx: Db) => {
+    const { attachment, head } = await read(tx);
+
+    if (
+      head?.id !== expected.head?.id ||
+      head?.generation !== expected.head?.generation ||
+      attachment?.id !== expected.attachment?.id ||
+      attachment?.packageInstallId !== expected.attachment?.packageInstallId
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The package declaration or attachment changed during material preparation.",
+        { details: { reason: "stale_generation" } },
+      );
+    await assertPackageMemberOwnership(
+      tx,
+      opts.projectId,
+      spec.flows.map((flow) => flow.id),
+      attachment?.packageInstallId,
+    );
+    await assertCapabilityMemberOwnership(
+      tx,
+      opts.projectId,
+      spec.capabilities.map((cap) => cap.id),
+      attachment?.packageInstallId,
+    );
+
+    return head;
+  };
+  const members = await preparePackageMembers(
+    db,
+    opts.projectId,
+    install,
+    opts.roleRefs,
+    opts.signal,
+    async (tx) => {
+      await assertCurrent(tx);
+    },
+  );
+
+  if (install.trustStatus !== "untrusted")
+    await settlePreparedPackageSetups(
+      db,
+      members,
+      async (tx) => {
+        await assertCurrent(tx);
+        await requireParentPackageTrust(tx, install.id);
+      },
+      opts.signal,
+    );
+
+  return { members, assertCurrent };
+}
+
+async function applyManualPackageMutation<T>(
+  opts: AttachPackageOptions & { attachmentId?: string },
+  mutate: (tx: DependencyTransaction, members: PreparedMembers) => Promise<T>,
+): Promise<T | null> {
+  const db: ReturnType<typeof getDb> = opts.db ?? getDb();
+  const staged = await prepareManualPackageMutation(db, opts);
+
+  if (!staged) return null;
+  const result = await withSettledSetups(() =>
+    db.transaction(async (tx) => {
+      await staged.assertCurrent(tx);
+      const result = await mutate(tx, staged.members);
+
+      if (result) await reconcileDependencyCatalog(tx, opts.projectId);
 
       return result;
     }),
   );
 
-  if (result) await reconcileProjectFlowLinks(db, target);
+  if (result) await reconcileProjectFlowLinks(db, opts);
 
   return result;
 }
@@ -1016,9 +1277,11 @@ async function applyManualPackageMutation<T>(
 export function attachPackage(
   opts: AttachPackageOptions,
 ): Promise<AttachResult | null> {
-  return applyManualPackageMutation(opts.db ?? getDb(), opts, (tx) =>
-    workerAttachPackage({ ...opts, db: tx }, (tx, attachmentId, install) =>
-      recordManualPackage(tx, opts.projectId, attachmentId, install),
+  return applyManualPackageMutation(opts, (tx, preparedMembers) =>
+    workerAttachPackage(
+      { ...opts, db: tx, preparedMembers },
+      (connection, id, install) =>
+        recordManualPackage(connection, opts.projectId, id, install),
     ),
   );
 }
@@ -1325,6 +1588,7 @@ export async function detachPackage(opts: {
 // name in one transaction. In-flight runs keep their pinned revisions; flows
 // removed from the new manifest lose their enablement rows.
 type UpgradeAttachmentOptions = {
+  actorGrant?: PackageActorGrant;
   preparedMembers?: PreparedMembers;
   roleRefs?: readonly string[];
   projectId: string;
@@ -1340,9 +1604,11 @@ type UpgradeAttachmentOptions = {
 export function upgradeAttachment(
   opts: UpgradeAttachmentOptions,
 ): Promise<{ upgraded: boolean } | null> {
-  return applyManualPackageMutation(opts.db ?? getDb(), opts, (tx) =>
-    workerUpgradeAttachment({ ...opts, db: tx }, (tx, attachmentId, install) =>
-      recordManualPackage(tx, opts.projectId, attachmentId, install),
+  return applyManualPackageMutation(opts, (tx, preparedMembers) =>
+    workerUpgradeAttachment(
+      { ...opts, db: tx, preparedMembers },
+      (tx, attachmentId, install) =>
+        recordManualPackage(tx, opts.projectId, attachmentId, install),
     ),
   );
 }
@@ -1502,6 +1768,7 @@ export async function workerUpgradeAttachment(
 // trust onto EVERY member row; pending setups run AFTER the commit.
 export async function trustPackageRevision(opts: {
   packageInstallId: string;
+  actorUserId?: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
@@ -1517,7 +1784,7 @@ export async function trustPackageRevision(opts: {
   const manifest = manifestOf(install);
   const flowIds = manifest.spec.flows.map((f) => f.id);
 
-  await db.transaction(async (tx: any) => {
+  const queued = await db.transaction(async (tx: any) => {
     await tx
       .update(packageInstalls)
       .set({ trustStatus: "trusted", updatedAt: new Date() })
@@ -1544,21 +1811,50 @@ export async function trustPackageRevision(opts: {
       .update(capabilityImports)
       .set({ trustStatus: "trusted", updatedAt: new Date() })
       .where(eq(capabilityImports.packageInstallId, install.id));
+    await refreshPackageCapabilityTrust(tx, install.id);
+
+    return enqueueTrustedSetup(tx, opts.actorUserId, {
+      kind: "package",
+      id: install.id,
+    });
   });
 
+  await finishTrustedSetup(db, queued, opts.signal);
+  await settleTrustedPackageSetup(db, install, opts.signal);
+
+  return { trusted: true };
+}
+
+export async function settleTrustedPackageSetup(
+  db: Db,
+  install: typeof packageInstalls.$inferSelect,
+  signal?: AbortSignal,
+  projectId?: string,
+): Promise<void> {
+  const flowIds = manifestOf(install).spec.flows.map((f) => f.id);
   // Post-trust setup (AFTER the tx): member bundles first, then member flow
   // revisions with pending setup.
   const capRows = await db
-    .select()
+    .select({
+      id: schemaModule.capabilityImports.id,
+      projectId: schemaModule.capabilityImports.projectId,
+      capabilityRefId: schemaModule.capabilityImports.capabilityRefId,
+      setupStatus: schemaModule.capabilityImports.setupStatus,
+    })
     .from(capabilityImports)
-    .where(eq(capabilityImports.packageInstallId, install.id));
+    .where(
+      and(
+        eq(capabilityImports.packageInstallId, install.id),
+        projectId ? eq(capabilityImports.projectId, projectId) : undefined,
+      ),
+    );
 
   for (const row of capRows) {
     if (row.setupStatus === "pending" || row.setupStatus === "failed") {
       const outcome = await runCapabilityRevisionSetup({
         importRowId: row.id,
         db,
-        signal: opts.signal,
+        signal,
       });
 
       if (outcome.setupStatus === "failed") {
@@ -1591,6 +1887,10 @@ export async function trustPackageRevision(opts: {
         and(
           eq(flowRevisions.resolvedRevision, install.resolvedRevision),
           inArray(flowRevisions.flowRefId, flowIds),
+          projectId
+            ? sql`EXISTS (SELECT 1 FROM flows mf WHERE mf.enabled_revision_id=${flowRevisions.id}
+            AND mf.project_id=${projectId} AND mf.package_install_id=${install.id})`
+            : undefined,
         ),
       );
 
@@ -1604,7 +1904,7 @@ export async function trustPackageRevision(opts: {
             revisionId: rev.id,
             installedPath: rev.installedPath,
             db,
-            signal: opts.signal,
+            signal,
           })
         : rev.setupStatus;
 
@@ -1635,6 +1935,7 @@ export async function trustPackageRevision(opts: {
         .where(
           and(
             eq(flows.packageInstallId, install.id),
+            projectId ? eq(flows.projectId, projectId) : undefined,
             eq(flows.trustStatus, "trusted"),
             eq(flows.enablementState, "Installed"),
             inArray(flows.enabledRevisionId, readyRevisionIds),
@@ -1658,6 +1959,4 @@ export async function trustPackageRevision(opts: {
     { packageInstallId: install.id, flows: flowIds.length },
     "package revision trusted (fan-out complete)",
   );
-
-  return { trusted: true };
 }

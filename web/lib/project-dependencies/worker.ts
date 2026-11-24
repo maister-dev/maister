@@ -10,10 +10,12 @@ import pino from "pino";
 
 import {
   claimDependency,
-  sameClaim,
+  liveDependencyClaim,
+  nextDependencyLease,
   requireCurrentDependency,
   dependencyLeaseMs,
 } from "./claims";
+import { executeTrustedSetup } from "./post-trust";
 import { executeDependency } from "./executor";
 import { withDependencySetupContext } from "./setup";
 
@@ -33,8 +35,9 @@ type DependencyStage =
 export async function serviceDependency(
   db: Db,
   signal: AbortSignal,
+  attemptId?: string,
 ): Promise<boolean> {
-  const claim = await claimDependency(db);
+  const claim = await claimDependency(db, attemptId);
 
   if (!claim) return false;
   const logger = log.child({
@@ -65,9 +68,9 @@ export async function serviceDependency(
         ...update,
         stage,
         updatedAt: new Date(),
-        leaseExpiresAt: new Date(Date.now() + dependencyLeaseMs),
+        leaseExpiresAt: nextDependencyLease,
       })
-      .where(sameClaim(claim))
+      .where(liveDependencyClaim(claim))
       .returning({ id: attempts.id });
 
     if (!owned)
@@ -78,8 +81,8 @@ export async function serviceDependency(
   const renewal = setInterval(() => {
     void db
       .update(attempts)
-      .set({ leaseExpiresAt: new Date(Date.now() + dependencyLeaseMs) })
-      .where(sameClaim(claim))
+      .set({ leaseExpiresAt: nextDependencyLease })
+      .where(liveDependencyClaim(claim))
       .returning({ id: attempts.id })
       .then((rows) => {
         if (!rows.length) cancellation.abort();
@@ -104,16 +107,21 @@ export async function serviceDependency(
         },
       },
       () =>
-        executeDependency({
-          db,
-          claim,
-          project,
-          declaration,
-          signal: combined,
-          progress,
-        }),
+        claim.checkpoint.postTrust
+          ? executeTrustedSetup(db, claim, claim.checkpoint.postTrust, combined)
+          : executeDependency({
+              db,
+              claim,
+              project,
+              declaration,
+              signal: combined,
+              authorizePublication: async (tx) => {
+                await requireCurrentDependency(tx, claim);
+              },
+              progress,
+            }),
     );
-    await db
+    const [completed] = await db
       .update(attempts)
       .set({
         status: "succeeded",
@@ -122,8 +130,10 @@ export async function serviceDependency(
         leaseExpiresAt: null,
         updatedAt: new Date(),
       })
-      .where(sameClaim(claim));
-    logger.info({ stage }, "dependency attempt succeeded");
+      .where(liveDependencyClaim(claim))
+      .returning({ id: attempts.id });
+
+    if (completed) logger.info({ stage }, "dependency attempt succeeded");
   } catch (error) {
     const raw = isMaisterError(error) ? error.details?.reason : undefined;
     const reason =
@@ -175,7 +185,7 @@ export async function serviceDependency(
         ),
         checkpoint: sql`coalesce(${attempts.checkpoint}, '{}'::jsonb) || jsonb_build_object('retryCount', ${retryCount + Number(transient && !combined.aborted)}::int)`,
       })
-      .where(sameClaim(claim));
+      .where(liveDependencyClaim(claim));
     logger.warn(
       {
         stage,

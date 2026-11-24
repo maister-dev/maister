@@ -131,8 +131,12 @@ export async function authorizeManagePackages(slug: string): Promise<{
 // managePackages is implied for global admins but NOT sufficient on its own.
 export async function authorizePackageTrust(
   slug: string,
-): Promise<{ project: Record<string, any>; db: Db }> {
-  await requireGlobalRole("admin");
+): Promise<{
+  project: Record<string, any>;
+  db: Db;
+  user: Awaited<ReturnType<typeof requireGlobalRole>>;
+}> {
+  const user = await requireGlobalRole("admin");
 
-  return resolveProjectBySlug(slug);
+  return { ...(await resolveProjectBySlug(slug)), user };
 }

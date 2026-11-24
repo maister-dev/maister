@@ -64,6 +64,10 @@ beforeAll(async () => {
     databaseName: "pkg_routes_test",
   });
   db = testDatabase.db;
+  await db
+    .update(schemaModule.users)
+    .set({ mustChangePassword: false })
+    .where(eq(schemaModule.users.id, "usr_bootstrap_admin"));
 
   homeDir = await mkdtemp(join(tmpdir(), "pkg-routes-home-"));
   workspaceRoot = await mkdtemp(join(tmpdir(), "pkg-routes-ws-"));

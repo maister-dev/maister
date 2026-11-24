@@ -1,10 +1,11 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { PreparedMembers } from "@/lib/packages/attach";
 import type { InstalledRevision } from "@/lib/flows";
 import type { PreparedCapability } from "@/lib/capabilities/import";
 
-import { runMaterialSetup } from "./setup";
+import { runMaterialSetup, withSetupAuthority } from "./setup";
 
 import { requiresExplicitNativeFindingsEnablement } from "@/lib/flows/enablement-states";
 import { MaisterError } from "@/lib/errors";
@@ -22,7 +23,7 @@ export async function stageFlowSetup(
   db: Db,
   revision: InstalledRevision,
   memberRef: string,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (
     revision.setupStatus !== "pending" ||
@@ -45,7 +46,7 @@ export async function stageCapabilitySetup(
   db: Db,
   material: PreparedCapability,
   memberRef: string,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!material.hasSetup) return;
   await settle(
@@ -59,4 +60,18 @@ export async function stageCapabilitySetup(
     },
     memberRef,
   );
+}
+
+export function settlePreparedPackageSetups(
+  db: Db,
+  members: PreparedMembers,
+  authorize: (tx: Db) => Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> {
+  return withSetupAuthority(db, authorize, async () => {
+    for (const [ref, flow] of members.flows)
+      await stageFlowSetup(db, flow, ref, signal);
+    for (const [ref, cap] of members.capabilities)
+      await stageCapabilitySetup(db, cap, ref, signal);
+  });
 }

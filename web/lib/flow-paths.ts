@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { assertDependencySource } from "@/lib/project-dependencies/source";
 import { MaisterError } from "@/lib/errors";
 
 /** Reserved runtime namespace; project slug validation excludes this identity. */
@@ -52,11 +53,25 @@ export const projectSlugSchema = z
 export const sourceUrlSchema = z
   .string()
   .min(1)
-  .max(2048)
-  .regex(
-    /^[A-Za-z0-9._+\-/:@~]+$/,
-    "source must contain only [A-Za-z0-9._+-/:@~]",
-  );
+  .max(4096)
+  .refine((source) => {
+    // Direct Flow installation also accepts the historical host/path shorthand.
+    if (
+      !source.startsWith("/") &&
+      !source.includes("://") &&
+      !source.includes("@")
+    )
+      return /^[A-Za-z0-9._+\-/:~]+$/.test(source);
+    try {
+      assertDependencySource(source);
+
+      return true;
+    } catch (error) {
+      if (error instanceof MaisterError && error.code === "CONFIG")
+        return false;
+      throw error;
+    }
+  }, "source must be a valid local directory or Git coordinate");
 
 export const workspaceRootSchema = z
   .string()

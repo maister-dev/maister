@@ -9,10 +9,15 @@ import { pathToFileURL } from "node:url";
 import { and, eq, ne } from "drizzle-orm";
 import pino from "pino";
 
+import { requireReadyDeclaredFlowRunner } from "@/lib/acp-runners/declared-flow-runner";
 import {
   parseAgentDefinition,
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
+import {
+  enqueueTrustedSetup,
+  finishTrustedSetup,
+} from "@/lib/project-dependencies/post-trust-store";
 import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
 import { getDb } from "@/lib/db/client";
 import { hasCompanyCoordinatorFlowReference } from "@/lib/agents/company-binding-references";
@@ -257,7 +262,7 @@ export async function enableRevision(args: {
   revisionId: string;
   db?: Db;
   /** HTTP callers authorize executable trust or deferred setup at this revision. */
-  authorizeExecution?: () => Promise<unknown>;
+  authorizeExecution?: () => Promise<{ id: string }>;
 }): Promise<void> {
   const db = args.db ?? getDb();
   const flow = await loadFlow(db, args.projectId, args.flowRefId);
@@ -269,15 +274,40 @@ export async function enableRevision(args: {
   );
 
   const manifest = assertEnableable(flow, rev);
+
   await requireParentPackageTrust(db, flow.packageInstallId);
-  if (rev.execTrust !== "trusted" || rev.setupStatus === "pending") {
-    await args.authorizeExecution?.();
-  }
+
+  const actor =
+    rev.execTrust !== "trusted" || rev.setupStatus === "pending"
+      ? await args.authorizeExecution?.()
+      : undefined;
 
   // Trust is now confirmed (flow.trustStatus != untrusted via assertEnableable).
   // Run the deferred setup.sh for an untrusted-then-trusted revision before
   // enabling. A setup failure marks the revision Failed and refuses enable.
   if (rev.setupStatus === "pending") {
+    await requireReadyDeclaredFlowRunner(db, flow.id);
+    if (actor && flow.enabledRevisionId === rev.id) {
+      const queued = await db.transaction(async (tx: Db) => {
+        await requireReadyDeclaredFlowRunner(tx, flow.id);
+        const attempts = await enqueueTrustedSetup(
+          tx,
+          actor.id,
+          { kind: "flow", id: rev.id },
+          args.projectId,
+        );
+
+        if (attempts.length)
+          await tx
+            .update(flowRevisions)
+            .set({ execTrust: "trusted" })
+            .where(eq(flowRevisions.id, rev.id));
+
+        return attempts;
+      });
+
+      await finishTrustedSetup(db, queued);
+    }
     const setupStatus = await runRevisionSetup({
       db,
       revisionId: rev.id,
@@ -311,6 +341,7 @@ export async function enableRevision(args: {
       );
     }
 
+    await requireReadyDeclaredFlowRunner(tx, flow.id);
     await tx
       .update(flows)
       .set({
@@ -355,7 +386,7 @@ export async function rollbackFlow(args: {
   revisionId: string;
   db?: Db;
   /** HTTP callers authorize executable trust or deferred setup at this revision. */
-  authorizeExecution?: () => Promise<unknown>;
+  authorizeExecution?: () => Promise<{ id: string }>;
 }): Promise<void> {
   log.info(
     {
@@ -450,6 +481,7 @@ export async function setTrust(args: {
 }): Promise<void> {
   const db = args.db ?? getDb();
   const flow = await loadFlow(db, args.projectId, args.flowRefId);
+
   if (args.trusted) await requireParentPackageTrust(db, flow.packageInstallId);
   const next = args.trusted ? "trusted" : "untrusted";
 

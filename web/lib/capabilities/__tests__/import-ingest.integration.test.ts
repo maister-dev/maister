@@ -18,6 +18,8 @@ import { promisify } from "node:util";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { reconcileDependencyCatalog } from "@/lib/project-dependencies/catalog";
+import { captureTaskLaunchCapabilityBundles } from "@/lib/tasks/launch-capabilities";
 import { installAndIngestCapabilityImports } from "@/lib/capabilities/import";
 import { maisterYamlV2Schema } from "@/lib/config.schema";
 import * as schemaModule from "@/lib/db/schema";
@@ -187,6 +189,29 @@ describe("installAndIngestCapabilityImports", () => {
     });
   });
 
+  it("withholds a local import that explicitly requires trust", async () => {
+    const config = buildConfig({
+      imports: [{ id: "explicit", source: repoNoSetup, version: "v1.0.0" }],
+    });
+
+    config.capability_imports[0].trust = "explicit";
+    await installAndIngestCapabilityImports({ config, projectId, db });
+    expect(
+      (await records()).filter(
+        (row) =>
+          row.capabilityRefId === "explicit" &&
+          row.selectable &&
+          !row.disabledAt,
+      ),
+    ).toHaveLength(0);
+    const { rows } = await testDatabase.pool.query(
+      "SELECT trust_status FROM capability_imports WHERE project_id=$1 AND capability_ref_id='explicit'",
+      [projectId],
+    );
+
+    expect(rows).toEqual([{ trust_status: "untrusted" }]);
+  });
+
   it("R-SYM: removing an import on a re-run disables its record but keeps block records", async () => {
     // First run: with the import.
     await installAndIngestCapabilityImports({
@@ -210,10 +235,25 @@ describe("installAndIngestCapabilityImports", () => {
     // The stale import record is disabled (CLEAR), not deleted.
     expect(imported).toMatchObject({ selectable: false });
     expect(imported!.disabledAt).not.toBeNull();
+    expect(await captureTaskLaunchCapabilityBundles(db, projectId)).toEqual([]);
 
     // The unrelated block skill stays selectable.
     const blockSkill = rows.find((r) => r.capabilityRefId === "block-skill");
 
     expect(blockSkill).toMatchObject({ selectable: true, disabledAt: null });
+    await db.transaction((tx: typeof testDatabase.db) =>
+      reconcileDependencyCatalog(tx, projectId),
+    );
+    expect(await captureTaskLaunchCapabilityBundles(db, projectId)).toEqual([]);
+    await installAndIngestCapabilityImports({
+      config: buildConfig({
+        imports: [{ id: "aif-skills", source: repoNoSetup, version: "v1.0.0" }],
+      }),
+      projectId,
+      db,
+    });
+    expect(
+      await captureTaskLaunchCapabilityBundles(db, projectId),
+    ).toHaveLength(1);
   });
 });

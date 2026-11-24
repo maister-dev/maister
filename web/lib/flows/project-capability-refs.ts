@@ -102,6 +102,11 @@ export async function assertProjectFlowCapabilities(
     SELECT 1 FROM ${capabilityImports} i
     JOIN ${projectPackageAttachments} a ON a.package_install_id=i.package_install_id AND a.project_id=i.project_id
     WHERE i.project_id=${projectId} AND i.capability_ref_id=${missing.ref}
+    UNION ALL
+    SELECT 1 FROM ${capabilityRecords} r
+    JOIN ${projectPackageAttachments} a ON a.project_id=r.project_id AND a.package_install_id=r.material->>'packageInstallId'
+    WHERE r.project_id=${projectId} AND r.kind=${missing.kind} AND r.capability_ref_id=${missing.ref}
+      AND r.material->>'origin'='package-attachment'
     LIMIT 1
   `);
 

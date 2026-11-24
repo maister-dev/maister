@@ -1,20 +1,28 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { resubmitDependency } from "../commands";
+import { editDependency, resubmitDependency } from "../commands";
 import { localDirectoryContentDigest } from "../content-digest";
 import {
   authorizeDependencySetupRecovery,
   runMaterialSetup,
   withDependencySetupContext,
 } from "../setup";
+import { publishMaterial } from "../material";
 import { claimDependency } from "../claims";
 import { serviceDependency } from "../worker";
 
@@ -221,6 +229,178 @@ it("ignores source markers, retains exact setup completion and fences an uncerta
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it("keeps the physical setup slot when a Flow setup rewrites its own script", async () => {
+  const db = database.db;
+  const dir = await mkdtemp(join(tmpdir(), "worker-self-rewrite-"));
+
+  try {
+    await writeFile(
+      join(dir, "setup.sh"),
+      "echo first >> count\necho 'echo replay >> count' > setup.sh\n",
+    );
+    const args = {
+      db,
+      kind: "flow" as const,
+      target: dir,
+      revision: randomUUID(),
+    };
+
+    expect(await runMaterialSetup(args)).toBe("done");
+    expect(await runMaterialSetup(args)).toBe("done");
+    expect(await readFile(join(dir, "count"), "utf8")).toBe("first\n");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("binds an unchanged legacy receipt and refuses an unidentifiable historical dispatch", async () => {
+  const db = database.db;
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "legacy-setup-")));
+  const revision = randomUUID();
+  const bytes = "echo unexpected >> count\n";
+  const key = createHash("sha256")
+    .update(JSON.stringify([dir, revision, revision, basename(dir)]))
+    .update(bytes)
+    .digest("hex");
+
+  try {
+    await db.insert(receipts).values({
+      materialKey: key,
+      status: "succeeded",
+      claimToken: randomUUID(),
+    });
+    const setup = () =>
+      runMaterialSetup({ db, target: dir, kind: "flow", revision });
+
+    await writeFile(join(dir, "setup.sh"), "echo replaced >> count\n");
+    await expect(setup()).rejects.toMatchObject({
+      details: { reason: "legacy_setup_evidence_unmapped" },
+    });
+    // The unrelated new physical revision is independently publishable while
+    // the retired/ambiguous slot above still has no matching script.
+    const freshSource = join(dir, "fresh-source"),
+      target = join(dir, "fresh-target");
+
+    await mkdir(freshSource);
+    await writeFile(join(freshSource, "setup.sh"), "echo ran > proof\n");
+    const freshRevision = "d".repeat(40);
+    const digest = await localDirectoryContentDigest(freshSource);
+
+    await publishMaterial({
+      source: freshSource,
+      target,
+      revision: freshRevision,
+      digest,
+      hash: localDirectoryContentDigest,
+    });
+    expect(
+      await runMaterialSetup({
+        db,
+        target,
+        revision: freshRevision,
+        kind: "capability",
+        contentWitness: digest,
+      }),
+    ).toBe("done");
+    expect(await readFile(join(target, "proof"), "utf8")).toBe("ran\n");
+    await writeFile(join(dir, "setup.sh"), bytes);
+    expect(await setup()).toBe("done");
+    expect(
+      (await db.select().from(receipts).where(eq(receipts.materialKey, key)))[0]
+        ?.physicalKey,
+    ).toMatch(/^[0-9a-f]{64}$/);
+    await expect(readFile(join(dir, "count"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
+    await db.delete(receipts).where(eq(receipts.materialKey, key));
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it.each(["edit", "remove"] as const)(
+  "allows another exact recovery after %s abandons an undispatched reservation",
+  async (action) => {
+    const db = database.db;
+    const dir = await mkdtemp(join(tmpdir(), "reserved-setup-"));
+
+    try {
+      await writeFile(join(dir, "setup.sh"), "echo call >> count\n");
+      const revision = randomUUID();
+      const setup = () =>
+        runMaterialSetup({ db, target: dir, kind: "flow", revision });
+      let key = "";
+
+      await withDependencySetupContext(
+        {
+          db,
+          before: async (materialKey) => {
+            key = materialKey;
+          },
+        },
+        setup,
+      );
+      await db
+        .update(receipts)
+        .set({ status: "running", ownerPid: 2147483647 })
+        .where(eq(receipts.materialKey, key));
+      const first = await seedRequest(null);
+      const second = await seedRequest(null);
+
+      for (const request of [first, second])
+        await db
+          .update(attempts)
+          .set({
+            status: "recovery_required",
+            stage: "setup",
+            reason: "setup_uncertain",
+            resolvedRevision: revision,
+            memberRef: "flow:member",
+            checkpoint: { setupMaterialKey: key },
+          })
+          .where(eq(attempts.id, request.id));
+      const command = {
+        expectedGeneration: 1,
+        expectedAttempt: 1,
+        memberRef: "flow:member",
+        resolvedRevision: revision,
+        action: "rerun_setup" as const,
+      };
+      const target = (request: typeof first) => ({
+        projectId: request.projectId,
+        declarationId: request.declarationId,
+        actorUserId: request.actor,
+      });
+
+      await resubmitDependency(db, target(first), command);
+      await expect(
+        resubmitDependency(db, target(second), command),
+      ).rejects.toMatchObject({ details: { reason: "setup_owner_live" } });
+      if (action === "edit") {
+        await editDependency(db, target(first), {
+          expectedGeneration: 1,
+          source: "/fixed-package",
+          version: "local",
+        });
+      } else {
+        await db
+          .delete(declarations)
+          .where(eq(declarations.id, first.declarationId));
+      }
+      await expect(setup()).rejects.toMatchObject({
+        details: { reason: "setup_uncertain" },
+      });
+      await resubmitDependency(db, target(second), command);
+      await withDependencySetupContext({ db, recoveryOf: second.id }, setup);
+      expect(await readFile(join(dir, "count"), "utf8")).toBe("call\ncall\n");
+      await db.delete(projects).where(eq(projects.id, first.projectId));
+      await db.delete(projects).where(eq(projects.id, second.projectId));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 it("preserves a dispatched standalone setup on shutdown and permits only the exact recovery, even at a stable local path revision", async () => {
   const root = await mkdtemp(join(tmpdir(), "worker-interrupted-"));

@@ -20,11 +20,14 @@ import {
   resolveAgentTaskLaunchSettings,
 } from "./launch-agent-resolution";
 
+import {
+  readFlowRunnerBinding,
+  requireReadyDeclaredFlowRunner,
+} from "@/lib/acp-runners/declared-flow-runner";
 import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import {
   flows,
   flowRevisions,
-  projectFlowRunnerDefaults,
   projects,
   tasks,
   platformRuntimeSettings,
@@ -161,17 +164,7 @@ export async function taskLaunchSettingsMetadataToken(
   const bindings = revision
     ? await loadFlowRunnerBindings(db, row.project.id, revision.id)
     : [];
-  const [defaults] = flow
-    ? await db
-        .select()
-        .from(projectFlowRunnerDefaults)
-        .where(
-          and(
-            eq(projectFlowRunnerDefaults.projectId, row.project.id),
-            eq(projectFlowRunnerDefaults.flowId, flow.id),
-          ),
-        )
-    : [];
+  const flowRunner = flow ? await readFlowRunnerBinding(db, flow.id) : null;
   const capabilities = revision
     ? await resolveTaskLaunchCapabilities(db, {
         projectId: row.project.id,
@@ -202,7 +195,7 @@ export async function taskLaunchSettingsMetadataToken(
     capabilityResolutionDigest:
       capabilities?.capabilityResolutionDigest ?? null,
     runtimeRunner: runtime?.defaultRunnerId ?? null,
-    flowRunner: defaults?.runnerId ?? null,
+    flowRunner: flowRunner?.defaultRunnerId ?? null,
     bindings: [...bindings].sort((a, b) => a.slotKey.localeCompare(b.slotKey)),
     runners: catalog
       .map((runner) => ({ id: runner.id, digest: retryDigest(runner) }))
@@ -380,6 +373,8 @@ async function resolveFlowLaunchSettingsForSource(
   });
 
   await assertProjectFlowCapabilities(db, project.id, manifest);
+  const flowDefaultRunnerId = await requireReadyDeclaredFlowRunner(db, flow.id);
+
   const [runtime] = await db
     .select()
     .from(platformRuntimeSettings)
@@ -390,16 +385,6 @@ async function resolveFlowLaunchSettingsForSource(
       "EXECUTOR_UNAVAILABLE",
       "No platform runner is configured",
     );
-  const [defaults] = await db
-    .select()
-    .from(projectFlowRunnerDefaults)
-    .where(
-      and(
-        eq(projectFlowRunnerDefaults.projectId, project.id),
-        eq(projectFlowRunnerDefaults.flowId, flow.id),
-      ),
-    );
-
   if (
     selection.flowRunnerDraft &&
     selection.flowRunnerDraft.flowRevisionId !== revision.id
@@ -412,7 +397,7 @@ async function resolveFlowLaunchSettingsForSource(
     taskRunnerId: task.runnerId,
     sessionRunnerOverrides: execution?.sessionRunnerOverrides,
     launchOverrideRunnerId: selection.runnerId,
-    projectFlow: { defaultRunnerId: defaults?.runnerId ?? null },
+    projectFlow: { defaultRunnerId: flowDefaultRunnerId },
     platformFlow: { defaultRunnerId: revision.defaultRunnerId },
     project: { defaultRunnerId: project.defaultRunnerId },
     platform: { defaultRunnerId: runtime.defaultRunnerId },

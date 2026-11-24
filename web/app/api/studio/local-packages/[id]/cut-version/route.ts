@@ -154,6 +154,7 @@ export async function POST(
         projectId: attachTarget.id,
         projectSlug: attachTarget.slug,
         packageInstallId: cut.installId,
+        actorGrant: { userId: user.id, action: "manageLocalPackages" },
         workspaceRoot: attachTarget.repoPath,
       });
 
@@ -175,6 +176,7 @@ export async function POST(
             projectSlug: target.slug,
             attachmentId: target.attachmentId,
             packageInstallId: cut.installId,
+            actorGrant: { userId: user.id, action: "manageLocalPackages" },
             workspaceRoot: target.repoPath,
           });
           adoptions.push({ projectId: target.projectId, status: "adopted" });

@@ -43,7 +43,13 @@ export const dependencyStages = [
   "projection",
 ] as const;
 
+export type TrustedSetupTarget = {
+  kind: "package" | "flow" | "capability";
+  id: string;
+};
+
 export type DependencyCheckpoint = {
+  postTrust?: TrustedSetupTarget;
   retryCount?: number;
   installId?: string;
   contentWitness?: string;

@@ -7,7 +7,8 @@ import pino from "pino";
 import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError, MaisterError } from "@/lib/errors";
+import { MaisterError } from "@/lib/errors";
+import { packageErrorResponse } from "@/lib/packages/http";
 import { trustExecutable } from "@/lib/flows/exec-trust";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches version-binding route).
@@ -20,43 +21,6 @@ const log = pino({
 
 type RouteParams = { params: Promise<{ slug: string; flowId: string }> };
 
-function httpStatusForCode(code: string): number {
-  switch (code) {
-    case "UNAUTHENTICATED":
-      return 401;
-    case "UNAUTHORIZED":
-    case "PASSWORD_CHANGE_REQUIRED":
-      return 403;
-    case "PRECONDITION":
-    case "CONFLICT":
-      return 409;
-    case "CONFIG":
-      return 422;
-    case "FLOW_INSTALL":
-      return 502;
-    default:
-      return 500;
-  }
-}
-
-function errorResponse(err: unknown, slug: string): NextResponse {
-  if (isMaisterError(err)) {
-    return NextResponse.json(
-      { code: err.code, message: err.message },
-      { status: httpStatusForCode(err.code) },
-    );
-  }
-
-  const message = err instanceof Error ? err.message : String(err);
-
-  log.error({ slug, err: message }, "trust-executable route unhandled error");
-
-  return NextResponse.json(
-    { code: "CRASH", message: "internal error" },
-    { status: 500 },
-  );
-}
-
 // Flip exec_trust='trusted' for the enabled revision of a flow in this project
 // and run any pending setup.sh. Idempotent.
 // Executable trust is granted by an active platform administrator.
@@ -67,7 +31,7 @@ export async function POST(
   const { slug, flowId } = await params;
 
   try {
-    await requireGlobalRole("admin");
+    const actor = await requireGlobalRole("admin");
 
     const db = getDb() as any;
 
@@ -86,11 +50,12 @@ export async function POST(
     const result = await trustExecutable({
       projectId: project.id,
       flowId,
+      actorUserId: actor.id,
       db,
     });
 
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
-    return errorResponse(err, slug);
+    return packageErrorResponse(err, `projects/${slug}/flows trust-executable`);
   }
 }

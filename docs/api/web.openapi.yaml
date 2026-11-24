@@ -14346,7 +14346,9 @@ paths:
         Project managePackages can select an already executable and ready revision.
         Granting executable trust or starting deferred setup also requires active global admin.
         Sets the project's enabled revision to `revisionId`,
-        refreshing the denormalized cache while preserving runner remaps.
+        refreshing the denormalized cache while preserving runner remaps. An unavailable
+        explicit `flows[].runner` without a ready per-Flow mapping returns 409
+        PRECONDITION with reason `declared_flow_runner_unavailable`.
         Refuses untrusted / incompatible /
         setup-incomplete revisions. `revisionId` is validated against the flow
         AND the project's declared source (cross-source enable is rejected).
@@ -15927,6 +15929,22 @@ paths:
         "422": { $ref: "#/components/responses/Config" }
         "502": { $ref: "#/components/responses/FlowInstall" }
 
+  /api/admin/package-installs/{installId}/trust:
+    post:
+      tags: [flow-packages, admin]
+      operationId: trustPackageInstall
+      summary: Trust an installed package revision across its attached projects.
+      description: Requires an active global administrator. A durable setup receipt identifies the affected project when an accepted trust decision has unfinished setup.
+      parameters:
+        - {name: installId, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/TrustSetupConflict" }
+        "502": { $ref: "#/components/responses/TrustSetupFailure" }
+
   /api/projects/{slug}/packages:
     get:
       tags: [flow-packages, projects]
@@ -16305,9 +16323,9 @@ paths:
         One operator decision per package revision: the same transaction fans
         `trust_status`/`exec_trust='trusted'` onto every member
         `flow_revisions` + `capability_imports` row, THEN the existing
-        post-trust setup path runs pending member `setup.sh` (after-tx
-        side-effect; never at install). Setup failure marks the member
-        revision Failed and surfaces on launch as today. Native
+        post-trust setup path processes pending member `setup.sh` after the
+        transaction. If setup does not complete, a committed declaration
+        receipt identifies the project and dependency to inspect. Native
         evidence_findings_v1 member Flows remain Installed after trust and need
         the existing explicit revision-enable action. A trusted install/cache
         or a previous attachment does not enable a new native attachment.
@@ -16330,7 +16348,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Precondition" }
+        "409": { $ref: "#/components/responses/TrustSetupConflict" }
+        "502": { $ref: "#/components/responses/TrustSetupFailure" }
 
   /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/fork:
     post:
@@ -16498,7 +16517,7 @@ paths:
         the shared material receipt and reconciles the project catalog.
 
         A first confirmation succeeds even when the bundle requires no setup.
-        Known setup failure returns 502 and a later confirmation can retry.
+        Known setup failure returns 502. The declaration exposes its retry action.
         An already trusted, ready bundle returns 409. An uncertain setup
         requires the explicit dependency recovery decision and quiescent owner.
 
@@ -16558,14 +16577,7 @@ paths:
                     enum: [trusted, trusted_by_policy]
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "409":
-          description: |
-            Project or capability import not found for this project
-            (`PRECONDITION`), or an already trusted setup is `done` or `not_required`
-            (nothing to do, `CONFLICT`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409": { $ref: "#/components/responses/TrustSetupConflict" }
         "422":
           description: |
             Body is malformed or `capabilityRefId` fails `SAFE_PATH_SEGMENT`
@@ -16573,15 +16585,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "502":
-          description: |
-            `setup.sh` execution failed (`setupStatus` flipped to `'failed'`).
-            `trustStatus` remains `'trusted'` so a re-POST will retry setup
-            (`FLOW_INSTALL`, retryable via re-POST). Carries structured detail
-            `{source, version, stage:'setup', exitStatus, output}` in the message.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "502": { $ref: "#/components/responses/TrustSetupFailure" }
 
   # ── M27 Flow Studio ─────────────────────────────────────────────────────────
 
@@ -16811,7 +16815,7 @@ paths:
       tags: [flow-studio]
       summary: (M27) Flip exec_trust to trusted on the enabled flow revision
       description: |
-        (M27 — Designed.) Requires global `admin` role
+        (M27 — Implemented.) Requires global `admin` role
         (`requireGlobalRole("admin")`). Flips `flow_revisions.exec_trust` to
         `trusted` on the currently enabled revision of the flow. This is the
         explicit operator gate before `setup.sh` runs and before any MCP stdio
@@ -16855,7 +16859,8 @@ paths:
                     exec_trust: trusted
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/TrustSetupConflict" }
+        "502": { $ref: "#/components/responses/TrustSetupFailure" }
 
   # ── M27 Platform MCP server admin ───────────────────────────────────────────
 
@@ -20490,7 +20495,9 @@ paths:
         state. Persist immutable input/settings/basis, reservation, audit and task.launch_changed in
         one transaction before effects. Same key/same payload returns original receipt after access
         checks; changed payload conflicts. 202 describes intent acceptance, not a started run. Lost
-        response does not cancel accepted work.
+        response does not cancel accepted work. An unavailable explicit `flows[].runner`
+        without a ready per-Flow mapping returns 409 PRECONDITION with reason
+        `declared_flow_runner_unavailable` before reservation.
       security:
         - sessionCookie: []
       parameters:
@@ -25422,6 +25429,24 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/NotFoundBody" }
+    TrustSetupConflict:
+      description: The project or target is unavailable, the trust operation conflicts, or setup is pending or requires recovery. Only an explicit trustAccepted receipt confirms committed trust and identifies the specific declaration. Refresh that project’s Packages view.
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - { $ref: "#/components/schemas/AcceptedTrustSetup" }
+              - { $ref: "#/components/schemas/MaisterErrorBody" }
+          example: {code: CONFLICT, message: "Inspect the trusted dependency setup in project settings.", details: {trustAccepted: true, reason: setup_uncertain, projectSlug: demo, declarationId: d1}}
+    TrustSetupFailure:
+      description: Setup failed. When the response includes trustAccepted, trust was committed and the identified declaration contains the durable attempt and its authorized recovery actions.
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - { $ref: "#/components/schemas/AcceptedTrustSetup" }
+              - { $ref: "#/components/schemas/MaisterErrorBody" }
+          example: {code: FLOW_INSTALL, message: "Inspect the trusted dependency setup in project settings.", details: {trustAccepted: true, reason: setup_failed, projectSlug: demo, declarationId: d1}}
     Precondition:
       description: Precondition failed or conflict (`PRECONDITION` / `CONFLICT`).
       content:
@@ -38079,6 +38104,21 @@ components:
               type: string
               enum: [stale_generation, stale_attempt, ineligible_state, setup_owner_live, setup_evidence_missing, operation_busy]
       example: {code: CONFLICT, message: "Refresh the current package pin.", details: {reason: stale_generation}}
+    AcceptedTrustSetup:
+      type: object
+      required: [code, message, details]
+      properties:
+        code: {type: string, enum: [CONFLICT, FLOW_INSTALL]}
+        message: {type: string}
+        details:
+          type: object
+          required: [trustAccepted, reason, projectSlug, declarationId]
+          properties:
+            trustAccepted: {type: boolean, enum: [true]}
+            reason: {type: string}
+            projectSlug: {type: string, minLength: 1}
+            declarationId: {type: string, minLength: 1}
+            memberRef: {type: string, nullable: true}
     EditProjectDependency:
       type: object
       additionalProperties: false

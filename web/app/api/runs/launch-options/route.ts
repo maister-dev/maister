@@ -5,6 +5,8 @@ import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
 
 import { and, eq, inArray } from "drizzle-orm";
+import { readFlowRunnerBinding } from "@/lib/acp-runners/declared-flow-runner";
+
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
@@ -85,7 +87,6 @@ const {
   flows,
   platformAcpRunners,
   platformRuntimeSettings,
-  projectFlowRunnerDefaults,
   projects,
   tasks,
 } = schemaModule as unknown as Record<string, any>;
@@ -440,34 +441,19 @@ async function readLaunchOptions(
     }
   }
 
-  const [
-    runtimeRows,
-    runnerRows,
-    projectFlowDefaultRows,
-    bindings,
-    flowRowsForProject,
-  ] = await Promise.all([
-    db
-      .select()
-      .from(platformRuntimeSettings)
-      .where(eq(platformRuntimeSettings.id, "singleton")),
-    db.select().from(platformAcpRunners),
-    flow
-      ? db
-          .select({ runnerId: projectFlowRunnerDefaults.runnerId })
-          .from(projectFlowRunnerDefaults)
-          .where(
-            and(
-              eq(projectFlowRunnerDefaults.projectId, project.id),
-              eq(projectFlowRunnerDefaults.flowId, flow.id),
-            ),
-          )
-      : Promise.resolve([]),
-    revision && flowIssue === null
-      ? loadFlowRunnerBindings(db, project.id, revision.id)
-      : Promise.resolve([]),
-    db.select().from(flows).where(eq(flows.projectId, project.id)),
-  ]);
+  const [runtimeRows, runnerRows, runnerBinding, bindings, flowRowsForProject] =
+    await Promise.all([
+      db
+        .select()
+        .from(platformRuntimeSettings)
+        .where(eq(platformRuntimeSettings.id, "singleton")),
+      db.select().from(platformAcpRunners),
+      flow ? readFlowRunnerBinding(client, flow.id) : Promise.resolve(null),
+      revision && flowIssue === null
+        ? loadFlowRunnerBindings(db, project.id, revision.id)
+        : Promise.resolve([]),
+      db.select().from(flows).where(eq(flows.projectId, project.id)),
+    ]);
   const platformRuntime = runtimeRows[0];
   const manifestCompatibility = revision
     ? classifyStoredFlowManifest(revision.manifest)
@@ -524,7 +510,7 @@ async function readLaunchOptions(
       : runnerRows.map(runnerCatalogEntry);
   const defaultChain = {
     projectFlow: {
-      defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
+      defaultRunnerId: runnerBinding?.defaultRunnerId ?? null,
     },
     platformFlow: { defaultRunnerId: revision?.defaultRunnerId ?? null },
     project: { defaultRunnerId: project.defaultRunnerId },
@@ -598,10 +584,11 @@ async function readLaunchOptions(
   const consensusRunnerSlots =
     runnerInspection?.consensus.map(toConsensusRunnerSlotPreview) ?? [];
   const runnerIssue =
-    runnerInspection &&
-    [...runnerInspection.sessions, ...runnerInspection.consensus].some(
-      (slot) => slot.status === "unresolved",
-    )
+    runnerBinding?.unavailable ||
+    (runnerInspection &&
+      [...runnerInspection.sessions, ...runnerInspection.consensus].some(
+        (slot) => slot.status === "unresolved",
+      ))
       ? "runner_unresolved"
       : null;
   let enforcementRefusal: NodeEnforcementRefusal | null = null;

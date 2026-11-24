@@ -1,7 +1,7 @@
 import "server-only";
 
 import { isAbsolute, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { MaisterError } from "@/lib/errors";
 
@@ -30,4 +30,11 @@ export function runtimePathUrl(directory: string, ...parts: string[]): URL {
   runtimeFileUrl(directory);
 
   return pathToFileURL([directory, ...parts].join(sep));
+}
+
+/** Resolve absolute directory and file-URL coordinates identically in install and Git review. */
+export function localDirectoryPath(source: string): string | null {
+  if (source.startsWith("file://")) return fileURLToPath(source);
+
+  return isAbsolute(source) ? source : null;
 }

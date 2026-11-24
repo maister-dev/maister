@@ -4,12 +4,18 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { POST as register } from "@/app/api/projects/route";
 import { POST as launch } from "@/app/api/task-launch-intents/route";
+import { enableRevision } from "@/lib/flows/lifecycle";
+import { listLaunchableFlowSummaries } from "@/lib/queries/project";
+
+import { readProjectDeclarations } from "../read";
+import { resubmitDependency } from "../commands";
+
 import { confirmCapabilityTrust } from "@/lib/capabilities/import";
 import {
   capabilityImports,
@@ -88,6 +94,10 @@ beforeAll(async () => {
 afterAll(async () => {
   await database?.stop();
   if (root) await rm(root, { recursive: true, force: true });
+  await rm(join(process.cwd(), ".maister", slug), {
+    recursive: true,
+    force: true,
+  });
   vi.unstubAllEnvs();
 });
 
@@ -111,7 +121,11 @@ async function createFlow(
   return dir;
 }
 
-async function requestLaunch(projectId: string, flowRefId: string) {
+async function requestLaunch(
+  projectId: string,
+  flowRefId: string,
+  taskRunnerId: string | null = runner,
+) {
   const db = database.db;
   const [flow] = await db
     .select()
@@ -129,7 +143,7 @@ async function requestLaunch(projectId: string, flowRefId: string) {
     id: taskId,
     projectId,
     flowId: flow.id,
-    runnerId: runner,
+    runnerId: taskRunnerId,
     title: "Launch qualification",
     prompt: "Execute test",
     number: next.number,
@@ -222,7 +236,22 @@ it("admits only eligible siblings as frozen declarations realize, fail setup and
           ],
         }),
         version: "v1",
-        runner,
+        runner: "inherit",
+      },
+      {
+        id: "missing-default",
+        source: await createFlow("missing-default", {
+          nodes: [
+            {
+              id: "step",
+              type: "ai_coding",
+              action: { prompt: "implement" },
+              transitions: { success: "done" },
+            },
+          ],
+        }),
+        version: "v1",
+        runner: "declared-only",
       },
       {
         id: "missing-runner",
@@ -274,7 +303,7 @@ it("admits only eligible siblings as frozen declarations realize, fail setup and
 
   await db
     .update(projectDependencyAttempts)
-    .set({ dueAt: new Date(Date.now() + 600_000) })
+    .set({ dueAt: sql`clock_timestamp() + interval '10 minutes'` })
     .where(importAttempt);
   const signal = new AbortController().signal;
 
@@ -298,7 +327,7 @@ it("admits only eligible siblings as frozen declarations realize, fail setup and
       .select()
       .from(projectFlowRunnerDefaults)
       .where(eq(projectFlowRunnerDefaults.projectId, projectId)),
-  ).toHaveLength(2);
+  ).toHaveLength(1);
   expect(
     await db
       .select()
@@ -321,9 +350,11 @@ it("admits only eligible siblings as frozen declarations realize, fail setup and
 
   await db
     .update(projectDependencyAttempts)
-    .set({ dueAt: new Date() })
+    .set({ dueAt: sql`clock_timestamp()` })
     .where(importAttempt);
-  expect(await serviceDependency(db, signal)).toBe(true);
+  // Concurrent launch processing may briefly own the project row: a worker
+  // tick skips that lock and a subsequent tick realizes the released import.
+  await expect.poll(() => serviceDependency(db, signal)).toBe(true);
   expect(
     await db
       .select()
@@ -332,17 +363,110 @@ it("admits only eligible siblings as frozen declarations realize, fail setup and
   ).toMatchObject([{ trustStatus: "untrusted", setupStatus: "pending" }]);
   expect(await requestLaunch(projectId, "needs-import")).toMatchObject(blocked);
   await expect(
-    confirmCapabilityTrust({ projectId, capabilityRefId: "bundle", db }),
+    confirmCapabilityTrust({
+      projectId,
+      capabilityRefId: "bundle",
+      db,
+      actorUserId: actorId,
+    }),
   ).rejects.toMatchObject({ code: "FLOW_INSTALL" });
   expect(await requestLaunch(projectId, "needs-import")).toMatchObject(blocked);
   await writeFile(readyMarker, "ready");
-  await confirmCapabilityTrust({ projectId, capabilityRefId: "bundle", db });
+  const [failedSetup] = await readProjectDeclarations(
+    db,
+    projectId,
+    true,
+    decl.id,
+  );
+
+  expect(failedSetup).toMatchObject({
+    state: "failed",
+    stage: "setup",
+    actions: { retry: true },
+  });
+  await resubmitDependency(
+    db,
+    { projectId, declarationId: decl.id, actorUserId: actorId },
+    {
+      expectedGeneration: failedSetup.generation,
+      expectedAttempt: failedSetup.attempt!,
+    },
+  );
+  expect(await serviceDependency(db, signal)).toBe(true);
   expect(await requestLaunch(projectId, "needs-import")).toMatchObject({
     status: 202,
   });
   expect(await requestLaunch(projectId, member)).toMatchObject({ status: 202 });
   expect(await requestLaunch(projectId, "missing-runner")).toMatchObject({
     status: 409,
+  });
+  const [defaultOnly] = await db
+    .select()
+    .from(flows)
+    .where(
+      and(
+        eq(flows.projectId, projectId),
+        eq(flows.flowRefId, "missing-default"),
+      ),
+    );
+  const enableDefaultOnly = () =>
+    enableRevision({
+      db,
+      projectId,
+      flowRefId: defaultOnly.flowRefId,
+      revisionId: defaultOnly.enabledRevisionId!,
+    });
+
+  expect(defaultOnly.enablementState).toBe("Disabled");
+  await expect(enableDefaultOnly()).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "declared_flow_runner_unavailable" },
+  });
+  // Provisioning the declared runner permits Enable and selects the exact
+  // Flow default. Its subsequent loss must fence a still-enabled Flow.
+  const declaredId = "declared-only";
+
+  await db
+    .insert(platformAcpRunners)
+    .values(
+      testPlatformRunnerRow(
+        declaredId,
+        "codex",
+      ) as typeof platformAcpRunners.$inferInsert,
+    );
+  await enableDefaultOnly();
+  expect(
+    await requestLaunch(projectId, defaultOnly.flowRefId, null),
+  ).toMatchObject({ status: 202 });
+  const [acceptedForDefault] = await db
+    .select({ settings: taskLaunchIntents.settingsSnapshot })
+    .from(taskLaunchIntents)
+    .innerJoin(tasks, eq(tasks.id, taskLaunchIntents.taskId))
+    .where(eq(tasks.flowId, defaultOnly.id));
+
+  expect(acceptedForDefault.settings).toMatchObject({
+    sessions: [{ runnerId: declaredId }],
+  });
+  await db
+    .update(platformAcpRunners)
+    .set({ enabled: false })
+    .where(eq(platformAcpRunners.id, declaredId));
+  expect(
+    (await listLaunchableFlowSummaries(projectId, db)).map((entry) => entry.id),
+  ).not.toContain(defaultOnly.id);
+  expect(await requestLaunch(projectId, defaultOnly.flowRefId)).toMatchObject({
+    status: 409,
+    body: { details: { reason: "declared_flow_runner_unavailable" } },
+  });
+  await db.insert(projectFlowRunnerDefaults).values({
+    id: randomUUID(),
+    projectId,
+    flowId: defaultOnly.id,
+    runnerId: runner,
+  });
+  await enableDefaultOnly();
+  expect(await requestLaunch(projectId, defaultOnly.flowRefId)).toMatchObject({
+    status: 202,
   });
   const reservations = await db
     .select({ flowRef: flows.flowRefId })
@@ -352,6 +476,8 @@ it("admits only eligible siblings as frozen declarations realize, fail setup and
     .where(eq(tasks.projectId, projectId))
     .orderBy(flows.flowRefId);
   expect(reservations.map((row) => row.flowRef)).toEqual([
+    "missing-default",
+    "missing-default",
     "needs-import",
     member,
     "ready-sibling",

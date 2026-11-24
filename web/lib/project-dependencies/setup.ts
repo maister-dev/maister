@@ -11,10 +11,12 @@ import { basename, join } from "node:path";
 
 import { and, eq, sql } from "drizzle-orm";
 
+import { physicalSetupKey, identifyHistoricalSetups } from "./setup-identity";
 import { localDirectoryContentDigest } from "./content-digest";
 
 import {
   projectDependencyAttempts as attempts,
+  projectDependencyDeclarations as declarations,
   projectDependencySetupReceipts as receipts,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -73,6 +75,24 @@ function ownerMayRun(receipt: Receipt): boolean {
     (receipt.ownerPid !== null && groupExists(receipt.ownerPid))
   );
 }
+async function hasReservedOwner(db: Db, receipt: Receipt): Promise<boolean> {
+  if (!receipt.claimToken.startsWith("recovery:")) return false;
+  const original = receipt.claimToken.slice("recovery:".length);
+  const [current] = await db
+    .select({ id: attempts.id })
+    .from(attempts)
+    .innerJoin(
+      declarations,
+      and(
+        eq(declarations.id, attempts.declarationId),
+        eq(declarations.generation, attempts.generation),
+      ),
+    )
+    .where(eq(attempts.id, original));
+
+  return Boolean(current);
+}
+
 function conflict(reason: string): never {
   throw new MaisterError(
     "CONFLICT",
@@ -101,13 +121,19 @@ export async function authorizeDependencySetupRecovery(
 
   if (!receipt) conflict("setup_evidence_missing");
   if (receipt.status === "succeeded") return "completed";
-  if (receipt.status === "running" && ownerMayRun(receipt))
+  if (
+    receipt.status === "running" &&
+    (receipt.claimToken.startsWith("recovery:")
+      ? await hasReservedOwner(db, receipt)
+      : ownerMayRun(receipt))
+  )
     conflict("setup_owner_live");
   // The unique retry-of FK identifies exactly one accepted recovery attempt.
   // Reserve its replay in the same transaction that enqueues it.
   await db
     .update(receipts)
     .set({
+      status: "running",
       claimToken: "recovery:" + attemptId,
       ownerHost: null,
       ownerPid: null,
@@ -159,60 +185,50 @@ export async function runMaterialSetup(input: {
   signal?: AbortSignal;
 }): Promise<"done" | "failed" | "not_required"> {
   const target = await realpath(input.target);
-  let script: Buffer;
+  const ctx = context.getStore();
+  const db = ctx?.db ?? input.db;
+  const identity = { ...input, target };
+  const key = physicalSetupKey(identity);
+  let script: Buffer | null = null;
 
   try {
     script = await readFile(join(target, "setup.sh"));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      if (settled.getStore()) conflict("setup_material_changed");
-
-      return "not_required";
-    }
-    throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   input.signal?.throwIfAborted();
-  const key = createHash("sha256")
-    .update(
-      JSON.stringify([
-        target,
-        input.revision,
-        input.contentWitness ?? input.revision,
-        basename(target),
-      ]),
-    )
-    .update(script)
-    .digest("hex");
-  const ctx = context.getStore();
-  const db = ctx?.db ?? input.db;
+  const scriptDigest =
+    script === null ? null : createHash("sha256").update(script).digest("hex");
 
+  // Before v2 the material key included script bytes. Keep the stored key so
+  // retained checkpoints and recovery decisions can use the same receipt.
+  await identifyHistoricalSetups(db, identity, script);
+  const match = eq(receipts.physicalKey, key);
+  const [prior] = await db.select().from(receipts).where(match);
+  const receiptKey = prior?.materialKey ?? key;
+
+  if (
+    prior?.physicalKey &&
+    prior.contentWitness !== (input.contentWitness ?? null)
+  )
+    conflict("revision_mismatch");
+  if (script === null && !prior) return "not_required";
   if (settled.getStore()) {
-    const [receipt] = await db
-      .select({ status: receipts.status })
-      .from(receipts)
-      .where(eq(receipts.materialKey, key));
-
-    if (receipt?.status !== "succeeded") conflict("setup_material_changed");
+    if (prior?.status !== "succeeded") conflict("setup_material_changed");
 
     return "done";
   }
-  // Verify a first dispatch's sealed capability bytes before taking the
-  // project lock. Existing receipts own the material including setup output.
   let initialDigest: string | undefined;
 
-  if (input.contentWitness) {
-    const [prior] = await db
-      .select({ key: receipts.materialKey })
-      .from(receipts)
-      .where(eq(receipts.materialKey, key));
-
-    if (!prior)
-      initialDigest = await localDirectoryContentDigest(
-        target,
-        new Set([".git"]),
-      );
-  }
-  await ctx?.before?.(key, input.kind + ":" + basename(target).split("@")[0]);
+  if (input.contentWitness && !prior)
+    initialDigest = await localDirectoryContentDigest(
+      target,
+      new Set([".git"]),
+    );
+  await ctx?.before?.(
+    receiptKey,
+    input.kind + ":" + basename(target).split("@")[0],
+  );
   const claimToken = randomUUID();
   // The gate exits on EOF if this process dies before sending a newline.
   const child = spawn(
@@ -261,9 +277,14 @@ export async function runMaterialSetup(input: {
       const [receipt] = await tx
         .select()
         .from(receipts)
-        .where(eq(receipts.materialKey, key))
+        .where(match)
         .for("update");
 
+      if (
+        receipt?.physicalKey &&
+        receipt.contentWitness !== (input.contentWitness ?? null)
+      )
+        conflict("revision_mismatch");
       if (receipt?.status === "succeeded") return false;
       if (
         !receipt &&
@@ -276,14 +297,26 @@ export async function runMaterialSetup(input: {
           !ctx?.recoveryOf ||
           receipt.claimToken !== "recovery:" + ctx.recoveryOf
         )
-          conflict("setup_owner_live");
+          conflict(
+            (await hasReservedOwner(tx, receipt))
+              ? "setup_owner_live"
+              : "setup_uncertain",
+          );
       } else if (receipt?.status === "running") {
         conflict(ownerMayRun(receipt) ? "setup_owner_live" : "setup_uncertain");
       }
+      if (
+        !scriptDigest ||
+        (receipt?.scriptDigest && receipt.scriptDigest !== scriptDigest)
+      )
+        conflict("setup_material_changed");
       await tx
         .insert(receipts)
         .values({
-          materialKey: key,
+          materialKey: receiptKey,
+          physicalKey: key,
+          scriptDigest,
+          contentWitness: input.contentWitness ?? null,
           status: "running",
           claimToken,
           ownerHost: hostname(),
@@ -316,7 +349,10 @@ export async function runMaterialSetup(input: {
       .update(receipts)
       .set({ status, updatedAt: new Date() })
       .where(
-        and(eq(receipts.materialKey, key), eq(receipts.claimToken, claimToken)),
+        and(
+          eq(receipts.materialKey, receiptKey),
+          eq(receipts.claimToken, claimToken),
+        ),
       );
     if (status === "succeeded") {
       const marker = join(target, ".maister-setup-done");

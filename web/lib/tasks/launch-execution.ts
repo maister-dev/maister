@@ -48,6 +48,7 @@ import {
 import { isManualTriageHold } from "./manual-launch-hold";
 import { withTaskLaunchCapabilityBundles } from "./launch-capability-materialization";
 
+import { requireReadyDeclaredFlowRunner } from "@/lib/acp-runners/declared-flow-runner";
 import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { recordTaskAgentTriggerRunBound } from "@/lib/agents/task-trigger-reservation";
@@ -219,6 +220,8 @@ export async function assertFrozenTaskLaunchCurrent(
   });
 
   await assertProjectFlowCapabilities(db, intent.projectId, manifest);
+  await requireReadyDeclaredFlowRunner(db, flow.id);
+
   const catalog = await loadRunnerCatalog(db);
 
   for (const slot of settings.sessions) {

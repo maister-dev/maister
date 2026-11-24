@@ -134,10 +134,17 @@ through server-state resolution, never a client-supplied path).
 ### Install + attach
 
 Install is idempotent and content-addressed (one resolved revision per
-package; every member sub-install inherits it). Attach writes the project
-group and export revision in one transaction without writing tracked files. Registration `packages[]` bootstrap drives the SAME two steps
-per entry (install revision → attach), so bootstrapped packages land in the
-same attachment model as UI-attached ones.
+package; every member sub-install inherits it). Attach prepares eligible
+trusted member setups, then commits the project group and desired pin in one
+transaction. A deferred `packages[]` request uses the same preparation and
+attachment checks as a manual upgrade. If preparation fails, an existing
+attachment remains available at its working revision.
+
+For a historical local package without a content witness, attachment verifies
+the cached package against its original local directory revision. For a
+historical remote package without that witness, attachment requires access
+to its recorded source to verify the revision and package contents. A failed
+verification leaves the current attachment in place.
 
 ```mermaid
 sequenceDiagram
@@ -154,6 +161,7 @@ sequenceDiagram
     W->>DB: package_installs two-phase Installing to Installed
     W->>DB: member flow/capability revisions (inherited revision)
     U->>W: attach to project
+    W->>W: prepare eligible trusted members and verify setup outcomes
     W->>DB: ONE tx - flows rows + capability_imports + mcp/restriction ingestion + attachment + FK links
     Note over W,DB: pre-guard in tx - manifest flow id colliding with a standalone flows row → CONFLICT
     W-->>U: runtime applied, Git unchanged
@@ -238,7 +246,7 @@ than attachment protection and include every historical run reference.
 | --- | --- | --- |
 | Install done, attach tx not committed | Orphan package install | Harmless; reused on retry or swept by GC when unreferenced |
 | Attach tx committed, configuration not saved to Git | Runtime applied, export pending | Explicit preview and configuration commit; package mutation retry does not write YAML |
-| Trust tx committed, setup not yet run | Members trusted, `setup_status='pending'` | Existing launch precondition refuses until setup completes; setup retried via the trust/enable path |
+| Trust tx committed, setup not yet run | Members trusted, `setup_status='pending'` | The declaration records outstanding setup. The worker resumes safe work. Project settings offer retry for a known failure and confirmed recovery for an uncertain dispatch. |
 
 ## Expectations
 
@@ -251,8 +259,9 @@ resolved_revision)`; installed package revisions are immutable.
 - Attach MUST refuse with `MaisterError("CONFLICT")` when a manifest flow id
   collides with an existing standalone `flows` row of the project
   (`flows_project_ref_uq`).
-- `setup.sh` NEVER executes during package install or attach; only the
-  post-trust setup path runs it, per member revision.
+- Platform installation only fetches and validates material. A trusted
+  attachment stages eligible setup before publishing the group. An
+  untrusted member awaits an explicit trust decision and its recorded setup.
 - A package trust decision MUST fan `trust_status`/`exec_trust` to ALL member
   rows in the same transaction and MUST require the global `admin` role.
 - Every member sub-install MUST record the package's resolved revision (tag

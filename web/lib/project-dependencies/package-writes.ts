@@ -32,7 +32,7 @@ type InstalledPackage = {
 };
 
 export async function lockDependencyProject(
-  tx: DependencyTransaction,
+  tx: Db,
   projectId: string,
 ): Promise<string> {
   const [project] = await tx
@@ -102,25 +102,33 @@ export async function removePackageDeclaration(
     .where(eq(declarations.effectiveAttachmentId, attachmentId));
 }
 
-export async function recordManualPackage(
-  tx: DependencyTransaction,
-  projectId: string,
-  attachmentId: string,
+export function installedPackageCoordinates(
   install: InstalledPackage,
-  coordinates: PackageCoordinates = {
+): PackageCoordinates {
+  return {
     source: install.sourceUrl,
     version: install.versionLabel,
     ...(install.manifest.sourceSubpath === undefined
       ? {}
       : { path: install.manifest.sourceSubpath }),
-  },
-): Promise<void> {
+  };
+}
+
+export async function manualPackageHead(
+  tx: Db,
+  projectId: string,
+  attachmentId: string | null,
+  installName: string,
+  coordinates: PackageCoordinates,
+) {
   assertDependencySource(coordinates.source);
-  const [linked] = await tx
-    .select()
-    .from(declarations)
-    .where(eq(declarations.effectiveAttachmentId, attachmentId))
-    .for("update");
+  const [linked] = attachmentId
+    ? await tx
+        .select()
+        .from(declarations)
+        .where(eq(declarations.effectiveAttachmentId, attachmentId))
+        .for("update")
+    : [];
   const packages = linked
     ? [linked]
     : await tx
@@ -131,7 +139,7 @@ export async function recordManualPackage(
             eq(declarations.projectId, projectId),
             eq(declarations.kind, "package"),
             or(
-              eq(declarations.logicalId, install.name),
+              eq(declarations.logicalId, installName),
               sql`
       ${declarations.desired}->>'source' = ${coordinates.source} AND ${declarations.desired}->>'version' = ${coordinates.version}
       AND ${declarations.desired}->>'path' IS NOT DISTINCT FROM ${coordinates.path ?? null}::text`,
@@ -153,7 +161,24 @@ export async function recordManualPackage(
       "Multiple package declarations identify this installation.",
       { details: { reason: "ambiguous_package_declaration" } },
     );
-  const head = packages[0];
+
+  return packages[0];
+}
+
+export async function recordManualPackage(
+  tx: DependencyTransaction,
+  projectId: string,
+  attachmentId: string,
+  install: InstalledPackage,
+  coordinates = installedPackageCoordinates(install),
+): Promise<void> {
+  const head = await manualPackageHead(
+    tx,
+    projectId,
+    attachmentId,
+    install.name,
+    coordinates,
+  );
   const effective = {
     effectiveAttachmentId: attachmentId,
     effectiveRevision: install.resolvedRevision,

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ConfigPersistSnapshot } from "./types";
+import type { ExportProjection, ConfigPersistSnapshot } from "./types";
 import type { ConfigPreview } from "./contracts";
 import type {
   ConfigOperation,
@@ -94,7 +94,7 @@ export async function configOperation(
 async function assertReviewedConfiguration(
   db: PersistenceDb,
   snapshot: ConfigPersistSnapshot,
-): Promise<void> {
+): Promise<ExportProjection> {
   const current = await readExportSnapshot(db, snapshot.projectId);
 
   if (
@@ -104,6 +104,8 @@ async function assertReviewedConfiguration(
       exportProjectionDigest(snapshot.projection)
   )
     throw stale();
+
+  return current.projection;
 }
 
 async function verifyPrivateBytes(
@@ -164,16 +166,25 @@ async function verifyPrivateBytes(
 async function verifyReviewedPackages(
   snapshot: ConfigPersistSnapshot,
   reviewedSource: string | null,
+  current: ExportProjection,
 ): Promise<void> {
-  const witnesses = await reviewPackageSources(
-    snapshot.projection,
-    snapshot.version === 1 ? null : reviewedSource,
-  );
+  if (snapshot.version === 1) {
+    await reviewPackageSources(snapshot.projection);
 
-  if (
-    snapshot.version === 2 &&
-    contentDigest(witnesses) !== contentDigest(snapshot.localWitnesses)
-  )
+    return;
+  }
+
+  // Keep witnesses from preview binding even if the worker has since detached
+  // the material. Newly effective local pins must also match the current bytes.
+  const reviewed = new Set(snapshot.localWitnesses.map((w) => w.id));
+  const witnesses = await reviewPackageSources(
+    current,
+    reviewedSource,
+    reviewed,
+  );
+  const actual = new Map(witnesses.map((w) => [w.id, w.digest]));
+
+  if (snapshot.localWitnesses.some((w) => actual.get(w.id) !== w.digest))
     throw new MaisterError(
       "CONFIG",
       "Local package contents changed after preview. Review the current contents before saving.",
@@ -437,8 +448,9 @@ export async function confirmProjectConfiguration(
       await authorize();
       const reviewedSource = await verifyPrivateBytes(operation);
 
-      await assertReviewedConfiguration(db, snapshot);
-      await verifyReviewedPackages(snapshot, reviewedSource);
+      const current = await assertReviewedConfiguration(db, snapshot);
+
+      await verifyReviewedPackages(snapshot, reviewedSource, current);
       if (operation.state === "previewed") {
         if (operation.expiresAt.getTime() <= Date.now()) {
           operation = await transitionConfigOperation(
@@ -535,9 +547,9 @@ export async function confirmProjectConfiguration(
       }
       const assertCurrentAuthority = async (): Promise<void> => {
         await authorize();
-        await assertReviewedConfiguration(db, snapshot);
+        const current = await assertReviewedConfiguration(db, snapshot);
         await assertRegisteredRepository(snapshot);
-        await verifyReviewedPackages(snapshot, reviewedSource);
+        await verifyReviewedPackages(snapshot, reviewedSource, current);
       };
 
       await publishConfigCommit(

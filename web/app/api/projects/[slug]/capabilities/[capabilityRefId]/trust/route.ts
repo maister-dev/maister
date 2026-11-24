@@ -6,8 +6,8 @@ import { z } from "zod";
 import {
   authorizePackageTrust,
   parseAuthorizedJson,
-  errorResponse,
 } from "@/app/api/projects/[slug]/flow-packages/_lib";
+import { packageErrorResponse } from "@/lib/packages/http";
 import { confirmCapabilityTrust } from "@/lib/capabilities/import";
 
 const postBodySchema = z.object({ confirm: z.literal(true) });
@@ -30,17 +30,19 @@ export async function POST(
   const { slug, capabilityRefId } = await params;
 
   try {
-    const { project, db } = await authorizePackageTrust(slug);
+    const { project, db, user } = await authorizePackageTrust(slug);
+
     await parseAuthorizedJson({ req, schema: postBodySchema, method: "POST" });
 
     const result = await confirmCapabilityTrust({
       projectId: project.id,
       capabilityRefId,
       db,
+      actorUserId: user.id,
     });
 
     return NextResponse.json({ ok: true, ...result }, { status: 200 });
   } catch (err) {
-    return errorResponse(err, slug);
+    return packageErrorResponse(err, `projects/${slug}/capabilities trust`);
   }
 }

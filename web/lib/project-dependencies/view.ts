@@ -20,6 +20,7 @@ export interface ProjectDependencyView {
   readiness:
     | "unresolved"
     | "awaiting_trust"
+    | "setup_pending"
     | "setup_failed"
     | "recovery_required"
     | "installed";

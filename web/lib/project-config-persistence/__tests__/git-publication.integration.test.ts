@@ -30,6 +30,7 @@ import {
   transitionConfigOperation,
 } from "../store";
 
+import { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
 import { projects, users } from "@/lib/db/schema";
 import {
   startMainPostgresTestDb,
@@ -914,4 +915,39 @@ it("AC08: a missing unchanged local declaration survives a reviewed edit and cha
   expect(await readFile(join(repo, "maister.yaml"), "utf8")).toBe(
     source.replace("Before", "Runtime").replace("version: old", "version: new"),
   );
+});
+
+it("AC08: confirmation enforces a local revision first installed after preview", async () => {
+  const { projectId, repo } = await seed();
+  const dir = join(root, "later-" + projectId);
+  const source = `schemaVersion: 2\nproject:\n  name: Before\nflows: []\npackages:\n  - id: local\n    source: '${dir}'\n    version: v1\n`;
+
+  await writeFile(join(repo, "maister.yaml"), source);
+  await git(repo, ["add", "maister.yaml"]);
+  await git(repo, ["commit", "-m", "Existing unresolved local package"]);
+  const before = await git(repo, ["rev-parse", "HEAD"]);
+  const declarationId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO project_dependency_declarations(id,project_id,kind,logical_id,ordinal,desired) VALUES($1,$2,'package','local',0,$3)",
+    [declarationId, projectId, { source: dir, version: "v1" }],
+  );
+  const identity = { id: await ready(projectId), projectId, actorUserId };
+
+  await mkdir(dir);
+  await writeFile(join(dir, "content"), "installed");
+  const revision = (await localDirectoryContentDigest(dir)).slice(0, 40);
+
+  await database.pool.query(
+    "UPDATE project_dependency_declarations SET effective_generation=generation,effective_revision=$2 WHERE id=$1",
+    [declarationId, revision],
+  );
+  await writeFile(join(dir, "content"), "drift");
+  expect(await currentConfigStatus(database.db, projectId)).toMatchObject({
+    reason: "package_revision_mismatch",
+  });
+  await expect(
+    confirmProjectConfiguration(database.db, identity, authorized),
+  ).rejects.toMatchObject({ details: { reason: "package_revision_mismatch" } });
+  expect(await git(repo, ["rev-parse", "HEAD"])).toBe(before);
 });

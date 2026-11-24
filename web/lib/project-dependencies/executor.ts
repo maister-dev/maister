@@ -18,7 +18,11 @@ import {
   reconcileProjectFlowLinks,
   validateProjectFlowLink,
 } from "./flow-links";
-import { stageFlowSetup, stageCapabilitySetup } from "./stage-setup";
+import {
+  stageFlowSetup,
+  stageCapabilitySetup,
+  settlePreparedPackageSetups,
+} from "./stage-setup";
 import { withSettledSetups, withSetupAuthority } from "./setup";
 import { requireParentPackageTrust } from "./member-trust";
 import {
@@ -47,6 +51,7 @@ import {
 import {
   type PackageInstallManifest,
   installPackageRevision,
+  verifyCachedPackage,
   preparePackageMembers,
   workerAttachPackage,
   workerUpgradeAttachment,
@@ -59,6 +64,7 @@ type Execution = {
   project: typeof projects.$inferSelect;
   declaration: typeof declarations.$inferSelect;
   signal: AbortSignal;
+  authorizePublication: (tx: Db) => Promise<void>;
   progress: (
     stage: "resolve" | "install" | "attach" | "setup" | "projection",
     update?: {
@@ -177,6 +183,7 @@ async function stagePackageMembers(
     candidate,
     roleRefs,
     signal,
+    job.authorizePublication,
   );
   const authorizeSetup = async (tx: Db) => {
     const { declaration: head } = await requireCurrentDependency(tx, claim);
@@ -219,12 +226,7 @@ async function stagePackageMembers(
   };
 
   if (candidate.trustStatus !== "untrusted") {
-    await withSetupAuthority(db, authorizeSetup, async () => {
-      for (const [ref, flow] of members.flows)
-        await stageFlowSetup(db, flow, ref, signal);
-      for (const [ref, cap] of members.capabilities)
-        await stageCapabilitySetup(db, cap, ref, signal);
-    });
+    await settlePreparedPackageSetups(db, members, authorizeSetup, signal);
   }
 
   return members;
@@ -240,8 +242,10 @@ async function executePackage(job: Execution): Promise<void> {
       )[0]
     : undefined;
 
+  if (install && !(await verifyCachedPackage(install))) install = undefined;
   if (!install) {
     const published = await installPackageRevision({
+      authorizePublication: job.authorizePublication,
       ...claim.desired,
       trustStatus: resolveTrust(claim.desired.source),
       db,
@@ -304,36 +308,38 @@ async function executePackage(job: Execution): Promise<void> {
             { ...args, attachmentId: head.effectiveAttachmentId },
             record,
           );
-        else await record(tx, head.effectiveAttachmentId);
+        else {
+          await record(tx, head.effectiveAttachmentId);
+          const installed = await tx
+            .select()
+            .from(flows)
+            .where(
+              and(
+                eq(flows.projectId, project.id),
+                eq(flows.packageInstallId, candidate.id),
+              ),
+            );
+
+          for (const flow of installed) {
+            if (!flow.enabledRevisionId) continue;
+            const [rev] = await tx
+              .select()
+              .from(flowRevisions)
+              .where(eq(flowRevisions.id, flow.enabledRevisionId));
+
+            await prepareDependencyFlow(tx, project.id, {
+              flowRowId: flow.id,
+              revisionId: rev.id,
+              manifest: rev.manifest as InstallResult["manifest"],
+            });
+          }
+        }
       } else {
         if (!(await workerAttachPackage(args, record)))
           throw new MaisterError(
             "PRECONDITION",
             "Resolved install disappeared",
           );
-      }
-      const installed = await tx
-        .select()
-        .from(flows)
-        .where(
-          and(
-            eq(flows.projectId, project.id),
-            eq(flows.packageInstallId, candidate.id),
-          ),
-        );
-
-      for (const flow of installed) {
-        if (!flow.enabledRevisionId) continue;
-        const [rev] = await tx
-          .select()
-          .from(flowRevisions)
-          .where(eq(flowRevisions.id, flow.enabledRevisionId));
-
-        await prepareDependencyFlow(tx, project.id, {
-          flowRowId: flow.id,
-          revisionId: rev.id,
-          manifest: rev.manifest as InstallResult["manifest"],
-        });
       }
       await progress("projection");
       await reconcileDependencyCatalog(tx, project.id);
@@ -361,10 +367,17 @@ export async function executeDependency(job: Execution): Promise<void> {
       flowId: declaration.logicalId,
       signal,
     };
-    const revision = await installRevision({ ...args, db });
+    const revision = await installRevision({
+      ...args,
+      db,
+      onResolve: async (resolvedRevision) => {
+        assertRevision(claim.resolvedRevision, resolvedRevision);
+        await progress("install", { resolvedRevision });
+      },
+      authorizePublication: job.authorizePublication,
+    });
 
-    assertRevision(claim.resolvedRevision, revision.resolvedRevision);
-    await progress("attach", { resolvedRevision: revision.resolvedRevision });
+    await progress("attach");
     const authorize = async (tx: Db) => {
       await requireCurrentDependency(tx, claim);
       await assertStandaloneFlowOwnership(
@@ -414,6 +427,7 @@ export async function executeDependency(job: Execution): Promise<void> {
       pin.trust === "explicit" ? ("untrusted" as const) : undefined,
   };
   const material = await prepareCapabilityRevision({
+    authorizePublication: job.authorizePublication,
     ...args,
     onResolve: async (revision, witness) => {
       assertRevision(claim.resolvedRevision, revision);

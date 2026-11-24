@@ -19,7 +19,6 @@ type TableName =
   | "flows"
   | "platform_acp_runners"
   | "platform_runtime_settings"
-  | "project_flow_runner_defaults"
   | "projects"
   | "task_clarifications"
   | "tasks";
@@ -31,7 +30,6 @@ const state: Record<TableName, Row[]> = {
   flows: [],
   platform_acp_runners: [],
   platform_runtime_settings: [],
-  project_flow_runner_defaults: [],
   projects: [],
   task_clarifications: [{ count: 0 }],
   tasks: [],
@@ -67,6 +65,12 @@ vi.mock("@/lib/authz", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/authz")>()),
   requireActiveSession: mocks.requireActiveSession,
   requireProjectAction: mocks.requireProjectAction,
+}));
+vi.mock("@/lib/acp-runners/declared-flow-runner", () => ({
+  readFlowRunnerBinding: async () => ({
+    defaultRunnerId: null,
+    unavailable: false,
+  }),
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 vi.mock("@/lib/runs/launchability", async (importOriginal) => {
@@ -485,7 +489,6 @@ function seedBase(): void {
       enabled: true,
     },
   ];
-  state.project_flow_runner_defaults = [];
   state.flow_runner_remaps = [];
   mocks.requireActiveSession.mockResolvedValue({
     id: "user-1",

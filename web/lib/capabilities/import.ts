@@ -18,14 +18,20 @@ import { promisify } from "node:util";
 import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { localDirectoryPath } from "@/lib/runtime-file-url";
 import { dependencyCloneFailure } from "@/lib/project-dependencies/failure";
 import { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
 import {
   materialConflict,
   publishMaterial,
+  snapshotLocalMaterial,
 } from "@/lib/project-dependencies/material";
 import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
 import { reconcileDependencyCatalog } from "@/lib/project-dependencies/catalog";
+import {
+  enqueueTrustedSetup,
+  finishTrustedSetup,
+} from "@/lib/project-dependencies/post-trust-store";
 import { runMaterialSetup } from "@/lib/project-dependencies/setup";
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { upsertCapabilitiesFromConfig } from "@/lib/capabilities/catalog";
@@ -383,6 +389,7 @@ type CapabilityInstallOptions = {
   resolvedRevisionOverride?: string;
   trustStatusOverride?: "untrusted" | "trusted" | "trusted_by_policy";
   onResolve?: (revision: string, witness: string) => Promise<void>;
+  authorizePublication?: (tx: Db) => Promise<void>;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
@@ -410,48 +417,28 @@ export async function prepareCapabilityRevision(
     capabilityRefId,
   );
 
-  let resolvedRevision: string;
-  let target: string;
-  let tmpDir: string | null = null;
-
-  if (isLocalSource(source)) {
-    const absSource = source.startsWith("file://")
-      ? source.slice("file://".length)
-      : source;
-
-    resolvedRevision = revisionOverride ?? localSourceRevision(absSource);
-    target = systemCapabilityCachePath(capabilityRefId, resolvedRevision);
-  } else {
-    tmpDir = await mkdtemp(
-      path.join(os.tmpdir(), `maister-cap-clone-${capabilityRefId}-`),
-    );
-
-    try {
-      await gitClone({ source, version, target: tmpDir, signal });
-      resolvedRevision =
-        revisionOverride ??
-        (await gitRevParseHead({
-          dir: tmpDir,
-          source,
-          version,
-          signal,
-        }));
-      target = systemCapabilityCachePath(capabilityRefId, resolvedRevision);
-    } catch (err) {
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      throw err;
-    }
-  }
-
-  log.info(
-    { capabilityRefId, version, source, resolvedRevision },
-    "installing capability revision",
-  );
+  const local = localDirectoryPath(source);
+  const sourcePath =
+    local === null
+      ? await mkdtemp(
+          path.join(os.tmpdir(), `maister-cap-clone-${capabilityRefId}-`),
+        )
+      : await snapshotLocalMaterial(local);
 
   try {
-    const sourcePath =
-      tmpDir ??
-      (source.startsWith("file://") ? source.slice("file://".length) : source);
+    if (local === null)
+      await gitClone({ source, version, target: sourcePath, signal });
+    const resolvedRevision =
+      revisionOverride ??
+      (local === null
+        ? await gitRevParseHead({ dir: sourcePath, source, version, signal })
+        : localSourceRevision(local));
+    const target = systemCapabilityCachePath(capabilityRefId, resolvedRevision);
+
+    log.info(
+      { capabilityRefId, version, source, resolvedRevision },
+      "installing capability revision",
+    );
     const hash = (dir: string) =>
       localDirectoryContentDigest(dir, new Set([".git"]));
     const witness = await hash(sourcePath);
@@ -459,6 +446,7 @@ export async function prepareCapabilityRevision(
     await opts.onResolve?.(resolvedRevision, witness);
 
     return await database.transaction(async (db: any) => {
+      await opts.authorizePublication?.(db);
       await db.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${target},0))`,
       );
@@ -476,6 +464,7 @@ export async function prepareCapabilityRevision(
           materialConflict();
       }
       await publishMaterial({
+        beforePublish: () => opts.authorizePublication?.(db),
         source: sourcePath,
         target,
         revision: resolvedRevision,
@@ -499,7 +488,7 @@ export async function prepareCapabilityRevision(
       };
     });
   } finally {
-    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+    await rm(sourcePath, { recursive: true, force: true });
   }
 }
 
@@ -796,6 +785,7 @@ export async function installAndIngestCapabilityImports(opts: {
       version: entry.version,
       capabilityRefId: entry.id,
       projectId: opts.projectId,
+      trustStatusOverride: entry.trust === "explicit" ? "untrusted" : undefined,
       db,
       signal: opts.signal,
     });
@@ -810,6 +800,14 @@ export async function installAndIngestCapabilityImports(opts: {
       });
     }
 
+    // A deliberate manifest SET can restore a previously cleared legacy projection.
+    // Source trust, setup and effective-revision selection still apply.
+    const ready = await db.execute(sql`
+      SELECT 1 FROM project_ready_capability_imports(${opts.projectId})
+      WHERE id=${installed.importRowId}
+    `);
+
+    if (!ready.rows.length) continue;
     importDerived.push({
       id: entry.id,
       kind: "agent_definition",
@@ -858,6 +856,7 @@ export async function installAndIngestCapabilityImports(opts: {
 //     (502, retryable) per ADR-042 — NOT EXECUTOR_UNAVAILABLE.
 export async function confirmCapabilityTrust(opts: {
   projectId: string;
+  actorUserId?: string;
   capabilityRefId: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
@@ -865,7 +864,7 @@ export async function confirmCapabilityTrust(opts: {
 }): Promise<{ trustStatus: "trusted"; setupStatus: string }> {
   const db = opts.db ?? getDb();
 
-  const importRowId: string = await db.transaction(async (tx: Db) => {
+  const { importRowId, queued } = await db.transaction(async (tx: Db) => {
     await tx
       .select({ id: schemaModule.projects.id })
       .from(schemaModule.projects)
@@ -928,9 +927,18 @@ export async function confirmCapabilityTrust(opts: {
       .set({ trustStatus: "trusted", updatedAt: new Date() })
       .where(eq(capabilityImports.id, row.id));
 
-    return row.id;
+    return {
+      importRowId: row.id,
+      queued: await enqueueTrustedSetup(
+        tx,
+        opts.actorUserId,
+        { kind: "capability", id: row.id },
+        opts.projectId,
+      ),
+    };
   });
 
+  await finishTrustedSetup(db, queued, opts.signal);
   const { setupStatus } = await runCapabilityRevisionSetup({
     importRowId,
     db,

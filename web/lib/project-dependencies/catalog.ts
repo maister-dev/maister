@@ -4,22 +4,14 @@ import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  notInArray,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+
+import { eligibleProjectImport } from "./eligible-imports";
 
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import {
   capabilityImports,
   capabilityRecords as records,
-  projectDependencyDeclarations as declarations,
   projectPackageAttachments,
   projects,
 } from "@/lib/db/schema";
@@ -55,6 +47,7 @@ export async function assertCapabilityMemberOwnership(
       ),
     )
     .limit(1);
+
   if (prior) throw memberConflict(prior.ref);
 }
 
@@ -74,6 +67,7 @@ export async function assertStandaloneImportOwnership(
       ),
     )
     .limit(1);
+
   if (prior) throw memberConflict(ref);
 }
 
@@ -89,51 +83,13 @@ export async function reconcileDependencyCatalog(
     .where(eq(projects.id, projectId))
     .for("update");
   const imports = await tx
-    .select({
-      row: capabilityImports,
-      head: declarations.id,
-      effective: declarations.effectiveRevision,
-      attached: projectPackageAttachments.id,
-    })
+    .select()
     .from(capabilityImports)
-    .leftJoin(
-      declarations,
-      and(
-        eq(declarations.projectId, capabilityImports.projectId),
-        eq(declarations.kind, "capability_import"),
-        eq(declarations.logicalId, capabilityImports.capabilityRefId),
-      ),
-    )
-    .leftJoin(
-      projectPackageAttachments,
-      and(
-        eq(projectPackageAttachments.projectId, capabilityImports.projectId),
-        eq(
-          projectPackageAttachments.packageInstallId,
-          capabilityImports.packageInstallId,
-        ),
-      ),
-    )
-    .where(eq(capabilityImports.projectId, projectId))
-    .orderBy(
-      asc(capabilityImports.capabilityRefId),
-      desc(capabilityImports.createdAt),
-      asc(capabilityImports.id),
-    );
-  const seen = new Set<string>();
+    .where(eligibleProjectImport(projectId))
+    .orderBy(asc(capabilityImports.capabilityRefId));
   const eligible: string[] = [];
-  for (const { row, head, effective, attached } of imports) {
-    if (row.packageInstallId && !attached) continue;
-    if (!row.packageInstallId && head && row.resolvedRevision !== effective)
-      continue;
-    if (seen.has(row.capabilityRefId)) continue;
-    seen.add(row.capabilityRefId);
-    if (
-      row.packageStatus !== "Installed" ||
-      row.trustStatus === "untrusted" ||
-      (row.setupStatus !== "done" && row.setupStatus !== "not_required")
-    )
-      continue;
+
+  for (const row of imports) {
     const entry = {
       version: row.versionTag,
       revision: row.resolvedRevision,
@@ -168,6 +124,7 @@ export async function reconcileDependencyCatalog(
         (${records.material}='{}'::jsonb AND ${records.version}=${row.versionTag} AND ${records.revision}=${row.resolvedRevision})`,
       })
       .returning({ id: records.id });
+
     if (!written.length) throw memberConflict(row.capabilityRefId);
     eligible.push(written[0].id);
   }
@@ -177,9 +134,29 @@ export async function reconcileDependencyCatalog(
     .where(
       and(
         eq(records.projectId, projectId),
-        eq(records.selectable, true),
+        sql`(${records.selectable} OR ${records.disabledAt} IS NULL)`,
         sql`${records.material}->>'origin'='dependency-import'`,
         eligible.length ? notInArray(records.id, eligible) : undefined,
+      ),
+    );
+}
+
+/** A global package trust decision applies to typed material in all attached projects. */
+export async function refreshPackageCapabilityTrust(
+  tx: Db,
+  installId: string,
+): Promise<void> {
+  await tx
+    .update(records)
+    .set({ selectable: true, disabledAt: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(records.source, "flow-package"),
+        sql`${records.material}->>'origin'='package-attachment' AND ${records.material}->>'packageInstallId'=${installId}`,
+        sql`exists (SELECT 1 FROM ${projectPackageAttachments} a JOIN package_installs i ON i.id=a.package_install_id
+        WHERE a.project_id=${records.projectId} AND a.package_install_id=${installId}
+        AND i.package_status='Installed' AND i.trust_status IN ('trusted','trusted_by_policy'))`,
+        sql`(${records.disabledAt} IS NOT NULL OR NOT ${records.selectable})`,
       ),
     );
 }

@@ -19,8 +19,9 @@ export async function prepareDependencyFlow(
   tx: Db,
   projectId: string,
   flow: Pick<InstallResult, "flowRowId" | "manifest" | "revisionId">,
-  runner?: string,
+  declaredRunner?: string,
 ): Promise<void> {
+  const runner = declaredRunner === "inherit" ? undefined : declaredRunner;
   const [rev] = await tx
     .select()
     .from(flowRevisions)

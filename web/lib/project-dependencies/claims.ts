@@ -14,10 +14,14 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 export const dependencyLeaseMs = 90_000;
+export const nextDependencyLease = sql`clock_timestamp() + ${dependencyLeaseMs}::int * interval '1 millisecond'`;
 export type DependencyClaim = typeof attempts.$inferSelect & {
   claimToken: string;
 };
-export async function claimDependency(db: Db): Promise<DependencyClaim | null> {
+export async function claimDependency(
+  db: Db,
+  attemptId?: string,
+): Promise<DependencyClaim | null> {
   const token = randomUUID();
 
   return db.transaction(async (tx) => {
@@ -40,13 +44,13 @@ export async function claimDependency(db: Db): Promise<DependencyClaim | null> {
       SELECT a.id FROM project_dependency_attempts a
       JOIN project_dependency_declarations d ON d.id=a.declaration_id AND d.generation=a.generation
       JOIN projects p ON p.id=d.project_id AND p.archived_at IS NULL
-      WHERE ((a.status='pending' AND a.due_at<=clock_timestamp())
+      WHERE ${attemptId ? sql`a.id=${attemptId}` : sql`true`} AND ((a.status='pending' AND a.due_at<=clock_timestamp())
          OR (a.status='running' AND a.lease_expires_at<=clock_timestamp()))
         AND NOT EXISTS (SELECT 1 FROM project_dependency_attempts busy WHERE busy.declaration_id=d.id AND busy.id<>a.id AND busy.status='running')
-        AND NOT EXISTS (SELECT 1 FROM project_dependency_attempts earlier
+        AND (${attemptId !== undefined} OR NOT EXISTS (SELECT 1 FROM project_dependency_attempts earlier
           JOIN project_dependency_declarations sibling ON sibling.id=earlier.declaration_id AND sibling.generation=earlier.generation
           WHERE sibling.project_id=p.id AND sibling.kind=d.kind AND sibling.ordinal<d.ordinal
-          AND earlier.status='pending' AND earlier.due_at<=clock_timestamp() AND earlier.attempt_no=1)
+          AND earlier.status='pending' AND earlier.due_at<=clock_timestamp() AND earlier.attempt_no=1))
       ORDER BY (SELECT max(other.updated_at) FROM project_dependency_attempts other WHERE other.project_id=p.id AND other.status<>'pending') NULLS FIRST, a.due_at, d.ordinal, a.id
       FOR UPDATE OF p,a SKIP LOCKED LIMIT 1`);
 
@@ -56,7 +60,7 @@ export async function claimDependency(db: Db): Promise<DependencyClaim | null> {
       .set({
         status: "running",
         claimToken: token,
-        leaseExpiresAt: new Date(Date.now() + dependencyLeaseMs),
+        leaseExpiresAt: nextDependencyLease,
         updatedAt: new Date(),
       })
       .where(eq(attempts.id, rows[0].id))
@@ -66,11 +70,12 @@ export async function claimDependency(db: Db): Promise<DependencyClaim | null> {
   });
 }
 
-export function sameClaim(claim: DependencyClaim) {
+export function liveDependencyClaim(claim: DependencyClaim) {
   return and(
     eq(attempts.id, claim.id),
     eq(attempts.claimToken, claim.claimToken),
     eq(attempts.status, "running"),
+    sql`${attempts.leaseExpiresAt} > clock_timestamp()`,
   );
 }
 
@@ -109,12 +114,7 @@ export async function requireCurrentDependency(db: Db, claim: DependencyClaim) {
   const [owned] = await db
     .select({ id: attempts.id })
     .from(attempts)
-    .where(
-      and(
-        sameClaim(claim),
-        sql`${attempts.leaseExpiresAt} > clock_timestamp()`,
-      ),
-    );
+    .where(liveDependencyClaim(claim));
 
   if (!project || !current || !owned)
     throw new MaisterError("CONFLICT", "Dependency attempt was superseded", {

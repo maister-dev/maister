@@ -1,8 +1,14 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
+
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  enqueueTrustedSetup,
+  finishTrustedSetup,
+} from "@/lib/project-dependencies/post-trust-store";
 import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -29,6 +35,7 @@ const log = pino({
 export async function trustExecutable(args: {
   projectId: string;
   flowId: string;
+  actorUserId?: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
 }): Promise<{ execTrust: "trusted"; setupStatus: string }> {
@@ -77,10 +84,21 @@ export async function trustExecutable(args: {
   }
 
   // Flip exec_trust → trusted unconditionally (idempotent).
-  await db
-    .update(flowRevisions)
-    .set({ execTrust: "trusted" })
-    .where(eq(flowRevisions.id, rev.id));
+  const queued = await db.transaction(async (tx: Db) => {
+    await tx
+      .update(flowRevisions)
+      .set({ execTrust: "trusted" })
+      .where(eq(flowRevisions.id, rev.id));
+
+    return enqueueTrustedSetup(
+      tx,
+      args.actorUserId,
+      { kind: "flow", id: rev.id },
+      args.projectId,
+    );
+  });
+
+  await finishTrustedSetup(db, queued);
 
   log.debug(
     { projectId: args.projectId, flowId: args.flowId, revisionId: rev.id },

@@ -3,6 +3,7 @@ import "server-only";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { FlowRevisionExecTrust } from "@/lib/db/schema";
 import type { TrustStatus } from "@/lib/flows/trust";
+import type { Db } from "@/lib/execution-host/db";
 import type { DependencyTransaction } from "@/lib/project-dependencies/package-writes";
 
 import { execFile } from "node:child_process";
@@ -23,12 +24,14 @@ import {
 import os from "node:os";
 import path, { dirname, join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { publishMaterial } from "@/lib/project-dependencies/material";
+import {
+  publishMaterial,
+  snapshotLocalMaterial,
+} from "@/lib/project-dependencies/material";
 import { dependencyCloneFailure } from "@/lib/project-dependencies/failure";
 import { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
 export { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
@@ -66,7 +69,7 @@ import {
   systemCachePath,
   versionTagSchema,
 } from "@/lib/flow-paths";
-import { runtimeFileUrl } from "@/lib/runtime-file-url";
+import { localDirectoryPath, runtimeFileUrl } from "@/lib/runtime-file-url";
 
 // FIXME(any): remove the schema-module bridge once Drizzle's generated table
 // types remain stable across service and integration-test boundaries.
@@ -625,17 +628,7 @@ export type LocalDirectorySourceResult =
 export async function isLocalDirectorySource(
   source: string,
 ): Promise<LocalDirectorySourceResult> {
-  let candidate: string | null = null;
-
-  if (source.startsWith("file://")) {
-    try {
-      candidate = fileURLToPath(source);
-    } catch {
-      candidate = null;
-    }
-  } else if (path.isAbsolute(source)) {
-    candidate = source;
-  }
+  const candidate = localDirectoryPath(source);
 
   if (!candidate) return { kind: "git" };
 
@@ -792,6 +785,8 @@ async function ensureRevisionIntentRow(opts: {
 // project enablement pointer — used by installFlowPlugin (install+enable) and
 // by lifecycle.upgradeFlow (install beside).
 export async function installRevision(opts: {
+  onResolve?: (revision: string) => Promise<void>;
+  authorizePublication?: (tx: Db) => Promise<void>;
   source: string;
   version: string;
   flowId: string;
@@ -831,57 +826,10 @@ export async function installRevision(opts: {
 
   let resolvedRevision: string;
   let target: string;
-  let tmpDir: string | null = null;
-  let manifestForIntent: FlowYamlV1;
-
-  if (sourceKind.kind === "local") {
-    manifestForIntent = await loadManifestOrThrow(
-      join(sourceKind.absPath, "flow.yaml"),
-      source,
-      version,
-      { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
-    );
-    resolvedRevision =
-      revisionOverride ??
-      (await localDirectoryContentDigest(sourceKind.absPath)).slice(
-        0,
-        LOCAL_REVISION_LEN,
-      );
-    target = systemCachePath(flowId, resolvedRevision);
-  } else {
-    tmpDir = await mkdtemp(
-      path.join(os.tmpdir(), `maister-flow-clone-${flowId}-`),
-    );
-
-    try {
-      await gitClone({ source, version, target: tmpDir, signal });
-      resolvedRevision =
-        revisionOverride ??
-        (await gitRevParseHead({
-          dir: tmpDir,
-          source,
-          version,
-          signal,
-        }));
-      target = systemCachePath(flowId, resolvedRevision);
-      manifestForIntent = await loadManifestOrThrow(
-        join(tmpDir, "flow.yaml"),
-        source,
-        version,
-        { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
-      );
-    } catch (err) {
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      throw err;
-    }
-  }
-
-  log.info(
-    { flowId, version, source, resolvedRevision },
-    "installing flow revision",
-  );
-
-  const sourceDir = sourceKind.kind === "local" ? sourceKind.absPath : tmpDir!;
+  const sourceDir =
+    sourceKind.kind === "local"
+      ? await snapshotLocalMaterial(sourceKind.absPath)
+      : await mkdtemp(path.join(os.tmpdir(), `maister-flow-clone-${flowId}-`));
   const hashMaterial = (dir: string) =>
     localDirectoryContentDigest(dir, new Set([".git"]));
   // Lock the physical destination (whose name contains a shortened SHA)
@@ -890,14 +838,40 @@ export async function installRevision(opts: {
   let skipFinalize: boolean;
 
   try {
+    if (sourceKind.kind === "git") {
+      await gitClone({ source, version, target: sourceDir, signal });
+    }
+    resolvedRevision =
+      revisionOverride ??
+      (sourceKind.kind === "local"
+        ? (await localDirectoryContentDigest(sourceDir)).slice(
+            0,
+            LOCAL_REVISION_LEN,
+          )
+        : await gitRevParseHead({ dir: sourceDir, source, version, signal }));
+    await opts.onResolve?.(resolvedRevision);
+    target = systemCachePath(flowId, resolvedRevision);
+    const manifestForIntent = await loadManifestOrThrow(
+      join(sourceDir, "flow.yaml"),
+      source,
+      version,
+      { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
+    );
+
+    log.info(
+      { flowId, version, source, resolvedRevision },
+      "installing flow revision",
+    );
     const witness = await hashMaterial(sourceDir);
 
     ({ revisionId, skipFinalize } = await db.transaction(
       async (tx: DependencyTransaction) => {
+        await opts.authorizePublication?.(tx);
         await tx.execute(
           sql`SELECT pg_advisory_xact_lock(hashtextextended(${target},0))`,
         );
         await publishMaterial({
+          beforePublish: () => opts.authorizePublication?.(tx),
           source: sourceDir,
           target,
           revision: resolvedRevision,
@@ -933,12 +907,10 @@ export async function installRevision(opts: {
       },
     ));
   } finally {
-    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+    await rm(sourceDir, { recursive: true, force: true });
   }
   try {
     if (skipFinalize) {
-      if (tmpDir)
-        await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       log.info(
         { target, resolvedRevision },
         "revision already Installed; reusing cache",
@@ -1043,8 +1015,6 @@ export async function installRevision(opts: {
       .set({ packageStatus: "Failed" })
       .where(eq(flowRevisions.id, revisionId))
       .catch(() => {});
-    if (tmpDir)
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 
     if (err instanceof MaisterError) throw err;
     throw wrapInstallStage({

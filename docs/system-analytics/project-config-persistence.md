@@ -266,8 +266,9 @@ each new or changed local pin. An unresolved local entry with identical
 coordinates in that blob can remain verbatim through an unrelated edit even
 when its directory is unavailable. Source validation applies to every pin,
 including preserved entries. An installed local pin still requires content
-matching the reviewed effective revision. Publication verifies the same source
-and local witnesses before its effects. A terminal v1 receipt replays by its
+matching its effective revision. At confirmation and recovery, publication verifies
+each original local witness and checks any local pin installed since preview
+against its current source directory. A terminal v1 receipt replays by its
 original digest. Pending v1 reviews retain their installed-revision check.
 
 The immutable repository snapshot encodes canonical Git-quoted ASCII index entries as base64. `core.quotePath=true` keeps arbitrary path bytes, control characters and non-ASCII names lossless across the text/JSON boundary. Expected published index entries are derived from the immutable prepared commit tree, never a mutable private index. PostgreSQL JSONB cannot represent U+0000; the lossless encoded value remains part of the reviewed-state digest. Do not strip delimiters or normalize path text. Repeated persistence against a non-empty index is a real-Git/real-Postgres acceptance case.

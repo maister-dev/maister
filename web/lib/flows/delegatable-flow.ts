@@ -6,6 +6,7 @@ import type { DelegationSnapshot } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import { requireReadyDeclaredFlowRunner } from "@/lib/acp-runners/declared-flow-runner";
 import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { getDb } from "@/lib/db/client";
@@ -192,6 +193,8 @@ export async function resolveDelegatableFlow(
   }
 
   await assertProjectFlowCapabilities(_db, projectId, stored.manifest);
+  await requireReadyDeclaredFlowRunner(_db, flow.id);
+
   // ADR-165: pre-flight the public-result export. This is NOT the decisive
   // resolve — `launchRunStaged` does that from the same pinned revision and its
   // result is what lands on the run — but failing here means a flow with a

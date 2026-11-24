@@ -19,7 +19,8 @@ import {
 } from "./flow-links";
 import { prepareDependencyFlow } from "./prepare-flow";
 import { assertDependencySource } from "./source";
-import { withSetupDatabase } from "./setup";
+import { stageFlowSetup } from "./stage-setup";
+import { withSetupAuthority, withSettledSetups } from "./setup";
 
 import {
   flows,
@@ -31,6 +32,7 @@ import { installFlowPlugin, installRevision } from "@/lib/flows";
 import { resolveTrust } from "@/lib/flows/trust";
 import {
   installPackageRevision,
+  prepareManualPackageMutation,
   workerAttachPackage,
   workerUpgradeAttachment,
 } from "@/lib/packages/attach";
@@ -54,33 +56,37 @@ export async function installOperatorPackage(
     db,
     trustStatus: resolveTrust(coordinates.source),
   });
-  const result = await withSetupDatabase(db, () =>
-    db.transaction(async (tx) => {
-      await lockDependencyProject(tx, projectId);
-      const [prior] = await tx
-        .select()
-        .from(attachments)
-        .where(
-          and(
-            eq(attachments.projectId, projectId),
-            eq(attachments.packageName, installed.name),
-          ),
-        );
-      const [head] = await tx
-        .select()
-        .from(declarations)
-        .where(
-          and(
-            eq(declarations.projectId, projectId),
-            eq(declarations.kind, "package"),
-            prior
-              ? eq(declarations.effectiveAttachmentId, prior.id)
-              : eq(declarations.logicalId, installed.name),
-          ),
-        );
+  const [prior] = await db
+    .select()
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.projectId, projectId),
+        eq(attachments.packageName, installed.name),
+      ),
+    );
+  const opts = {
+    ...target,
+    packageInstallId: installed.id,
+    attachmentId: prior?.id,
+  };
+  const staged = await prepareManualPackageMutation(db, opts, coordinates);
 
-      assertOperatorPin(head?.desired, coordinates);
-      const opts = { ...target, db: tx, packageInstallId: installed.id };
+  if (!staged)
+    throw new MaisterError(
+      "CONFLICT",
+      "The package attachment changed during preparation.",
+      { details: { reason: "stale_generation" } },
+    );
+  const result = await withSettledSetups(() =>
+    db.transaction(async (tx) => {
+      const head = await staged.assertCurrent(tx);
+      const opts = {
+        ...target,
+        db: tx,
+        packageInstallId: installed.id,
+        preparedMembers: staged.members,
+      };
       const record: Parameters<typeof workerAttachPackage>[1] = (
         connection,
         attachmentId,
@@ -162,22 +168,41 @@ export async function installOperatorFlow(
     roleRefs: requested?.desired.roleRefs,
     capabilityRefIds: requested?.desired.capabilityRefIds,
   };
-  const revision = await installRevision(opts);
-  const result = await withSetupDatabase(db, () =>
-    db.transaction(async (tx) => {
-      await lockDependencyProject(tx, projectId);
-      await assertStandaloneFlowOwnership(tx, projectId, pin.flowId);
-      const [current] = await tx.select().from(declarations).where(scope);
+  const authorize = async (tx: Db) => {
+    await lockDependencyProject(tx, projectId);
+    await assertStandaloneFlowOwnership(tx, projectId, pin.flowId);
+    const [current] = await tx.select().from(declarations).where(scope);
 
-      if (
-        requested?.id !== current?.id ||
-        requested?.generation !== current?.generation
-      )
-        throw new MaisterError(
-          "CONFLICT",
-          "The Flow declaration changed during source resolution.",
-          { details: { reason: "stale_generation" } },
-        );
+    if (
+      requested?.id !== current?.id ||
+      requested?.generation !== current?.generation
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The Flow declaration changed during source resolution.",
+        { details: { reason: "stale_generation" } },
+      );
+
+    return current;
+  };
+  const revision = await installRevision({
+    ...opts,
+    authorizePublication: async (tx) => {
+      await authorize(tx);
+    },
+  });
+
+  if (resolveTrust(pin.source) !== "untrusted")
+    await withSetupAuthority(
+      db,
+      async (tx) => {
+        await authorize(tx);
+      },
+      () => stageFlowSetup(db, revision, pin.flowId),
+    );
+  const result = await withSettledSetups(() =>
+    db.transaction(async (tx) => {
+      const current = await authorize(tx);
       const installed = await installFlowPlugin({
         ...opts,
         db: tx,

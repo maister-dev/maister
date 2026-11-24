@@ -26,6 +26,7 @@ import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { declaredFlowRunnerUnavailable } from "@/lib/acp-runners/declared-flow-runner";
 import { readProjectCapabilityRefs } from "@/lib/flows/project-capability-refs";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import {
@@ -234,6 +235,7 @@ export async function listLaunchableFlowSummaries(
         manifest: flows.manifest,
         enabledRevisionId: flows.enabledRevisionId,
         enablementState: flows.enablementState,
+        runnerUnavailable: declaredFlowRunnerUnavailable(flows.id),
         trustStatus: flows.trustStatus,
         engineMax: flowRevisions.engineMax,
         engineMin: flowRevisions.engineMin,
@@ -255,7 +257,7 @@ export async function listLaunchableFlowSummaries(
       isProjectFlowLaunchable({
         enabledRevisionId: row.enabledRevisionId,
         enablementState: row.enablementState,
-        hasReadyRunner,
+        hasReadyRunner: hasReadyRunner && !row.runnerUnavailable,
         capabilityRefs: capabilityRefs.get(projectId),
         revision: row.enabledRevisionId
           ? {
@@ -335,6 +337,7 @@ export async function getProjectPageData(
         manifest: flows.manifest,
         enabledRevisionId: flows.enabledRevisionId,
         enablementState: flows.enablementState,
+        runnerUnavailable: declaredFlowRunnerUnavailable(flows.id),
         trustStatus: flows.trustStatus,
       })
       .from(flows)
@@ -479,7 +482,7 @@ export async function getProjectPageData(
     launchable: isProjectFlowLaunchable({
       enabledRevisionId: f.enabledRevisionId,
       enablementState: f.enablementState,
-      hasReadyRunner,
+      hasReadyRunner: hasReadyRunner && !f.runnerUnavailable,
       capabilityRefs: capabilityRefs.get(project.id),
       revision: f.enabledRevisionId
         ? (revisionById.get(f.enabledRevisionId) ?? null)

@@ -20,9 +20,12 @@ export async function POST(
   const { installId } = await params;
 
   try {
-    await requireGlobalRole("admin");
+    const actor = await requireGlobalRole("admin");
 
-    const result = await trustPackageRevision({ packageInstallId: installId });
+    const result = await trustPackageRevision({
+      packageInstallId: installId,
+      actorUserId: actor.id,
+    });
 
     if (result === null) {
       return notFound(`package install not found: ${installId}`);

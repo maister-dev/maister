@@ -214,7 +214,7 @@ export function resubmitDependency(
       actorUserId: target.actorUserId,
       desired: head.desired,
       status: "pending",
-      ...(continueSetup
+      ...(continueSetup || original.checkpoint.postTrust
         ? {
             checkpoint: original.checkpoint,
             memberRef: original.memberRef,

@@ -4,14 +4,14 @@ import type { ExportProjection, LocalPackageWitness } from "./types";
 import type { PersistenceDb } from "./store";
 
 import { stat } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { and, eq } from "drizzle-orm";
 
 import { normalizedManifest } from "./manifest";
 
 import { projects, projectDependencyDeclarations } from "@/lib/db/schema";
+import { localDirectoryPath } from "@/lib/runtime-file-url";
 import { packageEntrySchema } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import { localDirectoryContentDigest } from "@/lib/flows";
@@ -98,6 +98,7 @@ export async function readExportSnapshot(
 export async function reviewPackageSources(
   projection: ExportProjection,
   source: string | null = null,
+  previouslyWitnessed: ReadonlySet<string> = new Set(),
 ): Promise<LocalPackageWitness[]> {
   const original = new Map(
     (source === null ? [] : normalizedManifest(source).packages).map((pin) => [
@@ -112,11 +113,7 @@ export async function reviewPackageSources(
 
     try {
       assertDependencySource(pin.source);
-      local = pin.source.startsWith("file://")
-        ? fileURLToPath(pin.source)
-        : isAbsolute(pin.source)
-          ? pin.source
-          : null;
+      local = localDirectoryPath(pin.source);
     } catch (cause) {
       throw new MaisterError(
         "CONFIG",
@@ -132,6 +129,7 @@ export async function reviewPackageSources(
 
     if (
       pin.resolvedRevision === null &&
+      !previouslyWitnessed.has(pin.id) &&
       entry?.source === pin.source &&
       entry.version === pin.version &&
       entry.path === pin.path

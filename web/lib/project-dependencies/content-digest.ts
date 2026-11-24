@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { readdir, readlink, readFile } from "node:fs/promises";
+import { lstat, readdir, readlink, readFile } from "node:fs/promises";
 import path, { join, resolve as resolvePath } from "node:path";
 
 export async function localDirectoryContentDigest(
@@ -81,18 +81,47 @@ export async function containsSourceMaterial(
   source: string,
   target: string,
 ): Promise<boolean> {
-  const ignored = new Set([".git"]);
-  const wanted = await listLocalDirectoryDigestEntries(source, ignored);
-  const present = new Map(
-    (await listLocalDirectoryDigestEntries(target, ignored)).map((entry) => [
-      entry.relativePath,
-      entry,
-    ]),
-  );
+  async function matches(from: string, to: string): Promise<boolean> {
+    const original = await lstat(from);
+    const installed = await lstat(to).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+      throw error;
+    });
 
-  return wanted.every((entry) => {
-    const existing = present.get(entry.relativePath);
+    if (!installed) return false;
+    if (original.isSymbolicLink())
+      return (
+        installed.isSymbolicLink() &&
+        (await readlink(from)) === (await readlink(to))
+      );
+    if (original.isDirectory()) {
+      if (!installed.isDirectory()) return false;
+      const names = await readdir(from);
 
-    return existing?.kind === entry.kind && existing.content === entry.content;
-  });
+      if (
+        from === source &&
+        !names.includes("setup.sh") &&
+        (await readdir(to)).includes("setup.sh")
+      )
+        return false;
+      for (const name of names) {
+        if (
+          name !== ".git" &&
+          !(await matches(join(from, name), join(to, name)))
+        )
+          return false;
+      }
+
+      return true;
+    }
+
+    return (
+      original.isFile() &&
+      installed.isFile() &&
+      (original.mode & 0o111) === (installed.mode & 0o111) &&
+      (await readFile(from)).equals(await readFile(to))
+    );
+  }
+
+  return matches(source, target);
 }

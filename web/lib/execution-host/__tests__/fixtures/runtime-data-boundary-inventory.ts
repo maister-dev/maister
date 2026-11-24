@@ -864,6 +864,10 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Read files and symlink targets in the caller-selected source directory to witness its contents.",
       [
+        ["matches", "node:fs/promises.lstat", "stat"],
+        ["matches", "node:fs/promises.readdir", "list"],
+        ["matches", "node:fs/promises.readlink", "read"],
+        ["matches", "node:fs/promises.readFile", "read"],
         ["walk", "node:fs/promises.readdir", "list"],
         ["walk", "node:fs/promises.readlink", "read"],
         ["walk", "node:fs/promises.readFile", "read"],
@@ -874,6 +878,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "manager-flow-state",
       "Flow installation hashes the selected local source. Existing callers retain the path-generic content digest export.",
       [
+        [
+          "installRevision",
+          "lib/project-dependencies/material.ts#snapshotLocalMaterial",
+          "wrapper",
+        ],
         [
           "<module>",
           "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
@@ -901,6 +910,21 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Validate candidate links before member attachment and reconcile the selected workspace after the approved mutation.",
       [
+        [
+          "verifyPackageBytes",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        [
+          "verifyPackageMemberSource",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        [
+          "verifyCachedPackage",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
         [
           "wireMembers",
           "lib/project-dependencies/flow-links.ts#validateProjectFlowLink",
@@ -976,6 +1000,10 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Publish immutable package, Flow and capability material from a verified source through a sibling staging directory under the installation cache.",
       [
+        ["snapshotLocalMaterial", "node:fs/promises.mkdtemp", "write"],
+        ["snapshotLocalMaterial", "node:fs/promises.realpath", "stat"],
+        ["snapshotLocalMaterial", "node:fs/promises.cp", "write"],
+        ["snapshotLocalMaterial", "node:fs/promises.rm", "remove"],
         [
           "publishMaterial",
           "lib/project-dependencies/content-digest.ts#containsSourceMaterial",
@@ -991,6 +1019,16 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["publishMaterial", "node:fs/promises.cp", "write"],
         ["publishMaterial", "node:fs/promises.rename", "write"],
         ["publishMaterial", "node:fs/promises.rm", "remove"],
+      ],
+    ),
+    ...classified(
+      "lib/project-dependencies/setup-identity.ts",
+      "repository-worktree",
+      "Match historical receipts to their recorded physical setup directory and script.",
+      [
+        ["isNewPublication", "node:fs/promises.readFile", "read"],
+        ["identifyHistoricalSetups", "node:fs/promises.realpath", "stat"],
+        ["identifyHistoricalSetups", "node:fs/promises.readFile", "read"],
       ],
     ),
     ...classified(
@@ -1351,6 +1389,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
+        [
+          "prepareCapabilityRevision",
+          "lib/project-dependencies/material.ts#snapshotLocalMaterial",
+          "wrapper",
+        ],
         [
           "prepareCapabilityRevision",
           "lib/project-dependencies/material.ts#publishMaterial",
@@ -2301,6 +2344,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
+        [
+          "snapshotPackageDirectory",
+          "lib/project-dependencies/material.ts#snapshotLocalMaterial",
+          "wrapper",
+        ],
+        ["snapshotPackageDirectory.cleanup", "node:fs/promises.rm", "remove"],
         ["resolvePackageSource", "node:fs/promises.stat", "stat"],
         ["resolvePackageSource", "node:fs/promises.mkdtemp", "write"],
         ["cleanup", "node:fs/promises.rm", "remove"],
@@ -3555,7 +3604,13 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/project-dependencies/material.ts", "repository-worktree", [
     ["publishMaterial", true],
+    ["snapshotLocalMaterial", true],
   ]),
+  ...wrappers(
+    "lib/project-dependencies/setup-identity.ts",
+    "repository-worktree",
+    [["identifyHistoricalSetups", false]],
+  ),
   ...wrappers("lib/project-dependencies/setup.ts", "repository-worktree", [
     ["runMaterialSetup", true],
   ]),
