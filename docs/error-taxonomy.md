@@ -970,4 +970,5 @@ and grants no delivery authority.
 | `workspace_diff_range_invalid` | The owning supervisor cannot verify the requested ancestry or retained checkout. No diff object is returned. |
 | `workspace_diff_too_large` | The Git patch exceeds 64 KiB. No diff object is returned. |
 | `workspace_input_changed` | The supervisor refuses to spawn when verification of the retained manifest, its files or the authorized context checkout fails. |
+| `addressed_native_settings_unavailable` | The addressed Flow node needs an adapter settings file. The current supervisor capability preparation stops before creating an ACP session. |
 | `workspace_context_authority_required` | Web refuses a context declaration whose launching user or current agent attachment lacks authority. A removed project membership retains the existing `launch_authority_revoked` reason. |

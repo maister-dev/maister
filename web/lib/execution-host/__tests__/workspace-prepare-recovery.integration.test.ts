@@ -191,9 +191,10 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
       {
         id: "edit",
         type: "ai_coding",
+        settings: { permissionMode: "ask" },
         action: {
           prompt:
-            'fixture-output:{"bytes":0,"text":"addressed edit complete","writeWorkspaceMarker":true}',
+            'fixture-output:{"bytes":0,"text":"addressed edit complete","writeWorkspaceMarker":true,"expectedCapabilityAgent":"codex"}',
         },
         transitions: { success: "work" },
       },

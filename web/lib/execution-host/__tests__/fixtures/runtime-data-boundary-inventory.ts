@@ -975,9 +975,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [["readInstalledAgentDefinition", "node:fs/promises.readFile", "read"]],
     ),
     ...classified(
-      "lib/agents/facade-launch.ts",
+      "../runtime/facade-launch.ts",
       "repository-worktree",
-      "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
+      "Resolve the installed MCP facade within the current tier's deployment. Web uses this only for the co-located launcher.",
       [["resolveFacadeLaunch", "node:fs.existsSync", "stat"]],
     ),
     ...classified(
@@ -1197,7 +1197,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["ensureWorktreeGitExclude", "node:fs/promises.mkdir", "write"],
         ["ensureWorktreeGitExclude", "node:fs/promises.appendFile", "write"],
         ["<object>.materialize", "node:fs/promises.mkdir", "write"],
-        ["<object>.materialize", "lib/atomic.ts#atomicWriteJson", "wrapper"],
         ["<object>.materialize", "lib/atomic.ts#atomicWriteText", "wrapper"],
       ],
     ),
@@ -1392,6 +1391,35 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [["pathIsDirectory", "node:fs/promises.stat", "stat"]],
+    ),
+    ...classified(
+      "lib/execution-host/events/lifecycle-projector.ts",
+      "migration-tooling",
+      "Read the shipped migration SQL for the once-only PostgreSQL lifecycle repair after Web writer cutover.",
+      [["reconcileSkippedSessionCrashes", "node:fs/promises.readFile", "read"]],
+      {
+        authority: "operator CLI: pnpm db:migrate and the elected Web worker after old writers drain",
+        lifetime: "One durable post-cutover backfill per database",
+      },
+    ),
+    ...classified(
+      "lib/execution-host/workspace-input-capture.ts",
+      "manager-flow-state",
+      "Capture files from the manager's pinned package copy for bounded publication to the workspace owner.",
+      [
+        ["collect", "node:fs/promises.realpath", "stat"],
+        ["collect", "node:fs/promises.stat", "stat"],
+        ["collect", "node:fs/promises.readdir", "list"],
+        ["collect", "node:fs/promises.readFile", "read"],
+        ["captureWorkspaceFlowAssets", "node:fs/promises.realpath", "stat"],
+        ["captureWorkspaceBundles", "node:fs/promises.lstat", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/services/runs.ts",
+      "manager-flow-state",
+      "Read the retained revision installation resolved by admission for bounded workspace input capture.",
+      [["executeFlowLaunch", "lib/execution-host/workspace-input-capture.ts#captureWorkspaceFlowAssets", "wrapper"]],
     ),
     ...classified(
       "lib/execution-host/capability-profile.ts",
@@ -2992,7 +3020,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["resolveEffectiveAgentDefinition", false],
     ["resolveInstalledAgentDefinition", false],
   ]),
-  ...wrappers("lib/agents/facade-launch.ts", "repository-worktree", [
+  ...wrappers("../runtime/facade-launch.ts", "repository-worktree", [
     ["resolveFacadeLaunch", false],
   ]),
   ...wrappers("lib/agents/finalization.ts", "repository-worktree", [
@@ -3151,6 +3179,13 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     "repository-worktree",
     [["publishCapabilityBundle", false]],
   ),
+  ...wrappers("lib/execution-host/events/lifecycle-projector.ts", "migration-tooling", [
+    ["reconcileSkippedSessionCrashes", false],
+  ]),
+  ...wrappers("lib/execution-host/workspace-input-capture.ts", "manager-flow-state", [
+    ["captureWorkspaceBundles", false],
+    ["captureWorkspaceFlowAssets", true],
+  ]),
   ...wrappers("lib/flows.ts", "manager-flow-state", [
     ["ensureSymlink", true],
     ["gitClone", true],

@@ -9,6 +9,7 @@ import type {
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { HooksConfig } from "@/lib/flows/hooks-config";
+import type { CapabilityBundleContent } from "@/lib/execution-host/capability-profile";
 
 import { execFile } from "node:child_process";
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
@@ -27,7 +28,7 @@ import {
   assertSafeAgentMaterializationPath,
   materializeWithAgentLease,
 } from "@/lib/agents/materialization-manifest";
-import { atomicWriteJson, atomicWriteText } from "@/lib/atomic";
+import { atomicWriteText } from "@/lib/atomic";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -83,6 +84,53 @@ export type MaterializedCapabilityProfile = {
   materializedFiles: string[];
   adapterLaunch: ScratchAdapterLaunch;
 };
+
+function renderCapabilityBundle({
+  profile,
+  executor,
+  workMode,
+  reasoningEffort,
+}: Pick<MaterializeCapabilityProfileArgs, "profile" | "executor" | "workMode" | "reasoningEffort">): CapabilityBundleContent {
+  const materialized = {
+    ...redactProfileForDisk(profile),
+    executor: executor ?? null,
+    workMode: workMode ?? profile.workMode,
+    reasoningEffort: reasoningEffort ?? profile.reasoningEffort,
+  };
+
+  return {
+    profile: JSON.stringify(materialized, null, 2),
+    instructions: `${instructionLines(materialized).join("\n")}\n`,
+  };
+}
+
+export function prepareAddressedCapabilityProfile(
+  args: Omit<MaterializeCapabilityProfileArgs, "worktreePath">,
+): { capabilityContent: CapabilityBundleContent; mcpServers: AgentMcpServer[] } {
+  const agent = args.profile.executorAgent;
+  const artifacts = mapProfileToAgentArtifacts({
+    profile: args.profile,
+    agent,
+    tools: args.tools,
+    permissionMode: args.permissionMode,
+    model: args.executor?.model,
+  });
+
+  if (
+    artifacts.settingsLocal ||
+    (agent === "claude" && args.hooksConfig?.pathGuard?.allowedPaths.length)
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected supervisor cannot materialize these native adapter settings",
+      { details: { reason: "addressed_native_settings_unavailable" } },
+    );
+
+  return {
+    capabilityContent: renderCapabilityBundle(args),
+    mcpServers: artifacts.mcpServers,
+  };
+}
 
 export function capabilityMaterializationRootPath(
   worktreePath: string,
@@ -266,12 +314,7 @@ export async function materializeCapabilityProfile(
 
   const profilePath = path.join(rootPath, "profile.json");
   const instructionsPath = path.join(rootPath, "instructions.md");
-  const materializedProfile = {
-    ...redactProfileForDisk(args.profile),
-    executor: args.executor ?? null,
-    workMode: args.workMode ?? args.profile.workMode,
-    reasoningEffort: args.reasoningEffort ?? args.profile.reasoningEffort,
-  };
+  const bundle = renderCapabilityBundle(args);
 
   const rootRelativePath = path.relative(worktreePath, rootPath);
 
@@ -297,11 +340,8 @@ export async function materializeCapabilityProfile(
       await recordIntent([rootPath]);
       await mkdir(rootPath, { recursive: true });
       await assertSafeAgentMaterializationPath(worktreePath, rootRelativePath);
-      await atomicWriteJson(profilePath, materializedProfile);
-      await atomicWriteText(
-        instructionsPath,
-        `${instructionLines(materializedProfile).join("\n")}\n`,
-      );
+      await atomicWriteText(profilePath, bundle.profile);
+      await atomicWriteText(instructionsPath, bundle.instructions);
 
       return [rootPath];
     },

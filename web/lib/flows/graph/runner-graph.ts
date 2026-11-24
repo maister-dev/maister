@@ -17,6 +17,7 @@ import type {
 } from "@/lib/db/schema";
 import type { CapabilityCatalogRecord } from "@/lib/capabilities/types";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { CapabilityBundleContent } from "@/lib/execution-host/capability-profile";
 import type {
   FormSettings,
   PlanReviewSettings,
@@ -201,7 +202,10 @@ import {
   pinCatalogToSnapshot,
   resolveCapabilityProfile,
 } from "@/lib/capabilities/resolver";
-import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
+import {
+  materializeCapabilityProfile,
+  prepareAddressedCapabilityProfile,
+} from "@/lib/capabilities/materialize";
 import { cleanupNodeMaterialization } from "@/lib/capabilities/cleanup";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { agentFacadeMcpServerForRun } from "@/lib/agents/launch";
@@ -1574,6 +1578,7 @@ async function executeNodeAction(
     rootDb: Db;
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
+    capabilityContent?: CapabilityBundleContent;
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     prepareSessionCapabilities?: () => Promise<AgentSessionCapabilities>;
@@ -1855,6 +1860,7 @@ async function executeNodeAction(
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
             capabilityProfilePath: ctx.capabilityProfilePath,
             capabilityInstructionsPath: ctx.capabilityInstructionsPath,
+            capabilityContent: ctx.capabilityContent,
             adapterLaunch: mergeRunnerAdapterLaunch(
               sessionRunner,
               ctx.adapterLaunch,
@@ -2141,6 +2147,18 @@ async function findLatestRespondedHitl(
 // Writes NO secrets — mcp creds resolve from the host env via `${NAME}`
 // placeholders the materializer emits (R-SECRET). Does NOT write the
 // materialization ledger (that is T4.2).
+type MaterializedNodeCapabilities = {
+  capabilityProfilePath?: string;
+  capabilityInstructionsPath?: string;
+  capabilityContent?: CapabilityBundleContent;
+  adapterLaunch: ScratchAdapterLaunch;
+  mcpServers: AgentMcpServer[];
+  plan: MaterializationPlan;
+  // The node's resolved restriction path sets feed must_not_touch gates.
+  restrictionPaths: RestrictionPathSet[];
+  enforcementProfile?: SessionEnforcementProfile;
+};
+
 async function materializeNodeCapabilities(
   node: CompiledNode,
   loaded: LoadedRun,
@@ -2153,21 +2171,7 @@ async function materializeNodeCapabilities(
   db: Db,
   logger: pino.Logger,
   checkDiagnostics: () => Promise<SupervisorDiagnosticsStatus>,
-): Promise<
-  | {
-      capabilityProfilePath: string;
-      capabilityInstructionsPath: string;
-      adapterLaunch: ScratchAdapterLaunch;
-      mcpServers: AgentMcpServer[];
-      plan: MaterializationPlan;
-      // M29 (ADR-074, D-C2): the node's resolved restriction path sets,
-      // threaded into GateRunContext for must_not_touch evaluation.
-      restrictionPaths: RestrictionPathSet[];
-      // ADR-130: the derived capability-enforcement set delivered to the supervisor.
-      enforcementProfile?: SessionEnforcementProfile;
-    }
-  | undefined
-> {
+): Promise<MaterializedNodeCapabilities | undefined> {
   if (isCompanyFlowRun(loaded)) {
     const companyWorktree = requireFlowWorktree(worktreePath);
     const definition = node.source.node;
@@ -2267,9 +2271,8 @@ async function materializeNodeCapabilities(
     catalog,
   });
 
-  const m = await materializeCapabilityProfile({
+  const capabilityArgs = {
     runId: loaded.run.id,
-    worktreePath: requireFlowWorktree(worktreePath),
     profile,
     nodeAttemptId,
     tools: declares && settings ? settings.tools?.[agent] : undefined,
@@ -2288,7 +2291,14 @@ async function materializeNodeCapabilities(
       agent,
       model: executor.model,
     },
-  });
+  };
+  const addressed = loaded.workspace.ownershipKind === "host_owned";
+  const m = addressed
+    ? prepareAddressedCapabilityProfile(capabilityArgs)
+    : await materializeCapabilityProfile({
+        ...capabilityArgs,
+        worktreePath: requireFlowWorktree(worktreePath),
+      });
 
   // ADR-130 (W-C/W-E): one shared gate+overlay pass (spec §13) — platform-trust
   // + exec-trust withhold (visible-but-not-executable, persisted to the run-level
@@ -2342,7 +2352,7 @@ async function materializeNodeCapabilities(
       kind: e.kind,
       sha: e.revision ?? "",
     })),
-    materializedFiles: m.materializedFiles,
+    materializedFiles: "materializedFiles" in m ? m.materializedFiles : [],
     enforcedClasses: profile.enforced.map((e) => e.capabilityRefId),
     // `profile.instructed` includes downgraded (unsupported, silently-dropped)
     // caps; source from supported-but-not-enforced so the immutable plan never
@@ -2361,7 +2371,7 @@ async function materializeNodeCapabilities(
     // stable inputs); the graph forces new-session so no cross-attempt consistency
     // guard reads it back.
     enforcementProfile: enforcementProfile ?? null,
-    cleanup: { status: "pending" },
+    cleanup: { status: addressed ? "done" : "pending" },
   };
 
   if (withheldMcps.length > 0) {
@@ -2379,15 +2389,20 @@ async function materializeNodeCapabilities(
     {
       nodeId: node.id,
       profileDigest: profile.profileDigest,
-      matPath: m.profilePath,
+      matPath: "profilePath" in m ? m.profilePath : undefined,
+      ownershipKind: loaded.workspace.ownershipKind,
     },
     "[runner.graph] node materialized",
   );
 
   return {
-    capabilityProfilePath: m.profilePath,
-    capabilityInstructionsPath: m.instructionsPath,
-    adapterLaunch: m.adapterLaunch,
+    ...("capabilityContent" in m
+      ? { capabilityContent: m.capabilityContent, adapterLaunch: {} }
+      : {
+          capabilityProfilePath: m.profilePath,
+          capabilityInstructionsPath: m.instructionsPath,
+          adapterLaunch: m.adapterLaunch,
+        }),
     mcpServers,
     plan,
     // enforced + instructed together cover every selected (non-refused)
@@ -3907,17 +3922,7 @@ export async function runGraph(
       // the in-flight attempt never stays stale at Running on the outer catch.
       let prepareSessionCapabilities:
         (() => Promise<AgentSessionCapabilities>) | undefined;
-      let materialized:
-        | {
-            capabilityProfilePath: string;
-            capabilityInstructionsPath: string;
-            adapterLaunch: ScratchAdapterLaunch;
-            mcpServers: AgentMcpServer[];
-            plan: MaterializationPlan;
-            restrictionPaths: RestrictionPathSet[];
-            enforcementProfile?: SessionEnforcementProfile;
-          }
-        | undefined;
+      let materialized: MaterializedNodeCapabilities | undefined;
 
       if (
         node.nodeType === "ai_coding" ||
@@ -4134,6 +4139,7 @@ export async function runGraph(
               capabilityProfilePath: materialized?.capabilityProfilePath,
               capabilityInstructionsPath:
                 materialized?.capabilityInstructionsPath,
+              capabilityContent: materialized?.capabilityContent,
               adapterLaunch: materialized?.adapterLaunch,
               mcpServers: materialized?.mcpServers,
               prepareSessionCapabilities,

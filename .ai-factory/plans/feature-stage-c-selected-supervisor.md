@@ -318,6 +318,17 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Run reached Review after a driver restart. Passed 45 Web integrations and
   the Web typecheck. Per-node native settings, role-bound materialization
   and OS-level read-only context enforcement remain open.
+
+  A capability-bearing Codex node now uses the legacy redacted profile and
+  instructions format without writing them into a Web-side checkout. RED
+  failed the node before ACP spawn at the workspace-path requirement. GREEN
+  read the two assignment-owned objects from the real fixture process and
+  completed the board Flow. The existing capability materialization and
+  enforcement integration suites ran alongside that scenario (nine cases).
+  The filesystem ownership inventory classifies the manager's package
+  capture, launcher discovery and one-time database repair (37 focused
+  unit tests passed). Web typecheck and full docs validation passed.
+  Addressed native settings files still refuse explicitly before spawn.
 - [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
 
   **C-08 workload transport checkpoint.** RED reached a 404 when a

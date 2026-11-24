@@ -679,6 +679,20 @@ class LifecycleAgent {
         return { stopReason: "end_turn" };
       }
       const glyph = spec.multibyte ? "é" : "x";
+      if (spec.expectedCapabilityAgent) {
+        const profile = JSON.parse(
+          await readFile(process.env.MAISTER_CAPABILITY_PROFILE_PATH, "utf8"),
+        );
+        const instructions = await readFile(
+          process.env.MAISTER_CAPABILITY_INSTRUCTIONS_PATH,
+          "utf8",
+        );
+        if (
+          profile.executor?.agent !== spec.expectedCapabilityAgent ||
+          !instructions.startsWith("# Capability profile\n")
+        )
+          throw new Error("The fixture did not receive its sealed capability inputs");
+      }
       if (spec.writeWorkspaceMarker === true)
         await writeFile("acp-marker", "written by addressed ACP\n", { flag: "wx" });
       let responseText = spec.text ?? "";

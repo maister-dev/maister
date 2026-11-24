@@ -5,6 +5,10 @@ import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { CapabilityAgent } from "@/lib/config.schema";
+import type {
+  CapabilityBundleContent,
+  PublishedCapabilityBundle,
+} from "@/lib/execution-host/capability-profile";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
@@ -122,6 +126,7 @@ import {
   type SupervisorRunnerInput,
 } from "@/lib/execution-host";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { publishCapabilityBundleContent } from "@/lib/execution-host/capability-profile";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
@@ -218,6 +223,7 @@ export type RunAgentStepCtx = {
   context: ExecutionFlowContext;
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
+  capabilityContent?: CapabilityBundleContent;
   outputObjects?: RuntimeObjectOutputBinding[];
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
@@ -1639,18 +1645,26 @@ async function runNewSession(
     const prepareCreatePayload = async (): Promise<
       Omit<CreateSessionPayload, "executionWorkspaceId">
     > => {
-      const capabilityBundle =
-        ctx.capabilityProfilePath && ctx.capabilityInstructionsPath
-          ? await publishCapabilityBundle({
-              client,
-              runId: ctx.runId,
-              sourceId: ctx.nodeAttemptId ?? ctx.stepId,
-              profileLogicalName: `${ctx.stepId}-capability-profile.json`,
-              profilePath: ctx.capabilityProfilePath,
-              instructionsLogicalName: `${ctx.stepId}-capability-instructions.md`,
-              instructionsPath: ctx.capabilityInstructionsPath,
-            })
-          : undefined;
+      let capabilityBundle: PublishedCapabilityBundle | undefined;
+      const capabilityOwner = {
+        client,
+        runId: ctx.runId,
+        sourceId: ctx.nodeAttemptId ?? ctx.stepId,
+        profileLogicalName: `${ctx.stepId}-capability-profile.json`,
+        instructionsLogicalName: `${ctx.stepId}-capability-instructions.md`,
+      };
+      if (ctx.capabilityContent) {
+        capabilityBundle = await publishCapabilityBundleContent(
+          capabilityOwner,
+          ctx.capabilityContent,
+        );
+      } else if (ctx.capabilityProfilePath && ctx.capabilityInstructionsPath) {
+        capabilityBundle = await publishCapabilityBundle({
+          ...capabilityOwner,
+          profilePath: ctx.capabilityProfilePath,
+          instructionsPath: ctx.capabilityInstructionsPath,
+        });
+      }
 
       const sessionCapabilities = ctx.prepareSessionCapabilities
         ? await ctx.prepareSessionCapabilities()
