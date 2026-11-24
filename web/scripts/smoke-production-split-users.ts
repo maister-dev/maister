@@ -575,9 +575,13 @@ ${adapterScript}EOF
     taskId: string,
     selectedHost?: { id: string; displayName: string },
     title = "Durable worker flow task",
+    language: "en" | "ru" = "en",
   ): Promise<string> => {
+    if (language === "ru")
+      await context.addCookies([{ name: "NEXT_LOCALE", value: "ru", url: origin }]);
     await page.goto("/projects/" + witness.slug);
     const board = page.getByRole("region", { name: "Task board", exact: true });
+    const launchLabel = language === "ru" ? "Запустить" : "Launch";
     const expectedPreview = selectedHost
       ? page.waitForResponse(
           (response) =>
@@ -587,7 +591,7 @@ ${adapterScript}EOF
     await board
       .getByRole("article")
       .filter({ hasText: title })
-      .getByRole("button", { name: "Launch", exact: true })
+      .getByRole("button", { name: launchLabel, exact: true })
       .click({ timeout: 30_000 });
     const dialog = page.getByTestId("task-launch-dialog");
     if (selectedHost) {
@@ -617,13 +621,14 @@ ${adapterScript}EOF
       await page.keyboard.press("End");
       await page.keyboard.press("Enter");
       await expect(picker).toContainText(selectedHost.displayName);
+      await expect(picker).toBeFocused();
     }
     const accepted = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/api/task-launch-intents" &&
         response.request().method() === "POST",
     );
-    await dialog.getByRole("button", { name: "Launch", exact: true }).click();
+    await dialog.getByRole("button", { name: launchLabel, exact: true }).click();
     const response = await accepted;
     if (selectedHost)
       assert.equal(
@@ -632,6 +637,21 @@ ${adapterScript}EOF
       );
     const receipt = await readTaskLaunchReceipt(response);
     assert.equal(receipt.taskId, taskId);
+    if (selectedHost) {
+      const status = dialog.getByTestId("task-launch-intent-status");
+      await expect(status.getByText(
+        language === "ru" ? "Ожидает запуска" : "Waiting for dispatch",
+        { exact: true },
+      )).toBeVisible();
+      await expect(status.getByText(selectedHost.displayName, { exact: true })).toBeVisible();
+      await expect(status.getByText(
+        `${selectedHost.displayName} (${language === "ru" ? "эпоха назначения" : "assignment epoch"} 1)`,
+        { exact: true },
+      )).toBeVisible({ timeout: 30_000 });
+      note("addressed-board-live-placement", { taskId, language, hostId: selectedHost.id });
+    }
+    if (language === "ru")
+      await context.addCookies([{ name: "NEXT_LOCALE", value: "en", url: origin }]);
 
     return poll(
       async () => {
@@ -711,8 +731,9 @@ ${adapterScript}EOF
       taskId: string,
       expectedCommit: string,
       title?: string,
+      language: "en" | "ru" = "en",
     ): Promise<{ runId: string; patch: string }> => {
-      const runId = await launchFromBoard(taskId, selectedHost, title);
+      const runId = await launchFromBoard(taskId, selectedHost, title, language);
       await page.goto("/runs/" + runId);
       const allow = page
         .getByTestId("pending-input-card")
@@ -842,7 +863,7 @@ ${adapterScript}EOF
       [secondTaskId, secondTitle, witness.taskId],
     );
     assert.equal(seeded.rowCount, 1);
-    const second = await verifyBuild(secondTaskId, nextCommit, secondTitle);
+    const second = await verifyBuild(secondTaskId, nextCommit, secondTitle, "ru");
     const retained = await api(`/api/runs/${first.runId}/diff?scope=run`);
     assert.equal(retained.status, 200);
     assert.equal((await retained.json()).diff, first.patch);
@@ -957,6 +978,47 @@ ${adapterScript}EOF
       publishedCommit: outcome.commit,
       publishedBranch: outcome.publication.remoteBranch,
       archivedCommit: disposition.archived_commit,
+    });
+    await page.goto(`/runs/${first.runId}#review-panel`);
+    const gcPublication = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === `/api/runs/${first.runId}/promote` &&
+        response.request().method() === "POST",
+    );
+    await page.getByTestId("review-panel").getByTestId("review-promote").click();
+    const gcPublished = await gcPublication;
+    assert.equal(gcPublished.status(), 200, await gcPublished.text());
+    const overdue = await ownedCheckoutForRun(first.runId);
+    assert(overdue, "the GC fixture has no retained checkout");
+    const gcFilename = "retain-before-gc.txt";
+    await inContainer(primary.user, [
+      "sh", "-ec", 'printf "%s" "$2" > "$1"', "sh",
+      overdue.path + "/" + gcFilename, archiveContent,
+    ]);
+    const scheduledGc = await db.pool.query(
+      "update workspaces set scheduled_removal_at=clock_timestamp()-interval '1 second' where run_id=$1",
+      [first.runId],
+    );
+    assert.equal(scheduledGc.rowCount, 1);
+    const gc = await api("/api/cron/gc", {
+      method: "POST",
+      headers: { "X-Maister-Cron-Token": cronToken },
+    });
+    assert([200, 207].includes(gc.status), await gc.text());
+    const swept = await poll(async () => {
+      const { rows: [row] } = await db.pool.query<{
+        archived_commit: string;
+        removed_at: Date | null;
+        removal_kind: string;
+      }>("select archived_commit, removed_at, removal_kind from workspaces where run_id=$1", [first.runId]);
+      return row?.removed_at ? row : null;
+    }, 30_000, "selected supervisor retains bytes before retention GC");
+    assert.equal(swept.removal_kind, "retention_gc");
+    await inContainer(primary.user, ["test", "!", "-e", overdue.path]);
+    assert.equal(await inContainer(primary.user, [
+      "git", "-C", overdue.repository, "show", `${swept.archived_commit}:${gcFilename}`,
+    ]), archiveContent);
+    note("addressed-retention-gc", {
+      runId: first.runId, hostId: selectedHost.id, archivedCommit: swept.archived_commit,
     });
     assert(witness.stopTaskId);
     const stoppedRunId = await launchFromBoard(

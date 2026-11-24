@@ -413,7 +413,10 @@ the eligible display names with the default choice. Changing the host clears
 the effective preview until the server returns a token for the new selection.
 Interactive admission sends that token with the requested host ID. Entering
 the scheduling form returns to the default choice. Existing launch SSE shows
-the requested host separately from the first persisted dispatch. The
+the requested host separately from the first persisted dispatch. The board
+keeps the launch dialog open while the task changes columns. Closing it
+returns keyboard focus to the original control or to the board after that
+control leaves the page. The
 administrator's host list identifies the active registration bound to the
 configured stable key. A different registration does not satisfy the
 selection, even if its row is healthy.

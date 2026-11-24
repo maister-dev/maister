@@ -817,6 +817,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   workspace-integrity dispatch requires its existing local preparation
   contract.
 
+  Production Chrome reproduced the board removing the launch dialog as
+  the task moved out of Backlog. The dialog now belongs to the board and
+  keeps its active attention-stream subscription while cards change
+  columns. The interaction test replaces the launching card, applies the
+  actual placement through an attention tick, and checks keyboard focus
+  on closing. All 35 launch interaction cases passed. The updated G1
+  harness observes selected and actual placement in EN and RU and checks
+  the original checkout bytes after retention GC.
+
 - [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.
 
   The exact archived image and Chrome fixture at `7b588d409` repeated the

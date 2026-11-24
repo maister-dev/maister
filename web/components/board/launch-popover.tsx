@@ -2,7 +2,7 @@
 
 import type { FlowRunnerDraft } from "@/lib/tasks/launch-schema";
 import type { TaskLaunchHostOptions } from "@/lib/execution-host/project-preference";
-import type { Key, ReactElement } from "react";
+import type { Key, ReactElement, ReactNode, Ref } from "react";
 import type { FlowRunnerSlotPreview } from "@/lib/acp-runners/flow-preflight";
 import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import type {
@@ -34,6 +34,8 @@ import {
 } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import {
+  createContext,
+  useContext,
   useEffect,
   useId,
   useMemo,
@@ -637,21 +639,110 @@ export function BudgetScopeFields(props: {
   );
 }
 
-export function LaunchPopover({
+type BoardLaunchDialog = Readonly<{
+  props: LaunchPopoverProps;
+  opener: HTMLButtonElement | null;
+  board: HTMLElement | null;
+}>;
+const BoardLaunchContext = createContext<((dialog: BoardLaunchDialog) => void) | null>(
+  null,
+);
+
+/** Board cards can change columns while admission is still being observed. */
+export function BoardLaunchDialogs({ children }: { children: ReactNode }): ReactElement {
+  const [dialog, setDialog] = useState<BoardLaunchDialog | null>(null);
+  const close = (): void => {
+    if (dialog?.opener?.isConnected) dialog.opener.focus();
+    else dialog?.board?.focus();
+    setDialog(null);
+  };
+  return (
+    <BoardLaunchContext.Provider value={setDialog}>
+      {children}
+      {dialog ? <LaunchPopoverContent {...dialog.props} dismissBoardDialog={close} /> : null}
+    </BoardLaunchContext.Provider>
+  );
+}
+
+type LaunchTriggerProps = Pick<LaunchPopoverProps, "label" | "disabledLabel" | "disabledReason" | "forceRelaunch"> & {
+  disabled: boolean;
+  buttonRef: Ref<HTMLButtonElement>;
+  error?: string | null;
+  onOpen: () => void;
+};
+
+function LaunchPopoverTrigger({
+  label, disabledLabel, disabledReason, forceRelaunch,
+  disabled, buttonRef, error, onOpen,
+}: LaunchTriggerProps): ReactElement {
+  return (
+    <span title={error ?? disabledReason}>
+      <Button
+        ref={buttonRef}
+        className={clsx(
+          "gap-1 border-transparent px-[9px] py-[5px] font-mono text-[10px] font-bold uppercase leading-none tracking-[0.06em] text-amber",
+          "group-hover/task:border-amber-line group-hover/task:bg-amber-soft",
+          "hover:!border-amber hover:!bg-amber hover:!text-white",
+          disabled && "opacity-60",
+        )}
+        isDisabled={disabled}
+        size="sm"
+        type="button"
+        variant="outline"
+        onClick={onOpen}
+      >
+        {forceRelaunch ? <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" /> : null}
+        {error ?? (disabledReason ? disabledLabel : label)}
+      </Button>
+    </span>
+  );
+}
+
+function BoardLaunchTrigger(
+  { props, open }: { props: LaunchPopoverProps; open: (dialog: BoardLaunchDialog) => void },
+): ReactElement {
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const intent = useTaskLaunchIntent(props.taskId, props.forceRelaunch ? "concurrent" : "ordinary");
+  const isClient = useIsClient();
+  const tracking = intent.receipt !== null || intent.uncertain;
+
+  return (
+    <LaunchPopoverTrigger
+      {...props}
+      buttonRef={opener}
+      disabled={!isClient || intent.busy || (Boolean(props.disabledReason) && !tracking)}
+      onOpen={() => open({
+        props,
+        opener: opener.current,
+        board: opener.current?.closest<HTMLElement>("[data-board]") ?? null,
+      })}
+    />
+  );
+}
+
+export function LaunchPopover(props: LaunchPopoverProps): ReactElement {
+  const open = useContext(BoardLaunchContext);
+  return open
+    ? <BoardLaunchTrigger props={props} open={open} />
+    : <LaunchPopoverContent {...props} />;
+}
+
+function LaunchPopoverContent({
   taskId,
   label,
   disabledLabel,
   disabledReason,
   hasRuns = true,
   forceRelaunch = false,
-}: LaunchPopoverProps): ReactElement {
+  dismissBoardDialog,
+}: LaunchPopoverProps & { dismissBoardDialog?: () => void }): ReactElement {
   const t = useTranslations("launch");
   const tRun = useTranslations("run");
   const isClient = useIsClient();
   const statusUnavailableMessage = t("admission.reason.statusUnavailable");
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(dismissBoardDialog));
   const [localBusy, setBusy] = useState(false);
   const intent = useTaskLaunchIntent(
     taskId,
@@ -721,6 +812,7 @@ export function LaunchPopover({
     setExecutionHostId(undefined);
     setScheduleMode(false);
     setOpen(false);
+    dismissBoardDialog?.();
   };
   const runnerId =
     flowRunnerDraft?.primaryRunnerId ?? options?.selectedRunnerId ?? "";
@@ -1447,7 +1539,7 @@ export function LaunchPopover({
         return;
       }
 
-      setOpen(false);
+      closeLaunch();
       startTransition(() => router.refresh());
     } catch {
       setError(t("scheduleError"));
@@ -1643,30 +1735,21 @@ export function LaunchPopover({
 
   return (
     <>
-      <span title={error ?? disabledReason}>
-        <Button
-          ref={openerRef}
-          className={clsx(
-            "gap-1 border-transparent px-[9px] py-[5px] font-mono text-[10px] font-bold uppercase leading-none tracking-[0.06em] text-amber",
-            "group-hover/task:border-amber-line group-hover/task:bg-amber-soft",
-            "hover:!border-amber hover:!bg-amber hover:!text-white",
-            disabled && "opacity-60",
-          )}
-          isDisabled={disabled}
-          size="sm"
-          type="button"
-          variant="outline"
-          onClick={() => {
+      {dismissBoardDialog ? null : (
+        <LaunchPopoverTrigger
+          label={label}
+          disabledLabel={disabledLabel}
+          disabledReason={disabledReason}
+          forceRelaunch={forceRelaunch}
+          error={error}
+          buttonRef={openerRef}
+          disabled={disabled}
+          onOpen={() => {
             if (!options) setOptionsError(false);
             setOpen(true);
           }}
-        >
-          {forceRelaunch ? (
-            <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
-          ) : null}
-          {error ?? (disabledReason ? disabledLabel : label)}
-        </Button>
-      </span>
+        />
+      )}
 
       {open && typeof document !== "undefined"
         ? createPortal(
