@@ -659,6 +659,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   four GC tests.
 - [ ] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
 
+  The admin host list now identifies the durable registration bound to the
+  selected supervisor key. A missing key match has its own EN/RU status and
+  does not relabel an unrelated registered host. The PostgreSQL read model
+  kept the configured identity and earlier stream evidence visible while
+  live telemetry was unavailable. The rendered diagnostic covers both
+  matching and foreign registrations.
+
   The launch dialog shows the default and eligible supervisor names in
   EN/RU. Selecting a host refreshes the same preview used for admission.
   The button stays disabled while that selection lacks a current preview.

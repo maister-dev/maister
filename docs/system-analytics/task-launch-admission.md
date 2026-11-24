@@ -412,8 +412,12 @@ stored preference and configured project eligibility. The board picker lists
 the eligible display names with the default choice. Changing the host clears
 the effective preview until the server returns a token for the new selection.
 Interactive admission sends that token with the requested host ID. Entering
-the scheduling form returns to the default choice. Shared-root inheritance
-and actual placement display remain designed.
+the scheduling form returns to the default choice. Existing launch SSE shows
+the requested host separately from the first persisted dispatch. The
+administrator's host list identifies the active registration bound to the
+configured stable key. A different registration does not satisfy the
+selection, even if its row is healthy. Shared-root inheritance remains
+designed.
 
 When the selected supervisor returns a terminal preparation refusal for the
 current assignment, the worker holds the bound intent with the localized

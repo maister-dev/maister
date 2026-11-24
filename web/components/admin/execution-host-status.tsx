@@ -127,15 +127,29 @@ function verdictTone(verdict: string): Tone {
 
 function HostsPanel({
   hosts,
+  selectedHost,
   format,
 }: {
   hosts: AdminExecutionHostStatus["hosts"];
+  selectedHost: AdminExecutionHostStatus["selectedHost"];
   format: Format;
 }): ReactElement {
   const { t, time } = format;
 
   return (
     <Panel subtitle={t("hosts.subtitle")} title={t("hosts.title")}>
+      {selectedHost && selectedHost.kind !== "registered" ? (
+        <p className="px-5 py-3 text-sm text-amber" role="status">
+          {selectedHost.kind === "invalid_configuration"
+            ? t("hosts.invalidConfiguration")
+            : t(
+                selectedHost.kind === "unregistered"
+                  ? "hosts.awaitingRegistration"
+                  : "hosts.registrationUnavailable",
+                { hostKey: selectedHost.hostKey },
+              )}
+        </p>
+      ) : null}
       {isPanelUnavailable(hosts) ? (
         <PanelUnavailable t={t} />
       ) : (
@@ -155,8 +169,12 @@ function HostsPanel({
               {hosts.map((host: AdminExecutionHostRow) => (
                 <tr key={host.id} className="border-t border-line align-top">
                   <td className="px-5 py-3">
-                    <div className="font-semibold text-ink">
+                    <div className="flex flex-wrap items-center gap-2 font-semibold text-ink">
                       {host.displayName}
+                      {selectedHost?.kind === "registered" &&
+                      selectedHost.hostId === host.id ? (
+                        <Badge>{t("hosts.selected")}</Badge>
+                      ) : null}
                     </div>
                     <div className="mt-1 font-mono text-[11px] text-mute">
                       {host.hostKey} · {host.id}
@@ -770,7 +788,11 @@ export async function ExecutionHostStatus({
 
   return (
     <div className="flex flex-col gap-5">
-      <HostsPanel format={format} hosts={status.hosts} />
+      <HostsPanel
+        format={format}
+        hosts={status.hosts}
+        selectedHost={status.selectedHost}
+      />
 
       {lag === null ? (
         <Panel subtitle={t("streams.subtitle")} title={t("streams.title")}>

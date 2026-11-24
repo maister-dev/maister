@@ -4098,7 +4098,11 @@
     "hosts": {
       "title": "Hosts",
       "subtitle": "Durable manager registration remains visible when the supervisor is unavailable.",
-      "empty": "No execution hosts are registered."
+      "empty": "No execution hosts are registered.",
+      "selected": "Selected for execution",
+      "awaitingRegistration": "Waiting for the supervisor with key {hostKey} to register.",
+      "registrationUnavailable": "Registration for the configured supervisor {hostKey} could not be verified.",
+      "invalidConfiguration": "The selected supervisor configuration is invalid."
     },
     "streams": {
       "title": "Event streams",
