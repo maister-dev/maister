@@ -108,12 +108,13 @@ export function prepareAddressedCapabilityProfile(
   args: Omit<MaterializeCapabilityProfileArgs, "worktreePath">,
 ): { capabilityContent: CapabilityBundleContent; mcpServers: AgentMcpServer[] } {
   const agent = args.profile.executorAgent;
+  // The addressed supervisor pins the explicit Claude model through its
+  // native launch environment and ACP session options.
   const artifacts = mapProfileToAgentArtifacts({
     profile: args.profile,
     agent,
     tools: args.tools,
     permissionMode: args.permissionMode,
-    model: args.executor?.model,
   });
 
   if (

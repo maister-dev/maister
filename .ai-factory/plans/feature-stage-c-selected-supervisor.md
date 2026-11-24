@@ -328,7 +328,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   The filesystem ownership inventory classifies the manager's package
   capture, launcher discovery and one-time database repair (37 focused
   unit tests passed). Web typecheck and full docs validation passed.
-  Addressed native settings files still refuse explicitly before spawn.
+  A Claude model-only node can now start on the addressed supervisor. RED
+  failed before ACP creation because it required a native settings file.
+  GREEN received the pinned model in the real fixture's ACP launch options
+  and child environment, read the sealed profile, edited the checkout and
+  reached Review. Four addressed Web and seven supervisor model integration
+  cases passed. Native permissions and path-guard settings files still
+  refuse explicitly before spawn.
 - [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
 
   **C-08 workload transport checkpoint.** RED reached a 404 when a

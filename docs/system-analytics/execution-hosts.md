@@ -1087,8 +1087,7 @@ bounds. The host applies and advertises effective limits. Use the existing
 runtime process-group observation after workload child close. Allow a bounded
 one-second grace for descendants to retire before returning an uncertain
 quiescence result. This observation does not signal a group after child close.
-Use the existing
-runtime-object limits for sealed
+Use the existing runtime-object limits for sealed
 bytes and artifact content ranges. Command records retain the existing
 state-aware retirement rules. Transport delivery stops at its retry
 budget and retains the uncertain owner for reconciliation.

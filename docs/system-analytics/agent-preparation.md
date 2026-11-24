@@ -197,6 +197,12 @@ Adapter processes inherit host plumbing and adapter-specific settings from a
 bounded allow-list. Explicit runner configuration and the run-scoped facade
 credential retain their separate channels.
 
+For a model-only Claude node, the supervisor applies the pinned runner model
+through its child environment and ACP session options. The addressed flow
+uses the same redacted capability profile and instructions as other adapters.
+Node declarations requiring a native permissions or path-guard settings
+file remain refused before spawn until that host materializer is available.
+
 The manager resolves approved package, skill, instructions, capabilities,
 memory references and mounted context revisions. The supervisor verifies
 the captured digests, stages the inputs in a private directory and publishes

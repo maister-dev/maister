@@ -61,6 +61,7 @@ import {
   flowRevisions,
   gateResults,
   nodeAttempts,
+  platformAcpRunners,
   projects,
   runs,
   taskLaunchIntents,
@@ -71,6 +72,7 @@ import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import { acceptInteractiveTaskLaunch } from "@/lib/tasks/launch-intent";
 import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { tryStartRun } from "@/lib/scheduler";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
 import { seedTaskLaunchFixture } from "@/test-support/task-launch-admission";
@@ -188,8 +190,13 @@ it.each([
       userId,
       projectId,
       flowId,
+      runnerId,
       repo: source,
     } = await seedTaskLaunchFixture(database, root);
+    const adapter = refusedRoot ? "codex" : "claude";
+    const runner = testPlatformRunnerRow(runnerId, adapter);
+    await db.update(platformAcpRunners).set(runner)
+      .where(eq(platformAcpRunners.id, runnerId));
     const commit = (await git(source, "rev-parse", "HEAD")).trim();
     const installedScript = join(root, "flow", "scripts", "check.sh");
     await mkdir(join(root, "flow", "scripts"), { recursive: true });
@@ -214,10 +221,13 @@ it.each([
         {
           id: "edit",
           type: "ai_coding",
-          settings: { permissionMode: "ask" },
           action: {
-            prompt:
-              'fixture-output:{"bytes":0,"text":"addressed edit complete","writeWorkspaceMarker":true,"expectedCapabilityAgent":"codex"}',
+            prompt: `fixture-output:${JSON.stringify({
+              bytes: 0,
+              text: "addressed edit complete",
+              writeWorkspaceMarker: true,
+              expectedCapabilityAgent: runner.capabilityAgent,
+            })}`,
           },
           transitions: { success: "work" },
         },
@@ -266,9 +276,12 @@ it.each([
     vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "web-worktrees"));
     supervisor = await startRealSupervisor({
       fixture: "mock-acp-lifecycle.mjs",
-      fixtureAdapters: ["codex"],
+      fixtureAdapters: [adapter],
       env: {
         MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: source }),
+        ...(adapter === "claude" && runner.model
+          ? { MAISTER_FIXTURE_EXPECT_NATIVE_MODEL: runner.model }
+          : {}),
         ...(refusedRoot ? { MAISTER_WORKSPACE_ROOTS: source } : {}),
       },
     });

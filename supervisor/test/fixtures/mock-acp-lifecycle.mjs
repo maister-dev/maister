@@ -407,9 +407,14 @@ class LifecycleAgent {
     };
   }
 
-  async newSession() {
+  async newSession(request) {
     await logInvocation({ method: "session/new", at: Date.now() });
     if (hangNewSession) return never();
+    const expectedModel = process.env.MAISTER_FIXTURE_EXPECT_NATIVE_MODEL;
+    if (expectedModel !== undefined && (
+      request._meta?.claudeCode?.options?.model !== expectedModel ||
+      process.env.ANTHROPIC_MODEL !== expectedModel
+    )) throw new Error("The addressed Claude session did not receive its explicit model pin");
 
     return { sessionId: `mock-${randomUUID()}` };
   }
