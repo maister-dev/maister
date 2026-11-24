@@ -4522,6 +4522,8 @@
     "owner": "owner"
   },
   "dependencies": {
+    "trustAccepted": "Trust is saved. Check the dependency’s setup status and available actions.",
+    "inspectTrustedSetup": "Open the affected project dependency",
     "heading": "Declared dependencies",
     "needsAttention": "Dependencies requiring attention",
     "refresh": "Refresh status",
@@ -4592,6 +4594,7 @@
       "revision_mismatch": "Resolved revision changed",
       "setup_failed": "The setup command failed",
       "setup_uncertain": "The setup result could not be confirmed",
+      "legacy_setup_evidence_unmapped": "Earlier setup evidence could not be matched to this material",
       "source_https_auth": "The host could not authenticate to the source over HTTPS",
       "source_ssh_auth": "The host could not authenticate to the source over SSH",
       "source_ssh_hostkey": "The source host key could not be verified",

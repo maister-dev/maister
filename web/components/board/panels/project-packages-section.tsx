@@ -5,7 +5,7 @@ import type {
   ProjectPackageAttachmentView,
 } from "@/lib/queries/packages";
 import type { ProjectDependencyView } from "@/lib/project-dependencies/view";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
@@ -18,8 +18,10 @@ import {
   studioPackagePath,
   withPackageInstall,
 } from "@/lib/studio/package-links";
-import { readApiErrorBody } from "@/lib/api-error";
+import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { TrustedSetupNotice } from "@/components/projects/trusted-setup-notice";
+import { requestPackageTrust } from "@/lib/project-dependencies/trust-response";
 
 type Props = {
   declarations?: ProjectDependencyView[];
@@ -77,7 +79,7 @@ export function ProjectPackagesSection({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ReactNode>(null);
   const [selectedInstall, setSelectedInstall] = useState("");
   const [trustingAttachment, setTrustingAttachment] =
     useState<ProjectPackageAttachmentView | null>(null);
@@ -170,13 +172,24 @@ export function ProjectPackagesSection({
   async function trust(att: ProjectPackageAttachmentView): Promise<void> {
     setBusy(`trust:${att.id}`);
     try {
-      const result = await call(
+      const result = await requestPackageTrust(
         `/api/projects/${slug}/packages/${att.id}/trust`,
-        "POST",
       );
 
-      surface(result);
-      if (result.ok) setTrustingAttachment(null);
+      if (result.kind === "unconfirmed") {
+        setNotice(apiErrorText(result.error, tErr));
+
+        return;
+      }
+      setTrustingAttachment(null);
+      setNotice(
+        result.kind === "setup" ? (
+          <TrustedSetupNotice href={result.href} />
+        ) : (
+          t("appliedInMaister")
+        ),
+      );
+      refresh();
     } catch {
       surface({ ok: false });
     } finally {
@@ -266,7 +279,7 @@ export function ProjectPackagesSection({
         </p>
       ) : null}
 
-      {notice ? (
+      {notice && !trustingAttachment ? (
         <p
           ref={noticeRef}
           className="mb-3 rounded-[8px] border border-amber/40 bg-amber/10 px-3 py-2 text-[12px] text-ink"
@@ -338,7 +351,10 @@ export function ProjectPackagesSection({
                                 className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
                                 disabled={busy === `trust:${att.id}`}
                                 type="button"
-                                onClick={() => setTrustingAttachment(att)}
+                                onClick={() => {
+                                  setNotice(null);
+                                  setTrustingAttachment(att);
+                                }}
                               >
                                 {t("trust")}
                               </button>
@@ -418,6 +434,7 @@ export function ProjectPackagesSection({
           titleId="package-trust-confirm-title"
           onClose={() => setTrustingAttachment(null)}
         >
+          {notice ? <p role="alert">{notice}</p> : null}
           <div className="flex justify-end gap-2">
             <button
               className="h-8 rounded-[8px] border border-line px-3 text-[12px] text-mute hover:bg-ivory disabled:opacity-50"

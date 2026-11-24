@@ -154,6 +154,7 @@ function attachButton(host: HTMLElement): HTMLButtonElement {
 }
 
 afterEach(() => {
+  fetchMock.mockReset();
   for (const root of roots) act(() => root.unmount());
   roots.length = 0;
   document.body.innerHTML = "";
@@ -229,6 +230,57 @@ describe("ProjectPackagesSection name-collision pre-flight", () => {
         '[data-testid="package-trust-confirm-submit"]',
       ),
     ).not.toHaveProperty("disabled", true);
+  });
+
+  it("keeps refused trust open, then closes on committed trust and links to the affected project's durable setup", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock
+      .mockReset()
+      .mockResolvedValueOnce(
+        Response.json(
+          { code: "CONFLICT", details: { reason: "setup_pending" } },
+          { status: 409 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            code: "FLOW_INSTALL",
+            details: {
+              reason: "setup_failed",
+              trustAccepted: true,
+              projectSlug: "second-project",
+              declarationId: "decl-two",
+            },
+          },
+          { status: 502 },
+        ),
+      );
+    const host = render({ ...attachment, trustStatus: "untrusted" });
+
+    await click(
+      [...host.querySelectorAll("button")].find(
+        (b) => b.textContent === "packages.trust",
+      )!,
+    );
+    const confirm = () =>
+      document.body.querySelector(
+        '[data-testid="package-trust-confirm-submit"]',
+      );
+
+    await click(confirm()!);
+    expect(confirm()).not.toBeNull();
+    expect(
+      document.querySelector('[role="dialog"] [role="alert"]'),
+    ).not.toBeNull();
+    await click(confirm()!);
+    expect(confirm()).toBeNull();
+    const link = host.querySelector(
+      'a[href="/projects/second-project?tab=packages#dependency-decl-two"]',
+    );
+
+    expect(link?.textContent).toBe("dependencies.inspectTrustedSetup");
+    expect(host.textContent).toContain("dependencies.trustAccepted");
   });
 });
 

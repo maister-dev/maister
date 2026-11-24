@@ -645,3 +645,114 @@ test("AC10 registers a clone, repairs its failed dependency and reviews the corr
   await expect(page.getByRole("dialog")).toContainText(fixed);
   await expect(page.getByRole("dialog")).toContainText(`${repo}/missing`);
 });
+
+for (const outcome of ["failed", "interrupted"] as const) {
+  test(`${outcome} setup after package trust can be repaired from reloaded project settings`, async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const slug = loadFixtures().byKey.board.projectSlug;
+    const name = "trust-" + randomUUID().slice(0, 8);
+    const root = testInfo.outputPath("trusted-package");
+    const pkg = join(root, "package");
+    const marker = join(root, "ready");
+    const invocations = join(root, "invocations");
+
+    mkdirSync(join(pkg, "bundle"), { recursive: true });
+    writeFileSync(
+      join(pkg, "maister-package.yaml"),
+      JSON.stringify({
+        schemaVersion: 1,
+        name,
+        flows: [],
+        capabilities: [{ id: name + "-bundle", path: "bundle" }],
+      }),
+    );
+    writeFileSync(
+      join(pkg, "bundle", "setup.sh"),
+      `#!/bin/sh\necho setup >> "${invocations}"\nif [ ! -f "${marker}" ]; then ${outcome === "interrupted" ? 'kill -TERM "$$"' : "exit 1"}; fi\n`,
+    );
+    const installed = await page.request.post("/api/admin/package-installs", {
+      data: { localPath: pkg },
+    });
+
+    expect(installed.status(), await installed.text()).toBe(201);
+    const { id } = (await installed.json()) as { id: string };
+
+    // Model a pre-existing third-party installation using isolated local material.
+    await withE2EDb((db) =>
+      db.query(
+        "UPDATE package_installs SET trust_status='untrusted' WHERE id=$1",
+        [id],
+      ),
+    );
+    const attached = await page.request.post(`/api/projects/${slug}/packages`, {
+      data: { packageInstallId: id },
+    });
+
+    expect(attached.ok(), await attached.text()).toBe(true);
+    await page.goto(`/projects/${slug}?tab=packages`);
+    const row = page
+      .getByRole("row")
+      .filter({ has: page.getByRole("link", { name, exact: true }) });
+
+    await row.getByRole("button", { name: "Trust", exact: true }).click();
+    const result = page.waitForResponse(
+      (r) => r.url().endsWith("/trust") && r.request().method() === "POST",
+    );
+
+    await page.getByTestId("package-trust-confirm-submit").click();
+    const trustResponse = await result;
+    const receipt = (await trustResponse.json()) as {
+      details: {
+        trustAccepted: boolean;
+        projectSlug: string;
+        declarationId: string;
+      };
+    };
+
+    expect(receipt.details).toMatchObject({
+      trustAccepted: true,
+      projectSlug: slug,
+    });
+    await expect(page.getByTestId("package-trust-confirm")).toBeHidden();
+    await page
+      .locator(`a[href$="#dependency-${receipt.details.declarationId}"]`)
+      .click();
+    await page.reload();
+    const declaration = page.locator('li[id^="dependency-"]').filter({
+      has: page.getByRole("heading", { name: new RegExp(name) }),
+    });
+
+    await expect(async () => {
+      await page
+        .getByRole("button", { name: "Refresh status", exact: true })
+        .click();
+      await expect(declaration).toContainText(
+        outcome === "failed" ? "Setup failed" : "Setup requires verification",
+        { timeout: 2000 },
+      );
+    }).toPass({ timeout: 45_000 });
+    writeFileSync(marker, "ready");
+    if (outcome === "failed") {
+      await declaration
+        .getByRole("button", { name: "Retry installation" })
+        .click();
+    } else {
+      await declaration.getByRole("button", { name: "Recover setup" }).click();
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "Authorize setup recovery" })
+        .click();
+    }
+    await expect(async () => {
+      await page
+        .getByRole("button", { name: "Refresh status", exact: true })
+        .click();
+      await expect(declaration).toContainText("Installation succeeded", {
+        timeout: 2000,
+      });
+    }).toPass({ timeout: 45_000 });
+    expect(readFileSync(invocations, "utf8")).toBe("setup\nsetup\n");
+  });
+}
