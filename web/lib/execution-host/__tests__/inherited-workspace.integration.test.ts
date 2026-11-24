@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -24,6 +24,7 @@ import {
   hitlRequests,
   nodeAttempts,
   runs,
+  runSessions,
   workspaces,
 } from "@/lib/db/schema";
 import { nodeWorkloadDeclarationId } from "@/lib/flows/addressed-workload-input";
@@ -40,6 +41,7 @@ import { mintPlacement } from "../placement";
 import { ensureLocalExecutionHost } from "../registrar";
 import { getCommand, insertCommand } from "../commands";
 import { releaseAssignmentForRun } from "../assignments";
+import { createExecutionHosts } from "../client";
 import { canonicalLifecycleProjector } from "../events/lifecycle-projector";
 import {
   startRuntimeEventConsumer,
@@ -172,6 +174,8 @@ async function prepareWorkspaceFixture() {
   vi.stubEnv("DB_URL", database.databaseUrl);
   vi.stubEnv("MAISTER_RUNTIME_ROOT", join(root, "manager-runtime"));
   supervisor = await startRealSupervisor({
+    fixture: "mock-acp-adapter-resumable.mjs",
+    fixtureAdapters: ["codex"],
     env: {
       MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({
         [projectId]: repository,
@@ -638,6 +642,28 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
   await settle(restore.id);
   expect((await readWorkspace()).preparationAssignmentId).toBe(initial.id);
   expect(await patchOf(workspace)).toBe("");
+
+  await db.update(runSessions).set({ capabilityAgent: "codex" })
+    .where(and(eq(runSessions.runId, runId), eq(runSessions.sessionName, "default")));
+  const execution = createExecutionHosts({ db });
+  const acp = await execution.forAssignment({ id: next.id });
+  const start = {
+    stepId: "validate",
+    executor: { agent: "codex" as const, model: "gpt-5.4" },
+  };
+  const issued = await acp.createSession(start);
+  await acp.checkpoint(issued.hostSessionId);
+  const resumed = await acp.createSession({ ...start, resumeSessionId: issued.acpSessionId });
+  try {
+    expect(resumed.acpSessionId).toBe(issued.acpSessionId);
+    expect(resumed.hostSessionId).not.toBe(issued.hostSessionId);
+    expect((await getCommand(db, restore.id))?.result).toMatchObject({
+      checkpointId: checkpoint.id, tree: expect.any(String),
+    });
+    expect(acp.assignment.executionWorkspaceId).toBe(workspace.executionWorkspaceId);
+  } finally {
+    await acp.checkpoint(resumed.hostSessionId);
+  }
 }, 60_000);
 
 it("C-09 claims and returns operator commits from the selected supervisor through the normal Run routes", async () => {

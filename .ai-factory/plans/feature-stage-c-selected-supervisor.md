@@ -463,7 +463,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
 
 ### C3–C4 — review, board and single-host qualification
 
-- [ ] **T08 · Git / review (after T07 provides sealed evidence and T05H provides owned handles).** Move status/diff/log, mutation detection, Git checkpoint and restore behind the handle. Cover `flows/graph/workspace-checkpoint.ts`, `artifact-content.ts`, board diff readers and human takeover. Scope read authorization to the content returned. Verify dirty and detached states, bounded diff ranges, authorized read and denied cross-project read. Preserve ACP checkpoint separately. Log expected/actual commit and evidence ID.
+- [x] **T08 · Git / review (after T07 provides sealed evidence and T05H provides owned handles).** Move status/diff/log, mutation detection, Git checkpoint and restore behind the handle. Cover `flows/graph/workspace-checkpoint.ts`, `artifact-content.ts`, board diff readers and human takeover. Scope read authorization to the content returned. Verify dirty and detached states, bounded diff ranges, authorized read and denied cross-project read. Preserve ACP checkpoint separately. Log expected/actual commit and evidence ID.
 
   **C-09 status checkpoint.** RED returned 404 for the addressed status
   route. GREEN observed clean and dirty detached checkouts on the same
@@ -586,6 +586,12 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   inputs remain available. A repeated fresh command does not erase later
   work. The real HITL rework returned to Review with its chosen validation
   output after the supervisor proved the restored parent tree.
+
+  A real addressed Codex ACP fixture checked that a new host session after
+  ACP checkpoint resumes the same ACP session ID on the inherited workspace.
+  The original Git restore and checkpoint IDs remained independently readable
+  in the Web ledger. Four addressed workspace cases passed with the fixture
+  closing both ACP sessions and retiring the local supervisor cleanly.
 
   The local A/B supervisor lane passed 148 tests in ten suites on `8b9ac8932`
   (Darwin arm64, Node 24.15.0), with one suite worker.
