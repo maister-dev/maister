@@ -33,7 +33,7 @@ import {
   launchAcceptedTaskAgentRun,
   startAgentSession,
 } from "@/lib/agents/launch";
-import { runs, taskLaunchIntents } from "@/lib/db/schema";
+import { runs, taskLaunchIntents, workspaces } from "@/lib/db/schema";
 import { acquireRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { withoutGitOwnership } from "@/lib/project-config-persistence/git-process";
 import { launchAcceptedTaskRun } from "@/lib/services/runs";
@@ -283,7 +283,11 @@ async function startBoundTaskLaunch(db: Db, intentId: string): Promise<void> {
     // A Running agent's preparation/continuation already owns its effects.
     if (bound?.status !== "Pending") return;
   }
-  const fence = intent.preparationIdentity.parentRepoPath
+  const [workspace] = await db
+    .select({ ownershipKind: workspaces.ownershipKind })
+    .from(workspaces)
+    .where(eq(workspaces.runId, intent.runId));
+  const fence = workspace?.ownershipKind !== "host_owned" && intent.preparationIdentity.parentRepoPath
     ? await acquireRepositoryMutationFence(
         intent.preparationIdentity.parentRepoPath,
       )

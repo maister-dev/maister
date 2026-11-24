@@ -78,6 +78,7 @@ import { runtimeRoot } from "@/lib/runtime-root";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { MaisterError } from "@/lib/errors";
 import { runtimeFileUrl } from "@/lib/runtime-file-url";
+import { observeSelectedWorkspaceRevision, readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
 
 const executionAuthority = Symbol("accepted task launch execution");
 
@@ -256,18 +257,25 @@ export async function assertFrozenTaskLaunchRepository(
     .where(eq(projects.id, intent.projectId));
 
   if (!project) throw launchRefusal("launch_task_missing", "PRECONDITION");
-  if (
-    intent.preparationIdentity &&
-    (await realpath(project.repoPath)) !==
-      intent.preparationIdentity.parentRepoPath
-  )
-    throw launchRefusal("launch_workspace_changed", "PRECONDITION");
-  await assertBaseCommitReachable({
-    projectRepoPath: project.repoPath,
-    baseRef: settings.baseBranch,
-    baseCommit: settings.baseCommit,
-    preferRemote: "origin",
-  });
+  const [bound] = intent.runId ? await db
+    .select({ ownershipKind: workspaces.ownershipKind })
+    .from(workspaces)
+    .where(eq(workspaces.runId, intent.runId)) : [];
+  const addressed = bound?.ownershipKind === "host_owned";
+  if (!addressed) {
+    if (
+      intent.preparationIdentity &&
+      (await realpath(project.repoPath)) !==
+        intent.preparationIdentity.parentRepoPath
+    )
+      throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+    await assertBaseCommitReachable({
+      projectRepoPath: project.repoPath,
+      baseRef: settings.baseBranch,
+      baseCommit: settings.baseCommit,
+      preferRemote: "origin",
+    });
+  }
   if (
     retryDigest(
       await captureTaskLaunchCapabilityBundles(db, intent.projectId),
@@ -275,11 +283,13 @@ export async function assertFrozenTaskLaunchRepository(
   )
     throw launchRefusal("launch_capabilities_changed");
   if (intent.basis.kind === "automatic") {
-    const currentHead = await resolveBaseCommit({
-      projectRepoPath: project.repoPath,
-      baseRef: settings.baseBranch,
-      preferRemote: "origin",
-    });
+    const currentHead = addressed
+      ? await observeSelectedWorkspaceRevision(intent.projectId, settings.baseBranch)
+      : await resolveBaseCommit({
+          projectRepoPath: project.repoPath,
+          baseRef: settings.baseBranch,
+          preferRemote: "origin",
+        });
     const [task] = await db
       .select()
       .from(tasks)
@@ -392,6 +402,21 @@ export async function assertTaskLaunchBoundWorkspace(
     .from(workspaces)
     .where(eq(workspaces.runId, identity.runId));
 
+  if (workspace?.ownershipKind === "host_owned") {
+    if (workspace.projectId !== intent.projectId || workspace.removedAt ||
+        workspace.branch !== identity.branch || workspace.baseCommit !== identity.baseCommit)
+      throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+    if (!workspace.workspaceMaterializationGeneration)
+      throw new MaisterError("EXECUTOR_UNAVAILABLE", "The selected supervisor is still preparing the workspace", {
+        details: { reason: "workspace_preparation_pending" },
+      });
+    const observed = await readAddressedWorkspaceStatus(db, workspace);
+    if (observed.workspace.mode !== "ownWorktree" ||
+        observed.workspace.observedCommit !== identity.baseCommit || observed.workingTree !== "clean")
+      throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+
+    return;
+  }
   if (
     !workspace ||
     workspace.removedAt ||

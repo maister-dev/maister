@@ -5,7 +5,7 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 
 import { eq } from "drizzle-orm";
 import {
@@ -42,7 +42,7 @@ import {
   launchQualifiedEngineRun as launchRun,
   acceptQualifiedEngineFixture,
 } from "@/test-support/launch-engine-response";
-import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
+import { dispatchBoundTaskLaunchIntent, prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { getRunDetail } from "@/lib/queries/run";
 import { acceptAgentMessage } from "@/lib/agents/turns";
 import { claimAgentMessage } from "@/lib/agents/turn-claim";
@@ -816,6 +816,18 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
         started: false,
       });
       expect(await runStatus(run.id)).toBe("Pending");
+      const [project] = await testDatabase.db.select({ repoPath: schemaModule.projects.repoPath })
+        .from(schemaModule.projects).where(eq(schemaModule.projects.id, workspace.projectId));
+      const parkedRepository = `${project.repoPath}.host-only`;
+      await rename(project.repoPath, parkedRepository);
+      try {
+        await dispatchBoundTaskLaunchIntent(testDatabase.db, receipt.intentId);
+        const [intent] = await testDatabase.db.select({ state: schemaModule.taskLaunchIntents.state, reason: schemaModule.taskLaunchIntents.reason })
+          .from(schemaModule.taskLaunchIntents).where(eq(schemaModule.taskLaunchIntents.id, receipt.intentId));
+        expect(intent).toEqual({ state: "run_bound", reason: null });
+      } finally {
+        await rename(parkedRepository, project.repoPath);
+      }
       await expect(prepareTaskLaunchIntent(testDatabase.db, receipt.intentId))
         .resolves.toMatchObject({ runId: run.id });
       expect(await runsForTask(taskId)).toHaveLength(1);

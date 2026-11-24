@@ -248,6 +248,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   scratch-placement integration suites on Darwin arm64, Node 24.15.0
   with PostgreSQL and disposable Git repos. All 48 cases passed. The
   checkout consumer and recovery across the HTTP boundary are T05H.
+
+  The board dispatcher preserves a bound Pending intent when its legacy
+  project path is inaccessible and the supervisor is still preparing it.
+  RED moved the intent to Held on the manager's repository lock. GREEN
+  bypassed that lock for the host-owned reservation. Bound checkout
+  validation reads the selected host's live handle and exact base commit.
+  The launch-path and real-host suites passed 16 cases and Web typecheck.
+  Capture before the initial board reservation and the graph driver still
+  require the G1 filesystem-denial test.
 - [x] **T05H · Supervisor / checkout and recovery (after T05).** Implement fetch-at-SHA, preparation and Web result application against the reserved owner. Verify Git origin, SHA, canonical root and workspace mode. Serialize cache writes and workspace writers, and guard the apply with owner/epoch/generation CAS. Drop the reply after real Git preparation, restart Web and prove one incarnation and one applied result. A moved ref, unavailable SHA, failed DB apply, alias or child affinity conflict cannot overwrite the first Run’s dirty work. Exercise plain, shared, read-only and empty modes through their actual entry points.
 
   **C-06 evidence.** RED on `fedd22bf6` returned 404 for the approved
