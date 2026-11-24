@@ -51,7 +51,10 @@ import {
   requireRunProjectId,
   withProjectRunKind,
 } from "@/lib/runs/run-kind-invariants";
-import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  DISPOSABLE_WORKSPACE_RUN_STATUSES,
+  WORKTREE_TTL_RUN_STATUSES,
+} from "@/lib/runs/run-status-sets";
 import {
   ABANDONABLE_STATUSES,
   markAbandoned,
@@ -59,6 +62,7 @@ import {
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
 import {
   gcArchivePush,
+  gcAgeDays,
   promotionClaimTimeoutSeconds,
   worktreesRoot,
 } from "@/lib/instance-config";
@@ -946,7 +950,10 @@ export async function archiveWorkbench(
         "recoverRun",
       );
 
-      return archiveAddressedWorkbench(client, addressed, sessionUser.id);
+      return archiveAddressedWorkbench(client, addressed, {
+        kind: "archive",
+        actorUserId: sessionUser.id,
+      });
     }
   }
 
@@ -986,7 +993,37 @@ function addressedArchiveResult(
   };
 }
 
-async function lockAddressedArchiveRun(tx: ExecutionDb, runId: string) {
+type AddressedArchiveOwner =
+  | { kind: "archive"; actorUserId: string }
+  | { kind: "retention_gc"; now: Date };
+
+export async function archiveExpiredAddressedWorkbench(
+  client: ExecutionDb,
+  workspaceId: string,
+  now: Date,
+): Promise<ArchiveWorkbenchResult> {
+  const [candidate] = await client
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId));
+  if (!candidate || candidate.ownershipKind !== "host_owned")
+    throw new MaisterError(
+      "CONFLICT",
+      "The addressed retention candidate changed",
+    );
+
+  return archiveAddressedWorkbench(client, candidate, {
+    kind: "retention_gc",
+    now,
+  });
+}
+
+async function lockAddressedArchiveRun(
+  tx: ExecutionDb,
+  workspace: Workspace,
+  owner: AddressedArchiveOwner,
+) {
+  const runId = workspace.runId;
   const [run] = await tx
     .select()
     .from(schema.runs)
@@ -1011,6 +1048,41 @@ async function lockAddressedArchiveRun(tx: ExecutionDb, runId: string) {
   )
     throw gitActionRefusal(runId, "archive", "unsupported-status");
   assertCodeDeliveryAllowed(run, "archive");
+  if (owner.kind === "retention_gc" && !workspace.removedAt) {
+    const fallbackDeadline =
+      run.endedAt && new Date(run.endedAt.getTime() + gcAgeDays() * 86_400_000);
+    const deadline = workspace.scheduledRemovalAt ?? fallbackDeadline;
+    if (
+      !WORKTREE_TTL_RUN_STATUSES.some((status) => status === run.status) ||
+      !deadline ||
+      deadline > owner.now
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The addressed workspace is outside its retention window",
+      );
+    const { evaluationParticipants, evaluationStudies } = schema;
+    const [evaluationHold] = await tx
+      .select({ id: evaluationParticipants.id })
+      .from(evaluationParticipants)
+      .innerJoin(
+        evaluationStudies,
+        eq(evaluationStudies.id, evaluationParticipants.studyId),
+      )
+      .where(
+        and(
+          eq(evaluationParticipants.runId, runId),
+          eq(evaluationParticipants.sourceType, "launched"),
+          notInArray(evaluationStudies.status, ["decided", "archived"]),
+        ),
+      )
+      .limit(1);
+    if (evaluationHold)
+      throw new MaisterError(
+        "CONFLICT",
+        "An active evaluation retains this workspace",
+      );
+  }
 
   return { ...run, runKind: run.runKind };
 }
@@ -1018,7 +1090,7 @@ async function lockAddressedArchiveRun(tx: ExecutionDb, runId: string) {
 async function archiveAddressedWorkbench(
   client: ExecutionDb,
   candidate: Workspace,
-  actorUserId: string,
+  owner: AddressedArchiveOwner,
 ): Promise<ArchiveWorkbenchResult> {
   const runId = candidate.runId;
   const reserved = await client.transaction(async (tx) => {
@@ -1027,9 +1099,10 @@ async function archiveAddressedWorkbench(
       .from(workspaces)
       .where(eq(workspaces.id, candidate.id))
       .for("update");
-    const run = await lockAddressedArchiveRun(tx, runId);
+    if (!workspace)
+      throw new MaisterError("CONFLICT", "The addressed workspace disappeared");
+    const run = await lockAddressedArchiveRun(tx, workspace, owner);
     if (
-      !workspace ||
       workspace.ownershipKind !== "host_owned" ||
       run.projectId !== candidate.projectId ||
       !workspace.executionHostId ||
@@ -1042,7 +1115,7 @@ async function archiveAddressedWorkbench(
       );
     if (workspace.removedAt) {
       if (
-        workspace.removalKind === "archive" &&
+        workspace.removalKind === owner.kind &&
         workspace.preservationOutcome === "snapshot_created" &&
         workspace.archivedCommit
       )
@@ -1084,16 +1157,15 @@ async function archiveAddressedWorkbench(
         ),
       );
     const resumed = rows.find(
-      (row) =>
-        row.payload.claimId === workspace.lifecycleOperationAttemptId,
+      (row) => row.payload.claimId === workspace.lifecycleOperationAttemptId,
     );
     const claim = await claimLifecycleOperation({
       database: tx,
       runId,
       workspaceId: workspace.id,
-      operation: "archive",
+      operation: owner.kind,
       expectedRunStatus: run.status,
-      actorUserId,
+      ...(owner.kind === "archive" ? { actorUserId: owner.actorUserId } : {}),
       ...(resumed &&
       resumed.state !== "failed" &&
       workspace.lifecycleOperationAttemptId
@@ -1181,11 +1253,12 @@ async function archiveAddressedWorkbench(
       .from(workspaces)
       .where(eq(workspaces.id, candidate.id))
       .for("update");
-    const run = await lockAddressedArchiveRun(tx, runId);
+    if (!workspace)
+      throw new MaisterError("CONFLICT", "The addressed workspace disappeared");
+    const run = await lockAddressedArchiveRun(tx, workspace, owner);
     if (
       run.status !== reserved.run.status ||
       run.executionAssignmentId !== reserved.target.assignmentId ||
-      !workspace ||
       workspace.lifecycleOperationAttemptId !== reserved.attemptId
     )
       throw new MaisterError(
@@ -1231,7 +1304,7 @@ async function archiveAddressedWorkbench(
         details: { reason: "retained_disposition_required" },
       },
     );
-  const now = new Date();
+  const now = owner.kind === "retention_gc" ? owner.now : new Date();
   await recordDrop({
     database: client,
     runId,
@@ -1244,7 +1317,7 @@ async function archiveAddressedWorkbench(
     archivedBranch: null,
     archivedCommit: archive.data.retainedCommit,
     preservationOutcome: "snapshot_created",
-    removalKind: "archive",
+    removalKind: owner.kind,
     attemptId: reserved.attemptId,
   });
 

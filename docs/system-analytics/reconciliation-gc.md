@@ -670,8 +670,16 @@ ref, and keeps the physical workspace claim. Release checks the current
 HEAD and captured tree again. Changed data keeps the worktree available.
 After an interrupted removal the supervisor requires the same retained
 archive and observes the checkout absent before settling. Web marks the
-worktree removed after the canonical release receipt. Automatic addressed
-retention GC and recovery actions still need their own qualification.
+worktree removed after the canonical release receipt.
+
+Retention GC selects expired addressed Git worktrees using the existing
+deadline, status and evaluation holds. The worker rechecks eligibility under
+the lifecycle claim, then sends preservation and release to the original
+supervisor. PostgreSQL 0383 rejects any addressed archive or retention
+tombstone that lacks the matching canonical release and retained commit.
+The local filesystem reconciler enumerates legacy path owners. A pending
+addressed operation remains bound to its receipt and is retried by the
+addressed retention sweep and command recovery.
 
 ## Expectations
 

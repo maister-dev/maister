@@ -270,21 +270,51 @@ export function createLocalDirectTransport(
 
       return receipt ? toReceipt(receipt) : null;
     },
-    sendWorkspacePreparation: wire.sendWorkspacePreparation,
-    sendWorkspaceMaterialization: wire.sendWorkspaceMaterialization,
-    sendWorkspaceWorkload: wire.sendWorkspaceWorkload,
-    sendWorkspaceGitCommand: wire.sendWorkspaceGitCommand,
-    sendRetainedWorkspaceCommand: wire.sendRetainedWorkspaceCommand,
-    getWorkspacePublicationTarget: wire.getWorkspacePublicationTarget,
-    cancelWorkspaceWorkload: wire.cancelWorkspaceWorkload,
-    getWorkspaceCommandReceipt: wire.getWorkspaceCommandReceipt,
-    getWorkspaceStatus: wire.getWorkspaceStatus,
-    getWorkspaceDiff: wire.getWorkspaceDiff,
-    getWorkspaceReviewFingerprint: wire.getWorkspaceReviewFingerprint,
-    getWorkspaceLog: wire.getWorkspaceLog,
-    observeWorkspaceRevision: wire.observeWorkspaceRevision,
-    resolveWorkspaceRevision: wire.resolveWorkspaceRevision,
-    listWorkspaceSourceRefs: wire.listWorkspaceSourceRefs,
+    sendWorkspacePreparation(...args) {
+      return wire.sendWorkspacePreparation(...args);
+    },
+    sendWorkspaceMaterialization(...args) {
+      return wire.sendWorkspaceMaterialization(...args);
+    },
+    sendWorkspaceWorkload(...args) {
+      return wire.sendWorkspaceWorkload(...args);
+    },
+    sendWorkspaceGitCommand(...args) {
+      return wire.sendWorkspaceGitCommand(...args);
+    },
+    sendRetainedWorkspaceCommand(...args) {
+      return wire.sendRetainedWorkspaceCommand(...args);
+    },
+    getWorkspacePublicationTarget(...args) {
+      return wire.getWorkspacePublicationTarget(...args);
+    },
+    cancelWorkspaceWorkload(...args) {
+      return wire.cancelWorkspaceWorkload(...args);
+    },
+    getWorkspaceCommandReceipt(...args) {
+      return wire.getWorkspaceCommandReceipt(...args);
+    },
+    getWorkspaceStatus(...args) {
+      return wire.getWorkspaceStatus(...args);
+    },
+    getWorkspaceDiff(...args) {
+      return wire.getWorkspaceDiff(...args);
+    },
+    getWorkspaceReviewFingerprint(...args) {
+      return wire.getWorkspaceReviewFingerprint(...args);
+    },
+    getWorkspaceLog(...args) {
+      return wire.getWorkspaceLog(...args);
+    },
+    observeWorkspaceRevision(...args) {
+      return wire.observeWorkspaceRevision(...args);
+    },
+    resolveWorkspaceRevision(...args) {
+      return wire.resolveWorkspaceRevision(...args);
+    },
+    listWorkspaceSourceRefs(...args) {
+      return wire.listWorkspaceSourceRefs(...args);
+    },
     retireCommand(commandId, request) {
       return wire.retireCommand(commandId, request);
     },

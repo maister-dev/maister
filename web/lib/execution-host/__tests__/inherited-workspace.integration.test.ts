@@ -3,7 +3,14 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -770,6 +777,102 @@ it("C-10 publishes and finalizes a host-owned Run through the normal promotion r
     workspaceRemoved: true,
     idempotent: true,
   });
+}, 60_000);
+
+it("C-10 retention GC preserves an overdue addressed worktree on its owning host", async () => {
+  const {
+    db,
+    runId,
+    readWorkspace,
+    supervisor: owningHost,
+  } = await prepareWorkspaceFixture();
+  const { id, executionWorkspaceId: handle } = await readWorkspace();
+  if (!handle) throw new Error("The GC fixture has no retained checkout");
+  const checkout = privateCheckoutPath(owningHost, handle);
+  const repository = await git(
+    checkout,
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  );
+  await writeFile(
+    join(checkout, "overdue-untracked.txt"),
+    "retain before GC\n",
+  );
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(runs)
+      .set({ status: "Done", endedAt: now })
+      .where(eq(runs.id, runId));
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+    await tx
+      .update(workspaces)
+      .set({ scheduledRemovalAt: new Date(now.getTime() + 60_000) })
+      .where(eq(workspaces.id, id));
+  });
+  startCanonicalProjectionWorker();
+  const { runWorkspaceGcSweep } = await import("@/lib/gc/workspace-gc");
+  const { runWorkspaceReconciliationSweep } =
+    await import("@/lib/gc/workspace-reconciler");
+  const webRoot = join(dirname(repository), "web-reconciliation");
+  await mkdir(webRoot);
+  expect(
+    await runWorkspaceReconciliationSweep({ database: db, root: webRoot }),
+  ).toMatchObject({
+    scanned: 0,
+    removed: 0,
+  });
+  const sweep = () =>
+    runWorkspaceGcSweep({
+      db,
+      now: () => now,
+      worktreeExists: async () => {
+        throw new Error("GC probed an addressed path from Web");
+      },
+    });
+  expect(await sweep()).toMatchObject({ scanned: 0, pruned: 0 });
+  await db
+    .update(workspaces)
+    .set({ scheduledRemovalAt: new Date(now.getTime() - 60_000) })
+    .where(eq(workspaces.id, id));
+  await expect(
+    db
+      .update(workspaces)
+      .set({
+        removedAt: now,
+        removalKind: "retention_gc",
+        preservationOutcome: "not_needed",
+      })
+      .where(eq(workspaces.id, id)),
+  ).rejects.toMatchObject({
+    cause: {
+      code: "23514",
+      constraint: "addressed_workspace_disposal_receipt",
+    },
+  });
+  expect(await sweep()).toMatchObject({
+    scanned: 1,
+    preserved: 1,
+    pruned: 1,
+    failed: 0,
+  });
+  const archived = await readWorkspace();
+  expect(archived).toMatchObject({
+    removalKind: "retention_gc",
+    removedAt: expect.any(Date),
+    preservationOutcome: "snapshot_created",
+    archivedCommit: expect.stringMatching(/^[a-f0-9]{40}$/),
+  });
+  expect(
+    await git(
+      repository,
+      "show",
+      `${archived.archivedCommit}:overdue-untracked.txt`,
+    ),
+  ).toBe("retain before GC");
+  await expect(stat(checkout)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await sweep()).toMatchObject({ scanned: 0, pruned: 0 });
 }, 60_000);
 
 it("C-10 projects a publication from the historical owner and holds removal until the outcome is verified", async () => {

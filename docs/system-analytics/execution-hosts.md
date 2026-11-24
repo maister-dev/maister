@@ -1176,8 +1176,9 @@ candidate ref before changing the live checkout. A crash between that change
 and durable receipt is reconciled against the candidate. The canonical
 terminal projection settles the existing sync timeline and releases its
 claim in one transaction. A stale target or content conflict leaves the
-live checkout untouched. Automatic retention remains part of the Stage C
-lifecycle work.
+live checkout untouched. Addressed retention uses the same preservation and
+release receipts, with the original deadline and evaluation hold rechecked
+under the claim.
 
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable

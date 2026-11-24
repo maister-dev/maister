@@ -2654,6 +2654,13 @@
       "when": 1795515124740,
       "tag": "0382_stage_c_retained_workspace_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 383,
+      "version": "7",
+      "when": 1795515892183,
+      "tag": "0383_stage_c_addressed_retention",
+      "breakpoints": true
     }
   ]
 }

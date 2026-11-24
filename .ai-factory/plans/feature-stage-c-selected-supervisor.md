@@ -643,7 +643,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   action through the existing workbench menu. Passed 14 Web and populated
   migration integrations, 29 supervisor integrations with one worker, 129
   legacy-policy and service cases, and the contracts and docs checks.
-  Automatic GC and reconciliation remain open.
+  Addressed retention GC now follows the same preservation and release
+  receipts. RED found the legacy path probe on a pathless workspace. GREEN
+  skipped a future deadline and kept the local reconciler out of the
+  private store. An overdue sweep retained an untracked file byte for byte,
+  removed the checkout once on its owner, and avoided local path probes.
+  PostgreSQL 0383 refused an attempted tombstone without a matching
+  preservation and release. Verified the addressed, legacy GC, shared-tree
+  GC and reconciler integrations, types, docs and ERD.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure
   while enumerating local agent materialization roots. The existing discovery

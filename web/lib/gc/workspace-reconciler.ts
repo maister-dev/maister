@@ -371,7 +371,12 @@ async function listMissingWorkspaceCandidates(args: {
     })
     .from(workspaces)
     .innerJoin(runs, eq(workspaces.runId, runs.id))
-    .where(sql`coalesce(${runs.agentKind}, 'code_delivery') <> 'operational'`);
+    .where(
+      and(
+        eq(workspaces.ownershipKind, "legacy_path"),
+        sql`coalesce(${runs.agentKind}, 'code_delivery') <> 'operational'`,
+      ),
+    );
   const candidates: ReconciliationCandidate[] = [];
 
   for (const row of rows) {
