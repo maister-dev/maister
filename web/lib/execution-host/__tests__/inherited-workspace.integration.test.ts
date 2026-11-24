@@ -511,7 +511,6 @@ it("C-10 publishes and finalizes a host-owned Run through the normal promotion r
   await writeFile(join(checkout, "README.md"), "reviewed publication\n");
   await git(checkout, "add", "--", "README.md");
   await git(checkout, "commit", "-m", "reviewed publication");
-  const head = await git(checkout, "rev-parse", "HEAD");
   const target = { remote: "origin", remoteBranch: "published-fixture" };
   await db.transaction(async (tx) => {
     await tx
@@ -536,37 +535,82 @@ it("C-10 publishes and finalizes a host-owned Run through the normal promotion r
   startCanonicalProjectionWorker();
   const { POST: promote } =
     await import("@/app/api/runs/[runId]/promote/route");
-  const send = () =>
+  const send = (
+    body: { reviewedSource?: { head: string; fingerprint: string } } = {},
+  ) =>
     promote(
       new NextRequest(`http://localhost/api/runs/${runId}/promote`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: "{}",
+        body: JSON.stringify(body),
       }),
       { params: Promise.resolve({ runId }) },
     );
-  const reply = await send();
+  const missingReview = await send();
+  expect(missingReview.status).toBe(409);
+  expect(await missingReview.json()).toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "review_source_required" },
+  });
+  const { readAddressedReviewSource } =
+    await import("@/lib/runs/review-source");
+  const readReview = async () =>
+    readAddressedReviewSource({
+      db,
+      workspace: await readWorkspace(),
+      signal: AbortSignal.timeout(15_000),
+    });
+  const firstReview = await readReview();
+  const firstHead = await git(checkout, "rev-parse", "HEAD");
+  await writeFile(
+    join(checkout, "README.md"),
+    "changed after operator review\n",
+  );
+  await git(checkout, "add", "--", "README.md");
+  await git(checkout, "commit", "-m", "change after review");
+  const reviewedHead = await git(checkout, "rev-parse", "HEAD");
+  const stale = await send({
+    reviewedSource: { head: firstHead, fingerprint: firstReview.fingerprint },
+  });
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "review_source_changed" },
+  });
+  expect(await readWorkspace()).toMatchObject({ promotionState: "none" });
+  expect(await git(repository, "branch", "--list", target.remoteBranch)).toBe(
+    "",
+  );
+  const currentReview = await readReview();
+  const reviewBody = {
+    reviewedSource: {
+      head: reviewedHead,
+      fingerprint: currentReview.fingerprint,
+    },
+  };
+  const reply = await send(reviewBody);
   const result = await reply.json();
   expect(reply.status, JSON.stringify(result)).toBe(200);
   expect(result).toMatchObject({
-    commit: head,
+    commit: reviewedHead,
     mode: "publish_branch",
     publication: target,
   });
   expect(
     await git(repository, "rev-parse", `refs/heads/${target.remoteBranch}`),
-  ).toBe(head);
+  ).toBe(reviewedHead);
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
-  expect(run).toMatchObject({ status: "Done", promotedHeadSha: head });
+  expect(run).toMatchObject({ status: "Done", promotedHeadSha: reviewedHead });
   expect(await readWorkspace()).toMatchObject({
     executionHostId: host.id,
     promotionState: "done",
     publishedRemote: target.remote,
     publishedBranch: target.remoteBranch,
   });
-  const replay = await send();
-  expect(replay.status).toBe(200);
-  expect(await replay.json()).toEqual(result);
+  const replay = await send(reviewBody);
+  const replayBody = await replay.json();
+  expect(replay.status, JSON.stringify(replayBody)).toBe(200);
+  expect(replayBody).toEqual(result);
   expect(
     await git(
       repository,
@@ -575,7 +619,7 @@ it("C-10 publishes and finalizes a host-owned Run through the normal promotion r
       "--format=%H",
       `refs/heads/${target.remoteBranch}`,
     ),
-  ).toBe(head);
+  ).toBe(reviewedHead);
   await writeFile(
     join(checkout, "untracked-archive.txt"),
     "retain the operator's change\n",

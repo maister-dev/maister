@@ -3058,6 +3058,8 @@
     "mergedPrBehind": "The pull request was merged without this run's latest commits, so nothing was changed. Open a new pull request for them in the git panel.",
     "promoteAnyway": "Promote anyway",
     "relaunchToPromote": "This run predates branch targeting and has no promotion metadata. Relaunch the task to promote it.",
+    "addressedReviewUnavailable": "The selected supervisor could not confirm the review snapshot. Refresh to try again.",
+    "addressedReviewChanged": "The workspace changed after Review. Review its current changes before publishing.",
     "diffTruncated": "This diff is too large to show in full (over 4 MiB) and was truncated. Review the complete change in the pull request or via `git diff` before promoting.",
     "promoteTruncated": "Promote anyway (diff truncated)",
     "conflictTitle": "Merge conflict — resolve manually",

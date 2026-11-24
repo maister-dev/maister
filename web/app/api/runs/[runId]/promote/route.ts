@@ -22,6 +22,12 @@ const promoteBodySchema = z
     deliveryPolicyOverride: deliveryPolicyOverrideSchema.optional(),
     targetBranch: z.string().min(1).max(255).optional(),
     reviewedTargetCommit: z.string().min(7).max(64).optional(),
+    reviewedSource: z
+      .strictObject({
+        head: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+        fingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      })
+      .optional(),
     allowTargetDrift: z.boolean().optional(),
     // ADR-141: opt-in one-click chaining for a resolver-backed
     // ai_rebase_merge conflict (default OFF → two-step).
@@ -97,6 +103,8 @@ export async function POST(
       sessionUser,
       authorize: async (projectId: string) => {
         await requireProjectAction(projectId, "promoteRun");
+        if (body.reviewedSource)
+          await requireProjectAction(projectId, "readRepoFiles");
       },
     });
 

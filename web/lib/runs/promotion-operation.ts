@@ -4,11 +4,17 @@ export type PromotionMode = DeliveryPolicyStrategy;
 
 export type PromotionDeliveryPolicy = DeliveryPolicy;
 
+export type ReviewedPromotionSource = Readonly<{
+  head: string;
+  fingerprint: string;
+}>;
+
 export interface PromotionOperationInput {
   targetBranch: string | null;
   deliveryPolicy: PromotionDeliveryPolicy;
   mode: PromotionMode;
   reviewedTargetCommit: string | null;
+  reviewedSource?: ReviewedPromotionSource | null;
   canPromote: boolean;
   reviewReady: boolean;
   diffTruncated: boolean;
@@ -32,6 +38,7 @@ export interface PromotionRequestBody {
   targetBranch?: string;
   deliveryPolicyOverride?: PromotionDeliveryPolicy;
   reviewedTargetCommit?: string;
+  reviewedSource?: ReviewedPromotionSource;
   allowTargetDrift?: true;
   autoFinalize?: true;
 }
@@ -59,7 +66,8 @@ export function buildPromotionRequestBody(
   allowTargetDrift = false,
 ): PromotionRequestBody | null {
   if (promotionBlockReason(input) !== null) return null;
-  if (input.mode === "publish_branch") return {};
+  if (input.mode === "publish_branch")
+    return input.reviewedSource ? { reviewedSource: input.reviewedSource } : {};
 
   return {
     targetBranch: input.targetBranch as string,

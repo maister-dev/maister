@@ -136,7 +136,7 @@ ${adapterScript}EOF
     import {join} from "node:path";
     import {eq} from "drizzle-orm";
     import {closeDb,getDb} from "./lib/db/client.ts";
-    import {flowRevisions,platformAcpRunners} from "./lib/db/schema.ts";
+    import {flowRevisions,platformAcpRunners,projects} from "./lib/db/schema.ts";
     import {testPlatformRunnerRow} from "./lib/__tests__/runner-fixtures.ts";
     import {seedAdmin,seedPlatformRunner,seedProjectRepo,seedFlowTask} from "./test-support/durable-workers-seed.ts";
     const db = getDb();
@@ -147,6 +147,7 @@ ${adapterScript}EOF
     let manifest;
     if (${addressedBuild}) {
       await db.update(platformAcpRunners).set(testPlatformRunnerRow(runnerId,"codex")).where(eq(platformAcpRunners.id,runnerId));
+      await db.update(projects).set({deliveryPolicyDefault:{strategy:"publish_branch",push:"on_success",trigger:"manual",targetBranch:"main"}}).where(eq(projects.id,project.projectId));
       const git = (...args) => execFileSync("git", ["-C",project.repoPath,...args],{encoding:"utf8"}).trim();
       await mkdir(join(project.repoPath,"app"),{recursive:true});
       const files = {
@@ -169,6 +170,8 @@ ln -s /app/web/node_modules node_modules
 node /app/web/node_modules/typescript/bin/tsc --noEmit
 NEXT_TELEMETRY_DISABLED=1 node /app/web/node_modules/next/dist/bin/next build --webpack
 test -s .next/BUILD_ID
+git add -- acp-marker
+git -c user.name='Stage C' -c user.email=stage-c@maister.local -c commit.gpgsign=false commit -m 'Commit addressed ACP edit'
 printf '%s\\n' '{"build":"passed","typecheck":"passed"}' > "$MAISTER_OUTPUT_FILE"`)}},
          output:{result:{schema:"./schemas/build.json",required:true}},transitions:{success:"done"}}
       ]};
@@ -788,6 +791,120 @@ ${adapterScript}EOF
       firstRunId: first.runId,
       secondRunId: second.runId,
       nextCommit,
+    });
+    await page.goto(`/runs/${second.runId}#review-panel`);
+    const reviewPanel = page.getByTestId("review-panel");
+    await expect(
+      reviewPanel.getByText("acp-marker", { exact: true }).first(),
+    ).toBeVisible();
+    const publicationResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/runs/${second.runId}/promote` &&
+        response.request().method() === "POST",
+    );
+    await reviewPanel.getByTestId("review-promote").click();
+    const published = await publicationResponse;
+    assert.equal(published.status(), 200, await published.text());
+    const outcome = (await published.json()) as {
+      commit: string;
+      mode: string;
+      publication: { remote: string; remoteBranch: string };
+    };
+    assert.equal(outcome.mode, "publish_branch");
+    assert.equal(outcome.publication.remote, "origin");
+    const reviewed = published.request().postDataJSON().reviewedSource as {
+      head: string;
+      fingerprint: string;
+    };
+    assert.equal(reviewed.head, outcome.commit);
+    assert.match(reviewed.fingerprint, /^sha256:[a-f0-9]{64}$/);
+    assert.equal(
+      await inContainer(primary.user, [
+        "git",
+        "-C",
+        witness.repoPath,
+        "rev-parse",
+        `refs/heads/${outcome.publication.remoteBranch}`,
+      ]),
+      outcome.commit,
+    );
+    await expect(page.getByTestId("run-header-status")).toContainText(/done/i);
+    const {
+      rows: [{ handle }],
+    } = await db.pool.query<{ handle: string }>(
+      "select execution_workspace_id as handle from workspaces where run_id=$1",
+      [second.runId],
+    );
+    const ownedCheckout = JSON.parse(
+      await inContainer(primary.user, [
+        "node",
+        "--input-type=module",
+        "-e",
+        `import { DatabaseSync } from "node:sqlite";
+         const db = new DatabaseSync(process.argv[1], { readOnly: true });
+         console.log(JSON.stringify(db.prepare("select real_path as path, repo_path as repository from workspaces where id=? and released_at is null").get(process.argv[2])));`,
+        primary.root + "/state/state.sqlite",
+        handle,
+      ]),
+    ) as { path: string; repository: string };
+    const archiveFile = "operator-note.txt";
+    const archiveContent = "Retain work created after publication";
+    await inContainer(primary.user, [
+      "sh",
+      "-ec",
+      'printf "%s" "$2" > "$1"',
+      "sh",
+      ownedCheckout.path + "/" + archiveFile,
+      archiveContent,
+    ]);
+    await page
+      .getByRole("main")
+      .getByTestId("workbench-lifecycle-actions")
+      .getByRole("button", { name: "Archive", exact: true })
+      .click();
+    const archiveResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/runs/${second.runId}/archive` &&
+        response.request().method() === "POST",
+    );
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Confirm", exact: true })
+      .click();
+    const archived = await archiveResponse;
+    assert.equal(archived.status(), 200, await archived.text());
+    assert.equal((await archived.json()).workspaceRemoved, true);
+    const {
+      rows: [disposition],
+    } = await db.pool.query<{
+      archived_commit: string;
+      removed_at: Date | null;
+      removal_kind: string;
+    }>(
+      "select archived_commit, removed_at, removal_kind from workspaces where run_id=$1",
+      [second.runId],
+    );
+    assert.equal(disposition.removal_kind, "archive");
+    assert(disposition.removed_at);
+    await inContainer(primary.user, ["test", "!", "-e", ownedCheckout.path]);
+    assert.equal(
+      await inContainer(primary.user, [
+        "git",
+        "-C",
+        ownedCheckout.repository,
+        "show",
+        `${disposition.archived_commit}:${archiveFile}`,
+      ]),
+      archiveContent,
+    );
+    note("addressed-published-and-archived", {
+      runId: second.runId,
+      hostId: selectedHost.id,
+      publishedCommit: outcome.commit,
+      publishedBranch: outcome.publication.remoteBranch,
+      archivedCommit: disposition.archived_commit,
     });
   } else {
     const runStatus = page.getByRole("main").getByTestId("run-header-status");

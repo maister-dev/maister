@@ -8931,11 +8931,16 @@ paths:
         assignment/inbox path.
 
         Promotion is gated at promote time by the M16 readiness chokepoint
-        (`assertEvidenceReady(runId, "review")`) and by a target-drift guard:
+        (`assertEvidenceReady(runId, "review")`). For merge and PR delivery:
         `reviewedTargetCommit` MUST equal the live target HEAD unless
         `allowTargetDrift` is set, else `PRECONDITION` (the target advanced
         since review). A body omitting `reviewedTargetCommit` is refused
         `PRECONDITION` — never promoted blind.
+
+        Manual branch publication from a supervisor-owned workspace also
+        requires `reviewedSource` with the exact HEAD and sealed Review
+        fingerprint. An omitted source returns `review_source_required`
+        and a mismatched source returns `review_source_changed` at HTTP 409.
 
         On success all strategies terminate the run at `Done` (no new run
         status); `pull_request` additionally records `pullRequestUrl`/`prNumber`.
@@ -34914,6 +34919,22 @@ components:
             ("target advanced since review") unless `allowTargetDrift` is set;
             a manual flow body omitting it is refused `PRECONDITION`, never
             promoted blind.
+        reviewedSource:
+          type: object
+          additionalProperties: false
+          required: [head, fingerprint]
+          description: |
+            Required for manual branch publication from a supervisor-owned
+            workspace. Submit the exact HEAD and sealed snapshot fingerprint
+            shown in Review. A changed source returns CONFLICT with reason
+            review_source_changed before reserving publication.
+          properties:
+            head:
+              type: string
+              pattern: '^(?:[a-f0-9]{40}|[a-f0-9]{64})$'
+            fingerprint:
+              type: string
+              pattern: '^sha256:[a-f0-9]{64}$'
         allowTargetDrift:
           type: boolean
           default: false

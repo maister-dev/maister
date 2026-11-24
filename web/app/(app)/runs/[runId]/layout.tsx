@@ -3,7 +3,9 @@ import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
 import type { ResultStatus } from "@/lib/run-results/types";
 import type { ReactElement, ReactNode } from "react";
 import type { NativeInputInspection } from "@/lib/orchestrator/native-input-read";
+import type { ReviewedPromotionSource } from "@/lib/runs/promotion-operation";
 
+import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
@@ -120,13 +122,16 @@ import {
   getSessionUser,
   projectRolesForActions,
 } from "@/lib/authz";
-import { isMaisterError } from "@/lib/errors";
+import { workspaces } from "@/lib/db/schema";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
 import {
   assertRunKnowledgeDisclosure,
   isRunKnowledgeUnavailable,
 } from "@/lib/brain/knowledge-run-disclosure";
 import { RunSourceUnavailable } from "@/components/runs/run-source-unavailable";
 import { prepareDiff } from "@/lib/diff/prepare";
+import { readAddressedReviewSource } from "@/lib/runs/review-source";
 import { reposRoot, worktreesRoot } from "@/lib/instance-config";
 import {
   formatProjectRepoPath,
@@ -214,7 +219,7 @@ const EMPTY_DIFF: ReviewPanelDiff = {
   truncated: false,
 };
 
-async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
+type ReviewPanelData = {
   baseBranch: string | null;
   baseCommit: string | null;
   targetBranch: string | null;
@@ -224,7 +229,72 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
   diff: ReviewPanelDiff;
   driftDetected: boolean;
   legacyNeedsRelaunch: boolean;
-}> {
+  reviewedSource?: ReviewedPromotionSource;
+  addressedReviewUnavailable?: boolean;
+};
+
+async function buildAddressedReviewPanelData(
+  detail: RunDetailForReview,
+): Promise<ReviewPanelData> {
+  const targetBranch = detail.targetBranch ?? detail.projectMainBranch;
+  const deliveryPolicy =
+    detail.deliveryPolicySnapshot ??
+    deliveryPolicyFromLegacyPromotionMode({
+      projectPromotionMode: detail.promotionMode,
+      projectMainBranch: targetBranch,
+    });
+  const db = getDb();
+  const [workspace] = await db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.runId, detail.runId));
+  if (
+    !workspace ||
+    workspace.executionWorkspaceId !== detail.addressedCheckout?.handle
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "The selected workspace changed during Review",
+    );
+  const { workspace: before } = await readAddressedWorkspaceStatus(
+    db,
+    workspace,
+  );
+  const source = await readAddressedReviewSource({
+    db,
+    workspace,
+    signal: AbortSignal.timeout(8_000),
+  });
+  const { workspace: after } = await readAddressedWorkspaceStatus(
+    db,
+    workspace,
+  );
+  if (!before.observedCommit || before.observedCommit !== after.observedCommit)
+    throw new MaisterError(
+      "CONFLICT",
+      "The selected workspace HEAD changed during Review",
+    );
+
+  return {
+    baseBranch: detail.baseBranch,
+    baseCommit: source.baseCommit,
+    targetBranch,
+    reviewedTargetCommit: null,
+    promotionMode: deliveryPolicy.strategy,
+    deliveryPolicy,
+    diff: await prepareDiff(source.diff, source.truncated),
+    driftDetected: false,
+    legacyNeedsRelaunch: false,
+    reviewedSource: {
+      head: before.observedCommit,
+      fingerprint: source.fingerprint,
+    },
+  };
+}
+
+async function buildReviewPanelData(
+  detail: RunDetailForReview,
+): Promise<ReviewPanelData> {
   const targetBranch = detail.targetBranch ?? detail.projectMainBranch;
   const deliveryPolicy =
     detail.deliveryPolicySnapshot ??
@@ -829,7 +899,8 @@ export default async function RunDetailLayout({
   // `Review`. Scratch keeps its conversation-specific promote affordance.
   const showReview =
     detail.status === "Review" &&
-    (detail.runKind === "flow" || detail.runKind === "agent");
+    (detail.runKind === "flow" || detail.runKind === "agent") &&
+    (!detail.addressedCheckout || canReadRepoFiles);
   let reviewData: Awaited<ReturnType<typeof buildReviewPanelData>> | null =
     null;
   let reviewReadiness = null;
@@ -842,7 +913,9 @@ export default async function RunDetailLayout({
 
   if (showReview) {
     try {
-      reviewData = await buildReviewPanelData(detail);
+      reviewData = detail.addressedCheckout
+        ? await buildAddressedReviewPanelData(detail)
+        : await buildReviewPanelData(detail);
     } catch (err) {
       // A derivation failure that is not a clean legacy-relaunch case (e.g. the
       // worktree is gone): fall back to the relaunch state rather than crash.
@@ -863,7 +936,8 @@ export default async function RunDetailLayout({
           deliveryPolicy: fallbackPolicy,
           diff: EMPTY_DIFF,
           driftDetected: false,
-          legacyNeedsRelaunch: true,
+          legacyNeedsRelaunch: !detail.addressedCheckout,
+          addressedReviewUnavailable: Boolean(detail.addressedCheckout),
         };
         flowResultDegradations.push("review-diff-fallback");
       } else {
@@ -879,6 +953,7 @@ export default async function RunDetailLayout({
     // real target + worktree are known (never for the legacy-relaunch fallback).
     if (
       reviewData &&
+      !detail.addressedCheckout &&
       reviewData.promotionMode !== "publish_branch" &&
       !reviewData.legacyNeedsRelaunch &&
       reviewData.targetBranch
@@ -1898,7 +1973,8 @@ export default async function RunDetailLayout({
               }}
               variant="detail"
               workspaceAvailable={
-                Boolean(detail.worktreePath) && !detail.pruned
+                Boolean(detail.worktreePath || detail.addressedCheckout) &&
+                !detail.pruned
               }
             />
           ) : null}
@@ -2350,7 +2426,9 @@ export default async function RunDetailLayout({
               <RunTakeoverActions
                 addressedCheckout={detail.addressedCheckout}
                 branch={detail.branch}
-                canAct={canAct && (!detail.addressedCheckout || canReadRepoFiles)}
+                canAct={
+                  canAct && (!detail.addressedCheckout || canReadRepoFiles)
+                }
                 displayWorktreePath={displayWorktreePath}
                 isOwner={detail.takeoverOwnerUserId === user.id}
                 mode="working"
@@ -2448,7 +2526,13 @@ export default async function RunDetailLayout({
               baseCommit={reviewData.baseCommit}
               branchDeliveryAttempted={detail.branchDelivery?.attempted}
               branchDeliveryError={detail.branchDelivery?.error}
-              canPromote={canAct}
+              addressedReviewUnavailable={reviewData.addressedReviewUnavailable}
+              canPromote={
+                canAct &&
+                (!detail.addressedCheckout ||
+                  (reviewData.promotionMode === "publish_branch" &&
+                    !!reviewData.reviewedSource))
+              }
               deliveryPolicy={reviewData.deliveryPolicy}
               diff={reviewData.diff}
               displayParentRepoPath={displayParentRepoPath}
@@ -2461,6 +2545,7 @@ export default async function RunDetailLayout({
               promotionMode={reviewData.promotionMode}
               prUrl={detail.prUrl}
               readiness={reviewReadiness}
+              reviewedSource={reviewData.reviewedSource}
               reviewedTargetCommit={reviewData.reviewedTargetCommit}
               runBranch={detail.branch}
               runId={detail.runId}

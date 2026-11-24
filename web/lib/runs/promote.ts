@@ -6,6 +6,7 @@ import type { PublishedTarget } from "@/lib/workbench-git/publication";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { CompletionAuthorization } from "@/lib/auto-promotion/promotion-claim";
 import type { WorkspacePublicationSnapshot } from "../../../runtime/workspace-publication";
+import type { ReviewedPromotionSource } from "@/lib/runs/promotion-operation";
 
 import { randomUUID } from "node:crypto";
 
@@ -21,6 +22,7 @@ import {
 } from "@/lib/execution-host/workspace-preparation";
 import { settleRetainedWorkspaceCommand } from "@/lib/execution-host/workspace-retained-operation";
 import { WorkspacePublishPayloadSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { readAddressedReviewFingerprint } from "@/lib/runs/review-source";
 import { isWorkspaceSourceRef } from "../../../runtime/workspace-prepare";
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
 import { assertNativeProjectPublication } from "@/lib/brain/knowledge-project-publication";
@@ -132,6 +134,7 @@ export type PromoteRunInput = {
   deliveryPolicyOverride?: DeliveryPolicyOverride;
   targetBranch?: string;
   reviewedTargetCommit?: string;
+  reviewedSource?: ReviewedPromotionSource;
   allowTargetDrift?: boolean;
   autoOnReady?: boolean;
   // ADR-141: `ai_rebase_merge` opt-in one-click chaining. Default OFF
@@ -1884,6 +1887,13 @@ async function reserveAddressedPromotion(
       "PRECONDITION",
       "The Run has no retained addressed checkout",
     );
+  const reviewed = input.reviewedSource;
+  if (!reviewed)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Open Review and confirm the current source before publishing",
+      { details: { reason: "review_source_required" } },
+    );
 
   const commands = schemaModule.executionCommands;
   const [previous] = await tx
@@ -1918,6 +1928,9 @@ async function reserveAddressedPromotion(
       previous.payload.claimId !== workspace.promotionAttemptId ||
       !workspace.promotionAttemptId ||
       workspace.promotionOwnerUserId !== ctx.sessionUser.id ||
+      WorkspacePublishPayloadSchema.shape.expected.safeParse(
+        previous.payload.expected,
+      ).data?.head !== reviewed.head ||
       workspace.targetBranch !== policy.targetBranch ||
       !workspace.branchDelivery?.target
     )
@@ -1999,6 +2012,13 @@ async function reserveAddressedPromotion(
       {
         details: { reason: "dirty_worktree" },
       },
+    );
+  const { fingerprint } = await readAddressedReviewFingerprint(tx, workspace);
+  if (reviewed.head !== head || reviewed.fingerprint !== fingerprint)
+    throw new MaisterError(
+      "CONFLICT",
+      "The workspace changed after Review. Review its current changes before publishing.",
+      { details: { reason: "review_source_changed" } },
     );
   const { priorTarget } = await readAddressedWorkspacePublicationTarget(
     tx,

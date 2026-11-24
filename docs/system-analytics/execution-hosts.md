@@ -1162,7 +1162,10 @@ accepts the terminal event after assignment release only when the immutable
 manager command, retained owner, host receipt, and verified target agree.
 The normal Web promotion route uses this flow for manual branch delivery.
 It requires current project authority, a Review-ready Run and a clean
-addressed checkout. Web reserves the dedicated branch, returns the verified
+addressed checkout. The Review panel reads the host's sealed diff. Its
+publication request carries the exact commit and snapshot fingerprint that
+the operator reviewed. Web compares both with the original supervisor before
+claiming publication. Web reserves the dedicated branch, returns the verified
 delivery on retry and changes Review to Done once. Manual archive retains the
 same owning supervisor for preservation and release. Migration 0381 prevents
 an early release and keeps the Web claim until the physical release receipt

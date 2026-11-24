@@ -612,6 +612,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   reflog proved one update. Sync and other promotion strategies still need
   their witnesses.
 
+  The Review panel renders the owning supervisor's sealed diff and submits
+  its fingerprint with the reviewed HEAD. RED reproduced publication without
+  a reviewed source. GREEN refused a missing source and a source changed by
+  a new commit before creating a claim or branch. Publishing the fresh
+  snapshot succeeded, replay returned the first response, and the archive
+  still preserved subsequent untracked work.
+
   Manual archive now reserves a preservation and release under the original
   host, handle, generation and claim. RED reproduced the missing host route
   and the path-only Web archive refusal. GREEN retained dirty tracked and
