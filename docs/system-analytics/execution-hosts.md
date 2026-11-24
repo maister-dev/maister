@@ -983,6 +983,17 @@ The terminal workload receipt records process exit, declared output
 validity and group retirement independently. Web holds unresolved
 quiescence in the command ledger for reconciliation.
 
+An addressed Flow records its workspace assignment on each node attempt.
+The graph driver uses that attempt ID for the CLI operation and the persisted
+evaluation ID for a command-check gate. A new driver for the same assignment
+can resume either operation with its existing receipt. Web applies the action
+or gate result after the terminal receipt proves process-group retirement and
+its output references resolve to the same Run and assignment. Both operations
+address the Git checkout by its retained workspace handle. CLI templates
+that render different command bytes and access to `MAISTER_FLOW_DIR` require
+the planned package-input contract. Git mutation assertions and workspace
+rewind policies require the corresponding host-owned Git operations.
+
 The [versioned schema profile](../api/stage-c-workspace.schema.yaml) fixes
 each operation's method, route, operation ID, stage-specific shape and
 terminal result. [Executable examples](../api/stage-c-workspace-examples.yaml)

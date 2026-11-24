@@ -37,6 +37,28 @@ export type AddressedCliWorkload = Readonly<{
   workload: "cli" | "check";
 }>;
 
+export function flowWorkloadTarget(
+  db: Db | undefined,
+  claim: FlowDriverClaim | undefined,
+  assignmentId: string | null,
+  input: Pick<
+    AddressedCliWorkload,
+    "declarationId" | "operationKey" | "workload"
+  >,
+): AddressedCliWorkload {
+  if (
+    !db ||
+    claim?.scope !== "assignment" ||
+    claim.assignmentId !== assignmentId
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Addressed command requires its assigned Flow driver",
+    );
+
+  return { ...input, db, assignmentId: claim.assignmentId };
+}
+
 /** An unsettled command still owns its workspace. The traversal must yield. */
 export class FlowWorkloadContinuationPending extends MaisterError {
   constructor(commandId: string) {

@@ -122,6 +122,16 @@ export type LoadedProjectRun = {
   companyContext?: undefined;
 };
 
+export type LoadedAddressedProjectRun = Omit<LoadedProjectRun, "workspace"> & {
+  workspace: WorkspaceRow & {
+    ownershipKind: "host_owned";
+    worktreePath: null;
+    parentRepoPath: null;
+  };
+};
+
+export type LoadedRepositoryRun = LoadedProjectRun | LoadedAddressedProjectRun;
+
 export type LoadedCompanyRun = Omit<
   LoadedProjectRun,
   "run" | "task" | "flow" | "workspace" | "companyContext"
@@ -133,7 +143,7 @@ export type LoadedCompanyRun = Omit<
   companyContext: CompanyFlowSessionContext;
 };
 
-export type LoadedRun = LoadedProjectRun | LoadedCompanyRun;
+export type LoadedRun = LoadedRepositoryRun | LoadedCompanyRun;
 
 /** The owner was read from the Run, but current company execution admission refused. */
 export class CompanyFlowLoadFailure extends MaisterError {
@@ -152,8 +162,9 @@ export function isCompanyFlowRun(
   return loaded.companyContext !== undefined;
 }
 
-/** Repository-only operations require an actual admitted project execution. */
-export function requireProjectFlowRun(loaded: LoadedRun): LoadedProjectRun {
+export function requireRepositoryFlowRun(
+  loaded: LoadedRun,
+): LoadedRepositoryRun {
   if (isCompanyFlowRun(loaded))
     throw new MaisterError(
       "PRECONDITION",
@@ -161,6 +172,23 @@ export function requireProjectFlowRun(loaded: LoadedRun): LoadedProjectRun {
     );
 
   return loaded;
+}
+
+/** A path-taking repository operation needs a legacy local checkout. */
+export function requireProjectFlowRun(loaded: LoadedRun): LoadedProjectRun {
+  const project = requireRepositoryFlowRun(loaded);
+
+  return { ...project, workspace: requireLegacyWorkspacePaths(project.workspace) };
+}
+
+export function requireFlowWorktree(worktreePath: string | undefined): string {
+  if (worktreePath) return worktreePath;
+
+  throw new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    "This Flow operation needs an addressed workspace implementation",
+    { details: { reason: "workspace_protocol_unsupported" } },
+  );
 }
 
 export async function loadProjectRun(
@@ -423,8 +451,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
       `workspace not found for run ${runId}`,
     );
   }
-  const workspace = requireLegacyWorkspacePaths(workspaceRow);
-  if (workspace.removedAt) {
+  if (workspaceRow.removedAt) {
     throw new MaisterError(
       "PRECONDITION",
       `workspace already removed for run ${runId}`,
@@ -495,7 +522,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
       }
     : executionTaskInput(run, task);
 
-  return {
+  const common = {
     // project_id is guaranteed (a flow run always has a project; ADR-097).
     run: { ...run, projectId: requireRunProjectId(run.projectId, runId) },
     task: privateTask,
@@ -504,11 +531,27 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     executor,
     runner,
     sessions,
-    workspace,
     projectSlug,
     flowInstallPath,
     execTrust,
   };
+
+  if (
+    workspaceRow.ownershipKind === "host_owned" &&
+    workspaceRow.worktreePath === null &&
+    workspaceRow.parentRepoPath === null
+  )
+    return {
+      ...common,
+      workspace: {
+        ...workspaceRow,
+        ownershipKind: "host_owned",
+        worktreePath: null,
+        parentRepoPath: null,
+      },
+    };
+
+  return { ...common, workspace: requireLegacyWorkspacePaths(workspaceRow) };
 }
 
 /** The private witnessed request is execution input; the shared carrier remains safe metadata. */

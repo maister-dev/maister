@@ -46,11 +46,16 @@ import { agentFacadeMcpServerForRun } from "@/lib/agents/launch";
 import { issueProjectVaultNodeToken } from "@/lib/agents/tokens";
 import { closeDb } from "@/lib/db/client";
 import { cliOutputFilePath } from "@/lib/flows/graph/node-output";
+import { compileManifest } from "@/lib/flows/graph/compile";
+import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
+import { captureAddressedFlowWorkloads } from "@/lib/flows/addressed-workload-input";
+import { runFlow } from "@/lib/flows/runner";
 import { runCliStep } from "@/lib/flows/runner-cli";
 import { loadGitState } from "@/lib/workbench-git/read-model";
-import { workspaces } from "@/lib/db/schema";
+import { gateResults, nodeAttempts, runs, workspaces } from "@/lib/db/schema";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
+import { seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   addProjectMember,
   removeProjectMember,
@@ -140,6 +145,204 @@ it.each([
   assertAddressedRequirement,
   120_000,
 );
+
+it("C-08 drives a pathless graph action and command gate in the same selected checkout", async () => {
+  root = await mkdtemp(join(tmpdir(), "stage-c-pathless-graph-"));
+  const source = await initRepo(join(root, "origin"));
+  const commit = (await git(source, "rev-parse", "HEAD")).trim();
+  database = await startMainPostgresTestDb({
+    databaseName: "eh_graph_workload",
+  });
+  const db = database.db as unknown as Db;
+  const command = "printf 'from owning host' > graph-marker; cat graph-marker";
+  const manifest = parseExecutableStoredFlowManifest(
+    {
+      schemaVersion: 1,
+      name: "addressed-graph",
+      compat: { engine_min: "1.1.0" },
+      nodes: [
+        {
+          id: "work",
+          type: "cli",
+          action: { command },
+          pre_finish: {
+            gates: [
+              {
+                id: "verify",
+                kind: "command_check",
+                mode: "blocking",
+                command:
+                  "test \"$(cat graph-marker)\" = 'from owning host' && printf 'gate saw host marker'",
+              },
+            ],
+          },
+          transitions: { success: "done" },
+        },
+      ],
+    },
+    {
+      code: "CONFIG",
+      surface: "addressed-graph-fixture",
+      manifestLabel: "addressed graph fixture",
+    },
+  );
+  const userId = await seedActiveUser(database.db);
+  const seeded = await seedGraphRun(database.db, manifest, {
+    repoPath: join(root, "no-manager-checkout"),
+    workspace: false,
+    run: { runKind: "flow", status: "Pending", createdByUserId: userId },
+  });
+  const { runId, projectId } = seeded;
+  await rm(seeded.worktreePath, { recursive: true, force: true });
+  await rm(seeded.runtimeRoot, { recursive: true, force: true });
+  await addProjectMember(database.db, { userId, projectId, role: "member" });
+  vi.stubEnv("DB_URL", database.databaseUrl);
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", join(root, "web"));
+  supervisor = await startRealSupervisor({
+    fixture: "mock-acp-librarian.mjs",
+    env: {
+      MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: source }),
+    },
+  });
+  const health = (await (await fetch(supervisor.url + "/health")).json()) as {
+    host: { hostKey: string };
+  };
+  vi.stubEnv("MAISTER_SUPERVISOR_URL", supervisor.url);
+  vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", health.host.hostKey);
+  const transport = createLocalDirectTransport();
+  const registration = await ensureLocalExecutionHost({ db, transport });
+  if (registration.status !== "registered")
+    throw new Error("graph fixture host failed registration");
+  const { host } = registration;
+  await db.transaction(async (tx) => {
+    const assignment = await mintPlacement(tx as unknown as Db, {
+      runId,
+      reason: "launch",
+      host,
+    });
+    await reserveHostWorkspace(
+      tx as unknown as Db,
+      { host, assignment },
+      { projectId, branch: "fixture", baseCommit: commit },
+      {
+        mode: "ownWorktree",
+        repositoryId: projectId,
+        commit,
+        inputDigest: "4".repeat(64),
+      },
+      captureAddressedFlowWorkloads(
+        compileManifest(manifest),
+        manifest.requirements,
+      ),
+      0,
+    );
+  });
+  const applyEvents = async (count: number): Promise<void> => {
+    const result = await consumeRuntimeEventStreamOnce({
+      db,
+      executionHostId: host.id,
+      transport,
+      owner: "fixture",
+      maxEvents: count,
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(result.received).toBe(count);
+    await projectCanonicalRuntimeObjects({ db, runId });
+    await projectExecutionEvents({
+      db,
+      projector: canonicalLifecycleProjector,
+      runId,
+    });
+  };
+  expect(
+    await recoverExecutionCommands({ db, transport, graceMs: 0 }),
+  ).toMatchObject({ errors: [], redelivered: 1 });
+  await applyEvents(1);
+  expect(
+    await recoverExecutionCommands({ db, transport, graceMs: 0 }),
+  ).toMatchObject({ errors: [], redelivered: 1 });
+  await applyEvents(5);
+  await db.update(runs).set({ status: "Running" }).where(eq(runs.id, runId));
+  const runtimeRoot = join(root, "web");
+  const firstDriver = new AbortController();
+  const startDriver = (signal: AbortSignal) =>
+    runFlow(runId, { db, runtimeRoot, signal }).then(
+      () => ({ state: "returned" as const }),
+      (error: unknown) => ({ state: "threw" as const, error }),
+    );
+  const findDeclaration = async (prefix: string) => {
+    const commands = (await listCommandsForRun(db, runId)).filter(
+      ({ kind, payload }) =>
+        kind === "workspace.run" &&
+        typeof payload.declarationId === "string" &&
+        payload.declarationId.startsWith(prefix),
+    );
+    expect(commands).toHaveLength(1);
+
+    return commands[0];
+  };
+  const first = startDriver(firstDriver.signal);
+  let commandId: string;
+  try {
+    const queued = await vi.waitFor(() => findDeclaration("node:"), {
+      timeout: 3_000,
+    });
+    commandId = queued.id;
+  } finally {
+    firstDriver.abort();
+    expect(await first).toEqual({ state: "returned" });
+  }
+
+  const driving = startDriver(AbortSignal.timeout(20_000));
+  try {
+    for (const declaration of ["node:", "gate:"]) {
+      const queued = await vi.waitFor(() => findDeclaration(declaration), {
+        timeout: 3_000,
+      });
+      if (declaration === "node:") expect(queued.id).toBe(commandId);
+      expect(
+        await recoverExecutionCommands({ db, transport, graceMs: 0 }),
+      ).toMatchObject({ errors: [], redelivered: 1 });
+      await applyEvents(3);
+    }
+  } finally {
+    expect(await driving).toEqual({ state: "returned" });
+  }
+  expect(
+    await db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId)),
+  ).toEqual([{ status: "Review" }]);
+  expect(
+    await db
+      .select({ status: nodeAttempts.status, stdout: nodeAttempts.stdout })
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, runId)),
+  ).toEqual([{ status: "Succeeded", stdout: "from owning host" }]);
+  expect(
+    await db
+      .select({ status: gateResults.status, verdict: gateResults.verdict })
+      .from(gateResults)
+      .where(eq(gateResults.runId, runId)),
+  ).toEqual([
+    {
+      status: "passed",
+      verdict: { verdict: "pass", reasons: ["gate saw host marker"] },
+    },
+  ]);
+  expect(
+    await db
+      .select({ path: workspaces.worktreePath })
+      .from(workspaces)
+      .where(eq(workspaces.runId, runId)),
+  ).toEqual([{ path: null }]);
+  expect(await findDeclaration("node:")).toMatchObject({
+    id: commandId,
+    state: "succeeded",
+    attempts: 1,
+  });
+}, 90_000);
 
 async function assertAddressedRequirement({
   probe,

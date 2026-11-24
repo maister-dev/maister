@@ -58,7 +58,7 @@ export type ResolveArtifactContentResult =
   | { kind: "notfound" };
 
 export type ResolveArtifactContentCtx = {
-  worktreePath: string;
+  worktreePath: string | undefined;
   projectSlug: string;
   runId: string;
   runtimeRoot: string;
@@ -214,6 +214,7 @@ export async function resolveArtifactContent(
     }
 
     case "git-range": {
+      if (!ctx.worktreePath) return { kind: "notfound" };
       const args = {
         worktreePath: ctx.worktreePath,
         baseRef: locator.baseCommit,
@@ -234,6 +235,7 @@ export async function resolveArtifactContent(
     }
 
     case "git-log": {
+      if (!ctx.worktreePath) return { kind: "notfound" };
       // ADR-120 (Codex #2): on the injection path (maxBytes set) stream a bounded
       // read so an oversized commit range TRUNCATES (via capForInline downstream)
       // instead of throwing; the payload route (no maxBytes) keeps the full read.

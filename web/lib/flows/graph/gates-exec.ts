@@ -7,7 +7,7 @@ import type { ArtifactKind, GateResult, GateVerdict } from "@/lib/db/schema";
 import type { ExecutionFlowContext as FlowContext } from "../types";
 import type { AgentExecution } from "../runner-agent";
 import type { CompiledNode } from "./compile";
-import type { Db, LoadedProjectRun as LoadedRun } from "./runner-core";
+import type { Db, LoadedRepositoryRun as LoadedRun } from "./runner-core";
 import type { RestrictionPathSet } from "./mutation-check";
 import type { FlowDriverClaim } from "./driver-claim";
 
@@ -22,8 +22,14 @@ import {
   runAgentStep,
 } from "../runner-agent";
 import { runCliStep } from "../runner-cli";
+import {
+  FlowWorkloadContinuationPending,
+  flowWorkloadTarget,
+} from "../addressed-workload";
+import { gateWorkloadDeclarationId } from "../addressed-workload-input";
 
 import { isFlowDriverClaimLost } from "./driver-claim";
+import { requireFlowWorktree } from "./runner-core";
 import { loadGateCrashRecoveryWitness } from "./gate-crash-recovery";
 import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
 import { hasPendingFlowPermission } from "./prompt-permission";
@@ -83,7 +89,8 @@ const VERDICT_EVIDENCE_CAP = 2000;
 
 export type GateRunContext = {
   runtimeRoot: string;
-  worktreePath: string;
+  worktreePath: string | undefined;
+  rootDb?: Db;
   execution?: AgentExecution;
   bindExecution?: () => Promise<AgentExecution>;
   flowDriverClaim?: FlowDriverClaim;
@@ -333,7 +340,8 @@ async function runGateStepGuarded<T>(
       !isMaisterError(err) ||
       isFencedError(err) ||
       isFlowDriverClaimLost(err) ||
-      err instanceof FlowPromptContinuationPending
+      err instanceof FlowPromptContinuationPending ||
+      err instanceof FlowWorkloadContinuationPending
     )
       throw err;
 
@@ -446,7 +454,6 @@ async function runOneGate(
     // own logical identity instead of claiming the run's. Stable per gate: a
     // permission resume respawns THIS session and must rebind the same row.
     sessionName: `gate-${gate.id}`,
-    worktreePath: ctx.worktreePath,
     context,
   };
 
@@ -475,6 +482,23 @@ async function runOneGate(
           { id: gate.id, type: "cli", command },
           {
             ...common,
+            ...(ctx.worktreePath
+              ? { worktreePath: ctx.worktreePath }
+              : {
+                  workload: flowWorkloadTarget(
+                    ctx.rootDb,
+                    ctx.flowDriverClaim,
+                    loaded.run.executionAssignmentId,
+                    {
+                      declarationId: gateWorkloadDeclarationId(
+                        node.id,
+                        gate.id,
+                      ),
+                      operationKey: `gate:${id}`,
+                      workload: "check",
+                    },
+                  ),
+                }),
             ...(ctx.flowDriverClaim && ctx.signal
               ? { driver: { claim: ctx.flowDriverClaim, signal: ctx.signal } }
               : {}),
@@ -623,6 +647,7 @@ async function runOneGate(
           { id: gate.id, type: "agent", mode: "new-session", prompt },
           {
             ...common,
+            worktreePath: requireFlowWorktree(ctx.worktreePath),
             scheduledRequestSnapshot: loaded.run.scheduledRequestSnapshot,
             nodeAttemptId,
             promptOwner: {
@@ -854,10 +879,11 @@ async function runMutationAssertionGate(
   presenceReason: string,
 ): Promise<"passed" | "failed"> {
   const branch = loaded.workspace.branch;
+  const worktreePath = requireFlowWorktree(ctx.worktreePath);
   // Cumulative range (merge-base vs main → head SHA) — shared resolution with
   // the diff artifact (byte-identical fallbacks, D-C3).
   const cumulative = await resolveDiffRange({
-    worktreePath: ctx.worktreePath,
+    worktreePath,
     branch,
   });
 
@@ -873,20 +899,12 @@ async function runMutationAssertionGate(
 
   if (evaluated) {
     try {
-      nodeTouched = await touchedPaths(
-        ctx.worktreePath,
-        nodeBase,
-        cumulative.head,
-      );
+      nodeTouched = await touchedPaths(worktreePath, nodeBase, cumulative.head);
       cumulativeTouched =
         gate.must_not_touch === undefined
           ? []
           : basis === "node"
-            ? await touchedPaths(
-                ctx.worktreePath,
-                cumulative.base,
-                cumulative.head,
-              )
+            ? await touchedPaths(worktreePath, cumulative.base, cumulative.head)
             : nodeTouched;
     } catch (err) {
       // Refs resolved but the diff failed — a sensor that cannot sense must

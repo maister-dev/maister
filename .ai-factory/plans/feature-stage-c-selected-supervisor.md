@@ -359,8 +359,16 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   declared output. GREEN ran on the supervisor, read the sealed JSON and
   left no output file on Web. The same fixture verifies that a quiet accepted
   command stays under receipt recovery without tripping the event stream
-  silence detector. Passed 25 Web tests and the Web typecheck. The ordinary
-  graph driver and command-check gates still require the addressed call path.
+  silence detector. Passed 25 Web tests and the Web typecheck.
+
+  The ordinary graph driver now runs CLI/check actions and command-check
+  gates through the selected workspace. RED stopped at a path-only workspace
+  lookup. A second RED exposed a missing attempt assignment after driver
+  withdrawal. GREEN reused the original command after changing drivers,
+  executed the gate against the marker in the same checkout, kept one
+  admission and one node attempt, and reached Review. Passed 52 Web
+  integrations, the Web typecheck, the full docs validator and ERD. Setup,
+  rendered templates, package scripts and operator cancellation remain open.
 
 ### C3–C4 — review, board and single-host qualification
 

@@ -19,6 +19,17 @@ import { FLOW_REQUIREMENT_TIMEOUT_MS } from "./requirements-check";
 
 import { MaisterError } from "@/lib/errors";
 
+export function nodeWorkloadDeclarationId(nodeId: string): string {
+  return `node:${workspaceEvidenceDigest(nodeId)}`;
+}
+
+export function gateWorkloadDeclarationId(
+  nodeId: string,
+  gateId: string,
+): string {
+  return `gate:${workspaceEvidenceDigest([nodeId, gateId])}`;
+}
+
 /** Freeze declarations from the compiled revision at the same boundary as the Run inputs. */
 export function captureAddressedFlowWorkloads(
   graph: FlowGraph,
@@ -37,7 +48,7 @@ export function captureAddressedFlowWorkloads(
     const definition = node.source.node;
     if (definition.type === "cli" || definition.type === "check") {
       declarations.push({
-        id: `node:${workspaceEvidenceDigest(node.id)}`,
+        id: nodeWorkloadDeclarationId(node.id),
         workload: definition.type,
         command: definition.action.command,
         timeoutMs: Math.min(
@@ -51,7 +62,7 @@ export function captureAddressedFlowWorkloads(
     for (const gate of node.gates) {
       if (gate.kind !== "command_check" || !gate.command) continue;
       declarations.push({
-        id: `gate:${workspaceEvidenceDigest([node.id, gate.id])}`,
+        id: gateWorkloadDeclarationId(node.id, gate.id),
         workload: "check",
         command: gate.command,
         timeoutMs: WORKSPACE_WORKLOAD_DEFAULT_TIMEOUT_MS,
