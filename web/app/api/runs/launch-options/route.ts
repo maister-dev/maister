@@ -8,6 +8,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
+import { bindTaskLaunchPlacementToken, resolveTaskLaunchPlacement } from "@/lib/execution-host/project-preference";
 
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import {
@@ -99,6 +100,7 @@ const querySchema = z
   .object({
     taskId: z.string().min(1).max(256),
     flowId: z.string().min(1).max(256).optional(),
+    executionHostId: z.string().min(1).max(256).optional(),
     runnerId: z.string().min(1).max(256).optional(),
     relaunchOfRunId: z.string().min(1).max(256).optional(),
     packageVersions: z.string().max(32768).optional(),
@@ -308,7 +310,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   } catch (err) {
     if (
       isMaisterError(err) &&
-      err.details?.reason === "flow_settings_enforcement_refused"
+      ["flow_settings_enforcement_refused", "host_ineligible"].includes(
+        String(err.details?.reason),
+      )
     )
       return taskLaunchErrorResponse(err);
 
@@ -385,6 +389,7 @@ async function readLaunchOptions(
           selection.flowRunnerDraft?.slots ? "editSettings" : "launchRun",
         )
       : await requireProjectAction(project.id, "launchRun");
+  const placement = await resolveTaskLaunchPlacement(client, project, selection.executionHostId);
   const canConfigureRunnerBindings = projectRolesForActions([
     "editSettings",
   ]).includes(authorization.role);
@@ -860,6 +865,7 @@ async function readLaunchOptions(
   return {
     options,
     previewFence,
+    placement,
     projectId: project.id,
     repoPath: project.repoPath,
   };
@@ -870,6 +876,7 @@ async function finalizeLaunchOptions(
   {
     options,
     previewFence,
+    placement,
     projectId,
     repoPath,
   }: Awaited<ReturnType<typeof readLaunchOptions>>,
@@ -889,12 +896,13 @@ async function finalizeLaunchOptions(
       ...options,
       ...(previewFence
         ? {
-            settingsToken: composeTaskLaunchSettingsToken(
-              previewFence.metadataToken,
-              assets,
+            settingsToken: bindTaskLaunchPlacementToken(
+              composeTaskLaunchSettingsToken(previewFence.metadataToken, assets),
+              placement,
             ),
           }
         : {}),
+      ...(placement ? { executionHostSelection: placement.selection } : {}),
       branches,
       availablePackageVersions,
     },

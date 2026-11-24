@@ -1,5 +1,9 @@
 import "server-only";
 
+import {
+  bindTaskLaunchPlacementToken,
+  resolveTaskLaunchPlacement,
+} from "@/lib/execution-host/project-preference";
 import type { TaskLaunchServerSourceSnapshot } from "./launch-server-source";
 import type { Db } from "@/lib/execution-host/db";
 import type { FlowRunnerDraft, TaskLaunchRequest } from "./launch-schema";
@@ -239,21 +243,31 @@ export function composeTaskLaunchSettingsToken(
 }
 
 /** Preview includes the actual directory identity; filesystem access stays outside the acceptance transaction. */
-export async function taskLaunchSettingsToken(
+export async function taskLaunchSettingsPreview(
   db: Db,
   taskId: string,
   selection: Partial<TaskLaunchRequest> = {},
-): Promise<string> {
+) {
   const metadataToken = await taskLaunchSettingsMetadataToken(
     db,
     taskId,
     selection,
   );
 
-  if (selection.agentId) return metadataToken;
-  const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+  const [row] = await db
+    .select({ task: tasks, project: projects })
+    .from(tasks)
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .where(eq(tasks.id, taskId));
 
-  if (!task) throw launchRefusal("launch_task_missing", "PRECONDITION");
+  if (!row) throw launchRefusal("launch_task_missing", "PRECONDITION");
+  const { task, project } = row;
+  const placement = await resolveTaskLaunchPlacement(
+    db,
+    project,
+    selection.executionHostId,
+  );
+  if (selection.agentId) return { metadataToken, placement };
   const selector = selection.flowId ?? task.flowId;
   const flow = selector
     ? await resolveTaskLaunchFlow(db, task.projectId, selector)
@@ -267,7 +281,24 @@ export async function taskLaunchSettingsToken(
       })
     : null;
 
-  return composeTaskLaunchSettingsToken(metadataToken, assets);
+  return {
+    metadataToken: composeTaskLaunchSettingsToken(metadataToken, assets),
+    placement,
+  };
+}
+
+export async function taskLaunchSettingsToken(
+  db: Db,
+  taskId: string,
+  selection: Partial<TaskLaunchRequest> = {},
+): Promise<string> {
+  const { metadataToken, placement } = await taskLaunchSettingsPreview(
+    db,
+    taskId,
+    selection,
+  );
+
+  return bindTaskLaunchPlacementToken(metadataToken, placement);
 }
 
 export type ResolvedFlowLaunchSettings = Omit<

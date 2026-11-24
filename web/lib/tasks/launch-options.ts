@@ -6,6 +6,7 @@ import type { TaskLaunchReceipt } from "./launch-types";
 import type { TaskQualificationSummary } from "./qualification-queries";
 import type { StoredDeliveryPolicy } from "@/lib/runs/delivery-policy";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type { TaskLaunchHostSelection } from "@/lib/execution-host/project-preference";
 
 import { and, eq } from "drizzle-orm";
 
@@ -20,6 +21,10 @@ import {
 import { tasks, projects } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
+import {
+  bindTaskLaunchPlacementToken,
+  resolveTaskLaunchPlacement,
+} from "@/lib/execution-host/project-preference";
 
 /** Query parsing is shared by session and bearer adapters after authentication. */
 export function readTaskLaunchOptions(
@@ -106,6 +111,7 @@ export type TaskLaunchOptionsSnapshot = Readonly<{
   qualification: TaskQualificationSummary | null;
   activeLaunch: TaskLaunchReceipt | null;
   target: TaskLaunchOptionsTarget | null;
+  executionHostSelection?: TaskLaunchHostSelection;
 }>;
 
 /** Authorization belongs to the adapter; reads never create an intent or resolve repository HEAD. */
@@ -128,6 +134,11 @@ export async function taskLaunchOptionsSnapshot(
       ...(await taskLaunchPreview(db, row.task.id, selection)),
       target: null,
     };
+  const placement = await resolveTaskLaunchPlacement(
+    db,
+    row.project,
+    selection.executionHostId,
+  );
   const launchInput = {
     agentId: selection.agentId,
     projectId,
@@ -147,7 +158,13 @@ export async function taskLaunchOptionsSnapshot(
         selection,
       );
 
-      return { settings, settingsToken: settings.resolutionToken };
+      return {
+        settings,
+        settingsToken: bindTaskLaunchPlacementToken(
+          settings.resolutionToken,
+          placement,
+        ),
+      };
     }
     if (selection.workspace)
       throw launchRefusal("launch_agent_target_invalid", "CONFIG");
@@ -184,6 +201,7 @@ export async function taskLaunchOptionsSnapshot(
     taskId: row.task.id,
     taskRevision: row.task.revision,
     settingsToken,
+    ...(placement ? { executionHostSelection: placement.selection } : {}),
     ...state,
     target: {
       kind: settings.kind,

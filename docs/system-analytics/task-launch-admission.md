@@ -398,12 +398,18 @@ the preference revision. Missing, malformed or stale revision returns
 409 `PRECONDITION` with `host_ineligible`. Neither refusal updates settings.
 The panel never receives peer URLs, host keys or transport credentials.
 
-The project default API is implemented for the single configured addressed
-supervisor. The manager calculates the eligibility revision from the eligible
-host IDs for the project. Transient liveness alone does not change that
-revision. Direct project Flow launch checks the stored preference and
-configured project eligibility. The board launch selection below remains
-designed.
+The project default API and independent task intent selection are implemented
+for the single configured addressed supervisor. The manager calculates the
+eligibility revision from eligible host IDs. Transient liveness leaves that
+revision stable. The task and board options APIs accept `executionHostId`
+and return `executionHostSelection` with requested and effective IDs,
+provenance, and the eligibility revision. The settings token also binds the
+project preference revision. First acceptance checks both revisions and
+persists the selection in the intent and its settings digest. Replay checks
+the original request digest under current read authority. Dispatch checks
+current eligibility of the saved host. Direct project Flow launch checks the
+stored preference and configured project eligibility. The board picker,
+shared-root inheritance and actual placement display remain designed.
 
 Task and Flow previews expose authorized choices. Bind the settings token
 to the actor, project, task and target revision, current input/settings

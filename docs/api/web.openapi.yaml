@@ -2349,6 +2349,9 @@ paths:
           required: false
           description: Preview an enabled Flow belonging to the task's project.
           schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: executionHostId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 256 }
         - name: relaunchOfRunId
           in: query
           description: Scoped source run included in the immutable settings token; task input and launch authority are captured fresh.
@@ -20325,6 +20328,9 @@ paths:
           name: flowId
           schema: { type: string, minLength: 1, maxLength: 256 }
         - in: query
+          name: executionHostId
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - in: query
           name: agentId
           description: Preview the actual code-delivery agent instead of a Flow; cannot be combined with flowId.
           schema: { type: string, minLength: 1, maxLength: 256 }
@@ -27138,6 +27144,8 @@ components:
       required:
         [taskId, taskRevision, settingsToken, qualification, activeLaunch, target]
       properties:
+        executionHostSelection:
+          $ref: "#/components/schemas/TaskLaunchHostSelection"
         taskId: { type: string, minLength: 1, maxLength: 256 }
         taskRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
         settingsToken: { type: string, minLength: 1, maxLength: 256 }
@@ -27274,6 +27282,11 @@ components:
       additionalProperties: false
       required: [taskId]
       properties:
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId: { type: string, minLength: 1, maxLength: 256 }
         flowId: { type: string, minLength: 1, maxLength: 256 }
         relaunchOfRunId: { type: string, minLength: 1, maxLength: 256 }
@@ -27298,6 +27311,11 @@ components:
         - expectedTaskRevision
         - expectedSettingsToken
       properties:
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId:
           type: string
           minLength: 1
@@ -27380,6 +27398,11 @@ components:
         - expectedTaskRevision
         - expectedSettingsToken
       properties:
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId:
           type: string
           minLength: 1
@@ -27482,6 +27505,11 @@ components:
         - expectedSettingsToken
         - expectedStateVersion
       properties:
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId:
           type: string
           minLength: 1
@@ -27569,6 +27597,11 @@ components:
         - expectedSettingsToken
         - expectedStateVersion
       properties:
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId:
           type: string
           minLength: 1
@@ -27656,6 +27689,16 @@ components:
           properties:
             flowId: { not: {} }
             agentId: { type: string }
+    TaskLaunchHostSelection:
+      type: object
+      additionalProperties: false
+      required: [requestedExecutionHostId, effectiveExecutionHostId, provenance, eligibilityRevision]
+      properties:
+        requestedExecutionHostId: { type: string, minLength: 1, maxLength: 256, nullable: true }
+        effectiveExecutionHostId: { type: string, minLength: 1, maxLength: 256 }
+        provenance: { type: string, enum: [explicit, projectDefault, instanceDefault, sharedRoot] }
+        eligibilityRevision: { type: string, pattern: '^[a-f0-9]{64}$' }
+
     TaskLaunchReceipt:
       type: object
       additionalProperties: false
@@ -27674,6 +27717,8 @@ components:
         - reason
         - snapshot
       properties:
+        executionHostSelection:
+          $ref: "#/components/schemas/TaskLaunchHostSelection"
         schemaVersion:
           type: integer
           enum:
@@ -32952,6 +32997,8 @@ components:
           deliveryPolicyDefault,
         ]
       properties:
+        executionHostSelection:
+          $ref: "#/components/schemas/TaskLaunchHostSelection"
         canManagePackages:
           type: boolean
           description: Current manageLocalPackages project action permits explicit package adoption; it does not launch a task.

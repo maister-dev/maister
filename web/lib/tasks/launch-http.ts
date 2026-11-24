@@ -24,6 +24,8 @@ const PUBLIC_LAUNCH_MESSAGES: Readonly<Record<string, string>> = {
     "Read launch options, then send expectedTaskRevision, expectedSettingsToken and Idempotency-Key. MCP callers can use task_launch_options followed by task_launch.",
   launch_request_key_required:
     "Send a stable Idempotency-Key and reuse the same key and payload when retrying an uncertain response.",
+  host_ineligible:
+    "Choose a supervisor eligible for this project, then refresh launch options.",
   launch_request_setup_required:
     "Complete the selected setup or use the source run's supported retry action, then refresh launch options.",
   flow_runner_unresolved:

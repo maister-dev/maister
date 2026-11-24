@@ -373,6 +373,7 @@ import {
   reserveHostWorkspace,
   usesHostWorkspacePreparation,
 } from "@/lib/execution-host/workspace-preparation";
+import { assertBoundTaskLaunchHost } from "@/lib/execution-host/project-preference";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -1886,6 +1887,7 @@ async function launchAgentRunWithAdmission(
   // unreachable/refused surfaces as EXECUTOR_UNAVAILABLE before any worktree
   // or row exists. The host row is what the launch tx places the run on.
   const placementHost = selectedHost ?? await localHost({ db: _db as unknown as ExecutionDb });
+  assertBoundTaskLaunchHost(acceptedExecution?.intent.effectiveExecutionHostId, placementHost);
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
   const isShared = input.workspaceMode === "shared" && input.rootRunId != null;

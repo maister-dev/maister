@@ -33,6 +33,18 @@ export type ProjectHostSettings = Readonly<{
   eligibilityRevision: string;
 }>;
 
+export type TaskLaunchHostSelection = Readonly<{
+  requestedExecutionHostId: string | null;
+  effectiveExecutionHostId: string;
+  provenance: "explicit" | "projectDefault" | "instanceDefault" | "sharedRoot";
+  eligibilityRevision: string;
+}>;
+
+export type TaskLaunchPlacement = Readonly<{
+  selection: TaskLaunchHostSelection;
+  preferenceRevision: number;
+}>;
+
 function eligibleForProject(projectId: string, host: ExecutionHost): boolean {
   return (
     host.retiredAt === null &&
@@ -95,6 +107,72 @@ function ineligibleHost(): MaisterError {
       details: { reason: "host_ineligible" },
     },
   );
+}
+
+/** Resolve the authorized project's configured identity without a readiness probe. */
+export async function resolveTaskLaunchPlacement(
+  db: Db,
+  project: ProjectPreference & { id: string },
+  requested: string | undefined,
+): Promise<TaskLaunchPlacement | null> {
+  if (
+    !configuredSelectedExecutionEndpoint() &&
+    !project.defaultExecutionHostId &&
+    !requested
+  )
+    return null;
+  const eligibleIds = await eligibleHostIds(db, project.id);
+  const effective =
+    requested ?? project.defaultExecutionHostId ?? eligibleIds[0];
+  if (!effective || !eligibleIds.includes(effective)) throw ineligibleHost();
+
+  return {
+    preferenceRevision: project.executionHostPreferenceRevision,
+    selection: {
+      requestedExecutionHostId: requested ?? null,
+      effectiveExecutionHostId: effective,
+      provenance: requested
+        ? "explicit"
+        : project.defaultExecutionHostId
+          ? "projectDefault"
+          : "instanceDefault",
+      eligibilityRevision: workspaceEvidenceDigest(eligibleIds),
+    },
+  };
+}
+
+export function bindTaskLaunchPlacementToken(
+  settingsToken: string,
+  placement: TaskLaunchPlacement | null,
+): string {
+  return placement
+    ? workspaceEvidenceDigest({ settingsToken, placement })
+    : settingsToken;
+}
+
+/** An accepted launch checks the original identity against current operator eligibility. */
+export async function assertAcceptedTaskLaunchHost(
+  db: Db,
+  projectId: string,
+  executionHostId: string | null,
+): Promise<void> {
+  if (
+    executionHostId !== null &&
+    !(await eligibleHostIds(db, projectId)).includes(executionHostId)
+  )
+    throw ineligibleHost();
+}
+
+export function assertBoundTaskLaunchHost(
+  expectedHostId: string | null | undefined,
+  host: ExecutionHost,
+): void {
+  if (expectedHostId && expectedHostId !== host.id)
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Accepted launch is waiting for its selected supervisor",
+      { details: { reason: "host_ineligible" } },
+    );
 }
 
 export function assertProjectExecutionHost(

@@ -13,6 +13,7 @@ import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskExecutionChildProof } from "./qualification-types";
 import type { FlowPublicationGrant } from "@/lib/workbench-git/flow-publication-grant";
 import type { CompletionGrant } from "@/lib/auto-promotion/completion-policy";
+import type { TaskLaunchHostSelection } from "@/lib/execution-host/project-preference";
 
 export const TASK_LAUNCH_STATES = [
   "queued",
@@ -252,6 +253,7 @@ export type TaskLaunchReceipt = Readonly<{
   runStatus?: string;
   queuePosition?: number;
   queueReason?: string;
+  executionHostSelection?: TaskLaunchHostSelection;
   snapshot: Readonly<{
     kind: "flow" | "agent";
     workspace: "none" | "repo_read" | "worktree";
