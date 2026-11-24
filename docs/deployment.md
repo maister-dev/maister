@@ -733,12 +733,40 @@ or database credentials.
   group, an empty new registry and unstamped historical receipts leave the
   original create unresolved. Follow the [supervisor receipt recovery contract](supervisor.md#command-envelope-fences-and-receipts-implemented--adr-166);
   restarting again or deleting the checkout does not establish retirement.
-- **Single host only.** The web tier needs no supervisor runtime-data mount:
+- **Default single-host deployment.** The web tier needs no supervisor runtime-data mount:
   events replay from the host outbox into canonical Postgres state and runtime
-  bytes use opaque object APIs. Repository/worktree placement remains local;
-  multi-host placement and remote trust/relay belong to Stage C/D
-  ([ADR-167](decisions/adr-167.md)).
+  bytes use opaque object APIs. The selected-supervisor pilot qualifies a
+  limited path from board launch through Review. See the
+  [local pilot configuration](#selected-supervisor-local-pilot) and
+  [ADR-167](decisions/adr-167.md).
 - **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)). Git auth is **host-ambient** — ssh-agent/keys, the credential helper, optional `gh`, and the one-off Add-project token (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). **Persist-config push and remote push/fetch reuse this same host-ambient auth** — there is no managed credential store, and on an auth failure the action returns an advisory without rolling back the local commit / DB state.
+
+### Selected supervisor local pilot
+
+The local Chrome fixture qualifies one pinned endpoint for independent project
+Flows through Review on a disposable Web instance with one project. It starts
+Web and the selected supervisor under separate Linux service identities. Keep
+the endpoint private to the control plane.
+
+1. Start the supervisor using `deploy/maister-supervisor.service` and its own
+   `supervisor/.env`. Set `MAISTER_RUNTIME_ROOT` and
+   `MAISTER_EXECUTION_HOST_STATE_DIR` to private durable directories. For an
+   explicit `MAISTER_WORKSPACE_ROOTS`, include an existing private ancestor
+   of the managed workspace root. The supervisor must be able to write there.
+2. Put the project ID and the approved source in the supervisor's
+   `MAISTER_WORKSPACE_REPOSITORIES` map. Set up Git access under its OS account.
+   Record `host.hostKey` from its `GET /health` response.
+3. Set the Web unit's `MAISTER_SUPERVISOR_URL` to that HTTP(S) origin and set
+   `MAISTER_SELECTED_EXECUTION_HOST_KEY` to the recorded key. Use
+   `MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS` to select the pilot project
+   IDs. Apply required PostgreSQL migrations before starting Web.
+4. Launch an eligible project Flow from the board and select the supervisor.
+   In the local fixture, Web received `EACCES` on the repository and host
+   runtime directories and still displayed the sealed result and diff.
+
+The PostgreSQL-only Compose files provide the database for these
+service units. Use the [Stage C acceptance plan](../.ai-factory/plans/feature-stage-c-selected-supervisor.md)
+to track the remaining lifecycle and multi-host rollout evidence.
 
 ## 14. Stage B execution-data cut-over (upgrade from Stage A)
 

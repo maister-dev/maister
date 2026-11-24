@@ -543,6 +543,10 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   configured host. Addressed cancel, checkpoint/restore, promotion and
   disposal remain open for G1.
 
+  The deployment and supervisor samples now describe the verified private
+  root, repository approval and stable-key pin. The PostgreSQL-only
+  production Compose configuration and full documentation validator pass.
+
 ### C5–C7 — separately shippable two-host pilot
 
 - [ ] **T12 · Registry / transport (after local G1).** Extend T04 to two configured endpoints. Activate the G2 PostgreSQL constraint change after draining incompatible registrars. Bind each descriptor to its observed key and distinguish restart from replacement. Update registrar, resolver, client, default transport, event-plane activation, admin status and recovery. Keep one legacy default and require compatible Web writers before enabling a second entry. Start independent event consumers/cursors/ACKs per host. Hold a projector after ingest and confirm its host still receives the ACK. Then prove identical command IDs or cursors cannot cross identities and an unreachable A leaves B usable. Log per-host negotiation, lag, drain and last seen.

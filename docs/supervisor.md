@@ -51,9 +51,11 @@ makes every HMR reload (dev) and every Next.js restart (prod) kill live
 runs. The supervisor isolates that failure mode. The two processes share
 the HTTP+SSE wire. Stage B removes the runtime-data filesystem dependency:
 browser replay, transcripts, costs, artifacts, and prompt completion read
-manager-owned Postgres state. Repository/worktree/Git operations remain
-web-side under ADR-023, so a different supervisor host is still a Stage C/D
-boundary. The execution-host contract below is the seam later stages build on.
+manager-owned Postgres state. The legacy repository path still uses Web-side
+Git under ADR-023. The Stage C pilot can prepare and execute an independent
+project Flow on a selected supervisor and serve its retained Review diff.
+The verified topology and the remaining placement and Git lifecycle work are
+tracked in [execution host analytics](system-analytics/execution-hosts.md).
 
 The architectural decision and its trade-offs live in
 [`ARCHITECTURE.md`](../.ai-factory/ARCHITECTURE.md). The ACP spike findings
