@@ -14,6 +14,47 @@ erDiagram
     PLATFORM_ACP_RUNNERS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "attachment default"
     FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner binding"
 
+    PROJECTS ||--o{ PROJECT_DEPENDENCY_DECLARATIONS : owns
+    PROJECT_DEPENDENCY_DECLARATIONS ||--o{ PROJECT_DEPENDENCY_ATTEMPTS : "generation and attempt"
+    USERS ||--o{ PROJECT_DEPENDENCY_ATTEMPTS : authorizes
+    PROJECT_PACKAGE_ATTACHMENTS o|--o| PROJECT_DEPENDENCY_DECLARATIONS : "effective attachment"
+
+    PROJECT_DEPENDENCY_DECLARATIONS {
+        text id PK
+        text project_id FK
+        text kind
+        text logical_id
+        integer generation
+        jsonb desired
+        text effective_attachment_id FK
+        text effective_revision
+        integer effective_generation
+    }
+
+    PROJECT_DEPENDENCY_ATTEMPTS {
+        text id PK
+        text declaration_id FK
+        integer generation
+        integer attempt_no
+        text actor_user_id FK
+        text retry_of_attempt_id FK
+        text status
+        text claim_token
+        timestamp lease_expires_at
+        jsonb checkpoint
+    }
+
+    PROJECT_DEPENDENCY_SETUP_RECEIPTS {
+        text material_key PK
+        text physical_key UK
+        text script_digest
+        text content_witness
+        text status
+        text claim_token
+        text owner_host
+        integer owner_pid
+    }
+
     PROJECTS {
         text id PK
         text slug UK "kebab-case derived from name"
@@ -396,4 +437,6 @@ Migrations 0369–0371 introduce project-owned declaration heads and generation-
 
 Backfill existing package attachments from their effective name, source, version and source subpath inside the migration transaction. Preserve export revision, optional path, actual revision and historical Run links. Leave historical attempt and actor absent. Stop previous writers before the cutover and drain accepted Git operations. Failed validation aborts the migration with affected IDs. A second migration run creates no work. See [dependency installation](../system-analytics/project-dependency-installation.md).
 
-The source guard rejects embedded HTTPS user information, SSH passwords, query strings, fragments and unsupported remote schemes. Upgrade diagnostics identify only the project, declaration and attachment. For a pre-0369 database repair the indicated installed source and retry the transaction. For already applied 0369 or 0370, correct the indicated declaration and native coordinates before retrying. Migration 0371 validates the same textual formats as registration and package edits. Network URLs accept ports 0 through 65535. Use percent encoding for URL path spaces. Absolute filesystem paths can contain literal spaces. If an immutable attempt already contains unsafe coordinates, restore the matching pre-cutover backup and repair its source before upgrade.
+The source guard rejects embedded HTTPS user information, SSH passwords, query strings, fragments and unsupported remote schemes. Upgrade diagnostics identify only the project, declaration and attachment. For a pre-0369 database repair the indicated installed source and retry the transaction. For already applied 0369 or 0370, correct the indicated declaration and native coordinates before retrying. The corrected 0370 preflight accepts bracketed IPv6 addresses with an embedded IPv4 suffix. Boot and migration checks also recognize the original 0370 checksum at its exact journal position. Migration 0371 validates the same textual formats as registration and package edits. Network URLs accept ports 0 through 65535. Use percent encoding for URL path spaces. Absolute filesystem paths can contain literal spaces. If an immutable attempt already contains unsafe coordinates, restore the matching pre-cutover backup and repair its source before upgrade.
+
+Migration 0372 reconciles import selection against the [effective capability rows](capabilities-domain.md). Migration 0373 adds a unique physical setup key and separate script and content evidence. Before cutover, drain workers and setup processes that use the previous receipt format. Keep the database and cached revision directories together. The new writer can match an old receipt to a canonical target, kind and revision using the original script bytes. A changed or missing original script can leave a receipt unidentifiable. Restore the original cached inputs from a verified backup to reconcile an affected historical target before authorizing another dispatch. Preserve the receipt and its recorded outcome throughout recovery. A verified new cache publication with independent revision evidence can proceed while the historical target awaits repair.

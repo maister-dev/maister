@@ -16,6 +16,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 // FIXME(any): dual drizzle-orm peer-dep variants (store idiom).
 import * as fullSchema from "@/lib/db/schema";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
+import { captureTaskLaunchCapabilityBundles } from "@/lib/tasks/launch-capabilities";
 import { workspacePackageSkillsPrompt } from "@/lib/capabilities/package-skills";
 import {
   startMainPostgresTestDb,
@@ -76,11 +77,14 @@ async function seedImport(args: {
   projectId: string;
   installedPath: string;
   packageStatus: "Installed" | "Installing";
+  trustStatus?: "trusted" | "untrusted";
+  setupStatus?: "done" | "failed";
+  ref?: string;
 }): Promise<void> {
   await db.insert(schema.capabilityImports).values({
     id: randomUUID(),
     projectId: args.projectId,
-    capabilityRefId: `ref-${randomUUID().slice(0, 8)}`,
+    capabilityRefId: args.ref ?? `ref-${randomUUID().slice(0, 8)}`,
     source: "github.com/x/bundle",
     versionTag: "v1.0.0",
     resolvedRevision: randomUUID().replace(/-/g, "").padEnd(40, "0"),
@@ -88,6 +92,8 @@ async function seedImport(args: {
     manifest: { schemaVersion: 1 },
     installedPath: args.installedPath,
     packageStatus: args.packageStatus,
+    trustStatus: args.trustStatus ?? "trusted",
+    setupStatus: args.setupStatus ?? "done",
   });
 }
 
@@ -105,7 +111,7 @@ async function makeBundleDir(skillName: string): Promise<string> {
 }
 
 describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
-  it("copies each Installed bundle, skips non-Installed, writes the override once", async () => {
+  it("captures and materializes only current trusted setup-ready imports", async () => {
     const projectId = await seedProject();
     const worktree = await mkdtemp(join(tmpdir(), "maister-wt-"));
 
@@ -131,6 +137,32 @@ describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
       packageStatus: "Installing",
     });
 
+    const stale = await makeBundleDir("superseded");
+    const refused = await makeBundleDir("untrusted");
+
+    await seedImport({
+      projectId,
+      installedPath: stale,
+      packageStatus: "Installed",
+      ref: "replaced",
+    });
+    await seedImport({
+      projectId,
+      installedPath: refused,
+      packageStatus: "Installed",
+      ref: "replaced",
+      trustStatus: "untrusted",
+    });
+    await seedImport({
+      projectId,
+      installedPath: await makeBundleDir("failed"),
+      packageStatus: "Installed",
+      setupStatus: "failed",
+    });
+    expect(
+      await captureTaskLaunchCapabilityBundles(testDatabase.db, projectId),
+    ).toHaveLength(2);
+
     const runId = randomUUID();
     const { bundles } = await materializeProjectBundlesIntoWorktree({
       runId,
@@ -145,7 +177,17 @@ describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
 
     expect(prompt).toContain(`/package-skills/skill-a/SKILL.md`);
     expect(prompt).toContain(`/package-skills/skill-b/SKILL.md`);
-    expect(prompt).not.toContain("skill-half");
+    for (const excluded of [
+      "skill-half",
+      "superseded",
+      "untrusted",
+      "failed",
+    ]) {
+      expect(prompt).not.toContain(excluded);
+      expect(
+        await pathExists(join(worktree, ".claude", "skills", excluded)),
+      ).toBe(false);
+    }
     expect(
       await pathExists(join(worktree, ".claude", "skills", "skill-a")),
     ).toBe(true);

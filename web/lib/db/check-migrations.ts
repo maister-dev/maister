@@ -71,6 +71,15 @@ function migrationHash(dir: string, tag: string): string {
     .digest("hex");
 }
 
+// Both shipped 0370 bodies install the same interface, replaced by 0371. The
+// corrected intermediate preflight also accepts IPv4-embedded IPv6 at cutover.
+// Recognize the original bytes only at their historical main-journal position.
+const mainLedgerReceipts = sql`SELECT CASE
+    WHEN created_at = 1795463255644 AND hash = 'e035cafe1e20aaab28bc60c4bf1db9e03c4fa8e1154cf446f2c65554e710ecf7'
+    THEN 'cb8bd1d1d5854ece71df2a3e3cb74e2e8be7c2b5202ec8409caf891f380cd27d'
+    ELSE hash END AS hash, created_at AS "createdAt"
+  FROM drizzle.__drizzle_migrations ORDER BY created_at`;
+
 // Shared core: return the journal tags in `dir` NOT present in the ledger read
 // by `ledgerQuery`. Empty = fully migrated.
 async function collectPending(
@@ -112,11 +121,7 @@ export async function findAppliedUnknownToJournal(
   let rows: Array<Record<string, unknown>>;
 
   try {
-    rows = (
-      await db.execute(
-        sql`SELECT hash, created_at AS "createdAt" FROM drizzle.__drizzle_migrations ORDER BY created_at`,
-      )
-    ).rows;
+    rows = (await db.execute(mainLedgerReceipts)).rows;
   } catch (err) {
     if (pgErrorOf(err)?.code === "42P01") return [];
     throw err;
@@ -154,11 +159,7 @@ export async function assertDatabaseNotAheadOfBinary(
 export async function findPendingMigrations(
   db: MigrationCheckDb,
 ): Promise<string[]> {
-  return collectPending(
-    db,
-    MAIN_MIGRATIONS_DIR,
-    sql`SELECT hash FROM drizzle.__drizzle_migrations`,
-  );
+  return collectPending(db, MAIN_MIGRATIONS_DIR, mainLedgerReceipts);
 }
 
 // Drizzle's incremental migrator compares journal `when` against the ledger's

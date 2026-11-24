@@ -6,10 +6,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
 import { atomicWriteText } from "@/lib/atomic";
 import {
   AGENT_MATERIALIZATION_ROOT_RELATIVE,
@@ -294,12 +294,7 @@ export async function materializeProjectBundlesIntoWorktree(args: {
   const installedImports: Array<{ installedPath: string }> = await args.db
     .select({ installedPath: capabilityImports.installedPath })
     .from(capabilityImports)
-    .where(
-      and(
-        eq(capabilityImports.projectId, args.projectId),
-        eq(capabilityImports.packageStatus, "Installed"),
-      ),
-    );
+    .where(eligibleProjectImport(args.projectId));
 
   return materializeBundleSet(
     {

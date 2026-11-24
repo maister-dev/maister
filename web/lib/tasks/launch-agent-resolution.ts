@@ -16,6 +16,7 @@ import {
 import { loadTaskQualificationInput } from "./qualification";
 import { captureConcurrentTaskLaunchRelaunchSource } from "./launch-continuation";
 
+import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
 import {
   projects,
   tasks,
@@ -123,7 +124,7 @@ export async function agentTaskLaunchCapabilityDigest(
         trustStatus: capabilityImports.trustStatus,
       })
       .from(capabilityImports)
-      .where(eq(capabilityImports.projectId, projectId)),
+      .where(eligibleProjectImport(projectId)),
     db
       .select({
         id: capabilityRecords.id,

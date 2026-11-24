@@ -147,6 +147,14 @@ durable ledger for each git-pinned capability package fetched from a
   `trusted_by_policy` is granted automatically by `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES`
   (mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES`).
 
+## Runtime eligibility
+
+Migration `0372_bundle_eligibility` defines `project_ready_capability_imports(project_id)`. A standalone declaration selects its effective revision. Legacy standalone imports use their newest native revision, and package members must belong to the project’s current attachment. The function chooses that revision before checking readiness, so an unavailable successor blocks use of an older revision.
+
+An import is ready when its package status is `Installed`, its trust is `trusted` or `trusted_by_policy`, and its setup is `done` or `not_required`. A package member also requires an installed, trusted supplier. Task preflight, worktree and scratch-run materialization, and catalog reconciliation use only ready rows with `catalog_enabled=true`. Typed MCP, skill and restriction records supplied directly by an attachment become selectable across its attached projects when the package revision is trusted.
+
+The upgrade adopts active historical opaque records only when their project, reference, source, kind, version and revision match a native import. It preserves the catalog row ID and user defaults. A previous legacy configuration CLEAR keeps its matching record disabled and its native installation history intact. Rebuilding the catalog respects that choice. An explicit configuration SET can restore the selected revision once it is ready.
+
 ## Unique key and indexes — `capability_imports`
 
 | Constraint / Index                                  | Columns                                              | Purpose                                                                                                                       |
@@ -220,10 +228,8 @@ projects
   └── capability_records    (FK project_id, ON DELETE CASCADE)
 
 capability_imports
-  └── capability_records    (ingested on install via upsertCapabilitiesFromConfig;
-                             capability_records carry no direct FK to
-                             capability_imports — they are linked by
-                             (project_id, capability_ref_id) and a source tag)
+  └── capability_records    (eligible opaque projections carry the native import ID
+                             in material; this is a logical link without an FK)
 
 runs
   └── node_attempts         (FK run_id, ON DELETE CASCADE)

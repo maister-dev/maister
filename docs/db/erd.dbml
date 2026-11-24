@@ -2843,6 +2843,9 @@ table project_dependency_declarations {
 
 table project_dependency_setup_receipts {
   material_key text [pk, not null]
+  physical_key text [unique]
+  script_digest text
+  content_witness text
   status text [not null]
   claim_token text [not null]
   owner_host text

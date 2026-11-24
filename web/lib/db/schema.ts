@@ -9033,6 +9033,9 @@ export const projectDependencySetupReceipts = pgTable(
   "project_dependency_setup_receipts",
   {
     materialKey: text("material_key").primaryKey(),
+    physicalKey: text("physical_key").unique(),
+    scriptDigest: text("script_digest"),
+    contentWitness: text("content_witness"),
     status: text("status", {
       enum: ["running", "succeeded", "failed"],
     }).notNull(),

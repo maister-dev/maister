@@ -5,6 +5,7 @@ import type { ResolvedCapabilitySet } from "@/lib/db/schema";
 
 import { and, asc, eq, isNull } from "drizzle-orm";
 
+import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
 import { capabilityRecords, capabilityImports } from "@/lib/db/schema";
 import { buildResolvedCapabilitySet } from "@/lib/capabilities/resolver";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
@@ -51,12 +52,7 @@ export async function captureTaskLaunchCapabilityBundles(
   const imports = await db
     .select()
     .from(capabilityImports)
-    .where(
-      and(
-        eq(capabilityImports.projectId, projectId),
-        eq(capabilityImports.packageStatus, "Installed"),
-      ),
-    )
+    .where(eligibleProjectImport(projectId))
     .orderBy(asc(capabilityImports.id))
     .limit(65);
 
@@ -127,12 +123,7 @@ export async function resolveTaskLaunchCapabilities(
       trustStatus: capabilityImports.trustStatus,
     })
     .from(capabilityImports)
-    .where(
-      and(
-        eq(capabilityImports.projectId, input.projectId),
-        eq(capabilityImports.packageStatus, "Installed"),
-      ),
-    )
+    .where(eligibleProjectImport(input.projectId))
     .orderBy(asc(capabilityImports.id));
 
   return {

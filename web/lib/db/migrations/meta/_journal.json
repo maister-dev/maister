@@ -2577,6 +2577,20 @@
       "when": 1795463931000,
       "tag": "0371_dependency_source_coordinates",
       "breakpoints": true
+    },
+    {
+      "idx": 372,
+      "version": "7",
+      "when": 1795505678359,
+      "tag": "0372_bundle_eligibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 373,
+      "version": "7",
+      "when": 1795505844783,
+      "tag": "0373_dependency_setup_identity",
+      "breakpoints": true
     }
   ]
 }

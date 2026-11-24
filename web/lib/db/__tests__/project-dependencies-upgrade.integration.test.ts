@@ -41,7 +41,7 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
     INSERT INTO projects (id, slug, name, repo_path, task_key)
     VALUES ('dep','dep','Legacy','/tmp/dep','DEP'), ('other','other','Empty','/tmp/other','OTH');
     INSERT INTO package_installs (id, source_url, name, version_label, resolved_revision, manifest, manifest_digest, installed_path, package_status)
-    VALUES ('installed','https://example.invalid/acme','tools','v1','abcdef','{"sourceSubpath":"packages/tools"}','digest','/tmp/tools','Installed');
+    VALUES ('installed','https://[::ffff:192.0.2.1]/acme','tools','v1','abcdef','{"sourceSubpath":"packages/tools"}','digest','/tmp/tools','Installed');
     INSERT INTO project_package_attachments (id, project_id, package_install_id, package_name)
     VALUES ('bound','dep','installed','wrong-name');
     INSERT INTO projects (id,slug,name,repo_path,task_key,archived_at)
@@ -50,6 +50,14 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
       VALUES ('cut','file:///tmp/cut','local','local-0123456789ab','0123456789ab','{}','digest','/tmp/cut','Installed');
     INSERT INTO project_package_attachments (id,project_id,package_install_id,package_name)
       VALUES ('cut-bound','archived','cut','local');
+    INSERT INTO capability_imports (id,project_id,capability_ref_id,source,version_tag,resolved_revision,manifest_digest,manifest,installed_path,package_status,trust_status,setup_status)
+      VALUES ('legacy-import','dep','legacy','https://example.invalid/bundle','v1','aa','hash','{}','/tmp/legacy','Installed','untrusted','pending');
+    INSERT INTO capability_records (id,project_id,capability_ref_id,kind,label,source,agents,version,revision)
+      VALUES ('legacy-record','dep','legacy','agent_definition','legacy','flow-package','[]','v1','aa');
+    INSERT INTO capability_imports (id,project_id,capability_ref_id,source,version_tag,resolved_revision,manifest_digest,manifest,installed_path,package_status,trust_status,setup_status)
+      VALUES ('cleared','dep','cleared','https://example.invalid/old','v1','bb','hash','{}','/tmp/no-longer-selected','Installed','trusted','done');
+    INSERT INTO capability_records (id,project_id,capability_ref_id,kind,label,source,agents,version,revision,selectable,disabled_at)
+      VALUES ('cleared-record','dep','cleared','agent_definition','cleared','flow-package','[]','v1','bb',false,now());
     INSERT INTO flow_revisions (id,flow_ref_id,source,version_label,resolved_revision,manifest_digest,manifest,schema_version,installed_path)
       VALUES ('revision','member','local','v1','abcdef','digest','{}',1,'/tmp/member');
     INSERT INTO flows (id,project_id,flow_ref_id,source,version,revision,installed_path,manifest,schema_version,package_install_id,enabled_revision_id)
@@ -108,7 +116,7 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
     ).rows[0].relation,
   ).toBeNull();
   await pool.query(
-    "UPDATE package_installs SET source_url='https://example.invalid/acme' WHERE id='installed'",
+    "UPDATE package_installs SET source_url='https://[::ffff:192.0.2.1]/acme' WHERE id='installed'",
   );
   const receiptsBefore = (await historical()).rows;
   const before = (await revisions()).rows;
@@ -117,6 +125,32 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
   await apply();
   expect((await revisions()).rows).toEqual(before);
   expect((await historical()).rows).toEqual(receiptsBefore);
+  expect(
+    (
+      await pool.query(
+        "SELECT package_status FROM capability_imports WHERE id='cleared'",
+      )
+    ).rows,
+  ).toEqual([{ package_status: "Installed" }]);
+  const { captureTaskLaunchCapabilityBundles } =
+    await import("@/lib/tasks/launch-capabilities");
+
+  expect(await captureTaskLaunchCapabilityBundles(database.db, "dep")).toEqual(
+    [],
+  );
+  expect(
+    (
+      await pool.query(
+        "SELECT selectable, disabled_at, material FROM capability_records WHERE id='legacy-record'",
+      )
+    ).rows,
+  ).toEqual([
+    {
+      selectable: false,
+      disabled_at: expect.any(Date),
+      material: { origin: "dependency-import", importId: "legacy-import" },
+    },
+  ]);
   await pool.query(
     "INSERT INTO users(id,email,role,account_status) VALUES ('dep-admin','dep@example.invalid','admin','active')",
   );
@@ -170,7 +204,7 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
       project_id: "dep",
       logical_id: "tools",
       desired: {
-        source: "https://example.invalid/acme",
+        source: "https://[::ffff:192.0.2.1]/acme",
         version: "v1",
         path: "packages/tools",
       },

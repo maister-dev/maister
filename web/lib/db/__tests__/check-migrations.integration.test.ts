@@ -50,6 +50,36 @@ describe("findPendingMigrations", () => {
     expect(await mainMigrationLedgerHighWater(db)).toEqual(expect.any(Number));
   });
 
+  it("accepts the original 0370 receipt only at its exact journal position", async () => {
+    const originalHash =
+      "e035cafe1e20aaab28bc60c4bf1db9e03c4fa8e1154cf446f2c65554e710ecf7";
+    const when = 1795463255644;
+
+    await testDatabase.db.transaction(async (tx) => {
+      const saved = await tx.execute<{ hash: string }>(
+        sql`SELECT hash FROM drizzle.__drizzle_migrations WHERE created_at=${when}`,
+      );
+
+      await tx.execute(
+        sql`UPDATE drizzle.__drizzle_migrations SET hash=${originalHash} WHERE created_at=${when}`,
+      );
+      expect(await findPendingMigrations(tx)).toEqual([]);
+      await expect(assertDatabaseNotAheadOfBinary(tx)).resolves.toBeUndefined();
+      await tx.execute(
+        sql`UPDATE drizzle.__drizzle_migrations SET created_at=${when + 1} WHERE hash=${originalHash}`,
+      );
+      expect(await findPendingMigrations(tx)).toEqual([
+        "0370_dependency_source_guard",
+      ]);
+      expect(await findAppliedUnknownToJournal(tx)).toEqual([
+        { hash: originalHash, createdAt: when + 1 },
+      ]);
+      await tx.execute(
+        sql`UPDATE drizzle.__drizzle_migrations SET created_at=${when}, hash=${saved.rows[0].hash} WHERE hash=${originalHash}`,
+      );
+    });
+  });
+
   it("flags a journal migration whose ledger row is missing (the silent-skip case)", async () => {
     // Reproduce what an out-of-order `when` does: drizzle never recorded the
     // newest migration. Remove its ledger row and the guard must surface it.

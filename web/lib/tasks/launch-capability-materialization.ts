@@ -16,12 +16,13 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
-import { and, asc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import pino from "pino";
 
 import { taskLaunchCapabilityChanged as changedCapability } from "./launch-capabilities";
 import { assertManagedCapturePath } from "./launch-capture-path";
 
+import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
 import { capabilityImports } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { localDirectoryContentDigest } from "@/lib/flows";
@@ -168,12 +169,7 @@ export async function withTaskLaunchCapabilityBundles(
   const imports = await db
     .select()
     .from(capabilityImports)
-    .where(
-      and(
-        eq(capabilityImports.projectId, input.projectId),
-        eq(capabilityImports.packageStatus, "Installed"),
-      ),
-    )
+    .where(eligibleProjectImport(input.projectId))
     .orderBy(asc(capabilityImports.id));
 
   if (imports.length !== input.bundles.length) throw changedCapability();
