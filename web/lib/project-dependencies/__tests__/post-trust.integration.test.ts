@@ -10,14 +10,16 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { resubmitDependency } from "../commands";
 import { readProjectDeclarations } from "../read";
 import { serviceDependency } from "../worker";
 
+import { enableRevision } from "@/lib/flows/lifecycle";
 import { trustExecutable } from "@/lib/flows/exec-trust";
+import { readProjectCapabilityRefs } from "@/lib/flows/project-capability-refs";
 import { installFlowPlugin } from "@/lib/flows";
 import {
   attachPackage,
@@ -27,6 +29,9 @@ import {
 import {
   projectDependencyAttempts as attempts,
   projectDependencyDeclarations as declarations,
+  flows,
+  flowRevisions,
+  packageInstalls,
   projects,
   users,
 } from "@/lib/db/schema";
@@ -72,13 +77,23 @@ it.each(["failed", "interrupted"] as const)(
       effects = join(repo, "effects");
 
     await mkdir(member, { recursive: true });
+    for (const [bundle, skills] of [
+      ["bundle", ["shared", "blocked-only"]],
+      ["ready-bundle", ["shared", "ready-only"]],
+    ] as const) {
+      for (const skill of skills) {
+        const directory = join(source, bundle, "skills", skill);
+        await mkdir(directory, { recursive: true });
+        await writeFile(join(directory, "SKILL.md"), skill);
+      }
+    }
     await writeFile(
       join(source, "maister-package.yaml"),
       "schemaVersion: 1\nname: package-" +
         kind +
         "\ncapabilities:\n  - { id: bundle-" +
         kind +
-        ", path: bundle }\n",
+        ", path: bundle }\n  - { id: ready-bundle, path: ready-bundle }\n",
     );
     await writeFile(
       join(member, "setup.sh"),
@@ -111,6 +126,20 @@ it.each(["failed", "interrupted"] as const)(
       workspaceRoot: repo,
       db,
     });
+    const availableSkills = async () => {
+      const refs = await readProjectCapabilityRefs(db, [projectId]);
+      return ["blocked-only", "ready-only", "shared"].filter((skill) =>
+        refs.get(projectId)?.skill.has(skill),
+      );
+    };
+    expect(await availableSkills()).toEqual([]);
+    if (kind === "failed") {
+      // Simulate an existing package whose verified inventory lists skill IDs without their providers.
+      await db
+        .update(packageInstalls)
+        .set({ manifest: sql`manifest #- '{inventory,skillsByCapability}'` })
+        .where(eq(packageInstalls.id, install.id));
+    }
     const [head] = await db
       .select()
       .from(declarations)
@@ -158,6 +187,7 @@ it.each(["failed", "interrupted"] as const)(
       },
     });
     const [view] = await readProjectDeclarations(db, projectId, true);
+    expect.soft(await availableSkills()).toEqual(["ready-only", "shared"]);
 
     expect(view).toMatchObject({
       state: kind === "failed" ? "failed" : "recovery_required",
@@ -208,13 +238,19 @@ it.each(["failed", "interrupted"] as const)(
       },
     ]);
     expect(await readFile(effects, "utf8")).toBe("called\ncalled\n");
+    expect(await availableSkills()).toEqual([
+      "blocked-only",
+      "ready-only",
+      "shared",
+    ]);
   },
   20000,
 );
 
-it("retries an exact trusted standalone Flow revision after a settings-visible setup failure", async () => {
+async function pendingFlow(label: string) {
   const db = database.db;
   const projectId = randomUUID();
+  const slug = "standalone-" + label;
   const repo = join(root, projectId),
     source = join(repo, "source"),
     ready = join(repo, "ready");
@@ -228,18 +264,18 @@ it("retries an exact trusted standalone Flow revision after a settings-visible s
   await db.insert(projects).values({
     id: projectId,
     name: "Flow",
-    slug: "standalone-flow",
+    slug: slug,
     repoPath: repo,
-    taskKey: "SFL",
+    taskKey: label.toUpperCase(),
   });
   const flow = await installFlowPlugin({
     db,
     projectId,
-    projectSlug: "standalone-flow",
+    projectSlug: slug,
     workspaceRoot: repo,
     source,
     version: "local",
-    flowId: "recover-flow",
+    flowId: label,
     execTrustOverride: "untrusted",
   });
   const [head] = await db
@@ -247,7 +283,7 @@ it("retries an exact trusted standalone Flow revision after a settings-visible s
     .values({
       projectId,
       kind: "flow",
-      logicalId: "recover-flow",
+      logicalId: label,
       ordinal: 0,
       desired: { source, version: "local" },
       effectiveGeneration: 1,
@@ -255,6 +291,12 @@ it("retries an exact trusted standalone Flow revision after a settings-visible s
     })
     .returning();
 
+  return { db, projectId, flow, ready, head, slug };
+}
+
+it("retries an exact trusted standalone Flow revision after a settings-visible setup failure", async () => {
+  const { db, projectId, flow, ready, head, slug } =
+    await pendingFlow("recover");
   await expect(
     trustExecutable({
       db,
@@ -266,7 +308,7 @@ it("retries an exact trusted standalone Flow revision after a settings-visible s
     code: "FLOW_INSTALL",
     details: {
       trustAccepted: true,
-      projectSlug: "standalone-flow",
+      projectSlug: slug,
       declarationId: head.id,
     },
   });
@@ -293,3 +335,207 @@ it("retries an exact trusted standalone Flow revision after a settings-visible s
     },
   ]);
 });
+
+it("reports a repairable failure when a pending Flow script disappears before trust", async () => {
+  const { db, projectId, flow, head } = await pendingFlow("missing");
+  await rm(join(flow.installedPath, "setup.sh"));
+  await expect(
+    trustExecutable({
+      db,
+      projectId,
+      flowId: flow.flowRowId,
+      actorUserId: actor,
+    }),
+  ).rejects.toMatchObject({
+    details: {
+      trustAccepted: true,
+      declarationId: head.id,
+      reason: "setup_material_changed",
+      memberRef: "flow:missing",
+    },
+  });
+  const [rev] = await db
+    .select()
+    .from(flowRevisions)
+    .where(eq(flowRevisions.id, flow.revisionId));
+  expect(rev.setupStatus).toBe("pending");
+});
+
+it.each(["trust", "enable"] as const)(
+  "refuses a stale Flow pointer during %s without running setup",
+  async (action) => {
+    const { db, projectId, flow, ready } = await pendingFlow(action);
+    await writeFile(ready, "ready");
+    let operation: Promise<unknown> | undefined;
+    await db.transaction(async (tx) => {
+      await tx
+        .select()
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .for("update");
+      await tx
+        .select()
+        .from(flowRevisions)
+        .where(eq(flowRevisions.id, flow.revisionId))
+        .for("update");
+      const [{ pid }] = (
+        await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`)
+      ).rows;
+      operation = (
+        action === "trust"
+          ? trustExecutable({
+              db,
+              projectId,
+              flowId: flow.flowRowId,
+              actorUserId: actor,
+            })
+          : enableRevision({
+              db,
+              projectId,
+              flowRefId: action,
+              revisionId: flow.revisionId,
+              authorizeExecution: async () => ({ id: actor }),
+            })
+      ).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await vi.waitFor(async () => {
+        const { rows } = await db.execute(
+          sql`select 1 from pg_stat_activity where ${pid}::int=any(pg_blocking_pids(pid))`,
+        );
+        expect(rows).toHaveLength(1);
+      });
+      await tx.delete(flows).where(eq(flows.id, flow.flowRowId));
+    });
+    expect(await operation).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "stale_generation" },
+    });
+    const [rev] = await db
+      .select()
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, flow.revisionId));
+    expect(rev).toMatchObject({
+      setupStatus: "pending",
+      execTrust: "untrusted",
+    });
+    await expect(
+      access(join(flow.installedPath, ".maister-setup-done")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.each(["platform", "mixed", "ready"] as const)(
+  "scopes %s package trust setup to current attached declarations",
+  async (mode) => {
+    const db = database.db,
+      name = "fanout-" + mode,
+      source = join(root, name),
+      member = join(source, "flow");
+    const effect = join(root, name + ".effect");
+    await mkdir(join(source, "bundle"), { recursive: true });
+    await writeFile(join(source, "bundle", "instructions.md"), "static");
+    await mkdir(member, { recursive: true });
+    await writeFile(
+      join(source, "maister-package.yaml"),
+      "schemaVersion: 1\nname: " +
+        name +
+        "\nflows:\n  - {id: " +
+        name +
+        ", path: flow}\ncapabilities:\n  - {id: static-bundle, path: bundle}\n",
+    );
+    await writeFile(
+      join(member, "flow.yaml"),
+      "schemaVersion: 1\nname: " +
+        name +
+        "\ncompat: {engine_min: 3.0.0}\nnodes:\n  - id: step\n    type: cli\n    action: {command: echo ok}\n    transitions: {success: done}\n",
+    );
+    if (mode !== "ready")
+      await writeFile(
+        join(member, "setup.sh"),
+        "echo ran >> '" + effect + "'\n",
+      );
+    const install = await installPackageRevision({
+      db,
+      source,
+      version: "local",
+      trustStatus: "untrusted",
+    });
+    const headIds: string[] = [];
+    if (mode !== "platform") {
+      for (const label of mode === "mixed"
+        ? ["replacing", "current"]
+        : ["ready"]) {
+        const slug = name + "-" + label,
+          projectId = randomUUID(),
+          repo = join(root, slug);
+        await mkdir(repo);
+        await db.insert(projects).values({
+          id: projectId,
+          slug,
+          name: slug,
+          taskKey: label.toUpperCase(),
+          repoPath: repo,
+        });
+        await attachPackage({
+          db,
+          projectId,
+          projectSlug: slug,
+          workspaceRoot: repo,
+          packageInstallId: install.id,
+        });
+        const [head] = await db
+          .select()
+          .from(declarations)
+          .where(eq(declarations.projectId, projectId));
+        headIds.push(head.id);
+        if (label === "replacing")
+          await db
+            .update(declarations)
+            .set({
+              generation: 2,
+              desired: { ...head.desired, version: "next" },
+            })
+            .where(eq(declarations.id, head.id));
+      }
+    }
+    await expect(
+      trustPackageRevision({
+        db,
+        packageInstallId: install.id,
+        actorUserId: actor,
+      }),
+    ).resolves.toEqual({ trusted: true });
+    if (mode === "platform")
+      await expect(access(effect)).rejects.toMatchObject({ code: "ENOENT" });
+    else if (mode === "ready") {
+      const enabled = await db.execute(
+        sql`select capability_ref_id from capability_records c join projects p on p.id=c.project_id where p.slug=${name + "-ready"} and c.capability_ref_id='static-bundle' and c.selectable and c.disabled_at is null`,
+      );
+      expect(enabled.rows).toHaveLength(1);
+      expect(
+        await db
+          .select()
+          .from(attempts)
+          .where(eq(attempts.declarationId, headIds[0])),
+      ).toEqual([]);
+    } else {
+      expect(await readFile(effect, "utf8")).toBe("ran\n");
+      expect(
+        await db
+          .select()
+          .from(attempts)
+          .where(eq(attempts.declarationId, headIds[0])),
+      ).toEqual([]);
+      expect(
+        await db
+          .select()
+          .from(attempts)
+          .where(eq(attempts.declarationId, headIds[1])),
+      ).toMatchObject([
+        { status: "succeeded", checkpoint: { postTrust: { id: install.id } } },
+      ]);
+    }
+  },
+);

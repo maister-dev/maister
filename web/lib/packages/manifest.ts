@@ -61,6 +61,23 @@ export function normalizePackageManifest(
   };
 }
 
+export function assertPackageMemberPaths(
+  manifest: MaisterPackageManifest,
+): void {
+  for (const member of [...manifest.flows, ...manifest.capabilities]) {
+    if (
+      member.path.split("/").some((segment) => segment.toLowerCase() === ".git")
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "A package member cannot refer to Git administrative data.",
+        {
+          details: { reason: "material_path_excluded", memberRef: member.id },
+        },
+      );
+  }
+}
+
 // Loads + validates `<packageRoot>/maister-package.yaml` (ADR-088). Every
 // failure mode is CONFIG so callers branch on one code; the package
 // installer adds its own FLOW_INSTALL wrapping for fetch/copy failures.
@@ -122,6 +139,7 @@ export async function loadMaisterPackageManifest(
     "maister-package.yaml loaded",
   );
 
+  assertPackageMemberPaths(parsed.data);
   await assertPackageOperationalContracts(packageRoot, parsed.data);
 
   return normalizePackageManifest(parsed.data);

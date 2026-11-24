@@ -29,8 +29,32 @@ it("AC05 rebuilds realized bundles without overwriting another owner or losing c
     repoPath: "/tmp/project",
     taskKey: "PRO",
   });
+  await db.insert(schema.packageInstalls).values({
+    id: "supplying-package",
+    name: "tools",
+    sourceUrl: "file:///tmp/tools",
+    versionLabel: "v1",
+    resolvedRevision: "revision",
+    manifestDigest: "digest",
+    installedPath: "/tmp/tools",
+    packageStatus: "Installed",
+    trustStatus: "trusted",
+    manifest: {
+      spec: { capabilities: [{ id: "provider", path: "bundle" }] },
+      inventory: {
+        skills: ["package-skill"],
+        skillsByCapability: { provider: ["package-skill"] },
+      },
+    },
+  });
+  await db.insert(schema.projectPackageAttachments).values({
+    id: "tools-attachment",
+    projectId,
+    packageInstallId: "supplying-package",
+    packageName: "tools",
+  });
   await db.insert(schema.capabilityImports).values(
-    ["bundle", "collision"].map((id) => ({
+    ["bundle", "collision", "provider"].map((id) => ({
       id,
       capabilityRefId: id,
       projectId,
@@ -40,6 +64,7 @@ it("AC05 rebuilds realized bundles without overwriting another owner or losing c
       manifestDigest: "digest",
       manifest: {},
       installedPath: "/tmp/cache",
+      packageInstallId: id === "provider" ? "supplying-package" : null,
       setupStatus: "done" as const,
       packageStatus: "Installed" as const,
       trustStatus: "trusted" as const,
@@ -96,11 +121,24 @@ it("AC05 rebuilds realized bundles without overwriting another owner or losing c
     },
     {
       ...base,
+      id: "provider-record",
+      source: "flow-package",
+      kind: "agent_definition",
+      capabilityRefId: "provider",
+      version: "v1",
+      revision: "revision",
+      material: { origin: "dependency-import", importId: "provider" },
+    },
+    {
+      ...base,
       id: "package",
       source: "flow-package",
       kind: "skill",
       capabilityRefId: "package-skill",
-      material: { origin: "package-attachment" },
+      material: {
+        origin: "package-attachment",
+        packageInstallId: "supplying-package",
+      },
     },
   ]);
   const rebuild = () =>

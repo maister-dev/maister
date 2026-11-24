@@ -5,7 +5,7 @@ import type { DurableWorkerHandle } from "@/lib/workers/health";
 
 import { setTimeout as delay } from "node:timers/promises";
 
-import { sql, type SQL } from "drizzle-orm";
+import { and, sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -16,6 +16,10 @@ import {
   dependencyLeaseMs,
 } from "./claims";
 import { executeTrustedSetup } from "./post-trust";
+import {
+  finishFlowLinkPublication,
+  serviceFlowLinkPublication,
+} from "./flow-links";
 import { executeDependency } from "./executor";
 import { withDependencySetupContext } from "./setup";
 
@@ -39,7 +43,7 @@ export async function serviceDependency(
 ): Promise<boolean> {
   const claim = await claimDependency(db, attemptId);
 
-  if (!claim) return false;
+  if (!claim) return attemptId ? false : serviceFlowLinkPublication(db);
   const logger = log.child({
     projectId: claim.projectId,
     declarationId: claim.declarationId,
@@ -91,36 +95,46 @@ export async function serviceDependency(
   }, dependencyLeaseMs / 3);
 
   try {
-    const { project, declaration } = await db.transaction((tx) =>
-      requireCurrentDependency(tx, claim),
-    );
+    if (claim.checkpoint.applicationCommitted && !claim.checkpoint.postTrust) {
+      stage = "projection";
+      await finishFlowLinkPublication(db, claim.id);
+    } else {
+      const { project, declaration } = await db.transaction((tx) =>
+        requireCurrentDependency(tx, claim),
+      );
 
-    await withDependencySetupContext(
-      {
-        db,
-        recoveryOf: claim.retryOfAttemptId,
-        before: async (materialKey, memberRef) => {
-          await progress("setup", {
-            memberRef,
-            checkpoint: sql`coalesce(${attempts.checkpoint}, '{}'::jsonb) || jsonb_build_object('setupMaterialKey', ${materialKey}::text)`,
-          });
+      await withDependencySetupContext(
+        {
+          db,
+          recoveryOf: claim.retryOfAttemptId,
+          before: async (materialKey, memberRef) => {
+            await progress("setup", {
+              memberRef,
+              checkpoint: sql`coalesce(${attempts.checkpoint}, '{}'::jsonb) || jsonb_build_object('setupMaterialKey', ${materialKey}::text)`,
+            });
+          },
         },
-      },
-      () =>
-        claim.checkpoint.postTrust
-          ? executeTrustedSetup(db, claim, claim.checkpoint.postTrust, combined)
-          : executeDependency({
-              db,
-              claim,
-              project,
-              declaration,
-              signal: combined,
-              authorizePublication: async (tx) => {
-                await requireCurrentDependency(tx, claim);
-              },
-              progress,
-            }),
-    );
+        () =>
+          claim.checkpoint.postTrust
+            ? executeTrustedSetup(
+                db,
+                claim,
+                claim.checkpoint.postTrust,
+                combined,
+              )
+            : executeDependency({
+                db,
+                claim,
+                project,
+                declaration,
+                signal: combined,
+                authorizePublication: async (tx) => {
+                  await requireCurrentDependency(tx, claim);
+                },
+                progress,
+              }),
+      );
+    }
     const [completed] = await db
       .update(attempts)
       .set({
@@ -135,15 +149,30 @@ export async function serviceDependency(
 
     if (completed) logger.info({ stage }, "dependency attempt succeeded");
   } catch (error) {
+    // A rejected COMMIT acknowledgement can arrive after the native decision was
+    // durably applied. Read that transaction's witness before classifying failure.
+    const [committed] = claim.checkpoint.postTrust
+      ? []
+      : await db
+          .select({ id: attempts.id })
+          .from(attempts)
+          .where(
+            and(
+              liveDependencyClaim(claim),
+              sql`${attempts.checkpoint} @> '{"applicationCommitted":true}'::jsonb`,
+            ),
+          );
     const raw = isMaisterError(error) ? error.details?.reason : undefined;
     const reason =
-      typeof raw === "string" && /^[a-z_]{1,64}$/.test(raw)
-        ? raw
-        : isMaisterError(error)
-          ? error.code === "CONFIG"
-            ? "invalid_manifest"
-            : error.code.toLowerCase()
-          : "installation_failed";
+      committed && raw !== "project_flow_link_pending"
+        ? "application_settlement_pending"
+        : typeof raw === "string" && /^[a-z_]{1,64}$/.test(raw)
+          ? raw
+          : isMaisterError(error)
+            ? error.code === "CONFIG"
+              ? "invalid_manifest"
+              : error.code.toLowerCase()
+            : "installation_failed";
     const diagnosticMember = isMaisterError(error)
       ? (error.details?.memberRef ?? error.details?.flowRef)
       : null;
@@ -158,9 +187,11 @@ export async function serviceDependency(
       reason === "source_unavailable" ||
       reason === "setup_owner_live";
     const requeue =
+      Boolean(committed) ||
       combined.aborted ||
       reason === "project_archived" ||
       reason === "earlier_member_pending" ||
+      reason === "project_flow_link_pending" ||
       (transient && retryCount < retryBudget);
     const uncertain =
       reason === "setup_uncertain" ||
@@ -174,14 +205,24 @@ export async function serviceDependency(
           : requeue
             ? "pending"
             : "failed",
-        stage: reason.startsWith("setup_") ? "setup" : stage,
+        stage:
+          committed || reason === "project_flow_link_pending"
+            ? "projection"
+            : reason.startsWith("setup_")
+              ? "setup"
+              : stage,
         reason,
         memberRef,
         leaseExpiresAt: null,
         claimToken: null,
         updatedAt: new Date(),
         dueAt: new Date(
-          Date.now() + (requeue ? 1000 * 2 ** Math.min(retryCount, 6) : 0),
+          Date.now() +
+            (reason === "project_flow_link_pending"
+              ? 30_000
+              : requeue
+                ? 1000 * 2 ** Math.min(retryCount, 6)
+                : 0),
         ),
         checkpoint: sql`coalesce(${attempts.checkpoint}, '{}'::jsonb) || jsonb_build_object('retryCount', ${retryCount + Number(transient && !combined.aborted)}::int)`,
       })
@@ -211,7 +252,9 @@ export function startProjectDependencyWorker({
   const slots = [0, 1].map((slot) =>
     runWorkerLoop(controller.signal, async () => {
       try {
-        const progressed = await serviceDependency(db, controller.signal);
+        const progressed =
+          (slot === 0 && (await serviceFlowLinkPublication(db))) ||
+          (await serviceDependency(db, controller.signal));
 
         failures.delete(slot);
         if (progressed) return;

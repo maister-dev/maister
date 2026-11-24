@@ -79,11 +79,11 @@ export function liveDependencyClaim(claim: DependencyClaim) {
   );
 }
 
-async function authorize(db: Db, claim: DependencyClaim) {
+export async function requireDependencyAdmin(db: Db, actorUserId: string) {
   const [actor] = await db
     .select()
     .from(users)
-    .where(eq(users.id, claim.actorUserId))
+    .where(eq(users.id, actorUserId))
     .for("share");
 
   // A current global admin satisfies the project management guard as well.
@@ -124,7 +124,7 @@ export async function requireCurrentDependency(db: Db, claim: DependencyClaim) {
     throw new MaisterError("PRECONDITION", "Project is archived", {
       details: { reason: "project_archived" },
     });
-  await authorize(db, claim);
+  await requireDependencyAdmin(db, claim.actorUserId);
 
   return { project, declaration: current };
 }

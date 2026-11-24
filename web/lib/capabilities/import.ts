@@ -21,14 +21,20 @@ import pino from "pino";
 import { capabilityRefIdSchema } from "@/lib/manifest-path-segments";
 import { localDirectoryPath } from "@/lib/runtime-file-url";
 import { dependencyCloneFailure } from "@/lib/project-dependencies/failure";
-import { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
+import {
+  localDirectoryContentDigest,
+  materialLayoutDigest,
+} from "@/lib/project-dependencies/content-digest";
 import {
   materialConflict,
   publishMaterial,
   snapshotLocalMaterial,
 } from "@/lib/project-dependencies/material";
 import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
-import { reconcileDependencyCatalog } from "@/lib/project-dependencies/catalog";
+import {
+  reconcileDependencyCatalog,
+  refreshProjectPackageSkills,
+} from "@/lib/project-dependencies/catalog";
 import {
   enqueueTrustedSetup,
   finishTrustedSetup,
@@ -391,7 +397,11 @@ type CapabilityInstallOptions = {
   // (tag SHA or package content digest); see flows.ts resolvedRevisionOverride.
   resolvedRevisionOverride?: string;
   trustStatusOverride?: "untrusted" | "trusted" | "trusted_by_policy";
-  onResolve?: (revision: string, witness: string) => Promise<void>;
+  onResolve?: (
+    revision: string,
+    witness: string,
+    layoutDigest: string,
+  ) => Promise<void>;
   authorizePublication?: (tx: Db) => Promise<void>;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
@@ -446,7 +456,8 @@ export async function prepareCapabilityRevision(
       localDirectoryContentDigest(dir, new Set([".git"]));
     const witness = await hash(sourcePath);
 
-    await opts.onResolve?.(resolvedRevision, witness);
+    const layoutDigest = await materialLayoutDigest(sourcePath);
+    await opts.onResolve?.(resolvedRevision, witness, layoutDigest);
 
     return await database.transaction(async (db: any) => {
       await opts.authorizePublication?.(db);
@@ -472,6 +483,7 @@ export async function prepareCapabilityRevision(
         target,
         revision: resolvedRevision,
         digest: witness,
+        layoutDigest,
         hash,
         hasHistoricalOwner: async () =>
           owners.some(
@@ -662,6 +674,7 @@ export async function runCapabilityRevisionSetup(opts: {
     trustStatus: string;
     packageInstallId: string | null;
     setupStatus: string;
+    projectId: string;
     installedPath: string;
     resolvedRevision: string;
     manifest: { contentWitness?: string };
@@ -669,6 +682,7 @@ export async function runCapabilityRevisionSetup(opts: {
     .select({
       trustStatus: capabilityImports.trustStatus,
       packageInstallId: capabilityImports.packageInstallId,
+      projectId: capabilityImports.projectId,
       setupStatus: capabilityImports.setupStatus,
       installedPath: capabilityImports.installedPath,
       resolvedRevision: capabilityImports.resolvedRevision,
@@ -733,14 +747,18 @@ export async function runCapabilityRevisionSetup(opts: {
     signal,
   });
 
-  await db
-    .update(capabilityImports)
-    .set({
-      setupStatus: newSetupStatus,
-      packageStatus: newSetupStatus === "failed" ? "Failed" : "Installed",
-      updatedAt: new Date(),
-    })
-    .where(eq(capabilityImports.id, importRowId));
+  await db.transaction(async (tx: Db) => {
+    await tx
+      .update(capabilityImports)
+      .set({
+        setupStatus: newSetupStatus,
+        packageStatus: newSetupStatus === "failed" ? "Failed" : "Installed",
+        updatedAt: new Date(),
+      })
+      .where(eq(capabilityImports.id, importRowId));
+    if (row.packageInstallId)
+      await refreshProjectPackageSkills(tx, row.projectId);
+  });
 
   log.info(
     { importRowId, setupStatus: newSetupStatus },

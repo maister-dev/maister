@@ -1,4 +1,12 @@
-import { cp, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -147,21 +155,26 @@ describe("installPackage (local source)", () => {
   });
 
   it("honors the path subdir variant", async () => {
-    const pkgDir = join(workDir, "packages/aif");
+    const alias = join(workDir, "alias");
+    const pkgDir = join(workDir, "source/packages/aif");
 
     await mkdir(pkgDir, { recursive: true });
     await buildFixturePackage(pkgDir);
+    await symlink("source", alias);
 
     const result = await installPackage({
       ...baseArgs,
-      source: pathToFileURL(workDir).href,
+      source: pathToFileURL(alias).href,
       version: "local-dev",
       path: "packages/aif",
     });
 
     expect(result.versionLabel).toBe("local-dev");
     expect(installFlowPluginMock.mock.calls[0]![0].source).toBe(
-      pathToFileURL(join(pkgDir, "flows/a")).href,
+      pathToFileURL(join(alias, "packages/aif/flows/a")).href,
+    );
+    expect(installCapabilityRevisionMock.mock.calls[0]![0].source).toBe(
+      pathToFileURL(join(alias, "packages/aif/capability")).href,
     );
   });
 

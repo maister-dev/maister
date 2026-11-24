@@ -3,6 +3,8 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { PackageCoordinates } from "./package-writes";
 
+import { randomUUID } from "node:crypto";
+
 import { and, eq } from "drizzle-orm";
 
 import {
@@ -14,7 +16,8 @@ import {
 } from "./package-writes";
 import { reconcileDependencyCatalog } from "./catalog";
 import {
-  reconcileProjectFlowLinks,
+  finishFlowLinkPublication,
+  queueProjectFlowLinks,
   validateProjectFlowLink,
 } from "./flow-links";
 import { prepareDependencyFlow } from "./prepare-flow";
@@ -51,6 +54,7 @@ export async function installOperatorPackage(
 ) {
   assertDependencySource(coordinates.source);
   const { db, projectId } = target;
+  const linkOperationId = randomUUID();
   const installed = await installPackageRevision({
     ...coordinates,
     db,
@@ -86,6 +90,7 @@ export async function installOperatorPackage(
         db: tx,
         packageInstallId: installed.id,
         preparedMembers: staged.members,
+        linkOperationId,
       };
       const record: Parameters<typeof workerAttachPackage>[1] = (
         connection,
@@ -141,7 +146,7 @@ export async function installOperatorPackage(
     }),
   );
 
-  await reconcileProjectFlowLinks(db, target);
+  await finishFlowLinkPublication(db, linkOperationId);
 
   return result;
 }
@@ -152,6 +157,7 @@ export async function installOperatorFlow(
   pin: PackageCoordinates & { flowId: string },
 ) {
   const { db, projectId } = target;
+  const linkOperationId = randomUUID();
 
   assertDependencySource(pin.source);
   const scope = and(
@@ -221,11 +227,18 @@ export async function installOperatorFlow(
           effectiveRevision: installed.revision,
         });
 
+      await queueProjectFlowLinks(
+        tx,
+        linkOperationId,
+        projectId,
+        target.workspaceRoot,
+        [pin.flowId],
+      );
       return installed;
     }),
   );
 
-  await reconcileProjectFlowLinks(db, target);
+  await finishFlowLinkPublication(db, linkOperationId);
 
   return result;
 }

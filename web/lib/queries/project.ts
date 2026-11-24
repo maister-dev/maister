@@ -26,7 +26,10 @@ import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
-import { declaredFlowRunnerUnavailable } from "@/lib/acp-runners/declared-flow-runner";
+import {
+  declaredRunnerMappings,
+  declaredFlowRunnerUnavailable,
+} from "@/lib/acp-runners/declared-flow-runner";
 import { readProjectCapabilityRefs } from "@/lib/flows/project-capability-refs";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import {
@@ -119,6 +122,7 @@ export interface ProjectFlowRunnerRemap {
   flowRef: string;
   flowRevisionId: string;
   slotKey: string;
+  declaredRunnerId?: string;
   mappedRunnerId: string | null;
   status: "Pending" | "Mapped";
 }
@@ -633,7 +637,10 @@ export async function getProjectPageData(
     project,
     flows: projectFlows,
     runners: projectRunners,
-    flowRunnerRemaps: projectFlowRunnerRemaps,
+    flowRunnerRemaps: [
+      ...(await declaredRunnerMappings(client, project.id)),
+      ...projectFlowRunnerRemaps,
+    ],
     members,
     activeWorkspaces,
     executingCount: executingRows[0]?.count ?? 0,
@@ -735,5 +742,12 @@ export async function getFlowRunnerBindingScope(
     enabled: runner.enabled,
   }));
 
-  return { remaps, runners, slotLabels };
+  return {
+    remaps: [
+      ...(await declaredRunnerMappings(client, projectId, flowRevisionId)),
+      ...remaps,
+    ],
+    runners,
+    slotLabels,
+  };
 }

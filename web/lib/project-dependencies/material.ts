@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, basename } from "node:path";
 
-import { containsSourceMaterial } from "./content-digest";
+import { containsSourceMaterial, materialLayoutDigest } from "./content-digest";
 
 import { runtimeFileUrl } from "@/lib/runtime-file-url";
 import { MaisterError } from "@/lib/errors";
@@ -51,6 +51,7 @@ export async function publishMaterial(input: {
   source: string;
   target: string;
   digest: string;
+  layoutDigest: string;
   revision: string;
   hash: (dir: string) => Promise<string>;
   hasHistoricalOwner?: () => Promise<boolean>;
@@ -61,8 +62,24 @@ export async function publishMaterial(input: {
   // This witnesses original bytes even when legitimate setup created output
   // before a process died and its project transaction rolled back.
   const seal = target + ".material";
-  const expectedSeal = JSON.stringify([input.revision, digest]);
-  const freshSeal = JSON.stringify([input.revision, digest, "new-cache-v2"]);
+  const previousSeal = JSON.stringify([input.revision, digest]);
+  const previousFreshSeal = JSON.stringify([
+    input.revision,
+    digest,
+    "new-cache-v2",
+  ]);
+  const expectedSeal = JSON.stringify([
+    input.revision,
+    digest,
+    "adopted-cache",
+    input.layoutDigest,
+  ]);
+  const freshSeal = JSON.stringify([
+    input.revision,
+    digest,
+    "new-cache-v2",
+    input.layoutDigest,
+  ]);
   let recorded: string | null = null;
 
   try {
@@ -70,7 +87,12 @@ export async function publishMaterial(input: {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  if (recorded !== null && recorded !== expectedSeal && recorded !== freshSeal)
+  if (
+    recorded !== null &&
+    ![previousSeal, previousFreshSeal, expectedSeal, freshSeal].includes(
+      recorded,
+    )
+  )
     materialConflict();
   const sealMaterial = async (contents: string) => {
     const temp = seal + "." + randomUUID();
@@ -98,7 +120,9 @@ export async function publishMaterial(input: {
     )
       materialConflict();
     await input.beforePublish?.();
-    if (recorded === null) await sealMaterial(expectedSeal);
+    if (recorded === null || recorded === previousSeal)
+      await sealMaterial(expectedSeal);
+    else if (recorded === previousFreshSeal) await sealMaterial(freshSeal);
 
     return;
   }
@@ -112,7 +136,11 @@ export async function publishMaterial(input: {
 
   try {
     await cp(source, stage, { recursive: true, verbatimSymlinks: true });
-    if ((await hash(stage)) !== digest) materialConflict();
+    if (
+      (await hash(stage)) !== digest ||
+      (await materialLayoutDigest(stage)) !== input.layoutDigest
+    )
+      materialConflict();
     const historical = await input.hasHistoricalOwner?.();
 
     await input.beforePublish?.();

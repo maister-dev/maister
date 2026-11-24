@@ -8,7 +8,9 @@ import pino from "pino";
 import {
   enqueueTrustedSetup,
   finishTrustedSetup,
+  lockCurrentFlowSetup,
 } from "@/lib/project-dependencies/post-trust-store";
+import { withSetupAuthority } from "@/lib/project-dependencies/setup";
 import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -85,6 +87,7 @@ export async function trustExecutable(args: {
 
   // Flip exec_trust → trusted unconditionally (idempotent).
   const queued = await db.transaction(async (tx: Db) => {
+    await lockCurrentFlowSetup(tx, flow, args.actorUserId);
     await tx
       .update(flowRevisions)
       .set({ execTrust: "trusted" })
@@ -108,12 +111,23 @@ export async function trustExecutable(args: {
   // Run pending setup.sh if needed.
   let setupStatus: string = rev.setupStatus;
 
-  if (rev.setupStatus === "pending" || rev.setupStatus === "failed") {
-    setupStatus = await runRevisionSetup({
+  if (queued.length) {
+    const [completed] = await db
+      .select({ status: flowRevisions.setupStatus })
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, rev.id));
+    setupStatus = completed.status;
+  } else if (rev.setupStatus === "pending" || rev.setupStatus === "failed") {
+    setupStatus = await withSetupAuthority(
       db,
-      revisionId: rev.id,
-      installedPath: rev.installedPath,
-    });
+      (tx) => lockCurrentFlowSetup(tx, flow, args.actorUserId),
+      () =>
+        runRevisionSetup({
+          db,
+          revisionId: rev.id,
+          installedPath: rev.installedPath,
+        }),
+    );
 
     if (setupStatus === "failed") {
       throw new MaisterError(

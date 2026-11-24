@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   listAdoptTargetProjects: vi.fn(),
   attachPackage: vi.fn(),
   upgradeAttachment: vi.fn(),
+  getDb: vi.fn(),
 }));
 
 vi.mock("@/lib/authz", () => ({
@@ -34,9 +35,7 @@ vi.mock("@/lib/packages/attach", () => ({
   upgradeAttachment: mocks.upgradeAttachment,
 }));
 vi.mock("@/lib/db/client", () => ({
-  getDb: () => {
-    throw new Error("getDb must not be reached in these cases");
-  },
+  getDb: mocks.getDb,
 }));
 
 import { POST } from "../route";
@@ -154,5 +153,54 @@ describe("cut-version adoptInProjectIds (ADR-132)", () => {
     expect(body).not.toHaveProperty("adoptions");
     expect(mocks.upgradeAttachment).not.toHaveBeenCalled();
     expect(mocks.listAdoptTargetProjects).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges an accepted attachment awaiting Flow links and reports a concurrently removed attachment separately", async () => {
+    const pending = {
+      reason: "project_flow_link_pending",
+      operationId: "op-1",
+      memberRef: "core-flow",
+      linkReason: "project_flow_link_conflict",
+    };
+    mocks.upgradeAttachment
+      .mockRejectedValueOnce(
+        new MaisterError("PRECONDITION", "link repair pending", {
+          details: { ...pending, mutationAccepted: true },
+        }),
+      )
+      .mockResolvedValueOnce(null);
+    mocks.getDb.mockReturnValueOnce({
+      select: () => ({
+        from: () => ({
+          where: async () => [
+            { id: "p3", slug: "new", repoPath: "/repos/p3", archivedAt: null },
+          ],
+        }),
+      }),
+    });
+    mocks.attachPackage.mockRejectedValueOnce(
+      new MaisterError("PRECONDITION", "link repair pending", {
+        details: {
+          ...pending,
+          operationId: "op-3",
+          mutationAccepted: true,
+          attachmentId: "att-3",
+        },
+      }),
+    );
+    const response = await POST(
+      req({ attachToProjectId: "p3", adoptInProjectIds: ["p1", "p2"] }),
+      ctx(),
+    );
+    expect(response.status).toBe(201);
+    const result = await response.json();
+    expect(result).toMatchObject({
+      attachmentId: "att-3",
+      flowLinkPending: { ...pending, operationId: "op-3" },
+    });
+    expect(result.adoptions).toEqual([
+      { projectId: "p1", status: "adopted", flowLinkPending: pending },
+      { projectId: "p2", status: "failed", error: expect.any(String) },
+    ]);
   });
 });

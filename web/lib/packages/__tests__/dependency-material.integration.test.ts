@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   access,
+  chmod,
+  symlink,
   mkdir,
   mkdtemp,
   readFile,
@@ -10,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -37,9 +39,14 @@ import {
 import { installOperatorPackage } from "@/lib/project-dependencies/operator";
 import {
   attachPackage,
+  detachPackage,
   installPackageRevision,
   upgradeAttachment,
 } from "@/lib/packages/attach";
+import {
+  readExportSnapshot,
+  reviewPackageSources,
+} from "@/lib/project-config-persistence/projection";
 import { serviceDependency } from "@/lib/project-dependencies/worker";
 import {
   startMainPostgresTestDb,
@@ -535,8 +542,14 @@ it("refuses a sealed capability cache that lost an original file while allowing 
   };
   const material = await prepareCapabilityRevision(opts);
 
+  // A pre-layout v2 seal upgrades only after the retained physical bytes match.
+  const seal = material.installedPath + ".material";
+  const originalSeal = JSON.parse(await readFile(seal, "utf8")) as string[];
+
+  await writeFile(seal, JSON.stringify(originalSeal.slice(0, 3)));
   await writeFile(join(material.installedPath, "generated"), "setup output");
   expect((await prepareCapabilityRevision(opts)).hasSetup).toBe(true);
+  expect(JSON.parse(await readFile(seal, "utf8"))).toEqual(originalSeal);
   await rm(join(material.installedPath, "setup.sh"));
   await expect(prepareCapabilityRevision(opts)).rejects.toMatchObject({
     details: { reason: "install_identity_conflict" },
@@ -789,3 +802,319 @@ it("rejects an unowned nested setup file before direct attach or reinstall reads
       .where(eq(attachments.projectId, target.projectId)),
   ).toEqual([]);
 });
+
+it("binds a package member symlink to the package tree", async () => {
+  await writePackage("member-link", "verified", "linked-material");
+  const dir = join(origin, "member-link");
+
+  await symlink("flow", join(dir, "member"));
+  const manifest = join(dir, "maister-package.yaml");
+
+  await writeFile(
+    manifest,
+    (await readFile(manifest, "utf8")).replace("path: flow", "path: member"),
+  );
+  const options = { source: dir, version: "v1", db: database.db };
+
+  expect((await installPackageRevision(options)).name).toBe("linked-material");
+
+  await writePackage("external-member", "outside", "other-material");
+  const coordinates = await readFile(manifest, "utf8");
+
+  await writeFile(
+    manifest,
+    coordinates.replace("path: member", "path: .git/metadata"),
+  );
+  await expect(installPackageRevision(options)).rejects.toMatchObject({
+    details: { reason: "material_path_excluded" },
+  });
+  await writeFile(manifest, coordinates);
+  await rm(join(dir, "member"));
+  await symlink(join(origin, "external-member/flow"), join(dir, "member"));
+  await expect(installPackageRevision(options)).rejects.toMatchObject({
+    details: { reason: "material_link_outside_source" },
+  });
+});
+
+it.each(["content", "mode"])(
+  "checks %s before attaching an agent-only package",
+  async (change) => {
+    const dir = join(origin, "only-agents-" + change);
+
+    await mkdir(join(dir, "maister-agents"), { recursive: true });
+    await writeFile(
+      join(dir, "maister-package.yaml"),
+      "schemaVersion: 1\nname: only-agents-" + change + "\n",
+    );
+    await writeFile(join(dir, "maister-agents/research.md"), "Research.\n");
+    const installed = await installPackageRevision({
+      source: dir,
+      version: "v1",
+      db: database.db,
+    });
+    const [row] = await database.db
+      .select()
+      .from(packageInstalls)
+      .where(eq(packageInstalls.id, installed.id));
+    const cached = join(row.installedPath, "maister-agents/research.md");
+
+    if (change === "mode") {
+      const target = await project();
+
+      await attachPackage({ ...target, packageInstallId: row.id });
+      const snapshot = await readExportSnapshot(target.db, target.projectId);
+      const input = join(dir, "maister-agents/research.md");
+
+      await chmod(input, 0o755);
+      await expect(
+        reviewPackageSources(snapshot.projection),
+      ).rejects.toMatchObject({
+        details: { reason: "package_revision_mismatch" },
+      });
+      await chmod(input, 0o644);
+    }
+    if (change === "content") await writeFile(cached, "Different.\n");
+    else await chmod(cached, 0o755);
+    await expect(
+      attachPackage({ ...(await project()), packageInstallId: row.id }),
+    ).rejects.toMatchObject({
+      details: { reason: "install_identity_conflict" },
+    });
+  },
+);
+
+// Drop exactly one commit acknowledgement while preserving the real native transaction.
+function loseCommit(
+  db: StartedPostgresTestDb["db"],
+  decided: () => Promise<boolean>,
+) {
+  let dropped = false;
+
+  return new Proxy(db, {
+    get(connection, key, receiver) {
+      if (key !== "transaction") return Reflect.get(connection, key, receiver);
+
+      return async (work: Parameters<typeof db.transaction>[0]) => {
+        const result = await connection.transaction(work);
+
+        if (!dropped && (await decided())) {
+          dropped = true;
+          throw new Error("test: lost committed response");
+        }
+
+        return result;
+      };
+    },
+  });
+}
+it("recovers committed manual attach, upgrade and detach projections without touching unrelated Flow links", async () => {
+  const target = await project();
+  const { db, projectId, projectSlug, workspaceRoot } = target;
+  const pin = { source: join(origin, "manual-publication"), version: "v1" };
+
+  await writePackage("manual-publication", "initial", "publication-package");
+  const initial = await installPackageRevision({ ...pin, db });
+  const link = projectFlowSymlinkPath(
+    workspaceRoot,
+    projectSlug,
+    "material-flow",
+  );
+
+  const current = async () =>
+    (
+      await db
+        .select()
+        .from(attachments)
+        .where(eq(attachments.projectId, projectId))
+    )[0];
+
+  await expect(
+    attachPackage({
+      ...target,
+      db: loseCommit(db, async () => Boolean(await current())),
+      packageInstallId: initial.id,
+    }),
+  ).rejects.toThrow("lost committed response");
+  await mkdir(dirname(link), { recursive: true });
+  await writeFile(link, "keep local content");
+  expect(await serviceDependency(db, new AbortController().signal)).toBe(true);
+  const pending = await db.execute(
+    sql`SELECT reason FROM project_flow_link_publications WHERE project_id=${projectId}`,
+  );
+
+  expect(pending.rows).toEqual([{ reason: "project_flow_link_conflict" }]);
+  expect(await readFile(link, "utf8")).toBe("keep local content");
+  await rm(link);
+  await db.execute(
+    sql`UPDATE project_flow_link_publications SET due_at=now() WHERE project_id=${projectId}`,
+  );
+  expect(await serviceDependency(db, new AbortController().signal)).toBe(true);
+  const [flow] = await db
+    .select()
+    .from(flows)
+    .where(eq(flows.projectId, projectId));
+
+  expect(await readlink(link)).toBe(flow!.installedPath);
+
+  const foreignRef = "unrelated-operator-flow";
+  const foreignLink = projectFlowSymlinkPath(
+    workspaceRoot,
+    projectSlug,
+    foreignRef,
+  );
+
+  await db.insert(flows).values({
+    ...flow!,
+    id: randomUUID(),
+    flowRefId: foreignRef,
+    installedPath: systemCachePath(foreignRef, flow!.revision),
+    packageInstallId: null,
+  });
+  await writeFile(foreignLink, "operator-owned");
+
+  await writePackage("manual-publication", "updated", "publication-package");
+  const next = await installPackageRevision({ db, ...pin, version: "v2" });
+  const attachment = (await current())!;
+
+  await expect(
+    upgradeAttachment({
+      ...target,
+      db: loseCommit(
+        db,
+        async () => (await current())?.packageInstallId === next.id,
+      ),
+      attachmentId: attachment.id,
+      packageInstallId: next.id,
+    }),
+  ).rejects.toThrow("lost committed response");
+  expect(await serviceDependency(db, new AbortController().signal)).toBe(true);
+  expect(await readlink(link)).toBe(
+    systemCachePath("material-flow", next.resolvedRevision),
+  );
+  await expect(
+    detachPackage({
+      ...target,
+      db: loseCommit(db, async () => !(await current())),
+      attachmentId: attachment.id,
+    }),
+  ).rejects.toThrow("lost committed response");
+  expect(await serviceDependency(db, new AbortController().signal)).toBe(true);
+  await expect(readlink(link)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(foreignLink, "utf8")).toBe("operator-owned");
+});
+
+it("refuses cross-kind package-name ownership before executing setup for a differently named member", async () => {
+  const target = await project();
+  const marker = join(sandbox, "setup-before-collision");
+
+  await writePackage(
+    "name-collision",
+    "member",
+    "reserved-package",
+    `echo ran > "${marker}"\n`,
+  );
+  await database.db.insert(heads).values({
+    projectId: target.projectId,
+    kind: "flow",
+    logicalId: "reserved-package",
+    ordinal: 0,
+    desired: { source, version: "old" },
+  });
+  const install = await installPackageRevision({
+    source: join(origin, "name-collision"),
+    version: "v1",
+    db: database.db,
+    trustStatus: "trusted_by_policy",
+  });
+
+  await expect(
+    attachPackage({ ...target, packageInstallId: install.id }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(
+    await database.db
+      .select()
+      .from(attachments)
+      .where(eq(attachments.projectId, target.projectId)),
+  ).toEqual([]);
+});
+
+it.each(["flow", "capability_import"] as const)(
+  "settles a committed standalone %s after the original source is gone",
+  async (kind) => {
+    const target = await project();
+    const logicalId = "already-installed";
+    const directory = join(target.workspaceRoot, "original");
+
+    await mkdir(directory);
+    await writeFile(
+      join(directory, kind === "flow" ? "flow.yaml" : "bundle.txt"),
+      kind === "flow"
+        ? "schemaVersion: 1\nname: already-installed\ncompat: {engine_min: 3.0.0}\nnodes:\n  - {id: step, type: cli, action: {command: echo done}, transitions: {success: done}}\n"
+        : "bundle contents",
+    );
+    const desired = { source: directory, version: "v1" };
+    const [head] = await target.db
+      .insert(heads)
+      .values({
+        projectId: target.projectId,
+        kind,
+        logicalId,
+        ordinal: 0,
+        desired,
+      })
+      .returning();
+    const [attempt] = await target.db
+      .insert(attempts)
+      .values({
+        projectId: target.projectId,
+        declarationId: head!.id,
+        generation: 1,
+        attemptNo: 1,
+        desired,
+        actorUserId: actor,
+      })
+      .returning();
+    const run = (db = target.db) =>
+      serviceDependency(db, new AbortController().signal, attempt!.id);
+    const read = async () =>
+      (
+        await target.db
+          .select()
+          .from(attempts)
+          .where(eq(attempts.id, attempt!.id))
+      )[0];
+
+    await run(
+      loseCommit(target.db, async () =>
+        Boolean((await read()).checkpoint.applicationCommitted),
+      ),
+    );
+    expect(await read()).toMatchObject({
+      status: "pending",
+      stage: "projection",
+    });
+    await rm(directory, { recursive: true });
+    await target.db
+      .update(attempts)
+      .set({
+        status: "running",
+        claimToken: randomUUID(),
+        leaseExpiresAt: new Date(0),
+      })
+      .where(eq(attempts.id, attempt!.id));
+    await target.db
+      .update(users)
+      .set({ role: "member" })
+      .where(eq(users.id, actor));
+    try {
+      await run();
+      expect(await read()).toMatchObject({ status: "succeeded", reason: null });
+    } finally {
+      await target.db
+        .update(users)
+        .set({ role: "admin" })
+        .where(eq(users.id, actor));
+    }
+  },
+);

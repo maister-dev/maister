@@ -22,6 +22,7 @@ import { writeConfigReviewFiles } from "../review-files";
 
 import { projects, users } from "@/lib/db/schema";
 import { localDirectoryContentDigest } from "@/lib/flows";
+import { materialLayoutDigest } from "@/lib/project-dependencies/content-digest";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -149,7 +150,11 @@ it("IT-CPC-07: deleted local sources and changed directory revisions refuse expo
   };
 
   expect(await reviewPackageSources(projection)).toEqual([
-    { id: "source", digest: await localDirectoryContentDigest(directory) },
+    {
+      id: "source",
+      digest: await localDirectoryContentDigest(directory),
+      layoutDigest: await materialLayoutDigest(directory),
+    },
   ]);
   await writeFile(join(directory, "content.txt"), "changed");
   await expect(reviewPackageSources(projection)).rejects.toMatchObject({

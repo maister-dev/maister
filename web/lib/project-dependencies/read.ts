@@ -37,7 +37,8 @@ export async function readProjectDeclarations(
               AND mc.package_install_id = pi.id AND mc.setup_status = 'failed')
           )) THEN 'setup_failed'
         WHEN coalesce(pi.package_status, fr.package_status, c.package_status) <> 'Installed' THEN 'unresolved'
-        WHEN coalesce(pi.trust_status, f.trust_status, c.trust_status) = 'untrusted' THEN 'awaiting_trust'
+        WHEN coalesce(pi.trust_status, f.trust_status, c.trust_status) = 'untrusted'
+          OR (fr.setup_status = 'pending' AND fr.exec_trust = 'untrusted') THEN 'awaiting_trust'
         WHEN fr.setup_status = 'pending' OR c.setup_status = 'pending' OR
           (pi.id IS NOT NULL AND (
             EXISTS (SELECT 1 FROM flows mf JOIN flow_revisions mr ON mr.id=mf.enabled_revision_id

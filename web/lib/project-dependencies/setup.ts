@@ -189,6 +189,7 @@ export async function runMaterialSetup(input: {
   const db = ctx?.db ?? input.db;
   const identity = { ...input, target };
   const key = physicalSetupKey(identity);
+  const memberRef = input.kind + ":" + basename(target).split("@")[0];
   let script: Buffer | null = null;
 
   try {
@@ -212,7 +213,15 @@ export async function runMaterialSetup(input: {
     prior.contentWitness !== (input.contentWitness ?? null)
   )
     conflict("revision_mismatch");
-  if (script === null && !prior) return "not_required";
+  // Callers only dispatch setup that the installed input declared as present.
+  if (script === null && !prior)
+    throw new MaisterError(
+      "CONFLICT",
+      "The installed dependency is missing its required setup.sh.",
+      {
+        details: { reason: "setup_material_changed", memberRef },
+      },
+    );
   if (settled.getStore()) {
     if (prior?.status !== "succeeded") conflict("setup_material_changed");
 
@@ -225,10 +234,7 @@ export async function runMaterialSetup(input: {
       target,
       new Set([".git"]),
     );
-  await ctx?.before?.(
-    receiptKey,
-    input.kind + ":" + basename(target).split("@")[0],
-  );
+  await ctx?.before?.(receiptKey, memberRef);
   const claimToken = randomUUID();
   // The gate exits on EOF if this process dies before sending a newline.
   const child = spawn(
@@ -268,6 +274,7 @@ export async function runMaterialSetup(input: {
     }
     const ownership = await db.transaction(async (tx) => {
       await ctx?.authorize?.(tx);
+      signal.throwIfAborted();
       // A conflict on the physical key serializes new receipts across projects
       // and the explicit trust APIs. A pre-existing dispatched owner is never
       // reset by an ordinary retry.
@@ -280,12 +287,14 @@ export async function runMaterialSetup(input: {
         .where(match)
         .for("update");
 
+      await ctx?.authorize?.(tx);
+      signal.throwIfAborted();
       if (
         receipt?.physicalKey &&
         receipt.contentWitness !== (input.contentWitness ?? null)
       )
         conflict("revision_mismatch");
-      if (receipt?.status === "succeeded") return false;
+      if (receipt?.status === "succeeded") return { acquired: false } as const;
       if (
         !receipt &&
         input.contentWitness &&
@@ -333,11 +342,22 @@ export async function runMaterialSetup(input: {
           },
         });
 
-      return true;
+      return { acquired: true, previous: receipt } as const;
     });
 
-    if (!ownership) return "done";
-    signal.throwIfAborted();
+    if (!ownership.acquired) return "done";
+    if (signal.aborted) {
+      // This process still owns the closed stdin gate. Restore the exact
+      // predecessor, including any explicit replay reservation, before leaving.
+      const ours = and(
+        eq(receipts.materialKey, receiptKey),
+        eq(receipts.claimToken, claimToken),
+      );
+      if (ownership.previous)
+        await db.update(receipts).set(ownership.previous).where(ours);
+      else await db.delete(receipts).where(ours);
+      signal.throwIfAborted();
+    }
     child.stdin.end("\n");
     const code = await exited;
 

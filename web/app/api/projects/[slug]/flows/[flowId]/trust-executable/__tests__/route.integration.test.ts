@@ -7,11 +7,13 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
+import Ajv from "ajv";
+import { parse } from "yaml";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -187,8 +189,19 @@ describe("POST /api/projects/[slug]/flows/[flowId]/trust-executable (integration
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.ok).toBe(true);
-    expect(body.execTrust).toBe("trusted");
+    expect(body).toEqual({
+      ok: true,
+      execTrust: "trusted",
+      setupStatus: "not_required",
+    });
+    const spec = parse(await readFile("../docs/api/web.openapi.yaml", "utf8"));
+    const operation =
+      spec.paths["/api/projects/{slug}/flows/{flowId}/trust-executable"].post;
+    const validate = new Ajv().compile(
+      operation.responses["200"].content["application/json"].schema,
+    );
+
+    expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
   });
 
   it("403 — project administration alone cannot run pending executable setup", async () => {

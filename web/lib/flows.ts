@@ -33,7 +33,10 @@ import {
   snapshotLocalMaterial,
 } from "@/lib/project-dependencies/material";
 import { dependencyCloneFailure } from "@/lib/project-dependencies/failure";
-import { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
+import {
+  localDirectoryContentDigest,
+  materialLayoutDigest,
+} from "@/lib/project-dependencies/content-digest";
 export { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
 import { runMaterialSetup } from "@/lib/project-dependencies/setup";
 import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
@@ -139,10 +142,8 @@ export type InstallFlowPluginArgs = {
   // loader rejects node settings refs absent from it (M14 carve-b). Omitted by
   // generic callers (enable/upgrade) that have no project context → no check.
   capabilityRefIds?: CapabilityRefIdsInput;
-  // Override the exec_trust value written to flow_revisions. When absent,
-  // exec_trust is derived from trustStatus: trusted_by_policy → 'trusted',
-  // untrusted → 'untrusted'. Authored-bridge callers set this to 'untrusted'
-  // to suppress setup.sh execution regardless of logic-trust (§4.2, §6.4).
+  // Override this install's executable authorization. Authored-bridge callers
+  // defer setup.sh regardless of logic trust (§4.2, §6.4).
   execTrustOverride?: FlowRevisionExecTrust;
   // ADR-088: package sub-installs inherit the PACKAGE's resolved revision
   // (tag SHA or package content digest) so all members share one immutable
@@ -785,7 +786,7 @@ async function ensureRevisionIntentRow(opts: {
 // project enablement pointer — used by installFlowPlugin (install+enable) and
 // by lifecycle.upgradeFlow (install beside).
 export async function installRevision(opts: {
-  onResolve?: (revision: string) => Promise<void>;
+  onResolve?: (revision: string, layoutDigest: string) => Promise<void>;
   authorizePublication?: (tx: Db) => Promise<void>;
   source: string;
   version: string;
@@ -849,7 +850,8 @@ export async function installRevision(opts: {
             LOCAL_REVISION_LEN,
           )
         : await gitRevParseHead({ dir: sourceDir, source, version, signal }));
-    await opts.onResolve?.(resolvedRevision);
+    const layoutDigest = await materialLayoutDigest(sourceDir);
+    await opts.onResolve?.(resolvedRevision, layoutDigest);
     target = systemCachePath(flowId, resolvedRevision);
     const manifestForIntent = await loadManifestOrThrow(
       join(sourceDir, "flow.yaml"),
@@ -876,6 +878,7 @@ export async function installRevision(opts: {
           target,
           revision: resolvedRevision,
           digest: witness,
+          layoutDigest,
           hash: hashMaterial,
           hasHistoricalOwner: async () => {
             const [prior] = await tx
@@ -1165,10 +1168,14 @@ async function installFlowPluginImpl(
     args.execTrustOverride ??
     (trustStatus === "untrusted" ? "untrusted" : "trusted");
 
-  await db
-    .update(flowRevisions)
-    .set({ execTrust })
-    .where(eq(flowRevisions.id, rev.revisionId));
+  // New revisions default to untrusted. Reusing a revision cannot revoke an
+  // earlier grant for the same executable content in another project.
+  if (execTrust === "trusted") {
+    await db
+      .update(flowRevisions)
+      .set({ execTrust })
+      .where(eq(flowRevisions.id, rev.revisionId));
+  }
 
   // git/policy installs (execTrust=trusted) run setup.sh now; authored-bridge
   // installs (execTrust=untrusted) skip setup and auto-enable without it.

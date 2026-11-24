@@ -11,12 +11,15 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { editDependency, resubmitDependency } from "../commands";
-import { localDirectoryContentDigest } from "../content-digest";
+import {
+  localDirectoryContentDigest,
+  materialLayoutDigest,
+} from "../content-digest";
 import {
   authorizeDependencySetupRecovery,
   runMaterialSetup,
@@ -24,6 +27,7 @@ import {
 } from "../setup";
 import { publishMaterial } from "../material";
 import { claimDependency } from "../claims";
+import { physicalSetupKey } from "../setup-identity";
 import { serviceDependency } from "../worker";
 
 import * as schema from "@/lib/db/schema";
@@ -230,6 +234,44 @@ it("ignores source markers, retains exact setup completion and fences an uncerta
   }
 });
 
+it("records no dispatch if shutdown wins during physical setup authorization", async () => {
+  const db = database.db;
+  const target = await mkdtemp(join(tmpdir(), "undispatched-setup-"));
+  const controller = new AbortController();
+  const setup = { db, target, kind: "flow" as const, revision: randomUUID() };
+  const key = physicalSetupKey({ ...setup, target: await realpath(target) });
+  try {
+    await writeFile(join(target, "setup.sh"), "echo called >> count\n");
+    let rejected: Promise<unknown> | undefined;
+    await db.transaction(async (tx) => {
+      const {
+        rows: [{ pid }],
+      } = await tx.execute<{ pid: number }>(
+        sql`select pg_backend_pid() as pid, pg_advisory_xact_lock(hashtextextended(${key},0))`,
+      );
+      rejected = runMaterialSetup({ ...setup, signal: controller.signal }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await vi.waitFor(async () => {
+        const { rows } = await db.execute(
+          sql`select 1 from pg_stat_activity where ${pid}::int=any(pg_blocking_pids(pid))`,
+        );
+        expect(rows).toHaveLength(1);
+      });
+      controller.abort();
+    });
+    expect(await rejected).toMatchObject({ name: "AbortError" });
+    expect(
+      await db.select().from(receipts).where(eq(receipts.materialKey, key)),
+    ).toEqual([]);
+    expect(await runMaterialSetup(setup)).toBe("done");
+    expect(await readFile(join(target, "count"), "utf8")).toBe("called\n");
+  } finally {
+    await rm(target, { recursive: true, force: true });
+  }
+});
+
 it("keeps the physical setup slot when a Flow setup rewrites its own script", async () => {
   const db = database.db;
   const dir = await mkdtemp(join(tmpdir(), "worker-self-rewrite-"));
@@ -292,6 +334,7 @@ it("binds an unchanged legacy receipt and refuses an unidentifiable historical d
       target,
       revision: freshRevision,
       digest,
+      layoutDigest: await materialLayoutDigest(freshSource),
       hash: localDirectoryContentDigest,
     });
     expect(

@@ -2,17 +2,21 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
-import { lstat, readlink, readdir, unlink } from "node:fs/promises";
+import { lstat, readlink, unlink } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import pino from "pino";
 
 import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
-import { flows, projects } from "@/lib/db/schema";
+import {
+  flows,
+  projects,
+  projectFlowLinkPublications as publications,
+} from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
   flowCacheDirectory,
-  flowIdSchema,
   flowRevisionSchema,
   projectFlowSymlinkPath,
   systemCachePath,
@@ -76,73 +80,196 @@ export async function validateProjectFlowLink({
   }
 }
 
-export async function reconcileProjectFlowLinks(
-  db: Db,
-  target: { projectId: string; workspaceRoot?: string },
+const log = pino({ name: "project-flow-link-publication" });
+type Publication = typeof publications.$inferSelect;
+
+/** Persist immutable scope alongside the native decision. The worker always projects
+ * the latest committed row, even if a newer attach has superseded this operation. */
+export async function queueProjectFlowLinks(
+  tx: Db,
+  operationId: string,
+  projectId: string,
+  workspaceRoot: string,
+  refs: readonly string[],
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [project] = await tx
-      .select({
-        slug: projects.slug,
-        repoPath: projects.repoPath,
-        archivedAt: projects.archivedAt,
-      })
-      .from(projects)
-      .where(eq(projects.id, target.projectId))
-      .for("update");
-
-    if (!project || project.archivedAt) return;
-    const workspaceRoot = target.workspaceRoot ?? project.repoPath;
-    const directory = dirname(
-      projectFlowSymlinkPath(workspaceRoot, project.slug, "member"),
-    );
-    const existing = (await managedDirectory(workspaceRoot, directory))
-      ? await readdir(directory, { withFileTypes: true })
-      : [];
-    const rows = await tx
-      .select({
-        ref: flows.flowRefId,
-        revision: flows.revision,
-        path: flows.installedPath,
-      })
-      .from(flows)
-      .where(eq(flows.projectId, target.projectId));
-    const active = new Set(rows.map((row) => row.ref));
-
-    for (const entry of existing) {
-      if (
-        !entry.isSymbolicLink() ||
-        active.has(entry.name) ||
-        !flowIdSchema.safeParse(entry.name).success
-      )
-        continue;
-      const linkPath = join(directory, entry.name);
-
-      if (
-        isManagedTarget(
-          entry.name,
-          resolve(directory, await readlink(linkPath)),
-        )
-      )
-        await unlink(linkPath);
-    }
-    const current = rows.filter(
-      (row) =>
-        flowRevisionSchema.safeParse(row.revision).success &&
-        flowIdSchema.safeParse(row.ref).success &&
-        row.path === systemCachePath(row.ref, row.revision),
-    );
-
-    if (current.length) await ensureWorktreeGitExclude(workspaceRoot);
-    for (const row of current) {
-      const linkPath = projectFlowSymlinkPath(
+  if (!refs.length) return;
+  await tx
+    .insert(publications)
+    .values(
+      [...new Set(refs)].map((flowRefId) => ({
+        operationId,
+        projectId,
         workspaceRoot,
-        project.slug,
-        row.ref,
-      );
+        flowRefId,
+      })),
+    )
+    .onConflictDoNothing();
+}
 
-      await validateProjectFlowLink({ workspaceRoot, linkPath });
-      await ensureSymlink({ target: row.path, linkPath });
+async function applyLink(
+  tx: Db,
+  job: Publication,
+  slug: string,
+): Promise<void> {
+  const { projectId, flowRefId, workspaceRoot } = job;
+  const [flow] = await tx
+    .select({ revision: flows.revision, path: flows.installedPath })
+    .from(flows)
+    .where(and(eq(flows.projectId, projectId), eq(flows.flowRefId, flowRefId)));
+  const linkPath = projectFlowSymlinkPath(workspaceRoot, slug, flowRefId);
+  if (flow) {
+    if (
+      !flowRevisionSchema.safeParse(flow.revision).success ||
+      flow.path !== systemCachePath(flowRefId, flow.revision)
+    )
+      return;
+    await validateProjectFlowLink({ workspaceRoot, linkPath });
+    await ensureWorktreeGitExclude(workspaceRoot);
+    await ensureSymlink({ target: flow.path, linkPath });
+    return;
+  }
+  if (!(await managedDirectory(workspaceRoot, dirname(linkPath)))) return;
+  try {
+    if (
+      (await lstat(linkPath)).isSymbolicLink() &&
+      isManagedTarget(
+        flowRefId,
+        resolve(dirname(linkPath), await readlink(linkPath)),
+      )
+    )
+      await unlink(linkPath);
+  } catch (error) {
+    if (!missing(error)) throw error;
+  }
+}
+
+type LinkResult = "idle" | "published" | "deferred";
+type LinkKey = Pick<Publication, "operationId" | "flowRefId">;
+async function publishOne(db: Db, key?: LinkKey): Promise<LinkResult> {
+  return db.transaction(async (tx) => {
+    const scope = key
+      ? and(
+          eq(publications.operationId, key.operationId),
+          eq(publications.flowRefId, key.flowRefId),
+        )
+      : sql`${publications.dueAt}<=clock_timestamp()`;
+    const query = tx
+      .select({ job: publications, slug: projects.slug })
+      .from(projects)
+      .innerJoin(publications, eq(publications.projectId, projects.id))
+      .where(and(scope, sql`${projects.archivedAt} IS NULL`))
+      .orderBy(
+        publications.dueAt,
+        publications.operationId,
+        publications.flowRefId,
+      )
+      .limit(1);
+    // Immediate callers wait for a concurrent reconciler's decision; the background scan skips busy projects.
+    const [selected] = key
+      ? await query.for("update")
+      : await query.for("update", { skipLocked: true });
+    if (!selected) return "idle";
+    const { job, slug } = selected;
+    const exact = and(
+      eq(publications.operationId, job.operationId),
+      eq(publications.flowRefId, job.flowRefId),
+    );
+    try {
+      await applyLink(tx, job, slug);
+    } catch (error) {
+      const reason =
+        error instanceof MaisterError &&
+        error.details?.reason === "project_flow_link_conflict"
+          ? "project_flow_link_conflict"
+          : "project_flow_link_unavailable";
+      await tx
+        .update(publications)
+        .set({ reason, dueAt: sql`clock_timestamp()+interval '30 seconds'` })
+        .where(exact);
+      log.warn(
+        { projectId: job.projectId, flowRefId: job.flowRefId, reason },
+        "committed Flow link awaits repair",
+      );
+      return "deferred";
     }
+    await tx.delete(publications).where(exact);
+    return "published";
   });
+}
+
+export async function serviceFlowLinkPublication(db: Db): Promise<boolean> {
+  return (await publishOne(db)) !== "idle";
+}
+
+/** A failed filesystem projection leaves a durable job. Distinguish the accepted
+ * database mutation from an installation that was rejected before commit. */
+export type PendingFlowLink = {
+  reason: "project_flow_link_pending";
+  operationId: string;
+  memberRef: string;
+  linkReason: string | null;
+};
+
+export function readAcceptedFlowLink(error: unknown): {
+  flowLinkPending: PendingFlowLink;
+  attachmentId?: string;
+} | null {
+  if (!(error instanceof MaisterError) || error.code !== "PRECONDITION")
+    return null;
+  const details = error.details;
+  if (
+    details?.reason !== "project_flow_link_pending" ||
+    details.mutationAccepted !== true ||
+    typeof details.operationId !== "string" ||
+    typeof details.memberRef !== "string" ||
+    !(details.linkReason === null || typeof details.linkReason === "string")
+  )
+    return null;
+  return {
+    ...(typeof details.attachmentId === "string"
+      ? { attachmentId: details.attachmentId }
+      : {}),
+    flowLinkPending: {
+      reason: details.reason,
+      operationId: details.operationId,
+      memberRef: details.memberRef,
+      linkReason: details.linkReason,
+    },
+  };
+}
+
+export async function finishFlowLinkPublication(
+  db: Db,
+  operationId: string,
+  attachmentId?: string,
+): Promise<void> {
+  const jobs = await db
+    .select({
+      operationId: publications.operationId,
+      flowRefId: publications.flowRefId,
+    })
+    .from(publications)
+    .where(eq(publications.operationId, operationId));
+  if (!jobs.length) return;
+  for (const job of jobs) await publishOne(db, job);
+  const [pending] = await db
+    .select({ ref: publications.flowRefId, reason: publications.reason })
+    .from(publications)
+    .where(eq(publications.operationId, operationId))
+    .limit(1);
+  if (pending)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The installation change was committed. Its project Flow link is awaiting repair.",
+      {
+        details: {
+          reason: "project_flow_link_pending",
+          mutationAccepted: true,
+          operationId,
+          ...(attachmentId ? { attachmentId } : {}),
+          memberRef: pending.ref,
+          linkReason: pending.reason,
+        },
+      },
+    );
 }

@@ -17,7 +17,9 @@ import {
 import {
   enqueueTrustedSetup,
   finishTrustedSetup,
+  lockCurrentFlowSetup,
 } from "@/lib/project-dependencies/post-trust-store";
+import { withSetupAuthority } from "@/lib/project-dependencies/setup";
 import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
 import { getDb } from "@/lib/db/client";
 import { hasCompanyCoordinatorFlowReference } from "@/lib/agents/company-binding-references";
@@ -287,9 +289,14 @@ export async function enableRevision(args: {
   // enabling. A setup failure marks the revision Failed and refuses enable.
   if (rev.setupStatus === "pending") {
     await requireReadyDeclaredFlowRunner(db, flow.id);
+    const authorizeSetup = async (tx: Db) => {
+      await lockCurrentFlowSetup(tx, flow, actor?.id);
+      await requireReadyDeclaredFlowRunner(tx, flow.id);
+    };
+    let queued: string[] = [];
     if (actor && flow.enabledRevisionId === rev.id) {
-      const queued = await db.transaction(async (tx: Db) => {
-        await requireReadyDeclaredFlowRunner(tx, flow.id);
+      queued = await db.transaction(async (tx: Db) => {
+        await authorizeSetup(tx);
         const attempts = await enqueueTrustedSetup(
           tx,
           actor.id,
@@ -308,12 +315,16 @@ export async function enableRevision(args: {
 
       await finishTrustedSetup(db, queued);
     }
-    const setupStatus = await runRevisionSetup({
-      db,
-      revisionId: rev.id,
-      installedPath: rev.installedPath,
-      signal: undefined,
-    });
+    const setupStatus = queued.length
+      ? "done"
+      : await withSetupAuthority(db, authorizeSetup, () =>
+          runRevisionSetup({
+            db,
+            revisionId: rev.id,
+            installedPath: rev.installedPath,
+            signal: undefined,
+          }),
+        );
 
     if (setupStatus === "failed") {
       throw new MaisterError(
@@ -327,6 +338,7 @@ export async function enableRevision(args: {
   // still Installed under the lock, so a concurrent removeRevision (which also
   // locks the row) cannot leave the project enabled to a Removed revision.
   await db.transaction(async (tx: Db) => {
+    await lockCurrentFlowSetup(tx, flow, actor?.id);
     const locked = await tx
       .select({ packageStatus: flowRevisions.packageStatus })
       .from(flowRevisions)

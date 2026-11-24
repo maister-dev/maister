@@ -44,6 +44,7 @@ function tableNameOf(table: unknown): TableName {
 }
 
 const fakeDb = {
+  execute: async () => ({ rows: [] }),
   select: () => ({
     from: (table: unknown) => ({
       where: async () => state[tableNameOf(table)],
@@ -67,6 +68,7 @@ vi.mock("@/lib/authz", async (importOriginal) => ({
   requireProjectAction: mocks.requireProjectAction,
 }));
 vi.mock("@/lib/acp-runners/declared-flow-runner", () => ({
+  declaredFlowRunnerUnavailable: () => false,
   readFlowRunnerBinding: async () => ({
     defaultRunnerId: null,
     unavailable: false,
@@ -145,6 +147,48 @@ async function invoke(query: Record<string, string> = {}): Promise<Response> {
 
   return GET(request(query));
 }
+
+it("disables a sibling Flow when its declared runner is unavailable in the launch chooser", async () => {
+  seedBase();
+  state.flows.push({
+    ...state.flows[0],
+    id: "unready",
+    flowRefId: "unready",
+    runnerUnavailable: true,
+  });
+  state.flows.push({
+    ...state.flows[0],
+    id: "dependency",
+    flowRefId: "dependency",
+    enabledRevisionId: "needs-cap",
+  });
+  state.flow_revisions.push({
+    ...state.flow_revisions[0],
+    id: "needs-cap",
+    manifest: manifest([
+      { ...aiNode("use"), settings: { skills: ["absent"] } },
+    ]),
+  });
+  const response = await invoke();
+
+  expect(response.status).toBe(200);
+  const { flows } = await response.json();
+
+  expect(flows).toContainEqual(
+    expect.objectContaining({
+      id: "dependency",
+      enabled: false,
+      disabledReason: "flow_capability_unavailable",
+    }),
+  );
+  expect(flows).toContainEqual(
+    expect.objectContaining({
+      id: "unready",
+      enabled: false,
+      disabledReason: "runner_unresolved",
+    }),
+  );
+});
 
 function consensusManifest(): Row {
   return {

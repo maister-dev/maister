@@ -5,12 +5,46 @@ import type { TrustedSetupTarget } from "./types";
 
 import { and, desc, eq, sql } from "drizzle-orm";
 
+import { requireDependencyAdmin } from "./claims";
+import { requireParentPackageTrust } from "./member-trust";
+import { lockDependencyProject } from "./package-writes";
 import {
+  flows,
   projects,
   projectDependencyDeclarations as heads,
   projectDependencyAttempts as attempts,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+
+export async function lockCurrentFlowSetup(
+  tx: Db,
+  expected: Pick<
+    typeof flows.$inferSelect,
+    "projectId" | "id" | "enabledRevisionId" | "packageInstallId"
+  >,
+  actorUserId?: string,
+): Promise<void> {
+  await lockDependencyProject(tx, expected.projectId);
+  const [current] = await tx
+    .select()
+    .from(flows)
+    .where(
+      and(eq(flows.id, expected.id), eq(flows.projectId, expected.projectId)),
+    )
+    .for("update");
+  if (
+    !current ||
+    current.enabledRevisionId !== expected.enabledRevisionId ||
+    current.packageInstallId !== expected.packageInstallId
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "The project's active Flow revision changed.",
+      { details: { reason: "stale_generation" } },
+    );
+  await requireParentPackageTrust(tx, current.packageInstallId);
+  if (actorUserId) await requireDependencyAdmin(tx, actorUserId);
+}
 
 /** Trust fan-out can affect several projects. Reserve one exact, recoverable
  * operation per effective declaration in the transaction that accepts trust. */
@@ -45,7 +79,16 @@ export async function enqueueTrustedSetup(
   const declarations = await tx
     .select()
     .from(heads)
-    .where(and(projectId ? eq(heads.projectId, projectId) : undefined, owner))
+    .where(
+      and(
+        projectId ? eq(heads.projectId, projectId) : undefined,
+        target.kind === "package"
+          ? sql`${heads.effectiveGeneration}=${heads.generation}
+            AND EXISTS (SELECT 1 FROM projects p WHERE p.id=${heads.projectId} AND p.archived_at IS NULL)`
+          : undefined,
+        owner,
+      ),
+    )
     .orderBy(heads.projectId, heads.id)
     .for("update");
   const ids: string[] = [];
@@ -86,11 +129,13 @@ export async function enqueueTrustedSetup(
       if (
         latest.checkpoint.postTrust?.kind !== target.kind ||
         latest.checkpoint.postTrust.id !== target.id
-      )
+      ) {
+        if (target.kind === "package") continue;
         throw new MaisterError(
           "CONFLICT",
           "Another operation owns this dependency.",
         );
+      }
       ids.push(latest.id);
       continue;
     }
@@ -122,6 +167,7 @@ export async function finishTrustedSetup(
 ): Promise<void> {
   if (!ids.length) return;
   const { serviceDependency } = await import("./worker");
+  let firstUnfinished: MaisterError | undefined;
 
   for (const id of ids) {
     await serviceDependency(db, signal ?? new AbortController().signal, id);
@@ -137,14 +183,16 @@ export async function finishTrustedSetup(
       .innerJoin(projects, eq(projects.id, attempts.projectId))
       .where(eq(attempts.id, id));
 
-    if (!row)
-      throw new MaisterError(
+    if (!row) {
+      firstUnfinished ??= new MaisterError(
         "CONFLICT",
         "The dependency was removed after trust confirmation.",
         { details: { reason: "stale_generation" } },
       );
+      continue;
+    }
     if (row.status !== "succeeded")
-      throw new MaisterError(
+      firstUnfinished ??= new MaisterError(
         row.status === "failed" ? "FLOW_INSTALL" : "CONFLICT",
         "Inspect the trusted dependency setup in project settings.",
         {
@@ -158,4 +206,5 @@ export async function finishTrustedSetup(
         },
       );
   }
+  if (firstUnfinished) throw firstUnfinished;
 }

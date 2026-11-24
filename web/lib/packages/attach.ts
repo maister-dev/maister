@@ -9,13 +9,14 @@ import os from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
   materialConflict,
   publishMaterial,
 } from "@/lib/project-dependencies/material";
+import { materialLayoutDigest } from "@/lib/project-dependencies/content-digest";
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
 import {
@@ -27,6 +28,7 @@ import {
 } from "@/lib/capabilities/import";
 import { getDb } from "@/lib/db/client";
 import { localDirectoryPath } from "@/lib/runtime-file-url";
+import { requireDependencyAdmin } from "@/lib/project-dependencies/claims";
 import { lockProjectWriteGrant } from "@/lib/project-action-authority";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -46,6 +48,7 @@ import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { requiresExplicitNativeFindingsEnablement } from "@/lib/flows/enablement-states";
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
 import { loadMcpReadinessContext } from "@/lib/mcp/readiness-host";
+import { assertPackageMemberPaths } from "@/lib/packages/manifest";
 import { resolvePackageSource } from "@/lib/packages/install";
 import { redactUrl } from "@/lib/repo-source";
 import { assertAttachedQualificationAgentsPolicy } from "@/lib/agents/qualification-policy";
@@ -64,11 +67,14 @@ import {
 } from "@/lib/project-dependencies/package-writes";
 import {
   assertCapabilityMemberOwnership,
+  retireClearedCapabilityOwners,
   refreshPackageCapabilityTrust,
+  refreshAttachedPackageSkills,
   reconcileDependencyCatalog,
 } from "@/lib/project-dependencies/catalog";
 import {
-  reconcileProjectFlowLinks,
+  finishFlowLinkPublication,
+  queueProjectFlowLinks,
   validateProjectFlowLink,
 } from "@/lib/project-dependencies/flow-links";
 import { prepareDependencyFlow } from "@/lib/project-dependencies/prepare-flow";
@@ -105,17 +111,24 @@ export type PackageInstallManifest = {
   // `.claude/` at run). `platformAgents` = package-root `maister-agents/`
   // platform-agent definitions. Old installs predate `platformAgents` → readers
   // default it to `[]`.
-  inventory: { skills: string[]; agents: string[]; platformAgents: string[] };
+  inventory: {
+    skills: string[];
+    agents: string[];
+    platformAgents: string[];
+    skillsByCapability?: Record<string, string[]>;
+  };
   // Install coordinate (packages[] `path` subdir) — needed by the
   // reviewed Git export to reproduce the pin.
   sourceSubpath?: string;
   contentWitness?: string;
+  layoutDigest?: string;
 };
 
 /** Package roots never run setup; their extracted members have separate caches. */
 async function verifyPackageBytes(
   directory: string,
   witness: string,
+  expectedLayout?: string,
 ): Promise<void> {
   const actual = await localDirectoryContentDigest(
     directory,
@@ -126,6 +139,9 @@ async function verifyPackageBytes(
   });
 
   if (actual !== witness) materialConflict();
+  const layout = await materialLayoutDigest(directory);
+
+  if (expectedLayout && layout !== expectedLayout) materialConflict();
 }
 
 export async function verifyCachedPackage(
@@ -134,12 +150,17 @@ export async function verifyCachedPackage(
   const witness = manifestOf(install).contentWitness;
 
   if (witness) {
-    await verifyPackageBytes(install.installedPath, witness);
+    await verifyPackageBytes(
+      install.installedPath,
+      witness,
+      manifestOf(install).layoutDigest,
+    );
 
     return true;
   }
   if (localDirectoryPath(install.sourceUrl) === null) return false;
   // A pre-upgrade local package's revision used the whole original directory.
+  await materialLayoutDigest(install.installedPath);
   const original = await localDirectoryContentDigest(install.installedPath);
 
   if (original.slice(0, 40) !== install.resolvedRevision) materialConflict();
@@ -151,6 +172,7 @@ async function verifyPackageMemberSource(
   install: PackageMaterial,
   signal?: AbortSignal,
 ): Promise<void> {
+  assertPackageMemberPaths(manifestOf(install).spec);
   if (await verifyCachedPackage(install)) return;
   const original = await resolvePackageSource({
     source: install.sourceUrl,
@@ -165,6 +187,7 @@ async function verifyPackageMemberSource(
     await verifyPackageBytes(
       install.installedPath,
       await localDirectoryContentDigest(original.pkgRoot, new Set([".git"])),
+      await materialLayoutDigest(original.pkgRoot),
     );
   } finally {
     await original.cleanup();
@@ -197,6 +220,7 @@ async function collectInventory(
   manifest: MaisterPackageManifest,
 ): Promise<PackageInstallManifest["inventory"]> {
   const skills = new Set<string>();
+  const skillsByCapability = new Map<string, string[]>();
   const agents = new Set<string>();
   const platformAgents = new Set<string>();
 
@@ -204,13 +228,19 @@ async function collectInventory(
     const skillsDir = join(pkgRoot, cap.path, "skills");
     const agentsDir = join(pkgRoot, cap.path, "agents");
 
-    try {
-      for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
-        if (entry.isDirectory()) skills.add(entry.name);
-      }
-    } catch {
-      // bundle without skills/ — fine
-    }
+    const entries = await readdir(skillsDir, { withFileTypes: true }).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      },
+    );
+    const provided = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+
+    skillsByCapability.set(cap.id, provided);
+    for (const ref of provided) skills.add(ref);
     try {
       for (const entry of await readdir(agentsDir, { withFileTypes: true })) {
         if (entry.isFile() && entry.name.endsWith(".md")) {
@@ -238,6 +268,7 @@ async function collectInventory(
   }
 
   return {
+    skillsByCapability: Object.fromEntries(skillsByCapability),
     skills: [...skills].sort(),
     agents: [...agents].sort(),
     platformAgents: [...platformAgents].sort(),
@@ -323,7 +354,7 @@ export async function installPackageRevision(opts: {
   // local package is cut, so a project's attached cut can detect a newer cut.
   sourceLocalPackageId?: string;
   sourceCommitSha?: string;
-  onResolve?: (revision: string) => Promise<void>;
+  onResolve?: (revision: string, layoutDigest: string) => Promise<void>;
   authorizePublication?: (tx: Db) => Promise<void>;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
@@ -340,7 +371,7 @@ export async function installPackageRevision(opts: {
   try {
     const name = resolved.manifest.name;
 
-    await opts.onResolve?.(resolved.resolvedRevision);
+    await opts.onResolve?.(resolved.resolvedRevision, resolved.layoutDigest);
 
     for (const flow of resolved.manifest.flows) {
       const manifest = await loadFlowManifest(
@@ -376,6 +407,7 @@ export async function installPackageRevision(opts: {
     const hashMaterial = (dir: string) =>
       localDirectoryContentDigest(dir, new Set([".git"]));
     const witness = await hashMaterial(resolved.pkgRoot);
+    const layoutDigest = resolved.layoutDigest;
     const cachePath = packageCachePath(name, resolved.resolvedRevision);
     const installed = await database.transaction(async (db: any) => {
       const beforePublish = () => opts.authorizePublication?.(db);
@@ -394,6 +426,7 @@ export async function installPackageRevision(opts: {
 
         if (
           owner.resolvedRevision !== resolved.resolvedRevision ||
+          (prior.layoutDigest && prior.layoutDigest !== layoutDigest) ||
           (prior.contentWitness && prior.contentWitness !== witness)
         )
           materialConflict();
@@ -431,21 +464,39 @@ export async function installPackageRevision(opts: {
           sourceSchemaDir: resolvedSchemaDir,
           cachedSchemaDir: join(existing.installedPath, "schemas"),
         });
-        await verifyPackageBytes(existing.installedPath, witness);
+        await verifyPackageBytes(existing.installedPath, witness, layoutDigest);
         await publishMaterial({
           beforePublish,
           revision: resolved.resolvedRevision,
           source: resolved.pkgRoot,
           target: cachePath,
           digest: witness,
+          layoutDigest,
           hash: hashMaterial,
           hasHistoricalOwner: async () => true,
         });
-        if (!existingManifest.contentWitness) {
+        const inventory = existingManifest.inventory?.skillsByCapability
+          ? existingManifest.inventory
+          : await collectInventory(resolved.pkgRoot, resolved.manifest);
+
+        if (
+          !existingManifest.layoutDigest ||
+          !existingManifest.contentWitness ||
+          inventory !== existingManifest.inventory
+        ) {
           await db
             .update(packageInstalls)
-            .set({ manifest: { ...existingManifest, contentWitness: witness } })
+            .set({
+              manifest: {
+                ...existingManifest,
+                inventory,
+                contentWitness: witness,
+                layoutDigest,
+              },
+            })
             .where(eq(packageInstalls.id, existing.id));
+          if (inventory !== existingManifest.inventory)
+            await refreshAttachedPackageSkills(db, existing.id);
         }
         for (const flow of existingManifest.spec.flows) {
           await installRevision({
@@ -475,7 +526,12 @@ export async function installPackageRevision(opts: {
           versionLabel: existing.versionLabel,
           resolvedRevision: existing.resolvedRevision,
           reused: true,
-          manifest: { ...existingManifest, contentWitness: witness },
+          manifest: {
+            ...existingManifest,
+            inventory,
+            contentWitness: witness,
+            layoutDigest,
+          },
         };
       }
 
@@ -495,6 +551,7 @@ export async function installPackageRevision(opts: {
         spec: resolved.manifest,
         inventory,
         contentWitness: witness,
+        layoutDigest,
         ...(opts.path !== undefined ? { sourceSubpath: opts.path } : {}),
       };
       const manifestDigest = createHash("sha256")
@@ -529,6 +586,7 @@ export async function installPackageRevision(opts: {
         source: resolved.pkgRoot,
         target: cachePath,
         digest: witness,
+        layoutDigest,
         hash: hashMaterial,
       });
 
@@ -609,6 +667,19 @@ export async function installPackageRevision(opts: {
 
 function manifestOf(install: any): PackageInstallManifest {
   return install.manifest as PackageInstallManifest;
+}
+
+async function storeVerifiedInventory(
+  db: Db,
+  installId: string,
+  inventory: PackageInstallManifest["inventory"],
+): Promise<void> {
+  await db
+    .update(schemaModule.packageInstalls)
+    .set({
+      manifest: sql`jsonb_set(manifest,'{inventory}',${JSON.stringify(inventory)}::jsonb)`,
+    })
+    .where(eq(schemaModule.packageInstalls.id, installId));
 }
 
 function isReadyFlowRevision(revision: {
@@ -825,12 +896,16 @@ async function writeIngestionRecords(
   const usable =
     install.packageStatus === "Installed" &&
     ["trusted", "trusted_by_policy"].includes(install.trustStatus);
-  const eligibility = {
-    selectable: usable,
-    disabledAt: usable ? null : new Date(),
-  };
 
   for (const record of records) {
+    // The attachment and its native members must exist before a skill can be
+    // derived from project_ready_capability_imports, later in this transaction.
+    const selectable = usable && record.kind !== "skill";
+    const eligibility = {
+      selectable,
+      disabledAt: selectable ? null : new Date(),
+    };
+
     await tx
       .insert(capabilityRecords)
       .values({
@@ -921,8 +996,16 @@ export async function preparePackageMembers(
 ): Promise<PreparedMembers> {
   const spec = manifestOf(install).spec;
 
-  if (spec.flows.length || spec.capabilities.length)
-    await verifyPackageMemberSource(install, signal);
+  await verifyPackageMemberSource(install, signal);
+  if (!manifestOf(install).inventory?.skillsByCapability) {
+    const inventory = await collectInventory(install.installedPath, spec);
+
+    await db.transaction(async (tx: Db) => {
+      await authorizePublication(tx);
+      await storeVerifiedInventory(tx, install.id, inventory);
+      await refreshAttachedPackageSkills(tx, install.id);
+    });
+  }
   const flows = new Map<string, InstalledRevision>();
   const capabilities = new Map<string, PreparedCapability>();
 
@@ -973,10 +1056,17 @@ async function wireMembers(
     preparedMembers?: PreparedMembers;
     signal?: AbortSignal;
   },
+  projectLink?: typeof validateProjectFlowLink,
 ): Promise<{ memberFlows: InstallResult[]; capImportRowIds: string[] }> {
   const manifest = manifestOf(opts.install);
   const memberFlows: InstallResult[] = [];
   const capImportRowIds: string[] = [];
+
+  await retireClearedCapabilityOwners(
+    tx,
+    opts.projectId,
+    manifest.spec.capabilities.map((cap) => cap.id),
+  );
 
   // Package members can consume capabilities contributed by this or another
   // package. Their complete registry exists only at launch, after projection.
@@ -989,7 +1079,7 @@ async function wireMembers(
         projectSlug: opts.projectSlug,
         flowId: flow.id,
         workspaceRoot: opts.workspaceRoot,
-        projectLink: validateProjectFlowLink,
+        projectLink: projectLink ?? validateProjectFlowLink,
         roleRefs: opts.roleRefs,
 
         sharedSchemaDir: join(opts.install.installedPath, "schemas"),
@@ -1095,7 +1185,127 @@ type PackageActorGrant = {
   action: "managePackages" | "manageLocalPackages";
 };
 
+async function requirePackageGrant(
+  tx: Db,
+  projectId: string,
+  grant?: PackageActorGrant,
+): Promise<void> {
+  if (
+    grant &&
+    !(await lockProjectWriteGrant(tx, projectId, grant.userId, [grant.action]))
+  )
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Current package management permission is required.",
+      {
+        details: { reason: "authority_revoked" },
+      },
+    );
+}
+
+export type LaunchAttachmentFence = {
+  installId: string;
+  declaration: { id: string; generation: number };
+};
+
+export type PackageAdoption = {
+  attachmentId: string;
+  priorInstallId: string;
+  priorPin: PackageCoordinates;
+  applied: LaunchAttachmentFence;
+};
+
+function staleLaunchAdoption(): never {
+  throw new MaisterError(
+    "CONFLICT",
+    "The package attachment or its desired pin changed during launch.",
+    {
+      details: { reason: "stale_generation" },
+    },
+  );
+}
+
+type LaunchHead = Pick<
+  typeof schemaModule.projectDependencyDeclarations.$inferSelect,
+  "id" | "generation" | "effectiveGeneration"
+>;
+
+async function assertLaunchPackageTarget(
+  tx: Db,
+  currentInstallId: string | undefined,
+  head: LaunchHead | undefined,
+  expected: LaunchAttachmentFence,
+): Promise<void> {
+  if (
+    !head ||
+    currentInstallId !== expected.installId ||
+    head.id !== expected.declaration.id ||
+    head.generation !== expected.declaration.generation
+  )
+    staleLaunchAdoption();
+  const attempts = schemaModule.projectDependencyAttempts;
+  const [attempt] = await tx
+    .select({ status: attempts.status })
+    .from(attempts)
+    .where(
+      and(
+        eq(attempts.declarationId, head.id),
+        eq(attempts.generation, head.generation),
+      ),
+    )
+    .orderBy(desc(attempts.attemptNo))
+    .limit(1);
+
+  if (
+    head.effectiveGeneration !== head.generation ||
+    (attempt && attempt.status !== "succeeded")
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "Resolve the pending project package pin before adopting another shared version.",
+      { details: { reason: "dependency_pin_unsettled" } },
+    );
+}
+
+/** Check every shared adoption before the launcher mints a cut or applies another choice. */
+export function captureLaunchPackageFence(
+  db: Db,
+  projectId: string,
+  attachmentId: string,
+  installId: string,
+): Promise<LaunchAttachmentFence> {
+  return db.transaction(async (tx) => {
+    await lockDependencyProject(tx, projectId);
+    const declarations = schemaModule.projectDependencyDeclarations;
+    const attachments = schemaModule.projectPackageAttachments;
+    const [row] = await tx
+      .select({ head: declarations, installId: attachments.packageInstallId })
+      .from(attachments)
+      .innerJoin(
+        declarations,
+        eq(declarations.effectiveAttachmentId, attachments.id),
+      )
+      .where(
+        and(
+          eq(attachments.id, attachmentId),
+          eq(attachments.projectId, projectId),
+        ),
+      );
+
+    if (!row) staleLaunchAdoption();
+    const expected = {
+      installId,
+      declaration: { id: row.head.id, generation: row.head.generation },
+    };
+
+    await assertLaunchPackageTarget(tx, row.installId, row.head, expected);
+
+    return expected;
+  });
+}
+
 type AttachPackageOptions = {
+  launchFence?: LaunchAttachmentFence;
   actorGrant?: PackageActorGrant;
   preparedMembers?: PreparedMembers;
   projectId: string;
@@ -1138,21 +1348,7 @@ export async function prepareManualPackageMutation(
     installedPackageCoordinates({ ...install, manifest: manifestOf(install) });
   const read = async (tx: Db) => {
     await lockDependencyProject(tx, opts.projectId);
-    const grant = opts.actorGrant;
-
-    if (
-      grant &&
-      !(await lockProjectWriteGrant(tx, opts.projectId, grant.userId, [
-        grant.action,
-      ]))
-    )
-      throw new MaisterError(
-        "UNAUTHORIZED",
-        "Current package management permission is required.",
-        {
-          details: { reason: "authority_revoked" },
-        },
-      );
+    await requirePackageGrant(tx, opts.projectId, opts.actorGrant);
     const [attachment] = await tx
       .select()
       .from(schemaModule.projectPackageAttachments)
@@ -1189,6 +1385,13 @@ export async function prepareManualPackageMutation(
       coordinates,
     );
 
+    if (opts.launchFence)
+      await assertLaunchPackageTarget(
+        tx,
+        attachment?.packageInstallId,
+        head,
+        opts.launchFence,
+      );
     if (requestedPin) assertOperatorPin(head?.desired, requestedPin);
 
     return { attachment, head };
@@ -1220,6 +1423,7 @@ export async function prepareManualPackageMutation(
       tx,
       opts.projectId,
       spec.capabilities.map((cap) => cap.id),
+      install.resolvedRevision,
       attachment?.packageInstallId,
     );
 
@@ -1252,16 +1456,22 @@ export async function prepareManualPackageMutation(
 
 async function applyManualPackageMutation<T>(
   opts: AttachPackageOptions & { attachmentId?: string },
-  mutate: (tx: DependencyTransaction, members: PreparedMembers) => Promise<T>,
+  mutate: (
+    tx: DependencyTransaction,
+    members: PreparedMembers,
+    operationId: string,
+  ) => Promise<T>,
+  onCommitted?: (result: NonNullable<T>) => void,
 ): Promise<T | null> {
   const db: ReturnType<typeof getDb> = opts.db ?? getDb();
   const staged = await prepareManualPackageMutation(db, opts);
 
   if (!staged) return null;
+  const operationId = randomUUID();
   const result = await withSettledSetups(() =>
     db.transaction(async (tx) => {
       await staged.assertCurrent(tx);
-      const result = await mutate(tx, staged.members);
+      const result = await mutate(tx, staged.members, operationId);
 
       if (result) await reconcileDependencyCatalog(tx, opts.projectId);
 
@@ -1269,7 +1479,16 @@ async function applyManualPackageMutation<T>(
     }),
   );
 
-  if (result) await reconcileProjectFlowLinks(db, opts);
+  if (result) {
+    onCommitted?.(result);
+    const attachmentId =
+      typeof result === "object" &&
+      "attachmentId" in result &&
+      typeof result.attachmentId === "string"
+        ? result.attachmentId
+        : opts.attachmentId;
+    await finishFlowLinkPublication(db, operationId, attachmentId);
+  }
 
   return result;
 }
@@ -1277,17 +1496,19 @@ async function applyManualPackageMutation<T>(
 export function attachPackage(
   opts: AttachPackageOptions,
 ): Promise<AttachResult | null> {
-  return applyManualPackageMutation(opts, (tx, preparedMembers) =>
-    workerAttachPackage(
-      { ...opts, db: tx, preparedMembers },
-      (connection, id, install) =>
-        recordManualPackage(connection, opts.projectId, id, install),
-    ),
+  return applyManualPackageMutation(
+    opts,
+    (tx, preparedMembers, linkOperationId) =>
+      workerAttachPackage(
+        { ...opts, db: tx, preparedMembers, linkOperationId },
+        (connection, id, install) =>
+          recordManualPackage(connection, opts.projectId, id, install),
+      ),
   );
 }
 
 export async function workerAttachPackage(
-  opts: AttachPackageOptions,
+  opts: AttachPackageOptions & { linkOperationId: string },
   recordActual: RecordAttachment,
 ): Promise<AttachResult | null> {
   const db = opts.db ?? getDb();
@@ -1347,6 +1568,7 @@ export async function workerAttachPackage(
       tx,
       opts.projectId,
       manifest.spec.capabilities.map((member) => member.id),
+      install.resolvedRevision,
     );
 
     const inserted = await tx
@@ -1378,6 +1600,14 @@ export async function workerAttachPackage(
       preparedMembers: opts.preparedMembers,
       signal: opts.signal,
     });
+
+    await queueProjectFlowLinks(
+      tx,
+      opts.linkOperationId,
+      opts.projectId,
+      opts.workspaceRoot ?? repoPath,
+      flowIds,
+    );
 
     return {
       attachmentId: inserted[0].id as string,
@@ -1500,12 +1730,15 @@ async function deleteMemberEnablements(
 // transaction removes the attachment + member rows + ingested records.
 // Member flow_revisions stay (in-flight runs + GC own them).
 export async function detachPackage(opts: {
+  actorUserId?: string;
   projectId: string;
   attachmentId: string;
+  workspaceRoot?: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
 }): Promise<{ detached: boolean } | null> {
   const db = opts.db ?? getDb();
+  const operationId = randomUUID();
   const att = await loadAttachment(db, opts.projectId, opts.attachmentId);
 
   if (!att) return null;
@@ -1516,10 +1749,20 @@ export async function detachPackage(opts: {
     .where(eq(packageInstalls.id, att.packageInstallId));
 
   await db.transaction(async (tx: any) => {
-    await lockDependencyProject(tx, opts.projectId);
+    const repoPath = await lockDependencyProject(tx, opts.projectId);
+
+    if (opts.actorUserId)
+      await requirePackageGrant(tx, opts.projectId, {
+        userId: opts.actorUserId,
+        action: "managePackages",
+      });
     await lockAttachment(tx, att.id, att.packageInstallId);
     const memberFlows = await tx
-      .select({ id: flows.id, enabledRevisionId: flows.enabledRevisionId })
+      .select({
+        id: flows.id,
+        flowRefId: flows.flowRefId,
+        enabledRevisionId: flows.enabledRevisionId,
+      })
       .from(flows)
       .where(
         and(
@@ -1564,6 +1807,13 @@ export async function detachPackage(opts: {
           eq(capabilityImports.packageInstallId, att.packageInstallId),
         ),
       );
+    await queueProjectFlowLinks(
+      tx,
+      operationId,
+      opts.projectId,
+      repoPath,
+      memberFlows.map((f: { flowRefId: string }) => f.flowRefId),
+    );
     await deleteMemberEnablements(tx, flowIds);
     await tx
       .delete(projectPackageAttachments)
@@ -1571,7 +1821,7 @@ export async function detachPackage(opts: {
     await reconcileDependencyCatalog(tx, opts.projectId);
   });
 
-  await reconcileProjectFlowLinks(db, opts);
+  await finishFlowLinkPublication(db, operationId, att.id);
   log.info(
     {
       projectId: opts.projectId,
@@ -1604,18 +1854,87 @@ type UpgradeAttachmentOptions = {
 export function upgradeAttachment(
   opts: UpgradeAttachmentOptions,
 ): Promise<{ upgraded: boolean } | null> {
-  return applyManualPackageMutation(opts, (tx, preparedMembers) =>
-    workerUpgradeAttachment(
-      { ...opts, db: tx, preparedMembers },
-      (tx, attachmentId, install) =>
-        recordManualPackage(tx, opts.projectId, attachmentId, install),
-    ),
+  return applyManualPackageMutation(
+    opts,
+    (tx, preparedMembers, linkOperationId) =>
+      workerUpgradeAttachment(
+        { ...opts, db: tx, preparedMembers, linkOperationId },
+        (tx, attachmentId, install) =>
+          recordManualPackage(tx, opts.projectId, attachmentId, install),
+      ),
   );
 }
 
+/** Apply the launch's shared pin only while its source attachment is current.
+ * The transaction captures the original alias and the exact generation it wrote. */
+export async function changeLaunchPackage(
+  opts: UpgradeAttachmentOptions & {
+    onCommitted?: (receipt: PackageAdoption) => void;
+  },
+  expected: LaunchAttachmentFence,
+  restorePin?: PackageCoordinates,
+): Promise<PackageAdoption> {
+  const receipt = await applyManualPackageMutation(
+    { ...opts, launchFence: expected },
+    async (tx, preparedMembers, linkOperationId) => {
+      const declarations = schemaModule.projectDependencyDeclarations;
+      const [prior] = await tx
+        .select()
+        .from(declarations)
+        .where(eq(declarations.effectiveAttachmentId, opts.attachmentId));
+
+      if (!prior) staleLaunchAdoption();
+      const changed = await workerUpgradeAttachment(
+        { ...opts, db: tx, preparedMembers, linkOperationId },
+        async (connection, id, install) => {
+          await recordManualPackage(
+            connection,
+            opts.projectId,
+            id,
+            install,
+            restorePin,
+          );
+        },
+        restorePin ? deferRestoredFlowLink : undefined,
+      );
+
+      if (!changed) staleLaunchAdoption();
+      const [applied] = await tx
+        .select({ id: declarations.id, generation: declarations.generation })
+        .from(declarations)
+        .where(eq(declarations.id, prior.id));
+
+      if (!applied) staleLaunchAdoption();
+
+      return {
+        attachmentId: opts.attachmentId,
+        priorInstallId: expected.installId,
+        priorPin: {
+          source: prior.desired.source,
+          version: prior.desired.version,
+          ...(prior.desired.path === undefined
+            ? {}
+            : { path: prior.desired.path }),
+        },
+        applied: { installId: opts.packageInstallId, declaration: applied },
+      };
+    },
+    opts.onCommitted,
+  );
+
+  if (!receipt) staleLaunchAdoption();
+
+  return receipt;
+}
+
+// Undo restores the fenced DB pin even if the checkout link is occupied. The
+// same durable outbox validates ownership before it touches that path.
+async function deferRestoredFlowLink(): Promise<void> {}
+
 export async function workerUpgradeAttachment(
-  opts: UpgradeAttachmentOptions,
+  opts: UpgradeAttachmentOptions & { linkOperationId: string },
   recordActual: RecordAttachment,
+  projectLink?: typeof validateProjectFlowLink,
 ): Promise<{ upgraded: boolean } | null> {
   const db = opts.db ?? getDb();
   const att = await loadAttachment(db, opts.projectId, opts.attachmentId);
@@ -1677,6 +1996,7 @@ export async function workerUpgradeAttachment(
       tx,
       opts.projectId,
       manifestOf(next).spec.capabilities.map((member) => member.id),
+      next.resolvedRevision,
       att.packageInstallId,
     );
     await recordActual(tx, att.id, next);
@@ -1698,21 +2018,25 @@ export async function workerUpgradeAttachment(
         ),
       );
 
-    const { memberFlows } = await wireMembers(tx, {
-      projectId: opts.projectId,
-      projectSlug: opts.projectSlug,
-      workspaceRoot: opts.workspaceRoot ?? repoPath,
-      roleRefs: opts.roleRefs,
-      install: next,
-      readinessByRef,
-      preparedMembers: opts.preparedMembers,
-      signal: opts.signal,
-    });
+    const { memberFlows } = await wireMembers(
+      tx,
+      {
+        projectId: opts.projectId,
+        projectSlug: opts.projectSlug,
+        workspaceRoot: opts.workspaceRoot ?? repoPath,
+        roleRefs: opts.roleRefs,
+        install: next,
+        readinessByRef,
+        preparedMembers: opts.preparedMembers,
+        signal: opts.signal,
+      },
+      projectLink,
+    );
     const flowRowIds = memberFlows.map((m) => m.flowRowId);
 
     // Removed members lose enablement, never their pinned run history.
     const removedFlows = await tx
-      .select({ id: flows.id })
+      .select({ id: flows.id, flowRefId: flows.flowRefId })
       .from(flows)
       .where(
         and(
@@ -1726,6 +2050,16 @@ export async function workerUpgradeAttachment(
       (flow: { id: string }) => flow.id,
     );
 
+    await queueProjectFlowLinks(
+      tx,
+      opts.linkOperationId,
+      opts.projectId,
+      opts.workspaceRoot ?? repoPath,
+      [
+        ...manifestOf(next).spec.flows.map((f) => f.id),
+        ...removedFlows.map((f: { flowRefId: string }) => f.flowRefId),
+      ],
+    );
     await deleteMemberEnablements(tx, removedFlowIds);
 
     await tx
@@ -1784,7 +2118,26 @@ export async function trustPackageRevision(opts: {
   const manifest = manifestOf(install);
   const flowIds = manifest.spec.flows.map((f) => f.id);
 
+  const historicalInventory =
+    !manifest.inventory?.skillsByCapability &&
+    manifest.spec.capabilities.length &&
+    (await verifyCachedPackage(install))
+      ? await collectInventory(install.installedPath, manifest.spec)
+      : null;
   const queued = await db.transaction(async (tx: any) => {
+    const current = await tx.execute(sql`SELECT a.project_id AS id
+      FROM project_package_attachments a
+      JOIN project_dependency_declarations d ON d.effective_attachment_id=a.id AND d.project_id=a.project_id
+        AND d.effective_generation=d.generation
+      JOIN projects p ON p.id=a.project_id AND p.archived_at IS NULL
+      WHERE a.package_install_id=${install.id} ORDER BY a.project_id FOR UPDATE OF p`);
+    const projectIds = current.rows.map(
+      (row: { id: string }) => row.id,
+    ) as string[];
+
+    if (opts.actorUserId) await requireDependencyAdmin(tx, opts.actorUserId);
+    if (historicalInventory)
+      await storeVerifiedInventory(tx, install.id, historicalInventory);
     await tx
       .update(packageInstalls)
       .set({ trustStatus: "trusted", updatedAt: new Date() })
@@ -1813,14 +2166,23 @@ export async function trustPackageRevision(opts: {
       .where(eq(capabilityImports.packageInstallId, install.id));
     await refreshPackageCapabilityTrust(tx, install.id);
 
-    return enqueueTrustedSetup(tx, opts.actorUserId, {
+    for (const projectId of projectIds) {
+      await enableReadyTrustedPackageFlows(tx, install.id, projectId);
+      await reconcileDependencyCatalog(tx, projectId);
+    }
+    const attempts = await enqueueTrustedSetup(tx, opts.actorUserId, {
       kind: "package",
       id: install.id,
     });
+
+    return { attempts, projectIds };
   });
 
-  await finishTrustedSetup(db, queued, opts.signal);
-  await settleTrustedPackageSetup(db, install, opts.signal);
+  await finishTrustedSetup(db, queued.attempts, opts.signal);
+  if (!opts.actorUserId) {
+    for (const projectId of queued.projectIds)
+      await settleTrustedPackageSetup(db, install, opts.signal, projectId);
+  }
 
   return { trusted: true };
 }
@@ -1828,8 +2190,8 @@ export async function trustPackageRevision(opts: {
 export async function settleTrustedPackageSetup(
   db: Db,
   install: typeof packageInstalls.$inferSelect,
-  signal?: AbortSignal,
-  projectId?: string,
+  signal: AbortSignal | undefined,
+  projectId: string,
 ): Promise<void> {
   const flowIds = manifestOf(install).spec.flows.map((f) => f.id);
   // Post-trust setup (AFTER the tx): member bundles first, then member flow
@@ -1845,7 +2207,7 @@ export async function settleTrustedPackageSetup(
     .where(
       and(
         eq(capabilityImports.packageInstallId, install.id),
-        projectId ? eq(capabilityImports.projectId, projectId) : undefined,
+        eq(capabilityImports.projectId, projectId),
       ),
     );
 
@@ -1887,14 +2249,10 @@ export async function settleTrustedPackageSetup(
         and(
           eq(flowRevisions.resolvedRevision, install.resolvedRevision),
           inArray(flowRevisions.flowRefId, flowIds),
-          projectId
-            ? sql`EXISTS (SELECT 1 FROM flows mf WHERE mf.enabled_revision_id=${flowRevisions.id}
-            AND mf.project_id=${projectId} AND mf.package_install_id=${install.id})`
-            : undefined,
+          sql`EXISTS (SELECT 1 FROM flows mf WHERE mf.enabled_revision_id=${flowRevisions.id}
+            AND mf.project_id=${projectId} AND mf.package_install_id=${install.id})`,
         ),
       );
-
-    const readyRevisionIds: string[] = [];
 
     for (const rev of revRows) {
       const rerun =
@@ -1917,46 +2275,61 @@ export async function settleTrustedPackageSetup(
           },
         );
       }
-      if (
-        !requiresExplicitNativeFindingsEnablement(rev.manifest) &&
-        isReadyFlowRevision({
-          packageStatus: rerun ? "Installed" : rev.packageStatus,
-          setupStatus,
-        })
-      ) {
-        readyRevisionIds.push(rev.id);
-      }
     }
-
-    if (readyRevisionIds.length > 0) {
-      await db
-        .update(flows)
-        .set({ enablementState: "Enabled", updatedAt: new Date() })
-        .where(
-          and(
-            eq(flows.packageInstallId, install.id),
-            projectId ? eq(flows.projectId, projectId) : undefined,
-            eq(flows.trustStatus, "trusted"),
-            eq(flows.enablementState, "Installed"),
-            inArray(flows.enabledRevisionId, readyRevisionIds),
-            sql`NOT EXISTS (SELECT 1 FROM flow_runner_remaps remap
-              WHERE remap.project_id = ${flows.projectId} AND remap.flow_revision_id = ${flows.enabledRevisionId}
-              AND remap.status = 'Pending')`,
-          ),
-        );
-    }
-
-    log.info(
-      {
-        packageInstallId: install.id,
-        readyFlowRevisionCount: readyRevisionIds.length,
-      },
-      "[FIX:package-trust-enable] ready member Flows enabled",
-    );
+    await enableReadyTrustedPackageFlows(db, install.id, projectId);
   }
 
   log.info(
     { packageInstallId: install.id, flows: flowIds.length },
     "package revision trusted (fan-out complete)",
   );
+}
+
+async function enableReadyTrustedPackageFlows(
+  db: Db,
+  installId: string,
+  projectId: string,
+): Promise<void> {
+  const candidates = await db
+    .select({ revision: schemaModule.flowRevisions })
+    .from(schemaModule.flows)
+    .innerJoin(
+      schemaModule.flowRevisions,
+      eq(schemaModule.flowRevisions.id, schemaModule.flows.enabledRevisionId),
+    )
+    .where(
+      and(
+        eq(schemaModule.flows.projectId, projectId),
+        eq(schemaModule.flows.packageInstallId, installId),
+        eq(schemaModule.flows.enablementState, "Installed"),
+      ),
+    );
+  const ready = candidates
+    .filter(
+      ({ revision }) =>
+        isReadyFlowRevision(revision) &&
+        !requiresExplicitNativeFindingsEnablement(
+          revision.manifest as InstallResult["manifest"],
+        ),
+    )
+    .map(({ revision }) => revision.id);
+
+  if (!ready.length) return;
+  await db
+    .update(flows)
+    .set({ enablementState: "Enabled", updatedAt: new Date() })
+    .where(
+      and(
+        eq(flows.projectId, projectId),
+        eq(flows.packageInstallId, installId),
+        eq(flows.trustStatus, "trusted"),
+        eq(flows.enablementState, "Installed"),
+        inArray(flows.enabledRevisionId, ready),
+        sql`EXISTS (SELECT 1 FROM project_package_attachments a JOIN project_dependency_declarations d
+      ON d.effective_attachment_id=a.id AND d.project_id=a.project_id AND d.effective_generation=d.generation
+      WHERE a.project_id=${projectId} AND a.package_install_id=${installId})`,
+        sql`NOT EXISTS (SELECT 1 FROM flow_runner_remaps remap WHERE remap.project_id=${flows.projectId}
+      AND remap.flow_revision_id=${flows.enabledRevisionId} AND remap.status='Pending')`,
+      ),
+    );
 }

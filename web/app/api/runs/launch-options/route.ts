@@ -3,14 +3,22 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
+import type { CapabilityRefIdSets } from "@/lib/config";
 
 import { and, eq, inArray } from "drizzle-orm";
-import { readFlowRunnerBinding } from "@/lib/acp-runners/declared-flow-runner";
-
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import {
+  declaredFlowRunnerUnavailable,
+  readFlowRunnerBinding,
+} from "@/lib/acp-runners/declared-flow-runner";
+import {
+  missingFlowCapability,
+  readProjectCapabilityRefs,
+  emptyCapabilityRefs,
+} from "@/lib/flows/project-capability-refs";
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import {
   projectRolesForActions,
@@ -115,7 +123,10 @@ type FlowLaunchIssue =
   | "setup_failed"
   | "setup_pending"
   | "unsupported_schema"
-  | "incompatible";
+  | "incompatible"
+  | "runner_unresolved"
+  | "flow_capability_unavailable"
+  | "untrusted";
 
 type SessionPreviewResolution = {
   readonly sessionName: string;
@@ -221,6 +232,7 @@ function runnerProviderKind(provider: unknown): string {
 
 function revisionLaunchIssue(
   revision: Record<string, any>,
+  refs: CapabilityRefIdSets,
 ): FlowLaunchIssue | null {
   if (revision.packageStatus !== "Installed") {
     return "not_installed";
@@ -244,15 +256,20 @@ function revisionLaunchIssue(
     return "incompatible";
   }
 
-  if (!classifyStoredFlowManifest(revision.manifest).compatible) {
+  const stored = classifyStoredFlowManifest(revision.manifest);
+
+  if (!stored.compatible) {
     return "incompatible";
   }
 
-  return null;
+  return missingFlowCapability(stored.manifest, refs)
+    ? "flow_capability_unavailable"
+    : null;
 }
 
 function projectFlowLaunchIssue(args: {
   projectFlow: Record<string, any>;
+  refs: CapabilityRefIdSets;
   revisionById: Map<string, Record<string, any>>;
 }): FlowLaunchIssue | null {
   const enabledRevisionId = args.projectFlow.enabledRevisionId as
@@ -269,13 +286,17 @@ function projectFlowLaunchIssue(args: {
     return "not_enabled";
   }
 
+  if (args.projectFlow.trustStatus === "untrusted") return "untrusted";
   const projectRevision = args.revisionById.get(enabledRevisionId);
 
   if (!projectRevision) {
     return "no_revision";
   }
 
-  return revisionLaunchIssue(projectRevision);
+  return (
+    revisionLaunchIssue(projectRevision, args.refs) ??
+    (args.projectFlow.runnerUnavailable ? "runner_unresolved" : null)
+  );
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -416,6 +437,9 @@ async function readLaunchOptions(
   const flow =
     flowRows.find((row: { id: string }) => row.id === selectedFlowId) ?? null;
 
+  const refs =
+    (await readProjectCapabilityRefs(client, [project.id])).get(project.id) ??
+    emptyCapabilityRefs;
   let revision: Record<string, any> | null = null;
   let flowIssue: FlowLaunchIssue | null = selectedFlowId
     ? flow
@@ -428,6 +452,8 @@ async function readLaunchOptions(
       flowIssue = "no_revision";
     } else if (!LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flow.enablementState)) {
       flowIssue = "not_enabled";
+    } else if (flow.trustStatus === "untrusted") {
+      flowIssue = "untrusted";
     } else {
       revision = (
         await selectedTaskLaunchRevision(db, project.id, flow, selection)
@@ -436,7 +462,7 @@ async function readLaunchOptions(
       if (!revision) {
         flowIssue = "no_revision";
       } else {
-        flowIssue = revisionLaunchIssue(revision);
+        flowIssue = revisionLaunchIssue(revision, refs);
       }
     }
   }
@@ -452,7 +478,18 @@ async function readLaunchOptions(
       revision && flowIssue === null
         ? loadFlowRunnerBindings(db, project.id, revision.id)
         : Promise.resolve([]),
-      db.select().from(flows).where(eq(flows.projectId, project.id)),
+      db
+        .select({
+          id: flows.id,
+          flowRefId: flows.flowRefId,
+          enabledRevisionId: flows.enabledRevisionId,
+          enablementState: flows.enablementState,
+          version: flows.version,
+          trustStatus: flows.trustStatus,
+          runnerUnavailable: declaredFlowRunnerUnavailable(flows.id),
+        })
+        .from(flows)
+        .where(eq(flows.projectId, project.id)),
     ]);
   const platformRuntime = runtimeRows[0];
   const manifestCompatibility = revision
@@ -804,6 +841,7 @@ async function readLaunchOptions(
     flows: flowRowsForProject.map((projectFlow: Record<string, any>) => {
       const disabledReason = projectFlowLaunchIssue({
         projectFlow,
+        refs,
         revisionById: projectRevisionById,
       });
 

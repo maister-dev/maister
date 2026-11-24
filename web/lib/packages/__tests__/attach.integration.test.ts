@@ -172,6 +172,10 @@ describe("package attach lifecycle (integration)", () => {
 
     expect(first.reused).toBe(false);
     installV1 = first.id;
+    await db
+      .update(schemaModule.packageInstalls)
+      .set({ manifest: sql`manifest #- '{inventory,skillsByCapability}'` })
+      .where(eq(schemaModule.packageInstalls.id, installV1));
 
     const again = await installPackageRevision({
       source: pkgV1,
@@ -190,6 +194,7 @@ describe("package attach lifecycle (integration)", () => {
     expect(row.packageStatus).toBe("Installed");
     expect(row.manifest.inventory).toEqual({
       skills: ["skill-one"],
+      skillsByCapability: { "att-bundle": ["skill-one"] },
       agents: ["agent-one"],
       platformAgents: ["triager"],
     });
@@ -1382,6 +1387,83 @@ nodes:
       "skill-one",
     ]);
   });
+});
+
+it("allows a package to take a cleared legacy import name without reviving the old revision on detach", async () => {
+  const id = randomUUID(),
+    slug = "cleared-" + id.slice(0, 8);
+  const repo = await mkdtemp(join(tmpdir(), "cleared-import-"));
+  dirsToClean.push(repo);
+  await db.insert(schema.projects).values({
+    id,
+    taskKey: slug.toUpperCase(),
+    slug,
+    name: slug,
+    repoPath: repo,
+  });
+  const old = randomUUID();
+  await db.insert(schema.capabilityImports).values({
+    id: old,
+    projectId: id,
+    capabilityRefId: "att-bundle",
+    source: "https://example.invalid/old",
+    versionTag: "legacy",
+    resolvedRevision: "legacy",
+    manifestDigest: "digest",
+    manifest: {},
+    installedPath: "/old",
+    packageStatus: "Installed",
+    trustStatus: "trusted",
+    setupStatus: "done",
+  });
+  await db.insert(schema.capabilityRecords).values({
+    id: randomUUID(),
+    projectId: id,
+    capabilityRefId: "att-bundle",
+    source: "flow-package",
+    kind: "agent_definition",
+    label: "old",
+    agents: [],
+    version: "legacy",
+    revision: "legacy",
+    material: {},
+    disabledAt: new Date(),
+    selectable: false,
+  });
+  const install = await installPackageRevision({
+    db,
+    source: pkgV1,
+    trustStatus: "trusted",
+    version: "attpkg/cleared",
+  });
+  const result = await attachPackage({
+    db,
+    projectId: id,
+    projectSlug: slug,
+    workspaceRoot: repo,
+    packageInstallId: install.id,
+  });
+  expect(result).toBeTruthy();
+  const eligible = () =>
+    testDatabase.pool.query(
+      "SELECT id FROM project_ready_capability_imports($1) WHERE catalog_enabled",
+      [id],
+    );
+  expect((await eligible()).rows).toHaveLength(1);
+  await detachPackage({
+    db,
+    projectId: id,
+    attachmentId: result!.attachmentId,
+  });
+  expect((await eligible()).rows).toHaveLength(0);
+  expect(
+    (
+      await testDatabase.pool.query(
+        "SELECT id FROM capability_imports WHERE id=$1",
+        [old],
+      )
+    ).rows,
+  ).toEqual([{ id: old }]);
 });
 
 it("operator CLI attaches explicit coordinates beside a repaired platform pin despite stale repository YAML", async () => {

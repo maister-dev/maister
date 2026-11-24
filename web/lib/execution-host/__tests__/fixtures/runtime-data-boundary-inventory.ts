@@ -526,8 +526,23 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
     ...classified(
       "lib/packages/attach.ts",
       "repository-worktree",
-      "Upgrade reads pinned package definitions before the attachment transaction",
+      "Attachment and upgrade verify the cached package tree and its member sources before consuming pinned definitions.",
       [
+        [
+          "verifyPackageBytes",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "verifyCachedPackage",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "verifyPackageMemberSource",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
         [
           "workerUpgradeAttachment",
           "lib/agents/package-contract.ts#readPackageAgentSources",
@@ -711,6 +726,16 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
       [
+        [
+          "reviewPackageSources",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "reviewPackageSources",
+          "lib/project-dependencies/content-digest.ts#confinedPackageDirectory",
+          "wrapper",
+        ],
         ["reviewPackageSources", "node:fs/promises.stat", "stat"],
         [
           "reviewPackageSources",
@@ -862,8 +887,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
     ...classified(
       "lib/project-dependencies/content-digest.ts",
       "repository-worktree",
-      "Read files and symlink targets in the caller-selected source directory to witness its contents.",
+      "Resolve selected package directories and inspect file bytes, executable modes and symlink targets in the reviewed source tree.",
       [
+        ["confinedPackageDirectory", "node:fs/promises.realpath", "stat"],
+        ["materialLayoutDigest", "node:fs/promises.realpath", "stat"],
+        ["walk", "node:fs/promises.realpath", "stat"],
+        ["walk", "node:fs/promises.lstat", "stat"],
         ["matches", "node:fs/promises.lstat", "stat"],
         ["matches", "node:fs/promises.readdir", "list"],
         ["matches", "node:fs/promises.readlink", "read"],
@@ -878,6 +907,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "manager-flow-state",
       "Flow installation hashes the selected local source. Existing callers retain the path-generic content digest export.",
       [
+        [
+          "installRevision",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
         [
           "installRevision",
           "lib/project-dependencies/material.ts#snapshotLocalMaterial",
@@ -930,16 +964,27 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "lib/project-dependencies/flow-links.ts#validateProjectFlowLink",
           "unresolved",
         ],
-        [
-          "applyManualPackageMutation",
-          "lib/project-dependencies/flow-links.ts#reconcileProjectFlowLinks",
-          "wrapper",
-        ],
-        [
-          "detachPackage",
-          "lib/project-dependencies/flow-links.ts#reconcileProjectFlowLinks",
-          "wrapper",
-        ],
+      ],
+    ),
+    ...classified(
+      "app/api/projects/[slug]/packages/route.ts",
+      "repository-worktree",
+      "Attach the selected installed revision in this project's registered checkout.",
+      [["POST", "lib/packages/attach.ts#attachPackage", "wrapper"]],
+    ),
+    ...classified(
+      "app/api/projects/[slug]/packages/[attachmentId]/upgrade/route.ts",
+      "repository-worktree",
+      "Upgrade the selected attachment in the registered project checkout.",
+      [["POST", "lib/packages/attach.ts#upgradeAttachment", "wrapper"]],
+    ),
+    ...classified(
+      "app/api/studio/local-packages/[id]/cut-version/route.ts",
+      "repository-worktree",
+      "Adopt the verified Studio cut in the selected project after the operator confirms the change.",
+      [
+        ["POST", "lib/packages/attach.ts#attachPackage", "wrapper"],
+        ["POST", "lib/packages/attach.ts#upgradeAttachment", "wrapper"],
       ],
     ),
     ...classified(
@@ -948,14 +993,14 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Worker supplies the managed Flow-link validator to installation, then reconciles committed selections on this project.",
       [
         [
-          "executeDependency",
-          "lib/project-dependencies/flow-links.ts#validateProjectFlowLink",
-          "unresolved",
+          "stagePackageMembers",
+          "lib/packages/attach.ts#preparePackageMembers",
+          "wrapper",
         ],
         [
           "executeDependency",
-          "lib/project-dependencies/flow-links.ts#reconcileProjectFlowLinks",
-          "wrapper",
+          "lib/project-dependencies/flow-links.ts#validateProjectFlowLink",
+          "unresolved",
         ],
       ],
     ),
@@ -969,30 +1014,20 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "lib/project-dependencies/flow-links.ts#validateProjectFlowLink",
           "unresolved",
         ],
-        [
-          "installOperatorFlow",
-          "lib/project-dependencies/flow-links.ts#reconcileProjectFlowLinks",
-          "wrapper",
-        ],
-        [
-          "installOperatorPackage",
-          "lib/project-dependencies/flow-links.ts#reconcileProjectFlowLinks",
-          "wrapper",
-        ],
       ],
     ),
     ...classified(
       "lib/project-dependencies/flow-links.ts",
       "repository-worktree",
-      "Validate manager-owned Flow symlinks in the registered checkout and reconcile them with committed enablement.",
+      "Publish the Flow symlink named by a committed project operation and remove a retired link only after checking its recorded repository scope and managed target.",
       [
         ["managedDirectory", "node:fs/promises.lstat", "stat"],
         ["validateProjectFlowLink", "node:fs/promises.lstat", "stat"],
         ["validateProjectFlowLink", "node:fs/promises.readlink", "read"],
-        ["reconcileProjectFlowLinks", "node:fs/promises.readdir", "list"],
-        ["reconcileProjectFlowLinks", "node:fs/promises.readlink", "read"],
-        ["reconcileProjectFlowLinks", "node:fs/promises.unlink", "remove"],
-        ["reconcileProjectFlowLinks", "lib/flows.ts#ensureSymlink", "wrapper"],
+        ["applyLink", "node:fs/promises.lstat", "stat"],
+        ["applyLink", "node:fs/promises.readlink", "read"],
+        ["applyLink", "node:fs/promises.unlink", "remove"],
+        ["applyLink", "lib/flows.ts#ensureSymlink", "wrapper"],
       ],
     ),
     ...classified(
@@ -1000,6 +1035,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Publish immutable package, Flow and capability material from a verified source through a sibling staging directory under the installation cache.",
       [
+        [
+          "publishMaterial",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
         ["snapshotLocalMaterial", "node:fs/promises.mkdtemp", "write"],
         ["snapshotLocalMaterial", "node:fs/promises.realpath", "stat"],
         ["snapshotLocalMaterial", "node:fs/promises.cp", "write"],
@@ -1389,6 +1429,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
+        [
+          "prepareCapabilityRevision",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
         [
           "prepareCapabilityRevision",
           "lib/project-dependencies/material.ts#snapshotLocalMaterial",
@@ -2273,6 +2318,16 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["cutLocalPackageVersion", "node:fs/promises.rm", "remove"],
         [
+          "applyPackageVersionChoices",
+          "lib/packages/attach.ts#changeLaunchPackage",
+          "wrapper",
+        ],
+        [
+          "revertPackageVersionChoices",
+          "lib/packages/attach.ts#changeLaunchPackage",
+          "wrapper",
+        ],
+        [
           "cutLocalPackageVersion",
           "lib/local-packages/git.ts#gitHeadSha",
           "wrapper",
@@ -2344,6 +2399,16 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
+        [
+          "resolvePackageSource",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "resolvePackageSource",
+          "lib/project-dependencies/content-digest.ts#confinedPackageDirectory",
+          "wrapper",
+        ],
         [
           "snapshotPackageDirectory",
           "lib/project-dependencies/material.ts#snapshotLocalMaterial",
@@ -3595,12 +3660,15 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     "repository-worktree",
     [
       ["localDirectoryContentDigest", true],
+      ["confinedPackageDirectory", true],
+      ["materialLayoutDigest", true],
       ["containsSourceMaterial", true],
     ],
   ),
   ...wrappers("lib/project-dependencies/flow-links.ts", "repository-worktree", [
     ["validateProjectFlowLink", true],
-    ["reconcileProjectFlowLinks", true],
+    ["finishFlowLinkPublication", false],
+    ["serviceFlowLinkPublication", false],
   ]),
   ...wrappers("lib/project-dependencies/material.ts", "repository-worktree", [
     ["publishMaterial", true],
@@ -3619,7 +3687,13 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["cleanRegistrationDirectory", true],
   ]),
   ...wrappers("lib/packages/attach.ts", "repository-worktree", [
+    ["attachPackage", true],
+    ["changeLaunchPackage", true],
     ["installPackageRevision", false],
+    ["prepareManualPackageMutation", false],
+    ["preparePackageMembers", true],
+    ["trustPackageRevision", false],
+    ["upgradeAttachment", true],
   ]),
   ...wrappers("lib/packages/catalog.ts", "repository-worktree", [
     ["createPackageSource", false],

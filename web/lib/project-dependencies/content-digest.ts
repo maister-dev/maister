@@ -1,7 +1,101 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { lstat, readdir, readlink, readFile } from "node:fs/promises";
+import { lstat, readdir, readlink, readFile, realpath } from "node:fs/promises";
 import path, { join, resolve as resolvePath } from "node:path";
+
+import { MaisterError } from "@/lib/errors";
+
+function unsafeLink(): never {
+  throw new MaisterError(
+    "CONFIG",
+    "A package link must resolve inside the copied source tree.",
+    {
+      details: { reason: "material_link_outside_source" },
+    },
+  );
+}
+
+function insideSource(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+
+  return (
+    !path.isAbsolute(relative) &&
+    !relative
+      .split(path.sep)
+      .some((part) => part === ".." || part.toLowerCase() === ".git")
+  );
+}
+
+/** Resolve an explicitly selected package subdirectory against its canonical source root. */
+export async function confinedPackageDirectory(
+  root: string,
+  subpath: string,
+): Promise<string> {
+  if (
+    subpath
+      .split("/")
+      .some((segment) => segment.toLowerCase() === ".git" || segment === "..")
+  )
+    unsafeLink();
+  const canonical = await realpath(root);
+  const selected = await realpath(join(canonical, subpath));
+
+  if (!insideSource(canonical, selected)) unsafeLink();
+
+  return selected;
+}
+
+/** Bind executable bits and tree shape alongside legacy byte-only revisions.
+ * Validate links in the same tree that will be copied or accepted for review. */
+export async function materialLayoutDigest(directory: string): Promise<string> {
+  const root = await realpath(directory);
+  const entries: string[] = [];
+
+  async function walk(dir: string): Promise<void> {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (entry.name === ".git") continue;
+      const location = join(dir, entry.name);
+      const name = path.relative(root, location).split(path.sep).join("/");
+
+      if (entry.isSymbolicLink()) {
+        const link = await readlink(location);
+
+        if (
+          path.isAbsolute(link) ||
+          !insideSource(root, resolvePath(dir, link))
+        )
+          unsafeLink();
+        let physical: string;
+
+        try {
+          physical = await realpath(location);
+        } catch (error) {
+          if (
+            ["ENOENT", "ENOTDIR", "ELOOP"].includes(
+              (error as NodeJS.ErrnoException).code ?? "",
+            )
+          )
+            unsafeLink();
+          throw error;
+        }
+        if (!insideSource(root, physical)) unsafeLink();
+        entries.push(JSON.stringify(["link", name, link]));
+      } else if (entry.isDirectory()) {
+        entries.push(JSON.stringify(["dir", name]));
+        await walk(location);
+      } else if (entry.isFile()) {
+        entries.push(
+          JSON.stringify(["file", name, (await lstat(location)).mode & 0o111]),
+        );
+      } else unsafeLink();
+    }
+  }
+  await walk(root);
+
+  return createHash("sha256")
+    .update(JSON.stringify(entries.sort()))
+    .digest("hex");
+}
 
 export async function localDirectoryContentDigest(
   sourceDir: string,

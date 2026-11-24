@@ -13,9 +13,10 @@ import {
   assertCapabilityMemberOwnership,
   reconcileDependencyCatalog,
 } from "./catalog";
-import { requireCurrentDependency } from "./claims";
+import { liveDependencyClaim, requireCurrentDependency } from "./claims";
 import {
-  reconcileProjectFlowLinks,
+  finishFlowLinkPublication,
+  queueProjectFlowLinks,
   validateProjectFlowLink,
 } from "./flow-links";
 import {
@@ -102,6 +103,23 @@ async function recordEffective(
       ),
     );
 }
+async function recordCommittedApplication(tx: Db, claim: DependencyClaim) {
+  const [marked] = await tx
+    .update(attempts)
+    .set({
+      stage: "projection",
+      checkpoint: sql`coalesce(${attempts.checkpoint},'{}'::jsonb)||'{"applicationCommitted":true}'::jsonb`,
+    })
+    .where(liveDependencyClaim(claim))
+    .returning({ id: attempts.id });
+  if (!marked)
+    throw new MaisterError(
+      "CONFLICT",
+      "The installation claim expired before committing its effective state.",
+      { details: { reason: "superseded" } },
+    );
+}
+
 function memberKeys(install: typeof packageInstalls.$inferSelect): Set<string> {
   const { spec, inventory } = install.manifest as PackageInstallManifest;
 
@@ -221,6 +239,7 @@ async function stagePackageMembers(
       tx,
       project.id,
       [...members.capabilities.keys()],
+      candidate.resolvedRevision,
       attachment?.packageInstallId,
     );
   };
@@ -230,6 +249,14 @@ async function stagePackageMembers(
   }
 
   return members;
+}
+function assertLayout(previous: string | undefined, current: string): void {
+  if (previous && previous !== current)
+    throw new MaisterError(
+      "CONFLICT",
+      "Dependency file layout changed after resolution.",
+      { details: { reason: "revision_mismatch" } },
+    );
 }
 async function executePackage(job: Execution): Promise<void> {
   const { db, claim, project, signal, progress } = job;
@@ -250,9 +277,13 @@ async function executePackage(job: Execution): Promise<void> {
       trustStatus: resolveTrust(claim.desired.source),
       db,
       signal,
-      onResolve: async (revision) => {
+      onResolve: async (revision, layoutDigest) => {
+        assertLayout(claim.checkpoint.layoutDigest, layoutDigest);
         assertRevision(claim.resolvedRevision, revision);
-        await progress("install", { resolvedRevision: revision });
+        await progress("install", {
+          resolvedRevision: revision,
+          checkpoint: { ...claim.checkpoint, layoutDigest },
+        });
       },
     });
 
@@ -271,7 +302,13 @@ async function executePackage(job: Execution): Promise<void> {
   assertRevision(claim.resolvedRevision, candidate.resolvedRevision);
   await progress("attach", {
     resolvedRevision: candidate.resolvedRevision,
-    checkpoint: { ...claim.checkpoint, installId: candidate.id },
+    checkpoint: {
+      ...claim.checkpoint,
+      installId: candidate.id,
+      layoutDigest:
+        (candidate.manifest as PackageInstallManifest).layoutDigest ??
+        claim.checkpoint.layoutDigest,
+    },
   });
   const roleRefs = claim.desired.roleRefs?.length
     ? claim.desired.roleRefs
@@ -291,6 +328,7 @@ async function executePackage(job: Execution): Promise<void> {
         workspaceRoot: project.repoPath,
         roleRefs,
         preparedMembers: members,
+        linkOperationId: claim.id,
         packageInstallId: candidate.id,
         signal,
       };
@@ -343,6 +381,7 @@ async function executePackage(job: Execution): Promise<void> {
       }
       await progress("projection");
       await reconcileDependencyCatalog(tx, project.id);
+      await recordCommittedApplication(tx, claim);
     }),
   );
 }
@@ -350,10 +389,60 @@ async function executePackage(job: Execution): Promise<void> {
 export async function executeDependency(job: Execution): Promise<void> {
   const { db, claim, project, declaration, signal, progress } = job;
 
+  if (
+    declaration.effectiveGeneration === claim.generation &&
+    claim.resolvedRevision !== null &&
+    declaration.effectiveRevision === claim.resolvedRevision
+  ) {
+    // Pre-outbox attempts could lose their acknowledgement after the native transaction.
+    if (!claim.checkpoint.applicationCommitted)
+      await db.transaction(async (tx) => {
+        await requireCurrentDependency(tx, claim);
+        let refs: string[] = [];
+        if (declaration.kind === "flow") refs = [declaration.logicalId];
+        if (
+          declaration.kind === "package" &&
+          declaration.effectiveAttachmentId
+        ) {
+          const rows = await tx
+            .select({ ref: flows.flowRefId })
+            .from(projectPackageAttachments)
+            .innerJoin(
+              flows,
+              and(
+                eq(
+                  flows.packageInstallId,
+                  projectPackageAttachments.packageInstallId,
+                ),
+                eq(flows.projectId, project.id),
+              ),
+            )
+            .where(
+              and(
+                eq(
+                  projectPackageAttachments.id,
+                  declaration.effectiveAttachmentId,
+                ),
+                eq(projectPackageAttachments.projectId, project.id),
+              ),
+            );
+          refs = rows.map((row) => row.ref);
+        }
+        await queueProjectFlowLinks(
+          tx,
+          claim.id,
+          project.id,
+          project.repoPath,
+          refs,
+        );
+        await recordCommittedApplication(tx, claim);
+      });
+    return finishFlowLinkPublication(db, claim.id);
+  }
   if (declaration.kind === "package") {
     await executePackage(job);
 
-    return reconcileProjectFlowLinks(db, { projectId: project.id });
+    return finishFlowLinkPublication(db, claim.id);
   }
   const pin = claim.desired;
 
@@ -370,9 +459,13 @@ export async function executeDependency(job: Execution): Promise<void> {
     const revision = await installRevision({
       ...args,
       db,
-      onResolve: async (resolvedRevision) => {
+      onResolve: async (resolvedRevision, layoutDigest) => {
+        assertLayout(claim.checkpoint.layoutDigest, layoutDigest);
         assertRevision(claim.resolvedRevision, resolvedRevision);
-        await progress("install", { resolvedRevision });
+        await progress("install", {
+          resolvedRevision,
+          checkpoint: { ...claim.checkpoint, layoutDigest },
+        });
       },
       authorizePublication: job.authorizePublication,
     });
@@ -403,10 +496,18 @@ export async function executeDependency(job: Execution): Promise<void> {
 
         await prepareDependencyFlow(tx, project.id, installed, pin.runner);
         await recordEffective(tx, job, installed.revision);
+        await queueProjectFlowLinks(
+          tx,
+          claim.id,
+          project.id,
+          project.repoPath,
+          [declaration.logicalId],
+        );
+        await recordCommittedApplication(tx, claim);
       }),
     );
 
-    return reconcileProjectFlowLinks(db, { projectId: project.id });
+    return finishFlowLinkPublication(db, claim.id);
   }
   await progress("install");
   const authorize = async (tx: Db) => {
@@ -429,7 +530,8 @@ export async function executeDependency(job: Execution): Promise<void> {
   const material = await prepareCapabilityRevision({
     authorizePublication: job.authorizePublication,
     ...args,
-    onResolve: async (revision, witness) => {
+    onResolve: async (revision, witness, layoutDigest) => {
+      assertLayout(claim.checkpoint.layoutDigest, layoutDigest);
       assertRevision(claim.resolvedRevision, revision);
       if (
         claim.checkpoint.contentWitness &&
@@ -442,7 +544,11 @@ export async function executeDependency(job: Execution): Promise<void> {
         );
       await progress("install", {
         resolvedRevision: revision,
-        checkpoint: { ...claim.checkpoint, contentWitness: witness },
+        checkpoint: {
+          ...claim.checkpoint,
+          contentWitness: witness,
+          layoutDigest,
+        },
       });
     },
   });
@@ -510,6 +616,7 @@ export async function executeDependency(job: Execution): Promise<void> {
       await progress("projection");
       await recordEffective(tx, job, installed.resolvedRevision);
       await reconcileDependencyCatalog(tx, project.id);
+      await recordCommittedApplication(tx, claim);
     }),
   );
 }

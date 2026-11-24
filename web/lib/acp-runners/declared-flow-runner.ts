@@ -13,13 +13,45 @@ import { MaisterError } from "@/lib/errors";
 const effectiveDefault = sql`coalesce(mapped.runner_id, d.desired->>'runner')`;
 const unavailable = sql`d.id IS NOT NULL AND runner.id IS NULL`;
 
-function runnerBinding(flowId: string | SQLWrapper): SQL {
-  return sql`FROM flows f
+const runnerRelations = sql`FROM flows f
     LEFT JOIN project_dependency_declarations d ON d.project_id = f.project_id AND d.kind = 'flow'
       AND d.logical_id = f.flow_ref_id AND d.desired->>'runner' <> 'inherit'
     LEFT JOIN project_flow_runner_defaults mapped ON mapped.flow_id = f.id AND mapped.project_id = f.project_id
     LEFT JOIN platform_acp_runners runner ON runner.id = ${effectiveDefault} AND runner.enabled AND runner.readiness_status = 'Ready'
-    WHERE f.id = ${flowId}`;
+    `;
+
+function runnerBinding(flowId: string | SQLWrapper): SQL {
+  return sql`${runnerRelations} WHERE f.id=${flowId}`;
+}
+
+const defaultMapping = z.object({
+  id: z.string(),
+  flowId: z.string(),
+  flowRef: z.string(),
+  flowRevisionId: z.string(),
+  slotKey: z.literal("declaration:default"),
+  mappedRunnerId: z.string().nullable(),
+  declaredRunnerId: z.string(),
+  status: z.enum(["Pending", "Mapped"]),
+});
+
+/** The manifest default is project-scoped and survives revisions. Its settings
+ * row is derived from the declaration even when that runner was never installed. */
+export async function declaredRunnerMappings(
+  db: SqlTransaction,
+  projectId: string,
+  revisionId?: string,
+) {
+  const result =
+    await db.execute(sql`SELECT d.id AS id, f.id AS "flowId", f.flow_ref_id AS "flowRef",
+    f.enabled_revision_id AS "flowRevisionId", 'declaration:default' AS "slotKey",
+    mapped.runner_id AS "mappedRunnerId", d.desired->>'runner' AS "declaredRunnerId",
+    CASE WHEN runner.id IS NULL THEN 'Pending' ELSE 'Mapped' END AS status
+    ${runnerRelations} WHERE f.project_id=${projectId} AND d.id IS NOT NULL AND f.enabled_revision_id IS NOT NULL
+    ${revisionId ? sql`AND f.enabled_revision_id=${revisionId}` : sql``}
+    ORDER BY f.flow_ref_id`);
+
+  return defaultMapping.array().parse(result.rows);
 }
 
 export function declaredFlowRunnerUnavailable(

@@ -26,6 +26,9 @@ export type ApiErrorBody = {
   message?: string;
   details?: {
     reason?: string;
+    mutationAccepted?: boolean;
+    memberRef?: string;
+    linkReason?: string | null;
     trustAccepted?: boolean;
     projectSlug?: string;
     declarationId?: string;

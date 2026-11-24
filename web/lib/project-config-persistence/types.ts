@@ -28,6 +28,7 @@ type ExportPackage<Revision extends string | null> = {
   version: string;
   path?: string;
   resolvedRevision: Revision;
+  installedLayoutDigest?: string;
 };
 
 export type ExportProjection<Revision extends string | null = string | null> = {
@@ -58,7 +59,11 @@ export type ConfigRepositorySnapshot = {
   signingRequired?: boolean;
 };
 
-export type LocalPackageWitness = { id: string; digest: string };
+export type LocalPackageWitness = {
+  id: string;
+  digest: string;
+  layoutDigest?: string;
+};
 
 export type ConfigPersistSnapshot = (
   | { version: 1; projection: ExportProjection<string> }

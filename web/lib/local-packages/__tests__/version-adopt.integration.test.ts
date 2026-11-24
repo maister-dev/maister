@@ -1,14 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { closeDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { editDependency } from "@/lib/project-dependencies/commands";
+import * as flowLinks from "@/lib/project-dependencies/flow-links";
+import { projectFlowSymlinkPath } from "@/lib/flow-paths";
 import { isMaisterError } from "@/lib/errors";
 import { forkPackageToLocal } from "@/lib/local-packages/fork";
 import { gitCommitWorkingDir, gitHeadSha } from "@/lib/local-packages/git";
@@ -337,6 +347,30 @@ describe("version-adopt launch (integration)", () => {
     await editCommit(pkg, "flows/flow-a/flow.yaml", FLOW_YAML("flow-a-v2"));
     const cut2 = await cutLocalPackageVersion(pkg, { db });
 
+    // One immutable cut can also have an independently reviewed source/tag alias.
+    const [prior] = await db
+      .select()
+      .from(schemaModule.projectDependencyDeclarations)
+      .where(
+        eq(
+          schemaModule.projectDependencyDeclarations.effectiveAttachmentId,
+          attachmentId,
+        ),
+      );
+    const alias = {
+      ...prior.desired,
+      source: "https://example.invalid/pinned.git",
+      version: "cut-alias",
+      path: "approved",
+    };
+    await db
+      .update(schemaModule.projectDependencyDeclarations)
+      .set({
+        desired: alias,
+        generation: prior.generation + 1,
+        effectiveGeneration: prior.generation + 1,
+      })
+      .where(eq(schemaModule.projectDependencyDeclarations.id, prior.id));
     const { reverts } = await applyPackageVersionChoices({
       projectId: project.id,
       projectSlug: project.slug,
@@ -357,6 +391,150 @@ describe("version-adopt launch (integration)", () => {
       db,
     });
     expect(await attachmentInstall(attachmentId)).toBe(pinInstallId);
+    const [restored] = await db
+      .select()
+      .from(schemaModule.projectDependencyDeclarations)
+      .where(eq(schemaModule.projectDependencyDeclarations.id, prior.id));
+    expect(restored.desired).toEqual(alias);
+    expect(restored.effectiveGeneration).toBe(restored.generation);
+  });
+
+  it("compensates the committed launch adoption when its Flow link cannot be published", async () => {
+    const project = await createProject();
+    const { pkg, pinInstallId, attachmentId } = await forkCutAttach(
+      "srcpkg",
+      project,
+    );
+    await editCommit(pkg, "flows/flow-a/flow.yaml", FLOW_YAML("flow-a-v2"));
+    await cutLocalPackageVersion(pkg, { db });
+    const [flow] = await db
+      .select()
+      .from(schemaModule.flows)
+      .where(eq(schemaModule.flows.projectId, project.id));
+    const link = projectFlowSymlinkPath(
+      project.repoPath,
+      project.slug,
+      flow.flowRefId,
+    );
+    const publish = flowLinks.finishFlowLinkPublication;
+    const fault = vi
+      .spyOn(flowLinks, "finishFlowLinkPublication")
+      .mockImplementationOnce(async (...args) => {
+        await rename(link, link + ".saved");
+        await writeFile(link, "occupied during publication");
+        await publish(...args);
+      });
+    try {
+      const refused = applyPackageVersionChoices({
+        projectId: project.id,
+        projectSlug: project.slug,
+        workspaceRoot: project.repoPath,
+        choices: { [pinInstallId]: "adopt" },
+        db,
+      });
+      await expect(refused).rejects.toMatchObject({
+        details: {
+          reason: "launch_flow_link_pending",
+          operationId: expect.any(String),
+          memberRef: flow.flowRefId,
+          linkReason: "project_flow_link_conflict",
+        },
+      });
+      await expect(refused).rejects.not.toHaveProperty(
+        "details.mutationAccepted",
+      );
+      expect(await attachmentInstall(attachmentId)).toBe(pinInstallId);
+      expect(await readFile(link, "utf8")).toBe("occupied during publication");
+    } finally {
+      fault.mockRestore();
+      await rename(link + ".saved", link);
+    }
+  });
+
+  it("preserves an independently edited pin during failed-launch compensation and refuses shared adoption while unresolved", async () => {
+    const project = await createProject();
+    const { pkg, pinInstallId, attachmentId } = await forkCutAttach(
+      "srcpkg",
+      project,
+    );
+    await editCommit(pkg, "flows/flow-a/flow.yaml", FLOW_YAML("flow-a-v2"));
+    const cut = await cutLocalPackageVersion(pkg, { db });
+    const target = {
+      projectId: project.id,
+      projectSlug: project.slug,
+      workspaceRoot: project.repoPath,
+      db,
+    };
+    const { reverts } = await applyPackageVersionChoices({
+      ...target,
+      choices: { [pinInstallId]: "adopt" },
+    });
+    const readHead = async () =>
+      (
+        await db
+          .select()
+          .from(schemaModule.projectDependencyDeclarations)
+          .where(
+            eq(
+              schemaModule.projectDependencyDeclarations.effectiveAttachmentId,
+              attachmentId,
+            ),
+          )
+      )[0]!;
+    const current = await readHead();
+    const source = "https://example.invalid/operator-correction.git";
+    await editDependency(
+      testDatabase.db,
+      { projectId: project.id, actorUserId: userId, declarationId: current.id },
+      { expectedGeneration: current.generation, source, version: "v3" },
+    );
+    const edited = await readHead();
+    const readAttempts = () =>
+      db
+        .select()
+        .from(schemaModule.projectDependencyAttempts)
+        .where(
+          eq(schemaModule.projectDependencyAttempts.declarationId, current.id),
+        );
+    const attempts = await readAttempts();
+
+    await revertPackageVersionChoices(reverts, target);
+    expect(await readHead()).toEqual(edited);
+    expect(await attachmentInstall(attachmentId)).toBe(cut.installId);
+
+    await editCommit(pkg, "flows/flow-a/flow.yaml", FLOW_YAML("flow-a-v3"));
+    const conflict = {
+      code: "CONFLICT",
+      details: { reason: "dependency_pin_unsettled" },
+    };
+    await expect(
+      applyPackageVersionChoices({
+        ...target,
+        choices: { [cut.installId]: "cut_and_adopt" },
+      }),
+    ).rejects.toMatchObject(conflict);
+    expect((await getLocalPackage(pkg.id, db))?.lastCutInstallId).toBe(
+      cut.installId,
+    );
+    const next = await cutLocalPackageVersion(pkg, { db });
+    await expect(
+      applyPackageVersionChoices({
+        ...target,
+        choices: { [cut.installId]: "adopt" },
+      }),
+    ).rejects.toMatchObject(conflict);
+    expect(
+      await applyPackageVersionChoices({
+        ...target,
+        choices: { [cut.installId]: "try_once" },
+      }),
+    ).toMatchObject({
+      reverts: [],
+      tryOncePins: [{ packageInstallId: next.installId }],
+    });
+    expect(await readHead()).toEqual(edited);
+    expect(await readAttempts()).toEqual(attempts);
+    expect(await attachmentInstall(attachmentId)).toBe(cut.installId);
   });
 
   it("`keep` is a no-op — the pin is unchanged", async () => {

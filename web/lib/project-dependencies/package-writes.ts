@@ -162,6 +162,25 @@ export async function manualPackageHead(
       { details: { reason: "ambiguous_package_declaration" } },
     );
 
+  if (!packages.length) {
+    const [conflict] = await tx
+      .select({ kind: declarations.kind })
+      .from(declarations)
+      .where(
+        and(
+          eq(declarations.projectId, projectId),
+          eq(declarations.logicalId, installName),
+          ne(declarations.kind, "package"),
+        ),
+      )
+      .limit(1);
+
+    if (conflict)
+      throw new MaisterError(
+        "CONFLICT",
+        `Package "${installName}" conflicts with an existing ${conflict.kind} declaration.`,
+      );
+  }
   return packages[0];
 }
 
@@ -185,23 +204,6 @@ export async function recordManualPackage(
   };
 
   if (!head) {
-    const [conflict] = await tx
-      .select({ kind: declarations.kind })
-      .from(declarations)
-      .where(
-        and(
-          eq(declarations.projectId, projectId),
-          eq(declarations.logicalId, install.name),
-          ne(declarations.kind, "package"),
-        ),
-      )
-      .limit(1);
-
-    if (conflict)
-      throw new MaisterError(
-        "CONFLICT",
-        `Package "${install.name}" conflicts with an existing ${conflict.kind} declaration.`,
-      );
     const [position] = await tx
       .select({
         ordinal: sql<number>`coalesce(max(${declarations.ordinal}), -1) + 1`,

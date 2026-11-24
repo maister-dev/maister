@@ -182,9 +182,16 @@ async function verifyReviewedPackages(
     reviewedSource,
     reviewed,
   );
-  const actual = new Map(witnesses.map((w) => [w.id, w.digest]));
+  const actual = new Map(witnesses.map((w) => [w.id, w]));
 
-  if (snapshot.localWitnesses.some((w) => actual.get(w.id) !== w.digest))
+  if (
+    snapshot.localWitnesses.some(
+      (w) =>
+        actual.get(w.id)?.digest !== w.digest ||
+        (w.layoutDigest !== undefined &&
+          w.layoutDigest !== actual.get(w.id)?.layoutDigest),
+    )
+  )
     throw new MaisterError(
       "CONFIG",
       "Local package contents changed after preview. Review the current contents before saving.",
@@ -548,6 +555,7 @@ export async function confirmProjectConfiguration(
       const assertCurrentAuthority = async (): Promise<void> => {
         await authorize();
         const current = await assertReviewedConfiguration(db, snapshot);
+
         await assertRegisteredRepository(snapshot);
         await verifyReviewedPackages(snapshot, reviewedSource, current);
       };

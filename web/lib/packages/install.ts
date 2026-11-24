@@ -3,7 +3,7 @@ import "server-only";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import pino from "pino";
 
@@ -28,12 +28,12 @@ import {
 } from "@/lib/flows";
 import { resolveTrust } from "@/lib/flows/trust";
 import { loadMaisterPackageManifest } from "@/lib/packages/manifest";
-import { snapshotLocalMaterial } from "@/lib/project-dependencies/material";
 import {
-  localDirectoryPath,
-  runtimeFileUrl,
-  runtimePathUrl,
-} from "@/lib/runtime-file-url";
+  confinedPackageDirectory,
+  materialLayoutDigest,
+} from "@/lib/project-dependencies/content-digest";
+import { snapshotLocalMaterial } from "@/lib/project-dependencies/material";
+import { localDirectoryPath, runtimeFileUrl } from "@/lib/runtime-file-url";
 
 const log = pino({
   name: "package-install",
@@ -54,7 +54,10 @@ export function packageVersionLabel(version: string): string {
 }
 
 export type ResolvedPackage = {
+  layoutDigest: string;
   pkgRoot: string;
+  /** Source coordinate retained by legacy member records, including local aliases. */
+  sourceRoot: string;
   resolvedRevision: string;
   versionLabel: string;
   manifest: MaisterPackageManifest;
@@ -92,15 +95,16 @@ export async function resolvePackageSource(
   const localRoot = localDirectoryPath(opts.source);
 
   if (localRoot !== null) {
-    const pkgRoot = opts.path
-      ? fileURLToPath(runtimePathUrl(localRoot, opts.path))
-      : localRoot;
+    let pkgRoot = localRoot;
 
     try {
+      if (opts.path)
+        pkgRoot = await confinedPackageDirectory(localRoot, opts.path);
       const st = await stat(runtimeFileUrl(pkgRoot));
 
       if (!st.isDirectory()) throw new Error("not a directory");
     } catch (err) {
+      if (err instanceof MaisterError) throw err;
       throw new MaisterError(
         "FLOW_INSTALL",
         `package install failed [stage=resolve] ${opts.source}@${opts.version}: ${asError(err).message}`,
@@ -111,6 +115,7 @@ export async function resolvePackageSource(
     const { pkgRoot: prepared, cleanup } = await prepareLocal(pkgRoot);
 
     try {
+      const layoutDigest = await materialLayoutDigest(prepared);
       const manifest = await loadMaisterPackageManifest(prepared);
       const resolvedRevision = (
         await localDirectoryContentDigest(prepared)
@@ -123,6 +128,8 @@ export async function resolvePackageSource(
 
       return {
         pkgRoot: prepared,
+        sourceRoot: join(localRoot, opts.path ?? "."),
+        layoutDigest,
         resolvedRevision,
         versionLabel,
         manifest,
@@ -152,7 +159,10 @@ export async function resolvePackageSource(
       version: opts.version,
       signal: opts.signal,
     });
-    const pkgRoot = opts.path ? join(tmpDir, opts.path) : tmpDir;
+    const pkgRoot = opts.path
+      ? await confinedPackageDirectory(tmpDir, opts.path)
+      : tmpDir;
+    const layoutDigest = await materialLayoutDigest(pkgRoot);
     const manifest = await loadMaisterPackageManifest(pkgRoot);
 
     log.info(
@@ -165,7 +175,15 @@ export async function resolvePackageSource(
       "package source resolved (git clone-once)",
     );
 
-    return { pkgRoot, resolvedRevision, versionLabel, manifest, cleanup };
+    return {
+      pkgRoot,
+      sourceRoot: pkgRoot,
+      resolvedRevision,
+      versionLabel,
+      manifest,
+      cleanup,
+      layoutDigest,
+    };
   } catch (err) {
     await cleanup();
     throw err;
@@ -241,7 +259,7 @@ export async function installPackage(
 
       const result = await installFlowPlugin(
         {
-          source: pathToFileURL(flowDir).href,
+          source: pathToFileURL(join(resolved.sourceRoot, flow.path)).href,
           version: resolved.versionLabel,
           projectId: args.projectId,
           projectSlug: args.projectSlug,
@@ -268,7 +286,7 @@ export async function installPackage(
 
     for (const cap of resolved.manifest.capabilities) {
       const installed = await installCapabilityRevision({
-        source: pathToFileURL(join(resolved.pkgRoot, cap.path)).href,
+        source: pathToFileURL(join(resolved.sourceRoot, cap.path)).href,
         version: resolved.versionLabel,
         capabilityRefId: cap.id,
         projectId: args.projectId,

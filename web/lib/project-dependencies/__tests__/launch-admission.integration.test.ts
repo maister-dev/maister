@@ -8,14 +8,18 @@ import { and, eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
+import { readProjectDeclarations } from "../read";
+import { resubmitDependency } from "../commands";
+
+import {
+  GET as listRunnerRemaps,
+  PATCH as mapRunner,
+} from "@/app/api/projects/[slug]/flow-runner-remaps/route";
+import { GET as launchOptions } from "@/app/api/runs/launch-options/route";
 import { POST as register } from "@/app/api/projects/route";
 import { POST as launch } from "@/app/api/task-launch-intents/route";
 import { enableRevision } from "@/lib/flows/lifecycle";
 import { listLaunchableFlowSummaries } from "@/lib/queries/project";
-
-import { readProjectDeclarations } from "../read";
-import { resubmitDependency } from "../commands";
-
 import { confirmCapabilityTrust } from "@/lib/capabilities/import";
 import {
   capabilityImports,
@@ -55,6 +59,7 @@ vi.mock("@/lib/authz", async (original) => ({
   ...(await original<typeof import("@/lib/authz")>()),
   requireGlobalRole: async () => ({ id: actorId, role: "admin" }),
   requireActiveSession: async () => ({ id: actorId, role: "admin" }),
+  requireProjectAction: async () => ({ role: "owner" }),
 }));
 vi.mock("@/lib/supervisor-client", async (original) => ({
   ...(await original<typeof import("@/lib/supervisor-client")>()),
@@ -164,7 +169,7 @@ async function requestLaunch(
     }),
   );
 
-  return { status: response.status, body: await response.json() };
+  return { taskId, status: response.status, body: await response.json() };
 }
 
 it("admits only eligible siblings as frozen declarations realize, fail setup and recover trust", async () => {
@@ -339,7 +344,32 @@ it("admits only eligible siblings as frozen declarations realize, fail setup and
     body: { details: { reason: "flow_capability_unavailable" } },
   };
 
-  expect(await requestLaunch(projectId, "needs-import")).toMatchObject(blocked);
+  const blockedLaunch = await requestLaunch(projectId, "needs-import");
+
+  expect(blockedLaunch).toMatchObject(blocked);
+  const preview = await launchOptions(
+    new NextRequest(
+      "http://localhost/api/runs/launch-options?taskId=" + blockedLaunch.taskId,
+    ),
+  );
+
+  expect(preview.status).toBe(200);
+  const previewBody = await preview.json();
+
+  expect(previewBody.launchability).toMatchObject({
+    launchable: false,
+    reason: "flow_capability_unavailable",
+  });
+  expect(previewBody.flows).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        refId: "needs-import",
+        enabled: false,
+        disabledReason: "flow_capability_unavailable",
+      }),
+      expect.objectContaining({ refId: "ready-sibling", enabled: true }),
+    ]),
+  );
   expect(await requestLaunch(projectId, member)).toMatchObject(blocked);
   expect(await requestLaunch(projectId, "ready-sibling")).toMatchObject({
     status: 202,
@@ -458,12 +488,28 @@ it("admits only eligible siblings as frozen declarations realize, fail setup and
     status: 409,
     body: { details: { reason: "declared_flow_runner_unavailable" } },
   });
-  await db.insert(projectFlowRunnerDefaults).values({
-    id: randomUUID(),
-    projectId,
-    flowId: defaultOnly.id,
-    runnerId: runner,
-  });
+  const url = "http://localhost/api/projects/" + slug + "/flow-runner-remaps";
+  const params = { params: Promise.resolve({ slug }) };
+  const list = await listRunnerRemaps(new NextRequest(url), params);
+  const binding = (await list.json()).remaps.find(
+    (r: { slotKey: string; flowId: string }) =>
+      r.flowId === defaultOnly.id && r.slotKey === "declaration:default",
+  );
+
+  expect(binding).toMatchObject({ status: "Pending" });
+  const patch = await mapRunner(
+    new NextRequest(url, {
+      method: "PATCH",
+      body: JSON.stringify({
+        flowRevisionId: binding.flowRevisionId,
+        slotKey: binding.slotKey,
+        mappedRunnerId: runner,
+      }),
+    }),
+    params,
+  );
+
+  expect(patch.status).toBe(200);
   await enableDefaultOnly();
   expect(await requestLaunch(projectId, defaultOnly.flowRefId)).toMatchObject({
     status: 202,
@@ -475,6 +521,7 @@ it("admits only eligible siblings as frozen declarations realize, fail setup and
     .innerJoin(flows, eq(flows.id, tasks.flowId))
     .where(eq(tasks.projectId, projectId))
     .orderBy(flows.flowRefId);
+
   expect(reservations.map((row) => row.flowRef)).toEqual([
     "missing-default",
     "missing-default",

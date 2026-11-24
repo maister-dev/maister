@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { declaredRunnerMappings } from "@/lib/acp-runners/declared-flow-runner";
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import {
   requireActiveSession,
@@ -241,9 +242,22 @@ export async function GET(
     );
 
     return NextResponse.json({
-      remaps: visibleRemaps.map((remap) =>
-        remapView({ remap, flowByRevisionId, slotMeta }),
-      ),
+      remaps: [
+        ...(
+          await declaredRunnerMappings(
+            db,
+            project.id,
+            scopeRevisionId ?? undefined,
+          )
+        ).map((row) => ({
+          ...row,
+          kind: "flow_default",
+          label: row.declaredRunnerId,
+        })),
+        ...visibleRemaps.map((remap) =>
+          remapView({ remap, flowByRevisionId, slotMeta }),
+        ),
+      ],
     });
   } catch (err) {
     return errorResponse(err, slug);
@@ -275,9 +289,9 @@ export async function PATCH(
       );
     }
 
-    const status = body.mappedRunnerId ? "Mapped" : "Pending";
+    const mappedStatus = body.mappedRunnerId ? "Mapped" : "Pending";
 
-    await (db as Db).transaction(async (tx) => {
+    const status = await (db as Db).transaction(async (tx) => {
       // Hold the enabled pointer through the write. Enable/rollback updates
       // this row; PostgreSQL rechecks the predicate after waiting on a writer.
       const [flow] = await tx
@@ -296,6 +310,42 @@ export async function PATCH(
           "CONFLICT",
           "Flow revision is no longer enabled in this project",
         );
+      if (body.slotKey === "declaration:default") {
+        const [mapping] = await declaredRunnerMappings(
+          tx,
+          project.id,
+          body.flowRevisionId,
+        );
+
+        if (!mapping)
+          throw new MaisterError(
+            "CONFLICT",
+            "This Flow revision has no declared project runner.",
+          );
+        await assertEnabledRunner(tx, body.mappedRunnerId);
+        const defaults = schemaModule.projectFlowRunnerDefaults;
+
+        await tx
+          .insert(defaults)
+          .values({
+            id: randomUUID(),
+            projectId: project.id,
+            flowId: mapping.flowId,
+            runnerId: body.mappedRunnerId,
+          })
+          .onConflictDoUpdate({
+            target: [defaults.projectId, defaults.flowId],
+            set: { runnerId: body.mappedRunnerId, updatedAt: new Date() },
+          });
+        if (body.mappedRunnerId) return "Mapped";
+        const [current] = await declaredRunnerMappings(
+          tx,
+          project.id,
+          body.flowRevisionId,
+        );
+
+        return current.status;
+      }
       const [revision] = await tx
         .select({ manifest: flowRevisions.manifest })
         .from(flowRevisions)
@@ -318,7 +368,7 @@ export async function PATCH(
         flowRevisionId: body.flowRevisionId,
         slotKey: body.slotKey,
         mappedRunnerId: body.mappedRunnerId,
-        status,
+        status: mappedStatus,
       } as const;
 
       await tx
@@ -332,10 +382,12 @@ export async function PATCH(
           ],
           set: {
             mappedRunnerId: mapping.mappedRunnerId,
-            status,
+            status: mappedStatus,
             updatedAt: new Date(),
           },
         });
+
+      return mappedStatus;
     });
 
     log.info(

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -16,6 +17,7 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 
 import * as gitModule from "../git";
+import * as projection from "../projection";
 import { git, gitResult } from "../git";
 import {
   previewProjectConfiguration,
@@ -906,7 +908,26 @@ it("AC08: a missing unchanged local declaration survives a reviewed edit and cha
     saved.committedSha,
   );
   expect((await findConfigOperation(database.db, next))?.state).toBe("stale");
-  const refreshed = { ...identity, id: await ready(projectId) };
+  const modeReview = { ...identity, id: await ready(projectId) };
+
+  await chmod(join(directory, "bytes"), 0o755);
+  await expect(
+    confirmProjectConfiguration(database.db, modeReview, authorized),
+  ).rejects.toMatchObject({
+    details: { reason: "package_revision_mismatch" },
+  });
+  // A pre-layout v2 preview bound only its byte digest. Replay its stored contract.
+  const legacyWitness = vi
+    .spyOn(projection, "reviewPackageSources")
+    .mockResolvedValueOnce([
+      { id: "alias", digest: await localDirectoryContentDigest(directory) },
+    ]);
+  const refreshed = {
+    ...identity,
+    id: await ready(projectId).finally(() => legacyWitness.mockRestore()),
+  };
+
+  await chmod(join(directory, "bytes"), 0o644);
 
   expect(
     (await confirmProjectConfiguration(database.db, refreshed, authorized))

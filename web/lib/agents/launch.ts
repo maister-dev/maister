@@ -191,6 +191,7 @@ import {
   assertConsensusDraftAdmission,
 } from "@/lib/flows/graph/consensus/admission";
 import { nodeAttempts } from "@/lib/db/schema";
+import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
 import { assertPreparationCommit } from "@/lib/agents/preparation-ownership";
 import { isPreparationIdentityRefusal } from "@/lib/agents/preparation-resource";
 import {
@@ -762,13 +763,34 @@ export async function resolveRunnerForAgent(
 
 async function packageSkillMaterializationRoots(
   effective: EffectiveAgentDefinition,
+  db: Db,
+  projectId: string | null,
 ): Promise<string[]> {
   const capabilities = Array.isArray(effective.manifest?.spec?.capabilities)
     ? effective.manifest.spec.capabilities
     : [];
   const roots: string[] = [];
 
+  if (!capabilities.length) return roots;
+  const imports = schemaModule.capabilityImports;
+  const eligible = projectId
+    ? new Set<string>(
+        (
+          await db
+            .select({ ref: imports.capabilityRefId })
+            .from(imports)
+            .where(
+              and(
+                eq(imports.packageInstallId, effective.packageInstallId),
+                eligibleProjectImport(projectId),
+              ),
+            )
+        ).map((row: { ref: string }) => row.ref),
+      )
+    : null;
+
   for (const capability of capabilities) {
+    if (eligible && !eligible.has(capability.id)) continue;
     try {
       const packageRoot = await assertSafeAgentMaterializationPath(
         effective.installedPath,
@@ -4517,6 +4539,7 @@ async function driveAgentSession(
         assignmentId: execution.client.assignment.id,
         logicalKey: agentTurn.logicalKey,
       });
+
       if (!claim) return;
       if (claim.state === "settlement") {
         await settleAgentContinuation(_db, hosts, claim);
@@ -4526,6 +4549,7 @@ async function driveAgentSession(
           stage: "resume_source",
         });
       }
+
       return;
     }
     if (!agentTurn.commandId && !run.companyId)
@@ -4866,7 +4890,9 @@ async function driveAgentSession(
         if (!continuation) return;
         if (continuation.state === "settlement") {
           const settlement = continuation;
+
           continuation = null;
+
           return await settleAgentContinuation(_db, hosts, settlement);
         }
         requireOperationalContinuationWitness(run.operationalIntegrityBaseline);
@@ -4920,6 +4946,7 @@ async function driveAgentSession(
         preparation,
         { ...preparationContext, stage: operationalSpawnStage },
       );
+
       return;
     }
     if (
@@ -5555,8 +5582,11 @@ async function driveAgentSession(
 
       operationalSpawnStage = "capability_materialization";
       await packageCapture.current?.assertCurrentPath();
-      const packageSkillRoots =
-        await packageSkillMaterializationRoots(effective);
+      const packageSkillRoots = await packageSkillMaterializationRoots(
+        effective,
+        _db,
+        run.projectId,
+      );
 
       log.debug(
         {

@@ -4,17 +4,25 @@ import type { ExportProjection, LocalPackageWitness } from "./types";
 import type { PersistenceDb } from "./store";
 
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { normalizedManifest } from "./manifest";
 
-import { projects, projectDependencyDeclarations } from "@/lib/db/schema";
+import {
+  projects,
+  projectDependencyDeclarations,
+  projectPackageAttachments,
+  packageInstalls,
+} from "@/lib/db/schema";
 import { localDirectoryPath } from "@/lib/runtime-file-url";
 import { packageEntrySchema } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import { localDirectoryContentDigest } from "@/lib/flows";
+import {
+  materialLayoutDigest,
+  confinedPackageDirectory,
+} from "@/lib/project-dependencies/content-digest";
 import { assertDependencySource } from "@/lib/project-dependencies/source";
 
 export type ExportSnapshot = {
@@ -32,6 +40,7 @@ export async function readExportSnapshot(
     .select({
       project: projects,
       declaration: projectDependencyDeclarations,
+      layout: sql<string | null>`${packageInstalls.manifest}->>'layoutDigest'`,
     })
     .from(projects)
     .leftJoin(
@@ -40,6 +49,17 @@ export async function readExportSnapshot(
         eq(projectDependencyDeclarations.projectId, projects.id),
         eq(projectDependencyDeclarations.kind, "package"),
       ),
+    )
+    .leftJoin(
+      projectPackageAttachments,
+      eq(
+        projectPackageAttachments.id,
+        projectDependencyDeclarations.effectiveAttachmentId,
+      ),
+    )
+    .leftJoin(
+      packageInstalls,
+      eq(packageInstalls.id, projectPackageAttachments.packageInstallId),
     )
     .where(eq(projects.id, projectId));
   const project = rows[0]?.project;
@@ -50,7 +70,7 @@ export async function readExportSnapshot(
     });
   const packages: ExportProjection["packages"] = [];
 
-  for (const { declaration } of rows) {
+  for (const { declaration, layout } of rows) {
     if (!declaration) continue;
     const { desired, logicalId, effectiveGeneration, effectiveRevision } =
       declaration;
@@ -71,6 +91,9 @@ export async function readExportSnapshot(
       );
     packages.push({
       ...pin.data,
+      ...(layout && effectiveGeneration === declaration.generation
+        ? { installedLayoutDigest: layout }
+        : {}),
       resolvedRevision:
         effectiveGeneration === declaration.generation
           ? effectiveRevision
@@ -135,13 +158,17 @@ export async function reviewPackageSources(
       entry.path === pin.path
     )
       continue;
-    const directory = pin.path ? join(local, pin.path) : local;
-
     let digest: string;
+    let layoutDigest: string;
 
     try {
+      const directory = pin.path
+        ? await confinedPackageDirectory(local, pin.path)
+        : local;
+
       if (!(await stat(directory)).isDirectory())
         throw new MaisterError("CONFIG", "Package source is not a directory.");
+      layoutDigest = await materialLayoutDigest(directory);
       digest = await localDirectoryContentDigest(directory);
     } catch (cause) {
       throw new MaisterError(
@@ -154,8 +181,9 @@ export async function reviewPackageSources(
       );
     }
     if (
-      pin.resolvedRevision !== null &&
-      digest.slice(0, 40) !== pin.resolvedRevision
+      (pin.resolvedRevision !== null &&
+        digest.slice(0, 40) !== pin.resolvedRevision) ||
+      (pin.installedLayoutDigest && pin.installedLayoutDigest !== layoutDigest)
     ) {
       throw new MaisterError(
         "CONFIG",
@@ -163,7 +191,7 @@ export async function reviewPackageSources(
         { details: { reason: "package_revision_mismatch" } },
       );
     }
-    witnesses.push({ id: pin.id, digest });
+    witnesses.push({ id: pin.id, digest, layoutDigest });
   }
 
   return witnesses;

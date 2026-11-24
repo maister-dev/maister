@@ -49,9 +49,11 @@ export type TrustedSetupTarget = {
 };
 
 export type DependencyCheckpoint = {
+  applicationCommitted?: boolean;
   postTrust?: TrustedSetupTarget;
   retryCount?: number;
   installId?: string;
   contentWitness?: string;
+  layoutDigest?: string;
   setupMaterialKey?: string;
 };

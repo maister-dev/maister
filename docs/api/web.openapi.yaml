@@ -2534,7 +2534,8 @@ paths:
                         flowRevisionId: { type: string }
                         slotKey:
                           type: string
-                          description: "`session:<name>` | `consensus:<nodeId>:<participantId>` | `consensus:<nodeId>:synthesizer`."
+                          description: "`session:<name>` | `consensus:<nodeId>:<participantId>` | `consensus:<nodeId>:synthesizer` | `declaration:default`."
+                        declaredRunnerId: { type: string, description: Runner named by the project Flow declaration. }
                         status: { type: string, enum: [Pending, Mapped] }
                         mappedRunnerId: { type: string, nullable: true }
         "401": { $ref: "#/components/responses/Unauthenticated" }
@@ -2544,9 +2545,11 @@ paths:
       summary: Bind (or clear) a Flow runner slot to a platform runner
       description: |
         Project owner/admin route. Binds one Flow runner `slot_key` to an
-        available platform ACP runner (SET), or clears it (CLEAR → `Pending`).
+        available platform ACP runner. Clearing a revision slot returns it to
+        `Pending`. Clearing `declaration:default` restores the runner named by
+        the project declaration and reports its current readiness.
         **(M42 — Implemented, ADR-114.)** `slot_key` is body-controlled and
-        validated ∈ the revision-declared slots (else 409/422); `mappedRunnerId`
+        validated against revision slots or the effective declaration default. `mappedRunnerId`
         is body-controlled and validated ∈ `platform_acp_runners` (allow-list).
         DB-only, no downstream side-effect — no two-phase commit.
       operationId: patchProjectFlowRunnerRemap
@@ -2567,12 +2570,12 @@ paths:
                 slotKey:
                   {
                     type: string,
-                    description: Must be one of the revision-declared slots.,
+                    description: A revision-declared slot or declaration:default for a project Flow with a manifest runner.,
                   }
                 mappedRunnerId:
                   type: string
                   nullable: true
-                  description: A `platform_acp_runners.id` to SET, or `null` to CLEAR (→ `Pending`).
+                  description: A ready platform runner ID to set, or null to clear the override.
       responses:
         "200":
           description: Slot binding updated.
@@ -16069,10 +16072,15 @@ paths:
           description: |
             Typed conflicts: standalone flow-id collision, cross-package
             `(kind, id)` record collision, or (ADR-132) the package-name
-            collision with rename guidance in `details`.
+            collision with rename guidance in `details`. When the database mutation
+            committed but a Flow link awaits repair, the response identifies the
+            accepted mutation and its operation ID.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              schema:
+                anyOf:
+                  - { $ref: "#/components/schemas/PackageFlowLinkPending" }
+                  - { $ref: "#/components/schemas/MaisterErrorBody" }
               example:
                 code: CONFLICT
                 message: "package name already attached — rename the fork and re-cut"
@@ -16253,7 +16261,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Precondition" }
+        "409": { $ref: "#/components/responses/PackageMutationConflict" }
 
   /api/projects/{slug}/packages/{attachmentId}/upgrade:
     post:
@@ -16309,7 +16317,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Precondition" }
+        "409": { $ref: "#/components/responses/PackageMutationConflict" }
         "422": { $ref: "#/components/responses/Config" }
 
   /api/projects/{slug}/packages/{attachmentId}/trust:
@@ -16844,19 +16852,23 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, exec_trust]
+                required: [ok, execTrust, setupStatus]
                 properties:
                   ok: { type: boolean, enum: [true] }
-                  exec_trust:
+                  execTrust:
                     type: string
                     enum: [trusted]
                     description: The new exec_trust value of the enabled revision.
+                  setupStatus:
+                    type: string
+                    enum: [not_required, done]
               examples:
                 trusted:
                   summary: Exec trust granted
                   value:
                     ok: true
-                    exec_trust: trusted
+                    execTrust: trusted
+                    setupStatus: done
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/TrustSetupConflict" }
@@ -25447,6 +25459,21 @@ components:
               - { $ref: "#/components/schemas/AcceptedTrustSetup" }
               - { $ref: "#/components/schemas/MaisterErrorBody" }
           example: {code: FLOW_INSTALL, message: "Inspect the trusted dependency setup in project settings.", details: {trustAccepted: true, reason: setup_failed, projectSlug: demo, declarationId: d1}}
+    PackageMutationConflict:
+      description: |
+        The request was refused, or its database mutation committed and an affected
+        Flow link awaits repair. In the latter case the worker retries publication
+        and the client can refresh the project to inspect the applied change.
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - { $ref: "#/components/schemas/PackageFlowLinkPending" }
+              - { $ref: "#/components/schemas/MaisterErrorBody" }
+          example:
+            code: PRECONDITION
+            message: The package change was committed. Its Flow link is awaiting repair.
+            details: { reason: project_flow_link_pending, mutationAccepted: true, operationId: op-1, memberRef: review, linkReason: project_flow_link_conflict }
     Precondition:
       description: Precondition failed or conflict (`PRECONDITION` / `CONFLICT`).
       content:
@@ -31960,6 +31987,12 @@ components:
           $ref: "#/components/schemas/TaskLaunchBody/properties/relaunchOfRunId"
         packageVersions:
           type: object
+          description: |
+            A shared adoption requires a settled project dependency pin. An
+            outstanding replacement returns 409 with reason dependency_pin_unsettled.
+            keep and an offered try_once preserve the project's desired pin.
+            An adoption whose working-copy Flow link cannot be published refuses
+            launch with reason launch_flow_link_pending. No Run is accepted.
           maxProperties: 64
           additionalProperties:
             type: string
@@ -33127,6 +33160,8 @@ components:
                   not_installed,
                   setup_failed,
                   setup_pending,
+                  flow_capability_unavailable,
+                  untrusted,
                   unsupported_schema,
                   incompatible,
                 ]
@@ -33171,6 +33206,8 @@ components:
                   not_installed,
                   setup_failed,
                   setup_pending,
+                  flow_capability_unavailable,
+                  untrusted,
                   unsupported_schema,
                   incompatible,
                   runner_unresolved,
@@ -33210,6 +33247,9 @@ components:
                     not_installed,
                     setup_failed,
                     setup_pending,
+                    runner_unresolved,
+                    flow_capability_unavailable,
+                    untrusted,
                     unsupported_schema,
                     incompatible,
                     null,
@@ -37773,6 +37813,7 @@ components:
             type: string,
             description: "Present only when attachToProjectId was supplied and the attach succeeded.",
           }
+        flowLinkPending: { $ref: "#/components/schemas/PendingFlowLink" }
         adoptions:
           type: array
           items:
@@ -37783,7 +37824,8 @@ components:
               projectId: { type: string }
               status: { type: string, enum: [adopted, failed] }
               error: { type: string, nullable: true }
-          description: "(ADR-132) Per-project adopt outcomes for `adoptInProjectIds`; present only when it was supplied. Failed adopts are retryable from the dialog."
+              flowLinkPending: { $ref: "#/components/schemas/PendingFlowLink" }
+          description: "(ADR-132) Per-project adopt outcomes for `adoptInProjectIds`; present only when it was supplied. An adopted target can have a pending working-copy link. The dialog offers retries only for failed adoptions."
           example: [{ projectId: "proj-1", status: adopted }]
     PublishLocalPackageBody:
       type: object
@@ -38082,6 +38124,28 @@ components:
           items: { type: string }
           description: "Manifest flow ids."
 
+    PendingFlowLink:
+      type: object
+      required: [reason, operationId, memberRef, linkReason]
+      properties:
+        reason: { type: string, enum: [project_flow_link_pending] }
+        operationId: { type: string }
+        memberRef: { type: string }
+        linkReason: { type: string, nullable: true, enum: [project_flow_link_conflict, project_flow_link_unavailable, null] }
+    PackageFlowLinkPending:
+      type: object
+      required: [code, message, details]
+      properties:
+        code: { type: string, enum: [PRECONDITION] }
+        message: { type: string }
+        details:
+          allOf:
+            - { $ref: "#/components/schemas/PendingFlowLink" }
+            - type: object
+              required: [mutationAccepted]
+              properties:
+                mutationAccepted: { type: boolean, enum: [true] }
+                attachmentId: { type: string }
     ActivePackageProjectPrecondition:
       type: object
       description: The package-management route requires an active project and uses the same error for a missing or archived project.

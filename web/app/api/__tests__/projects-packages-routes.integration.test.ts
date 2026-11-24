@@ -33,7 +33,8 @@ let pkgDir: string;
 let projectId: string;
 let originalHome: string | undefined;
 
-vi.mock("@/lib/authz", () => ({
+vi.mock("@/lib/authz", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/authz")>()),
   requireActiveSession: vi.fn(async () => ({
     id: "usr_bootstrap_admin",
     role: "admin",
@@ -788,7 +789,7 @@ describe("project packages routes (integration)", () => {
     }
   });
 
-  it("trust as global admin: 200 + revision trust applied", async () => {
+  it("rechecks durable actor authority for trust and detach after HTTP admission", async () => {
     const attachRes = await attachPOST(
       jsonRequest("/api/projects/pkg-routes/packages", {
         packageInstallId: installId,
@@ -799,6 +800,52 @@ describe("project packages routes (integration)", () => {
     expect(attachRes.status).toBe(201);
     const attBody = await attachRes.json();
 
+    const params = {
+      params: Promise.resolve({
+        slug: "pkg-routes",
+        attachmentId: attBody.attachmentId,
+      }),
+    };
+    const route = `/api/projects/pkg-routes/packages/${attBody.attachmentId}`;
+    // The HTTP session still says admin. Revoke its persistent authority before either write.
+    const previous = await db
+      .select()
+      .from(schemaModule.packageInstalls)
+      .where(eq(schemaModule.packageInstalls.id, installId));
+    await db
+      .update(schemaModule.users)
+      .set({ accountStatus: "disabled" })
+      .where(eq(schemaModule.users.id, "usr_bootstrap_admin"));
+    try {
+      for (const response of [
+        await trustPOST(jsonRequest(route + "/trust", {}), params),
+        await detachDELETE(jsonRequest(route), params),
+      ]) {
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({
+          details: { reason: "authority_revoked" },
+        });
+      }
+      expect(
+        await db
+          .select()
+          .from(schemaModule.packageInstalls)
+          .where(eq(schemaModule.packageInstalls.id, installId)),
+      ).toEqual(previous);
+      expect(
+        await db
+          .select()
+          .from(schemaModule.projectPackageAttachments)
+          .where(
+            eq(schemaModule.projectPackageAttachments.id, attBody.attachmentId),
+          ),
+      ).toHaveLength(1);
+    } finally {
+      await db
+        .update(schemaModule.users)
+        .set({ accountStatus: "active" })
+        .where(eq(schemaModule.users.id, "usr_bootstrap_admin"));
+    }
     const res = await trustPOST(
       jsonRequest(
         `/api/projects/pkg-routes/packages/${attBody.attachmentId}/trust`,

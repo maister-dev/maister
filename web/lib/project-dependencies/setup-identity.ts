@@ -59,7 +59,12 @@ async function isNewPublication(
   }
   if (
     !Array.isArray(seal) ||
-    seal.length !== 3 ||
+    (seal.length !== 3 &&
+      !(
+        seal.length === 4 &&
+        typeof seal[3] === "string" &&
+        /^[a-f0-9]{64}$/.test(seal[3])
+      )) ||
     seal[2] !== "new-cache-v2" ||
     typeof seal[1] !== "string" ||
     !/^[a-f0-9]{64}$/.test(seal[1])
