@@ -334,6 +334,8 @@ paths:
         - { name: generation, in: query, required: true, schema: { type: integer, minimum: 1 } }
         - { name: cursor, in: query, schema: { type: string, minLength: 1, maxLength: 512 } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: base, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }, description: Use with head for an explicit plain text commit set. }
+        - { name: head, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }, description: "Use with base. An explicit range excludes cursor and limit." }
       responses:
         "200":
           description: Exact generation and sealed log reference.
@@ -345,6 +347,8 @@ paths:
                 required: [generation, object]
                 properties:
                   generation: { type: integer, minimum: 1 }
+                  baseCommit: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+                  headCommit: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
                   object:
                     type: object
                     additionalProperties: false

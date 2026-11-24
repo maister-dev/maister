@@ -8,6 +8,7 @@ import { z } from "zod";
 import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
 import {
   WORKSPACE_LOG_MAX_BYTES,
+  WORKSPACE_COMMIT_SET_OBJECT_NAME,
   WORKSPACE_LOG_OBJECT_NAME,
   WORKSPACE_REVIEW_MAX_BYTES,
   WORKSPACE_REVIEW_OBJECT_NAME,
@@ -29,6 +30,7 @@ const workspaceDiff = workspaceIdentity
 const workspaceLog = workspaceIdentity
   .extend({
     head: z.string().regex(GIT_OBJECT_ID),
+    base: z.string().regex(GIT_OBJECT_ID).optional(),
   })
   .strict();
 
@@ -81,8 +83,10 @@ export function workspaceGitEvidence(
   return parsed.success
     ? {
         ...parsed.data,
-        logicalName: WORKSPACE_LOG_OBJECT_NAME,
-        mimeType: "application/json",
+        logicalName: parsed.data.base
+          ? WORKSPACE_COMMIT_SET_OBJECT_NAME
+          : WORKSPACE_LOG_OBJECT_NAME,
+        mimeType: parsed.data.base ? "text/plain" : "application/json",
         maxBytes: WORKSPACE_LOG_MAX_BYTES,
       }
     : null;

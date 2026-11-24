@@ -549,8 +549,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   the legacy local-filesystem guard. GREEN the addressed producer stores the
   verified object ID, digest and byte count with the existing artifact
   validity rules. A completed board Run reads the exact patch after releasing
-  capacity and verifies the object and artifact digests agree. Commit-set
-  output and default artifact production still need equivalent coverage.
+  capacity and verifies the object and artifact digests agree.
+
+  **C-09 declared commit set.** RED rejected the exact SHA-bounded log query.
+  GREEN sealed the plain-text range, refused an unreachable head and returned
+  an empty object when base equalled head. The pathless board Flow made a real
+  Git commit on its selected supervisor and exposed the exact single-commit
+  artifact after Review, with the artifact digest matching the sealed bytes.
+  Default artifact production and takeover still need equivalent coverage.
 
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 

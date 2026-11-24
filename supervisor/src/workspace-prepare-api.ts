@@ -122,7 +122,9 @@ const diffQuery = workspaceQuery.extend({
 const logQuery = workspaceQuery.extend({
   cursor: z.string().min(1).max(512).optional(),
   limit: z.string().regex(/^[1-9][0-9]{0,2}$/).transform(Number).pipe(z.number().max(WORKSPACE_LOG_MAX_PAGE_SIZE)).optional(),
-});
+  base: z.string().regex(GIT_OBJECT_ID).optional(),
+  head: z.string().regex(GIT_OBJECT_ID).optional(),
+}).refine(({ base, head, cursor, limit }) => (!base && !head) || Boolean(base && head && cursor === undefined && limit === undefined));
 const materializeSchema = z
   .object({
     workspaceProtocol: z.literal(1),

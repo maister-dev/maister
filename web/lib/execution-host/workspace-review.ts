@@ -16,6 +16,7 @@ import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
 import {
   WORKSPACE_LOG_MAX_BYTES,
   WORKSPACE_GIT_CHECKPOINT_PREFIX,
+  WORKSPACE_COMMIT_SET_OBJECT_NAME,
   WORKSPACE_LOG_MAX_PAGE_SIZE,
   WORKSPACE_LOG_OBJECT_NAME,
   WORKSPACE_REVIEW_MAX_BYTES,
@@ -30,6 +31,7 @@ import {
 import {
   readAddressedWorkspaceDiff,
   readAddressedWorkspaceLog,
+  readAddressedWorkspaceStatus,
 } from "./workspace-preparation";
 
 import { MaisterError } from "@/lib/errors";
@@ -89,7 +91,12 @@ export function addressedCheckpointId(
 export async function readAddressedWorkspacePatch(
   input: WorkspaceReview &
     Readonly<{ range: Omit<WorkspaceDiffQuery, "generation" | "format"> }>,
-): Promise<{ patch: string; baseCommit?: string; reference: WorkspaceInputObject; sizeBytes: number }> {
+): Promise<{
+  patch: string;
+  baseCommit?: string;
+  reference: WorkspaceInputObject;
+  sizeBytes: number;
+}> {
   input.signal.throwIfAborted();
   const { object: reference, baseCommit } = await readAddressedWorkspaceDiff(
     input.db,
@@ -101,12 +108,16 @@ export async function readAddressedWorkspacePatch(
       "ACP_PROTOCOL",
       "The selected supervisor did not identify the patch's base checkpoint",
     );
-  const { text: patch, sizeBytes } = await readWorkspaceReviewText(input, reference, {
-    logicalName: "workspace-diff.patch",
-    mimeType: "text/x-diff",
-    maxBytes: 64 * 1024,
-    pendingReason: "workspace_diff_pending",
-  });
+  const { text: patch, sizeBytes } = await readWorkspaceReviewText(
+    input,
+    reference,
+    {
+      logicalName: "workspace-diff.patch",
+      mimeType: "text/x-diff",
+      maxBytes: 64 * 1024,
+      pendingReason: "workspace_diff_pending",
+    },
+  );
 
   return { patch, baseCommit, reference, sizeBytes };
 }
@@ -135,6 +146,56 @@ export async function readAddressedWorkspaceHistory(
       "The selected supervisor returned invalid Git history",
     );
   }
+}
+
+export async function readAddressedWorkspaceCommitSet(
+  input: WorkspaceReview & Readonly<{ base: string; head: string }>,
+): Promise<{
+  text: string;
+  reference: WorkspaceInputObject;
+  sizeBytes: number;
+}> {
+  input.signal.throwIfAborted();
+  const {
+    object: reference,
+    baseCommit,
+    headCommit,
+  } = await readAddressedWorkspaceLog(input.db, input.workspace, {
+    base: input.base,
+    head: input.head,
+  });
+  if (baseCommit !== input.base || headCommit !== input.head)
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "The selected supervisor returned a different commit set range",
+    );
+  const content = await readWorkspaceReviewText(input, reference, {
+    logicalName: WORKSPACE_COMMIT_SET_OBJECT_NAME,
+    mimeType: "text/plain",
+    maxBytes: WORKSPACE_LOG_MAX_BYTES,
+    pendingReason: "workspace_log_pending",
+  });
+
+  return { ...content, reference };
+}
+
+export async function readAddressedHeadCommitSet(
+  input: WorkspaceReview & Readonly<{ base: string }>,
+): ReturnType<typeof readAddressedWorkspaceCommitSet> {
+  const { workspace } = await readAddressedWorkspaceStatus(
+    input.db,
+    input.workspace,
+  );
+  if (!workspace.observedCommit)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected supervisor has no verified HEAD for the commit set",
+    );
+
+  return readAddressedWorkspaceCommitSet({
+    ...input,
+    head: workspace.observedCommit,
+  });
 }
 
 export async function readAddressedWorkspaceReviewSnapshot(
@@ -218,7 +279,10 @@ async function readWorkspaceReviewText(
         signal,
       });
 
-      return { text: new TextDecoder().decode(content.bytes), sizeBytes: Number(object.sizeBytes) };
+      return {
+        text: new TextDecoder().decode(content.bytes),
+        sizeBytes: Number(object.sizeBytes),
+      };
     }
     await runEventWakeBus.wait(runId, 2_000, signal);
   }

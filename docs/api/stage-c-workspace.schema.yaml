@@ -351,7 +351,7 @@ definitions:
                   - required: [base]
                   - required: [checkpointId]
   LogQuery:
-    description: Page of history reachable from the observed HEAD in topological order. The cursor is scoped to the stable host, handle, generation and HEAD. A page over 65536 bytes is refused.
+    description: Page of history reachable from the observed HEAD in topological order, or a sealed plain text commit set for an explicit reachable base and head. The cursor is scoped to the stable host, handle, generation and HEAD. Results over 65536 bytes are refused.
     type: object
     additionalProperties: false
     required: [ generation ]
@@ -359,6 +359,15 @@ definitions:
       generation: *a1
       cursor: { type: string, minLength: 1, maxLength: 512 }
       limit: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      base: *a4
+      head: *a4
+    dependencies:
+      base: [head]
+      head: [base]
+    not:
+      anyOf:
+        - required: [base, cursor]
+        - required: [base, limit]
   RefQuery:
     type: object
     additionalProperties: false
@@ -695,7 +704,10 @@ definitions:
       object: { $ref: "#/definitions/InputObject" }
       nextCursor: { type: string, minLength: 1, maxLength: 512 }
       baseCommit:
-        description: Verified private checkpoint commit when the request uses checkpointId.
+        description: Verified checkpoint commit or lower bound of an explicit commit-set request.
+        $ref: "#/definitions/GitObjectId"
+      headCommit:
+        description: Verified upper bound of an explicit commit-set request.
         $ref: "#/definitions/GitObjectId"
   GitCheckpoint:
     type: object

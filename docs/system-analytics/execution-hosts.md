@@ -1111,6 +1111,12 @@ ID, SHA-256 and byte length. A resumed driver reuses the current artifact
 from that attempt. The existing artifact stream applies Run and repository
 content authorization to downloads and bounded previews.
 
+Declared commit-set artifacts use the same object ledger. The supervisor
+checks the pinned base and observed HEAD against the retained checkout,
+seals the bounded `git log --oneline` bytes and returns both range limits.
+An unrelated HEAD is refused. A range whose endpoints coincide produces a
+verified empty object.
+
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable
 workload. The context excludes Web's environment. The supervisor verifies the

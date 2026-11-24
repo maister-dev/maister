@@ -205,7 +205,7 @@ it.each([
     await mkdir(join(root, "flow", "scripts"), { recursive: true });
     await writeFile(
       installedScript,
-      "#!/bin/sh\nset -eu\ntest \"$(cat acp-marker)\" = 'written by addressed ACP'\nprintf 'from owning host' > graph-marker\ncat graph-marker\nprintf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"\n",
+      "#!/bin/sh\nset -eu\ntest \"$(cat acp-marker)\" = 'written by addressed ACP'\nprintf 'from owning host' > graph-marker\ngit add -- graph-marker\ngit -c user.name=Fixture -c user.email=fixture@example.test -c commit.gpgSign=false -c core.hooksPath=/dev/null commit -qm 'fixture graph marker'\ncat graph-marker\nprintf '%s' '{\"verified\":true}' > \"$MAISTER_OUTPUT_FILE\"\n",
       { mode: 0o755 },
     );
     await writeFile(
@@ -245,7 +245,7 @@ it.each([
           action: { command },
           output: {
             result: { schema: "./result.json", required: true },
-            produces: [{ id: "delta", kind: "diff", requiredFor: ["review"] }],
+            produces: [{ id: "delta", kind: "diff", requiredFor: ["review"] }, { id: "commits", kind: "commit_set", requiredFor: ["review"] }],
           },
           pre_finish: {
             gates: [
@@ -556,6 +556,14 @@ it.each([
     expect(capturedDiff.object.sha256).toBe(delta.hash);
     expect(delta.sizeBytes).toBe(capturedDiff.content.bytes.byteLength);
     expect(Buffer.from(capturedDiff.content.bytes).toString()).toContain("+from owning host");
+    const [commits] = await db.select().from(artifactInstances).where(and(
+      eq(artifactInstances.runId, runId), eq(artifactInstances.artifactDefId, "commits"),
+    ));
+    expect(commits).toMatchObject({ kind: "commit_set", validity: "current", locator: { kind: "execution-object" } });
+    if (commits.locator.kind !== "execution-object") throw new Error("commit set is not a retained object");
+    const capturedCommits = await readRuntimeObjectContent({ db, runId, objectId: commits.locator.objectId });
+    expect(capturedCommits.object.sha256).toBe(commits.hash);
+    expect(Buffer.from(capturedCommits.content.bytes).toString()).toMatch(/^[0-9a-f]+ fixture graph marker\n$/);
     const { GET: getIntent } = await import("@/app/api/task-launch-intents/[intentId]/route");
     const receipt = await getIntent(
       new Request(`http://localhost/api/task-launch-intents/${bound.intentId}`),

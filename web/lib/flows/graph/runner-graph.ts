@@ -324,7 +324,7 @@ import {
 import { finalizeCompanyFlowRun } from "@/lib/run-results/company-flow-terminal";
 import { assertTaskAdmissionForDispatch } from "@/lib/tasks/qualification-admission";
 import { requireFlowWorktree } from "@/lib/execution-host/legacy-workspace";
-import { readAddressedWorkspacePatch } from "@/lib/execution-host/workspace-review";
+import { readAddressedHeadCommitSet, readAddressedWorkspacePatch } from "@/lib/execution-host/workspace-review";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, hitlRequests, artifactInstances } =
@@ -5052,29 +5052,45 @@ export async function runGraph(
               },
               db,
             );
-          } else if (produces.kind === "diff") {
+          } else if (
+            loaded.workspace?.ownershipKind === "host_owned" &&
+            (produces.kind === "diff" || produces.kind === "commit_set")
+          ) {
             const workspace = loaded.workspace;
-            if (workspace?.ownershipKind === "host_owned") {
-              const current = await getCurrentArtifact(runId, produces.id, db);
-              if (current?.nodeAttemptId === nodeAttemptId && current.locator.kind === "execution-object") continue;
-              if (!workspace.baseCommit)
-                throw new MaisterError("PRECONDITION", "The assigned workspace has no pinned base for a diff artifact");
-              const { reference, sizeBytes } = await readAddressedWorkspacePatch({
-                db: rootDb, workspace, range: { base: workspace.baseCommit },
-                signal: opts.driver?.signal ?? AbortSignal.timeout(12_000),
-              });
+            const current = await getCurrentArtifact(runId, produces.id, db);
+            if (current?.nodeAttemptId === nodeAttemptId && current.locator.kind === "execution-object") continue;
+            if (!workspace.baseCommit)
+              throw new MaisterError("PRECONDITION", "The assigned workspace has no pinned base for a Git artifact");
+            const source = {
+              db: rootDb,
+              workspace,
+              signal: opts.driver?.signal ?? AbortSignal.timeout(12_000),
+            };
+            const { reference, sizeBytes } = produces.kind === "diff"
+              ? await readAddressedWorkspacePatch({ ...source, range: { base: workspace.baseCommit } })
+              : await readAddressedHeadCommitSet({ ...source, base: workspace.baseCommit });
 
-              await recordCurrentArtifact({
+            await recordCurrentArtifact(
+              {
                 id: `run:${nodeAttemptId}:${produces.id}`,
-                runId, nodeAttemptId, nodeId: node.id, attempt: currentAttempt,
-                artifactDefId: produces.id, kind: "diff", producer: "runner",
+                runId,
+                nodeAttemptId,
+                nodeId: node.id,
+                attempt: currentAttempt,
+                artifactDefId: produces.id,
+                kind: produces.kind,
+                producer: "runner",
                 locator: { kind: "execution-object", objectId: reference.objectId },
-                hash: reference.sha256, sizeBytes,
-                validity: "current", requiredFor: produces.requiredFor,
-                visibility: produces.visibility ?? "internal", retention: produces.retention ?? "run",
-              }, db);
-              continue;
-            }
+                hash: reference.sha256,
+                sizeBytes,
+                validity: "current",
+                requiredFor: produces.requiredFor,
+                visibility: produces.visibility ?? "internal",
+                retention: produces.retention ?? "run",
+              },
+              db,
+            );
+          } else if (produces.kind === "diff") {
             // Diff kind: always record with git-range locator. The range
             // (merge-base vs main → immutable head SHA, EMPTY_TREE /
             // branch-name fallbacks) is shared with the M29 mutation sensor

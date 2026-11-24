@@ -2031,6 +2031,8 @@ export async function getWorkspaceLog(handle: string, input: WorkspaceLogQuery):
     generation: String(input.generation),
     ...(input.cursor ? { cursor: input.cursor } : {}),
     ...(input.limit !== undefined ? { limit: String(input.limit) } : {}),
+    ...(input.base ? { base: input.base } : {}),
+    ...(input.head ? { head: input.head } : {}),
   });
 
   return getWorkspaceEvidence(handle, "log", query, input.generation);

@@ -1108,6 +1108,24 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
     commits: [{ commit, subject: "first" }],
     nextCursor: null,
   });
+  const rangeUrl = `/v1/workspaces/${second.result.workspace.handle}/log?generation=1&base=${commit}&head=${freshCommit}`;
+  const commitSet = await addressedRequest(rebooted, rangeUrl);
+  expect(commitSet.status).toBe(200);
+  const commitSetRef = await commitSet.json() as { object: { objectId: string; sha256: string } };
+  const commitSetRead = await addressedRequest(rebooted,
+    `/runtime-objects/${commitSetRef.object.objectId}/content`,
+  );
+  const commitSetBytes = Buffer.from(await commitSetRead.arrayBuffer());
+  expect(createHash("sha256").update(commitSetBytes).digest("hex")).toBe(commitSetRef.object.sha256);
+  expect(commitSetBytes.toString()).toMatch(/^[0-9a-f]+ second\n$/);
+  const foreignCommitSet = await addressedRequest(rebooted, `${workspaceQuery}/log?generation=1&base=${commit}&head=${freshCommit}`);
+  expect(foreignCommitSet.status).toBe(409);
+  const emptySet = await addressedRequest(rebooted, `${workspaceQuery}/log?generation=1&base=${commit}&head=${commit}`);
+  expect(emptySet.status).toBe(200);
+  const emptyRef = await emptySet.json() as { object: { objectId: string } };
+  const emptyRead = await addressedRequest(rebooted, `/runtime-objects/${emptyRef.object.objectId}/content`);
+  expect(emptyRead.status).toBe(200);
+  expect(await emptyRead.text()).toBe("");
   const foreignLogPage = await addressedRequest(
     rebooted,
     `${workspaceQuery}/log?generation=1&cursor=${cursor}`,

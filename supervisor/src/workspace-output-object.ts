@@ -39,6 +39,7 @@ export async function sealWorkspaceOutput(
             handle: string;
             generation: number;
             head: string;
+            base?: string;
           };
         };
   }>,

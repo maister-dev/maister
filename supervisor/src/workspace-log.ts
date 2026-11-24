@@ -11,6 +11,7 @@ import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 import {
   WORKSPACE_LOG_MAX_BYTES,
   WORKSPACE_LOG_OBJECT_NAME,
+  WORKSPACE_COMMIT_SET_OBJECT_NAME,
   workspaceEvidenceDigest,
 } from "../../runtime/workspace-prepare";
 
@@ -77,57 +78,99 @@ export async function sealWorkspaceLog(
       },
     );
 
-  let page: WorkspaceLogPage;
+  let output: { bytes: Buffer; head: string; base?: string };
   try {
     const observed = await observePreparedGitHead(workspace);
-    const scope = `${workspaceEvidenceDigest([state.hostKey, handle, generation, observed.commit])}:`;
-    const offset = readOffset(query.cursor, scope);
-    const records = await executeWorkspaceGitBytes(
-      [
-        "--no-optional-locks",
-        "--no-replace-objects",
-        "-C",
-        workspace.realPath,
-        "log",
-        "--topo-order",
-        "--no-show-signature",
-        "--no-decorate",
-        "--no-notes",
-        "-z",
-        "--format=%H%x00%cI%x00%s",
-        `--skip=${offset}`,
-        `--max-count=${limit + 1}`,
-        observed.commit,
-        "--",
-      ],
-      { timeout: 8_000 },
-    );
-    const fields = records.toString("utf8").split("\0");
-    if (
-      fields.pop() !== "" ||
-      fields.length % 3 !== 0 ||
-      fields.length > 3 * (limit + 1)
-    )
-      throw new SupervisorError(
-        "ACP_PROTOCOL",
-        "Git returned an invalid log page",
+    const git = [
+      "--no-optional-locks",
+      "--no-replace-objects",
+      "-C",
+      workspace.realPath,
+    ];
+    const head = query.head ?? observed.commit;
+    if (query.base) {
+      for (const [ancestor, descendant] of [
+        [query.base, head],
+        [head, observed.commit],
+      ]) {
+        if (ancestor !== descendant)
+          await executeWorkspaceGitBytes(
+            [...git, "merge-base", "--is-ancestor", ancestor, descendant],
+            { timeout: 8_000 },
+          );
+      }
+      const bytes = await executeWorkspaceGitBytes(
+        [
+          ...git,
+          "log",
+          "--oneline",
+          "--no-color",
+          "--no-show-signature",
+          "--no-decorate",
+          "--no-notes",
+          `${query.base}..${head}`,
+          "--",
+        ],
+        { timeout: 8_000 },
       );
-    const commits: WorkspaceLogPage["commits"][number][] = [];
-    for (
-      let index = 0;
-      index < Math.min(3 * limit, fields.length);
-      index += 3
-    ) {
-      const [commit, committedAt, subject] = fields.slice(index, index + 3);
+      output = { bytes, head, base: query.base };
+    } else {
+      const scope = `${workspaceEvidenceDigest([state.hostKey, handle, generation, observed.commit])}:`;
+      const offset = readOffset(query.cursor, scope);
+      const records = await executeWorkspaceGitBytes(
+        [
+          ...git,
+          "log",
+          "--topo-order",
+          "--no-show-signature",
+          "--no-decorate",
+          "--no-notes",
+          "-z",
+          "--format=%H%x00%cI%x00%s",
+          `--skip=${offset}`,
+          `--max-count=${limit + 1}`,
+          observed.commit,
+          "--",
+        ],
+        { timeout: 8_000 },
+      );
+      const fields = records.toString("utf8").split("\0");
       if (
-        !GIT_OBJECT_ID.test(commit) ||
-        !Number.isFinite(Date.parse(committedAt))
+        fields.pop() !== "" ||
+        fields.length % 3 !== 0 ||
+        fields.length > 3 * (limit + 1)
       )
         throw new SupervisorError(
           "ACP_PROTOCOL",
-          "Git returned invalid commit metadata",
+          "Git returned an invalid log page",
         );
-      commits.push({ commit, committedAt, subject });
+      const commits: WorkspaceLogPage["commits"][number][] = [];
+      for (
+        let index = 0;
+        index < Math.min(3 * limit, fields.length);
+        index += 3
+      ) {
+        const [commit, committedAt, subject] = fields.slice(index, index + 3);
+        if (
+          !GIT_OBJECT_ID.test(commit) ||
+          !Number.isFinite(Date.parse(committedAt))
+        )
+          throw new SupervisorError(
+            "ACP_PROTOCOL",
+            "Git returned invalid commit metadata",
+          );
+        commits.push({ commit, committedAt, subject });
+      }
+
+      const page: WorkspaceLogPage = {
+        head: observed.commit,
+        commits,
+        nextCursor:
+          fields.length > 3 * limit
+            ? Buffer.from(`${scope}${offset + limit}`).toString("base64url")
+            : null,
+      };
+      output = { bytes: Buffer.from(JSON.stringify(page)), head };
     }
 
     const verified = await observePreparedGitHead(workspace);
@@ -146,14 +189,6 @@ export async function sealWorkspaceLog(
           details: { reason: "stale_workspace_generation" },
         },
       );
-    page = {
-      head: observed.commit,
-      commits,
-      nextCursor:
-        fields.length > 3 * limit
-          ? Buffer.from(`${scope}${offset + limit}`).toString("base64url")
-          : null,
-    };
   } catch (error) {
     if (isSupervisorError(error)) throw error;
     if (
@@ -171,7 +206,7 @@ export async function sealWorkspaceLog(
     );
   }
 
-  const bytes = Buffer.from(JSON.stringify(page));
+  const { bytes, head, base } = output;
   if (bytes.byteLength > WORKSPACE_LOG_MAX_BYTES) throw oversizedLog();
   const object = await sealWorkspaceOutput(
     services,
@@ -181,12 +216,25 @@ export async function sealWorkspaceLog(
       assignmentEpoch: fence.epoch,
     },
     {
-      logicalName: WORKSPACE_LOG_OBJECT_NAME,
-      mimeType: "application/json",
+      logicalName: base
+        ? WORKSPACE_COMMIT_SET_OBJECT_NAME
+        : WORKSPACE_LOG_OBJECT_NAME,
+      mimeType: base ? "text/plain" : "application/json",
       bytes,
-      source: { workspaceGitLog: { handle, generation, head: page.head } },
+      source: {
+        workspaceGitLog: {
+          handle,
+          generation,
+          head,
+          ...(base ? { base } : {}),
+        },
+      },
     },
   );
 
-  return { generation, object };
+  return {
+    generation,
+    object,
+    ...(base ? { baseCommit: base, headCommit: head } : {}),
+  };
 }

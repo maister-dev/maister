@@ -74,6 +74,8 @@ export type WorkspaceLogQuery = Readonly<{
   generation: number;
   cursor?: string;
   limit?: number;
+  base?: string;
+  head?: string;
 }>;
 export type WorkspaceLogPage = Readonly<{
   head: string;
@@ -81,6 +83,7 @@ export type WorkspaceLogPage = Readonly<{
   nextCursor: string | null;
 }>;
 export const WORKSPACE_LOG_OBJECT_NAME = "workspace-log.json";
+export const WORKSPACE_COMMIT_SET_OBJECT_NAME = "workspace-commit-set.txt";
 export const WORKSPACE_LOG_MAX_BYTES = 64 * 1024;
 export const WORKSPACE_LOG_MAX_PAGE_SIZE = 100;
 export const WORKSPACE_TEMPLATE_CONTEXT_NAME = "workload-template-context.json";
@@ -89,6 +92,7 @@ export type WorkspaceEvidenceObject = Readonly<{
   generation: number;
   object: WorkspaceInputObject;
   baseCommit?: string;
+  headCommit?: string;
 }>;
 export const WORKSPACE_GIT_CHECKPOINT_PREFIX = "host-checkpoint:";
 export type WorkspaceMaterializeRequest = Readonly<{
