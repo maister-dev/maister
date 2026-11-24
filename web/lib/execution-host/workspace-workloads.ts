@@ -42,7 +42,6 @@ export async function reserveWorkspaceWorkload(
 ): Promise<ExecutionCommand> {
   return db.transaction(async (tx) => {
     await input.assertDriver?.(tx);
-    await assertWorkspaceRunAuthority(tx, input.runId);
     const [run] = await tx
       .select({ assignmentId: runs.executionAssignmentId, status: runs.status })
       .from(runs)
@@ -66,6 +65,7 @@ export async function reserveWorkspaceWorkload(
       throw workloadConflict(
         "Workload requires its current active assignment and Run",
       );
+    await assertWorkspaceRunAuthority(tx, input.runId);
     const [owned] = await tx
       .select({
         generation: workspaces.workspaceGeneration,

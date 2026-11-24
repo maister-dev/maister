@@ -169,7 +169,6 @@ export async function queueWorkspaceInputs(
   };
 
   return db.transaction(async (tx) => {
-    await assertAuthority(tx);
     const [run] = await tx
       .select({ status: runs.status, assignmentId: runs.executionAssignmentId })
       .from(runs)
@@ -187,6 +186,8 @@ export async function queueWorkspaceInputs(
       active.executionWorkspaceId !== handle
     )
       throw changed();
+    // Ingest serializes on the Run before updating the host's last-seen fields.
+    await assertAuthority(tx);
     const [existing] = await tx
       .select()
       .from(executionCommands)
