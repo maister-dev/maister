@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ChildLaunchReceipt } from "@/lib/orchestrator/child-launch-context";
+import type { ClaudeNativePermissions } from "../../../runtime/claude-native-permissions";
 import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -224,6 +225,7 @@ export type RunAgentStepCtx = {
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   capabilityContent?: CapabilityBundleContent;
+  claudePermissions?: ClaudeNativePermissions;
   outputObjects?: RuntimeObjectOutputBinding[];
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
@@ -1713,6 +1715,7 @@ async function runNewSession(
         runner: ctx.runner,
         capabilityProfileObjectId: capabilityBundle?.profileObjectId,
         capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
+        claudePermissions: ctx.claudePermissions,
         outputObjects: ctx.outputObjects,
         adapterLaunch: ctx.adapterLaunch,
         mcpServers: sessionCapabilities.mcpServers,

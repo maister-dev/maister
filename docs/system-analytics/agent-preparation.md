@@ -190,18 +190,21 @@ For an addressed Flow, Web checks the launching user's `readRepoFiles`
 grant before the supervisor observes each approved sibling ref. An addressed
 Agent uses the active attachment's approved declarations. Web verifies those
 grants again before delivery and session admission. The supervisor checks
-out the captured commit into a private context directory, clears file write
-bits and attaches only the current step's mounts to the ACP write guard.
+out the captured commit into a private context directory. Its native write
+guard protects the checkout and its Git metadata from the adapter and child
+processes. Only the current step's mounts enter the ACP write guard.
 The session receives the verified packaged skill paths on its first prompt.
 Adapter processes inherit host plumbing and adapter-specific settings from a
 bounded allow-list. Explicit runner configuration and the run-scoped facade
 credential retain their separate channels.
 
-For a model-only Claude node, the supervisor applies the pinned runner model
-through its child environment and ACP session options. The addressed flow
-uses the same redacted capability profile and instructions as other adapters.
-Node declarations requiring a native permissions or path-guard settings
-file remain refused before spawn until that host materializer is available.
+For a Claude node, the supervisor applies the pinned runner model through
+its child environment and ACP options. The session command carries typed
+permission rules. The supervisor supplies the packaged native path-guard
+command from the current declared lane, and the adapter acknowledges the
+requested permission mode before a prompt. Strict tool arbitration takes
+precedence over bypass mode. Capability instructions use the same sealed
+objects as on other adapters. The node's reuse digest includes native policy.
 
 The manager resolves approved package, skill, instructions, capabilities,
 memory references and mounted context revisions. The supervisor verifies
@@ -213,7 +216,8 @@ across replay and checkpoint resume. The launch-path and materialization
 integration scenarios C-05 and C-07 own the transaction and byte witnesses.
 
 An addressed Flow freezes its requirement checks with the admitted revision.
-The manager admits them in declaration order after workspace materialization.
+The manager admits them in declaration order after workspace materialization
+and any required [host setup](execution-hosts.md#workspace-protocol-1).
 Checkout and input receipts alone leave the Run Pending while a required probe
 is outstanding. An applied successful receipt advances preflight. A failed
 probe with confirmed process retirement fails the Run and releases its active

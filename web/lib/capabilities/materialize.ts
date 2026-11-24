@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { CapabilityAgent } from "@/lib/config.schema";
+import type { ClaudeNativePermissions } from "../../../runtime/claude-native-permissions";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type {
   CapabilityProfileEntry,
@@ -106,7 +107,11 @@ function renderCapabilityBundle({
 
 export function prepareAddressedCapabilityProfile(
   args: Omit<MaterializeCapabilityProfileArgs, "worktreePath">,
-): { capabilityContent: CapabilityBundleContent; mcpServers: AgentMcpServer[] } {
+): {
+  capabilityContent: CapabilityBundleContent;
+  mcpServers: AgentMcpServer[];
+  claudePermissions?: ClaudeNativePermissions;
+} {
   const agent = args.profile.executorAgent;
   // The addressed supervisor pins the explicit Claude model through its
   // native launch environment and ACP session options.
@@ -117,19 +122,10 @@ export function prepareAddressedCapabilityProfile(
     permissionMode: args.permissionMode,
   });
 
-  if (
-    artifacts.settingsLocal ||
-    (agent === "claude" && args.hooksConfig?.pathGuard?.allowedPaths.length)
-  )
-    throw new MaisterError(
-      "PRECONDITION",
-      "The selected supervisor cannot materialize these native adapter settings",
-      { details: { reason: "addressed_native_settings_unavailable" } },
-    );
-
   return {
     capabilityContent: renderCapabilityBundle(args),
     mcpServers: artifacts.mcpServers,
+    claudePermissions: artifacts.settingsLocal?.permissions,
   };
 }
 

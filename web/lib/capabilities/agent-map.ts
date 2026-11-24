@@ -1,4 +1,5 @@
 import type { CapabilityAgent } from "@/lib/config.schema";
+import type { ClaudeNativePermissions } from "../../../runtime/claude-native-permissions";
 import type {
   CapabilityMaterial,
   CapabilityProfileEntry,
@@ -50,7 +51,7 @@ export type ClaudeSettingsLocalHooks = {
 };
 
 export type AgentSettingsLocal = {
-  permissions: { allow?: string[]; defaultMode?: string };
+  permissions: { allow?: string[]; defaultMode?: ClaudeNativePermissions["defaultMode"] };
   model?: string;
   availableModels?: string[];
   // ADR-108 (M40) P4: native path-guard hook, folded in by the native
@@ -84,7 +85,7 @@ export type MapProfileToAgentArtifactsArgs = {
 
 const PERMISSION_MODE_TO_DEFAULT_MODE: Record<
   NonNullable<MapProfileToAgentArtifactsArgs["permissionMode"]>,
-  string
+  NonNullable<ClaudeNativePermissions["defaultMode"]>
 > = {
   ask: "default",
   allow: "bypassPermissions",

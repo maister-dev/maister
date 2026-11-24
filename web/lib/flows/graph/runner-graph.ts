@@ -4,6 +4,8 @@ import {
 } from "@/lib/agents/operational-diagnostics";
 import "server-only";
 
+import type { ClaudeNativePermissions } from "../../../../runtime/claude-native-permissions";
+import { workspaceEvidenceDigest } from "../../../../runtime/workspace-prepare";
 import type {
   DeclaredDelegationBounds,
   RunResultContract,
@@ -1582,6 +1584,7 @@ async function executeNodeAction(
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
     capabilityContent?: CapabilityBundleContent;
+    claudePermissions?: ClaudeNativePermissions;
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     prepareSessionCapabilities?: () => Promise<AgentSessionCapabilities>;
@@ -1864,6 +1867,7 @@ async function executeNodeAction(
             capabilityProfilePath: ctx.capabilityProfilePath,
             capabilityInstructionsPath: ctx.capabilityInstructionsPath,
             capabilityContent: ctx.capabilityContent,
+            claudePermissions: ctx.claudePermissions,
             adapterLaunch: mergeRunnerAdapterLaunch(
               sessionRunner,
               ctx.adapterLaunch,
@@ -2154,6 +2158,7 @@ type MaterializedNodeCapabilities = {
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   capabilityContent?: CapabilityBundleContent;
+  claudePermissions?: ClaudeNativePermissions;
   adapterLaunch: ScratchAdapterLaunch;
   mcpServers: AgentMcpServer[];
   plan: MaterializationPlan;
@@ -2343,11 +2348,17 @@ async function materializeNodeCapabilities(
     mcpServerNames: mcpServers.map((s) => s.name),
   });
 
+  const nativePolicy = addressed && agent === "claude" ? {
+    permissions: "claudePermissions" in m ? m.claudePermissions ?? null : null,
+    pathGuard: capabilityArgs.hooksConfig?.pathGuard ?? null,
+  } : undefined;
   const plan: MaterializationPlan = {
     // Fold the enforcement profile into the digest so the long-lived-session
     // consistency guard catches a mid-session enforcement change (D4).
     profileDigest: foldEnforcementProfileIntoDigest(
-      profile.profileDigest,
+      nativePolicy?.permissions || nativePolicy?.pathGuard
+        ? workspaceEvidenceDigest({ profileDigest: profile.profileDigest, nativePolicy })
+        : profile.profileDigest,
       enforcementProfile,
     ),
     resolvedRevisions: profile.supported.map((e) => ({
@@ -2400,7 +2411,11 @@ async function materializeNodeCapabilities(
 
   return {
     ...("capabilityContent" in m
-      ? { capabilityContent: m.capabilityContent, adapterLaunch: {} }
+      ? {
+          capabilityContent: m.capabilityContent,
+          claudePermissions: m.claudePermissions,
+          adapterLaunch: {},
+        }
       : {
           capabilityProfilePath: m.profilePath,
           capabilityInstructionsPath: m.instructionsPath,
@@ -4210,6 +4225,7 @@ export async function runGraph(
               capabilityInstructionsPath:
                 materialized?.capabilityInstructionsPath,
               capabilityContent: materialized?.capabilityContent,
+              claudePermissions: materialized?.claudePermissions,
               adapterLaunch: materialized?.adapterLaunch,
               mcpServers: materialized?.mcpServers,
               prepareSessionCapabilities,

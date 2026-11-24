@@ -4080,6 +4080,24 @@ components:
             Opaque `capability_instructions` object previously published under
             the same run and assignment fence. The host validates the kind and
             derives `MAISTER_CAPABILITY_INSTRUCTIONS_PATH` privately.
+        claudePermissions:
+          type: object
+          additionalProperties: false
+          description: >
+            Optional policy for an addressed Claude workspace. The host
+            builds native settings and requires mode acknowledgement before
+            dispatching a prompt. Read-only and strict tool arbitration take
+            precedence over bypassPermissions. Any path guard comes from the
+            existing hooksConfig and the host's packaged script.
+          properties:
+            allow:
+              type: array
+              minItems: 1
+              maxItems: 128
+              items: { type: string, minLength: 1, maxLength: 512 }
+            defaultMode:
+              type: string
+              enum: [default, plan, bypassPermissions]
         outputObjects:
           type: array
           maxItems: 32

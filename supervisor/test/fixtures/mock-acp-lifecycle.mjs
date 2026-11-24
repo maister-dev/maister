@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
@@ -59,6 +60,8 @@ let preHoldText;
 let promptInFlight = false;
 const steerQueue = [];
 let unownedTurn;
+let expectedNativeModel;
+let expectClaudeNative = false;
 const outputWrites = [];
 const sizedOutputWrites = [];
 
@@ -98,6 +101,10 @@ for (let i = 0; i < args.length; i += 1) {
     hangNewSession = true;
   } else if (arg === "--hang-prompt") {
     hangPrompt = true;
+  } else if (arg === "--expect-native-model") {
+    expectedNativeModel = args[++i];
+  } else if (arg === "--expect-claude-native") {
+    expectClaudeNative = true;
   } else if (arg === "--hang-permission") {
     hangPermission = true;
   } else if (arg === "--exit-delay-ms") {
@@ -410,11 +417,24 @@ class LifecycleAgent {
   async newSession(request) {
     await logInvocation({ method: "session/new", at: Date.now() });
     if (hangNewSession) return never();
-    const expectedModel = process.env.MAISTER_FIXTURE_EXPECT_NATIVE_MODEL;
-    if (expectedModel !== undefined && (
-      request._meta?.claudeCode?.options?.model !== expectedModel ||
-      process.env.ANTHROPIC_MODEL !== expectedModel
+    if (expectedNativeModel !== undefined && (
+      request._meta?.claudeCode?.options?.model !== expectedNativeModel ||
+      process.env.ANTHROPIC_MODEL !== expectedNativeModel
     )) throw new Error("The addressed Claude session did not receive its explicit model pin");
+    if (expectClaudeNative) {
+      const settings = request._meta?.claudeCode?.options?.settings;
+      const hook = settings?.hooks?.PreToolUse?.[0]?.hooks?.[0];
+      if (!settings?.permissions?.allow?.includes("Read") || typeof hook?.command !== "string")
+        throw new Error("Addressed Claude permissions or native path guard are missing");
+      const invoke = (filePath) => execFileSync("bash", ["-c", hook.command], {
+        cwd: request.cwd,
+        encoding: "utf8",
+        input: JSON.stringify({ tool_input: { file_path: filePath } }),
+      });
+      if (invoke("src/allowed.ts") !== "" ||
+        JSON.parse(invoke("prohibited.ts")).hookSpecificOutput.permissionDecision !== "deny")
+        throw new Error("Addressed Claude native path guard did not observe the declared lane");
+    }
 
     return { sessionId: `mock-${randomUUID()}` };
   }
@@ -448,7 +468,15 @@ class LifecycleAgent {
     return {};
   }
 
-  async setSessionConfigOption() {
+  async setSessionConfigOption(params) {
+    if (expectClaudeNative && params.configId === "mode") {
+      if (params.value !== "plan") throw new Error("Addressed Claude did not apply its declared native mode");
+      this.nativeModeApplied = true;
+      return { configOptions: [{
+        id: "mode", name: "Permission mode", type: "select", currentValue: "plan",
+        options: [{ value: "plan", name: "Plan" }],
+      }] };
+    }
     return { configOptions: [] };
   }
 
@@ -479,6 +507,8 @@ class LifecycleAgent {
   }
 
   async prompt(params) {
+    if (expectClaudeNative && !this.nativeModeApplied)
+      throw new Error("Addressed Claude received a prompt before applying native mode");
     promptInFlight = true;
     try {
       return await this.runPrompt(params);

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
+import type { ClaudeNativePermissions } from "../../runtime/claude-native-permissions";
 import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspaceRetainedRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
@@ -149,6 +150,7 @@ export type CreateSessionInput = {
   resumeSessionId?: string;
   capabilityProfileObjectId?: string;
   capabilityInstructionsObjectId?: string;
+  claudePermissions?: ClaudeNativePermissions;
   outputObjects?: SupervisorRuntimeOutputBinding[];
   adapterLaunch?: SupervisorAdapterLaunchInput;
   mcpServers?: AgentMcpServer[];

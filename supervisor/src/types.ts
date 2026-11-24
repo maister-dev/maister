@@ -7,6 +7,7 @@ import type { SessionContentReference } from "./runtime-events";
 import { z } from "zod";
 
 import { COMMAND_KINDS } from "../../runtime/command-kinds";
+import { CLAUDE_NATIVE_MODES } from "../../runtime/claude-native-permissions";
 
 import { NEW_WORK_REFUSALS, type OutboxLimit } from "./host-runtime-errors";
 import { RuntimeEventSequenceSchema } from "./runtime-events";
@@ -499,6 +500,10 @@ export const StartSessionRequestSchema = z
       .optional(),
     capabilityProfileObjectId: z.string().guid().optional(),
     capabilityInstructionsObjectId: z.string().guid().optional(),
+    claudePermissions: z.object({
+      allow: z.array(z.string().min(1).max(512).regex(/^[^\p{Cc}]+$/u)).min(1).max(128).optional(),
+      defaultMode: z.enum(CLAUDE_NATIVE_MODES).optional(),
+    }).strict().optional(),
     outputObjects: z.array(RuntimeObjectOutputBindingSchema).max(32).optional(),
     adapterLaunch: AdapterLaunchSchema.optional(),
     mcpServers: z.array(McpServerInputSchema).max(64).optional(),

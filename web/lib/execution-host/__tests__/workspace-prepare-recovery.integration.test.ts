@@ -230,6 +230,13 @@ it.each([
         {
           id: "edit",
           type: "ai_coding",
+          ...(!refusedRoot ? {
+            settings: {
+              permissionMode: "deny",
+              tools: { claude: ["Read"] },
+              hooks: { pathGuard: { allowedPaths: ["src/**"] } },
+            },
+          } : {}),
           retry_policy: {
             attempts: 2,
             on_errors: ["SPAWN"],
@@ -300,12 +307,12 @@ it.each([
     supervisor = await startRealSupervisor({
       fixture: "mock-acp-lifecycle.mjs",
       fixtureAdapters: [adapter],
+      fixtureArgs: adapter === "claude" && runner.model
+        ? ["--expect-native-model", runner.model, "--expect-claude-native"]
+        : [],
       env: {
         LANG: "C",
         MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: source }),
-        ...(adapter === "claude" && runner.model
-          ? { MAISTER_FIXTURE_EXPECT_NATIVE_MODEL: runner.model }
-          : {}),
         ...(refusedRoot ? { MAISTER_WORKSPACE_ROOTS: source } : {}),
       },
     });

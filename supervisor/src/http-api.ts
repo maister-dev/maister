@@ -60,6 +60,7 @@ import {
   type CommandOutcome,
 } from "./command-receipts";
 import { takeContextMountPreamble } from "./context-mounts";
+import { addressedClaudeSettings } from "./claude-tool-arbitration";
 import {
   StandDispatchPayloadSchema,
   StandLogsSelectorSchema,
@@ -3004,6 +3005,19 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           const workspace: WorkspaceResolution = workspaceInputs === undefined
             ? resolvedWorkspace
             : { ...resolvedWorkspace, ...workspaceInputs };
+          const adapter = request.runner?.adapter ?? request.executor.agent;
+          const addressedClaude = workspace.ownershipKind === "host_owned" && adapter === "claude";
+          if (request.claudePermissions && !addressedClaude)
+            throw new SupervisorError("PRECONDITION", "Native Claude permissions require an addressed Claude workspace", {
+              details: { reason: "command_invariant_conflict" },
+            });
+          const claudeSettings = addressedClaude ? addressedClaudeSettings({
+            permissions: request.claudePermissions,
+            allowedPaths: request.hooksConfig?.pathGuard?.allowedPaths,
+            mustArbitrate: Boolean(request.enforcementProfile || request.readOnlySession ||
+              workspace.readOnlyCheckout || workspace.contextMounts?.length ||
+              request.hooksConfig?.pathGuard),
+          }) : undefined;
           const mcpServers = workspaceSessionMcpServers(
             hostState, request.executionWorkspaceId, request.mcpServers,
           );
@@ -3163,7 +3177,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               record,
               emitter,
               logger,
-              adapter: request.runner?.adapter ?? request.executor.agent,
+              adapter,
+              claudeSettings,
               model: request.runner?.model ?? request.executor.model,
               mcpServers,
               resumeSessionId: request.resumeSessionId,

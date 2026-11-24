@@ -1011,9 +1011,10 @@ instructions. Web renders per-node capability profiles and instructions from
 the launch-frozen catalogue and publishes them as assignment-owned runtime
 objects. The supervisor resolves both references against the Run, assignment,
 epoch and object kind before exposing its local paths to ACP. The same MCP
-trust and enforcement checks apply before creating the session. Requests
-requiring adapter-specific settings files refuse until the supervisor can own
-those writes. Repository role installation still requires addressed support.
+trust and enforcement checks apply before creating the session. Addressed
+Claude sessions receive the node's typed native permissions and the
+supervisor's path-guard command over ACP. Repository role installation still
+requires addressed support.
 The graph driver uses that attempt ID for the CLI operation and the persisted
 evaluation ID for a command-check gate. A new driver for the same assignment
 can resume either operation with its existing receipt. Web applies the action
