@@ -22,6 +22,7 @@ type Adoption = {
   projectId: string;
   status: "adopted" | "failed";
   error?: string;
+  flowLinkPending?: { memberRef: string };
 };
 
 type Step =
@@ -176,6 +177,13 @@ export function CutVersionDialog({
                       {nameByProject.get(adoption.projectId) ??
                         adoption.projectId}
                     </span>
+                    {adoption.flowLinkPending ? (
+                      <span className="text-[11.5px] text-mute">
+                        {t("local.cutFlowLinkPending", {
+                          memberRef: adoption.flowLinkPending.memberRef,
+                        })}
+                      </span>
+                    ) : null}
                     {adoption.error ? (
                       <span className="text-[11.5px] text-mute">
                         {adoption.error}

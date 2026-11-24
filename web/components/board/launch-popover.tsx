@@ -218,7 +218,9 @@ const LAUNCH_UNAVAILABLE_REASON_KEY: Record<string, string> = {
   setup_pending: "launchUnavailableReason.setupPending",
   target_terminal: "launchUnavailableReason.targetTerminal",
   unsupported_schema: "launchUnavailableReason.unsupportedSchema",
+  untrusted: "launchUnavailableReason.untrusted",
   runner_unresolved: "launchUnavailableReason.runnerUnresolved",
+  flow_capability_unavailable: "launchUnavailableReason.capabilityUnavailable",
   queue_paused: "launchUnavailableReason.queuePaused",
   launch_task_held: "launchUnavailableReason.flagged",
 };

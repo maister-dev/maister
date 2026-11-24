@@ -162,6 +162,32 @@ afterEach(() => {
 });
 
 describe("ProjectPackagesSection name-collision pre-flight", () => {
+  it("acknowledges a committed attach while its worker still has a link to repair", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    const host = render();
+    await selectOption(host, "inst-3");
+    fetchMock.mockResolvedValueOnce(
+      Response.json(
+        {
+          code: "PRECONDITION",
+          message: "Repair pending",
+          details: {
+            mutationAccepted: true,
+            reason: "project_flow_link_pending",
+            operationId: "op",
+            memberRef: "review",
+            linkReason: "project_flow_link_conflict",
+          },
+        },
+        { status: 409 },
+      ),
+    );
+    await click(attachButton(host));
+    expect(host.textContent).toContain("packages.flowLinkOccupied");
+    expect(attachButton(host).disabled).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("selecting the colliding fork cut shows the rename explainer with the editor link and disables Attach", async () => {
     const host = render();
 
@@ -302,6 +328,67 @@ it("submits retry for the exact failed declaration displayed by the server", asy
     expectedAttempt: 3,
   });
 });
+
+it.each([
+  ["lost response", 3, null, "editConfirmed"],
+  ["stale_generation", 3, null, "editConfirmed"],
+  ["stale_generation", 4, null, "conflict"],
+  ["lost response", 3, "different/path", "conflict"],
+  ["lost response", 2, null, "requestFailed"],
+] as const)(
+  "reconciles %s with the saved pin at generation %s, path %s",
+  async (failure, generation, path, notice) => {
+    vi.stubGlobal("fetch", fetchMock);
+    if (failure === "lost response")
+      fetchMock.mockRejectedValueOnce(new Error("network"));
+    else
+      fetchMock.mockResolvedValueOnce(
+        Response.json({ details: { reason: failure } }, { status: 409 }),
+      );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        declarations: [
+          {
+            ...failedPin,
+            generation,
+            version: generation === 2 ? "v2" : "v3",
+            path,
+          },
+        ],
+      }),
+    );
+    const host = render(attachment, [failedPin]);
+
+    await click(
+      [...host.querySelectorAll("button")].find(
+        (b) => b.textContent === "dependencies.edit",
+      )!,
+    );
+    const form = document.body.querySelector<HTMLFormElement>(
+      '[role="dialog"] form',
+    )!;
+
+    form.querySelector<HTMLInputElement>('[name="version"]')!.value = "v3";
+    await act(async () => {
+      form.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(
+      fetchMock.mock.calls.map(([url, options]) => [
+        url,
+        options.method ?? "GET",
+      ]),
+    ).toEqual([
+      ["/api/projects/demo/dependency-declarations/decl-1", "PATCH"],
+      ["/api/projects/demo/packages", "GET"],
+    ]);
+    expect(document.body.textContent).toContain(`dependencies.${notice}`);
+    expect(document.body.querySelector('[role="dialog"]') !== null).toBe(
+      notice === "requestFailed",
+    );
+  },
+);
 
 it("keeps a rejected edit open and associates the translated correction with its field", async () => {
   vi.stubGlobal("fetch", fetchMock);

@@ -18,6 +18,54 @@ type DialogKind = "edit" | "recover-setup";
 const coordinateFields = ["source", "version", "path"] as const;
 
 type CoordinateField = (typeof coordinateFields)[number];
+type EditPin = {
+  expectedGeneration: number;
+  source: string;
+  version: string;
+  path?: string;
+};
+type Command =
+  | { action: "edit"; body: EditPin }
+  | { action: "retry" | "recover-setup"; body: Record<string, unknown> };
+
+async function reconcileEdit(
+  slug: string,
+  declarationId: string,
+  pin: EditPin,
+): Promise<"editConfirmed" | "conflict" | "requestFailed"> {
+  try {
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(slug)}/packages`,
+      { cache: "no-store" },
+    );
+
+    if (!response.ok) return "requestFailed";
+    const { declarations }: { declarations: ProjectDependencyView[] } =
+      await response.json();
+    const current = declarations.find(
+      (entry) => entry.id === declarationId && entry.kind === "package",
+    );
+
+    if (!current) return "conflict";
+    const samePin =
+      current.source === pin.source &&
+      current.version === pin.version &&
+      current.path === (pin.path ?? null);
+
+    if (
+      samePin &&
+      (current.generation === pin.expectedGeneration + 1 ||
+        current.generation === pin.expectedGeneration)
+    )
+      return "editConfirmed";
+
+    return current.generation === pin.expectedGeneration
+      ? "requestFailed"
+      : "conflict";
+  } catch {
+    return "requestFailed";
+  }
+}
 
 function DeclarationRow({
   slug,
@@ -39,10 +87,15 @@ function DeclarationRow({
   );
   const base = `/api/projects/${encodeURIComponent(slug)}/dependency-declarations/${encodeURIComponent(row.id)}`;
 
-  async function send(
-    action: "retry" | DialogKind,
-    body: Record<string, unknown>,
-  ): Promise<void> {
+  async function verifyEdit(pin: EditPin): Promise<void> {
+    const outcome = await reconcileEdit(slug, row.id, pin);
+
+    if (outcome !== "requestFailed") setDialog(null);
+    setNotice(t(outcome));
+    router.refresh();
+  }
+
+  async function send({ action, body }: Command): Promise<void> {
     setBusy(true);
     setNotice(null);
     setInvalidField(null);
@@ -58,9 +111,17 @@ function DeclarationRow({
 
       if (response.ok) setDialog(null);
       else if (response.status === 409) {
-        setDialog(null);
         const failure = await response.json();
 
+        if (
+          action === "edit" &&
+          failure.details?.reason === "stale_generation"
+        ) {
+          await verifyEdit(body);
+
+          return;
+        }
+        setDialog(null);
         setNotice(
           t(
             failure.details?.reason === "operation_busy"
@@ -81,7 +142,8 @@ function DeclarationRow({
       } else setNotice(t("refused"));
       router.refresh();
     } catch {
-      setNotice(t("requestFailed"));
+      if (action === "edit") await verifyEdit(body);
+      else setNotice(t("requestFailed"));
     } finally {
       setBusy(false);
     }
@@ -95,11 +157,14 @@ function DeclarationRow({
     const data = new FormData(event.currentTarget);
     const path = String(data.get("path") ?? "").trim();
 
-    void send("edit", {
-      expectedGeneration,
-      source: String(data.get("source") ?? "").trim(),
-      version: String(data.get("version") ?? "").trim(),
-      ...(path ? { path } : {}),
+    void send({
+      action: "edit",
+      body: {
+        expectedGeneration,
+        source: String(data.get("source") ?? "").trim(),
+        version: String(data.get("version") ?? "").trim(),
+        ...(path ? { path } : {}),
+      },
     });
   }
   const reasonKey = row.reason ? `reasons.${row.reason}` : null;
@@ -167,9 +232,12 @@ function DeclarationRow({
             disabled={busy}
             type="button"
             onClick={() =>
-              void send("retry", {
-                expectedGeneration: row.generation,
-                expectedAttempt: row.attempt,
+              void send({
+                action: "retry",
+                body: {
+                  expectedGeneration: row.generation,
+                  expectedAttempt: row.attempt,
+                },
               })
             }
           >
@@ -246,12 +314,15 @@ function DeclarationRow({
               disabled={busy}
               type="button"
               onClick={() =>
-                void send("recover-setup", {
-                  expectedAttempt: dialog.snapshot.attempt,
-                  expectedGeneration: dialog.snapshot.generation,
-                  resolvedRevision: dialog.snapshot.resolvedRevision,
-                  memberRef: dialog.snapshot.memberRef,
-                  action: "rerun_setup",
+                void send({
+                  action: "recover-setup",
+                  body: {
+                    expectedAttempt: dialog.snapshot.attempt,
+                    expectedGeneration: dialog.snapshot.generation,
+                    resolvedRevision: dialog.snapshot.resolvedRevision,
+                    memberRef: dialog.snapshot.memberRef,
+                    action: "rerun_setup",
+                  },
                 })
               }
             >

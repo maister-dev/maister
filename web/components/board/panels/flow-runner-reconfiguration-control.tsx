@@ -25,7 +25,10 @@ type Props = {
   allResolvedLabel?: string;
 };
 
-async function patchJson(url: string, body: unknown): Promise<void> {
+async function patchJson(
+  url: string,
+  body: unknown,
+): Promise<ProjectFlowRunnerRemap["status"]> {
   const response = await fetch(url, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
@@ -35,6 +38,12 @@ async function patchJson(url: string, body: unknown): Promise<void> {
   if (!response.ok) {
     throw new Error("request failed");
   }
+  const { remap } = await response.json();
+
+  if (remap?.status !== "Mapped" && remap?.status !== "Pending")
+    throw new Error("Missing runner binding status");
+
+  return remap.status;
 }
 
 function remapStatusClass(status: ProjectFlowRunnerRemap["status"]): string {
@@ -99,7 +108,7 @@ export function FlowRunnerReconfigurationControl({
     setError(null);
 
     try {
-      await patchJson(
+      const status = await patchJson(
         `/api/projects/${encodeURIComponent(projectSlug)}/flow-runner-remaps`,
         {
           flowRevisionId: remap.flowRevisionId,
@@ -107,13 +116,14 @@ export function FlowRunnerReconfigurationControl({
           mappedRunnerId,
         },
       );
+
       setItems((current) =>
         current.map((item) =>
           item.id === remap.id
             ? {
                 ...item,
                 mappedRunnerId,
-                status: mappedRunnerId ? "Mapped" : "Pending",
+                status,
               }
             : item,
         ),
@@ -156,7 +166,13 @@ export function FlowRunnerReconfigurationControl({
                   {remap.flowRef}
                 </div>
                 <div className="mt-1 font-mono text-[10.5px] tracking-[0.02em] text-mute">
-                  {t("slot")}: {slotLabels?.[remap.slotKey] ?? remap.slotKey}
+                  {remap.declaredRunnerId
+                    ? t("declaredFlowRunner", {
+                        runner: remap.declaredRunnerId,
+                      })
+                    : t("slot") +
+                      ": " +
+                      (slotLabels?.[remap.slotKey] ?? remap.slotKey)}
                 </div>
                 <div
                   className={`mt-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] ${remapStatusClass(

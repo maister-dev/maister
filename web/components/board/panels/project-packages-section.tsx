@@ -40,11 +40,15 @@ function installLabel(install: AvailablePackageInstallView): string {
     : `${install.name}@${install.versionLabel}`;
 }
 
+type PackageChange =
+  | { state: "applied" | "publicationBusy" | "failed" }
+  | { state: "linkPending"; occupiedRef?: string };
+
 async function call(
   url: string,
   method: "POST" | "DELETE",
   body?: unknown,
-): Promise<{ ok: boolean; publicationBusy?: boolean }> {
+): Promise<PackageChange> {
   const res = await fetch(url, {
     method,
     headers: { "content-type": "application/json" },
@@ -54,13 +58,29 @@ async function call(
   if (!res.ok) {
     const failure = await readApiErrorBody(res);
 
+    if (
+      res.status === 409 &&
+      failure?.code === "PRECONDITION" &&
+      failure.details?.reason === "project_flow_link_pending" &&
+      failure.details.mutationAccepted === true
+    )
+      return {
+        state: "linkPending",
+        occupiedRef:
+          failure.details.linkReason === "project_flow_link_conflict"
+            ? failure.details.memberRef
+            : undefined,
+      };
+
     return {
-      ok: false,
-      publicationBusy: failure?.details?.reason === "operation_busy",
+      state:
+        failure?.details?.reason === "operation_busy"
+          ? "publicationBusy"
+          : "failed",
     };
   }
 
-  return { ok: true };
+  return { state: "applied" };
 }
 
 // (ADR-088) Whole-package attachments of a project: attach from the platform
@@ -106,15 +126,26 @@ export function ProjectPackagesSection({
     if (notice) noticeRef.current?.focus();
   }, [notice]);
 
-  function surface(result: { ok: boolean; publicationBusy?: boolean }): void {
-    if (!result.ok)
-      setNotice(
-        result.publicationBusy
-          ? tErr("configPublicationBusy")
-          : t("errorGeneric"),
-      );
-    else setNotice(t("appliedInMaister"));
-    if (result.ok) refresh();
+  function surface(result: PackageChange): void {
+    switch (result.state) {
+      case "publicationBusy":
+        setNotice(tErr("configPublicationBusy"));
+        return;
+      case "failed":
+        setNotice(t("errorGeneric"));
+        return;
+      case "linkPending":
+        setNotice(
+          result.occupiedRef
+            ? t("flowLinkOccupied", { flow: result.occupiedRef })
+            : t("flowLinkPending"),
+        );
+        break;
+      case "applied":
+        setNotice(t("appliedInMaister"));
+        break;
+    }
+    refresh();
   }
 
   async function attach(): Promise<void> {
@@ -126,9 +157,10 @@ export function ProjectPackagesSection({
       });
 
       surface(result);
-      if (result.ok) setSelectedInstall("");
+      if (result.state === "applied" || result.state === "linkPending")
+        setSelectedInstall("");
     } catch {
-      surface({ ok: false });
+      surface({ state: "failed" });
     } finally {
       setBusy(null);
     }
@@ -141,7 +173,7 @@ export function ProjectPackagesSection({
         await call(`/api/projects/${slug}/packages/${attachmentId}`, "DELETE"),
       );
     } catch {
-      surface({ ok: false });
+      surface({ state: "failed" });
     } finally {
       setBusy(null);
     }
@@ -163,7 +195,7 @@ export function ProjectPackagesSection({
         }),
       );
     } catch {
-      surface({ ok: false });
+      surface({ state: "failed" });
     } finally {
       setBusy(null);
     }
@@ -191,7 +223,7 @@ export function ProjectPackagesSection({
       );
       refresh();
     } catch {
-      surface({ ok: false });
+      surface({ state: "failed" });
     } finally {
       setBusy(null);
     }

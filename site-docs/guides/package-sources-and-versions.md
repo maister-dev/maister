@@ -161,15 +161,17 @@ commands may run on the host.
 | State | Meaning |
 | --- | --- |
 | **Untrusted** | The default for any git source. Launches, `setup.sh`, and MCP commands from the revision are refused. |
-| **Trusted by policy** | Logic trust granted automatically: local sources, Studio cuts, and git sources whose URL starts with a prefix listed in `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES`. Executable content still needs the explicit confirmation. |
+| **Trusted by policy** | Logic trust granted automatically: local sources, Studio cuts, and git sources whose URL starts with a prefix listed in `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES`. Package members follow the trust policy of their installed revision. |
 | **Trusted** | Confirmed by a global administrator in **Trust review**. |
 
 To trust a revision, open **Trust review** on it, inspect the inventory
 (Flows, agents, skills, MCP templates, scripts, and `setup.sh`), and confirm.
-The decision applies to every project attached to that revision, and the
-dialog shows how many projects that is. After confirmation MAIster runs each
-member Flow's `setup.sh`; a failing script marks the revision as failed, and
-launches are refused until a fixed version is installed.
+The dialog shows how many projects use the revision. MAIster saves the
+decision for that exact revision and runs required setup for its current
+project attachments. If no project uses it yet, setup starts when it is
+attached. If setup fails, open **Project → Packages** to inspect the affected
+member and retry after correcting the cause. An interrupted setup may ask for
+explicit recovery. Other ready dependencies remain available.
 
 Trust is granted per revision. A new version needs its own review, even from
 the same source. Keep `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` for repositories

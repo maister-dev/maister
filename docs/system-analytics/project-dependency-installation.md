@@ -10,7 +10,7 @@ Registration accepts a repository after source preparation and validation. Each 
 
 - A declaration identifies a desired dependency by project, kind and logical manifest ID. Its immutable generation contains its coordinates, ordinal and kind-specific settings. A package pin can be edited before its first successful resolution.
 - An attempt belongs to one declaration generation. It records the authorizing actor, lease, stage, resolved material, outcome and actionable diagnostic. Migrated attachments have an effective revision and no synthetic attempt.
-- Managed local packages, Flows and capabilities derive the content witness and published bytes from one private snapshot. Package and Flow manifests are read from that snapshot. A standalone capability retains its historical path-based revision. A matching cache seal still requires the source-owned files to be present and intact. Generated setup outputs can coexist with those files. Package member attachment, reinstallation and checkpointed recovery verify the entire package root, including unexpected nested files. For pre-witness packages, a local content revision identifies the original bytes; a remote source must resolve to the recorded revision before its members are staged.
+- Managed local packages, Flows and capabilities resolve from one private snapshot. The existing byte digest identifies local package and Flow revisions, and standalone capabilities retain their path-based revision. A separate layout digest records directory entries, regular-file executable bits and relative symlink targets. Each link must resolve inside the material being copied. The installer verifies source-owned files on cache reuse, allowing generated Flow and capability setup output. It upgrades historical seals after this verification. Package roots have no setup output: manual attach, upgrade and checkpoint recovery verify the whole root, including packages containing only agents. A pre-witness local install retains its original content-revision check; a pre-witness remote source must resolve to its recorded revision.
 - The effective attachment and its members retain the runtime trust, setup and enablement decisions. Only eligible material may be used for a new run. Existing runs retain their snapshots.
 
 ## States
@@ -78,6 +78,8 @@ These acceptance criteria cover registration, dependency realization, recovery a
 
 An unreachable remote or invalid member manifest fails its declaration. An invalid project manifest still fails registration. A late attempt may update its own history but cannot publish a superseded generation. A known failure supports explicit retry. A lost response to an already accepted retry replays its original receipt. An uncertain setup can be rerun only after checking completion evidence, proving owner quiescence and receiving a fresh authorized recovery decision.
 
+Registration, installation and cache lookup accept capability identifiers and manifest versions of up to 128 safe characters. If a package edit loses its HTTP response, Settings reads the declaration again. The requested coordinates at the expected successor generation confirm the save. A different edit stays visible as a conflict.
+
 Package edits affect Postgres immediately. Settings → Git previews the desired pins, including unresolved remote pins. Status, preview and publication share the same validation basis. A local commit and any subsequent push have separate confirmation and evidence.
 
 If setup is unfinished after an accepted package trust decision, the response
@@ -88,6 +90,10 @@ or detaching it before dispatch allows another current owner to request
 recovery. A recorded dispatch still requires proof of completion or an
 authorized recovery decision after the previous process stops. Recovery checks
 the original script digest before starting another process.
+
+A missing required script produces `setup_material_changed` and identifies the member. Cancellation while the process is waiting for permission to run is retryable when the owner can prove the gate stayed closed. Trust and enablement apply to the Flow revision still attached when the decision commits. A global grant persists for an unattached package. Its setup starts with an eligible project attachment. A failed replacement in another project retains its own diagnostic and permits other current owners to proceed.
+
+Flow links are published by member. PostgreSQL stores each pending link in the same transaction as the effective change. After a lost acknowledgement the worker reads the committed decision and the current project Flow before touching its link. A missing source does not prevent repair. An occupied path leaves the existing file intact. Package management returns the accepted mutation, member and operation ID, and retries publication after the obstruction clears.
 
 Admission, bundle capture and worktree preparation use the same effective,
 trusted, setup-ready inputs. An independent Flow can run while a sibling's

@@ -435,26 +435,22 @@ capability_imports:
       # policy-trusted sources (default: follow policy)
 ```
 
-| Field     | Rule                                                                                                                                                                                                                                     |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`      | Non-empty string matching `SAFE_PATH_SEGMENT` (`/^[A-Za-z0-9._-]+$/`). No `.`, `..`, or embedded `/`. Validated at Zod schema layer AND inside `systemCapabilityCachePath` (defence-in-depth). Unique within the file.                   |
-| `source`  | Non-empty git URL. Resolved by `installCapabilityRevision` (`git clone --branch <version>`).                                                                                                                                             |
-| `version` | Tag-pinned (lock semantics). Non-empty string matching `SAFE_PATH_SEGMENT`. Passed verbatim to `git clone --branch`. The resolved 40-hex SHA is captured and stored in `capability_imports.resolved_revision`.                           |
-| `trust`   | Optional. `"explicit"` overrides policy-trust and requires an operator confirmation via `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust` before `setup.sh` runs, even if the source prefix would be `trusted_by_policy`. |
+| Field | Rule |
+| --- | --- |
+| `id` | Unique within the import list. Uses the capability identifier rules below. |
+| `source` | Supported Git coordinate or local directory. A Git import resolves the requested tag to its full commit SHA. |
+| `version` | Requested tag. Uses the capability identifier rules below. |
+| `trust` | Optional. `explicit` requires operator confirmation before setup, including for policy-trusted sources. |
 
-**Path safety (R-PATH):** Both `id` and `version` are validated against
-`SAFE_PATH_SEGMENT` at the schema layer (Zod `refine`) and again inside the
-path builder `systemCapabilityCachePath` (the `assertFieldSafe` guard from
-`web/lib/flow-paths.ts`). An import `id` of `../evil`, `..`, or `a/b` is
-rejected at both layers and never reaches `~/.maister/capabilities/`. This
-mirrors the existing `flowIdSchema` / `versionSchema` pattern (see ADR-043).
+Capability identifiers and manifest versions allow 1–128 ASCII letters, digits,
+dots, underscores and hyphens. A single dot and any occurrence of two consecutive
+dots are invalid. Registration validates the manifest. The installer checks the
+coordinates again, and the cache path builder validates the identifier and
+resolved revision used on disk.
 
-**Install lifecycle:** On project registration, each `capability_imports[]`
-entry drives `installCapabilityRevision` (fetch → record SHA → resolve trust),
-followed by `runCapabilityRevisionSetup` (trust-gated, physically separate).
-The resolved import is then ingested into `capability_records` via
-`upsertCapabilitiesFromConfig` (source `flow-package`). See
-[`db/capabilities-domain.md`](db/capabilities-domain.md) and ADR-043.
+The worker records the effective revision and projects eligible imports into
+the capability catalog. The Packages panel shows the saved request and its
+installation outcome. [Installation and recovery](system-analytics/project-dependency-installation.md)
 
 **Config-state symmetry (R-SYM):** Removing an entry from `capability_imports[]`
 disables the corresponding config/import-owned `capability_records` rows
@@ -486,17 +482,13 @@ packages:
 | `version` | Per-package tag, slash allowed: `/^[A-Za-z0-9._+/-]+$/`, no `..`, ≤ 128 chars. NOT `versionTagSchema` — member sub-installs receive the path-safe label (`/` → `-`); the raw tag is used only for `git clone --branch` and the package row. |
 | `path`    | Optional package subdir inside the source (escape-guarded relative path; no `..`/absolute). Defaults to the source root.                                                                                                                    |
 
-Bootstrap semantics: registration runs the SAME pipeline as the UI surface —
-`installPackageRevision` (one platform `package_installs` row per resolved
-revision; every member sub-install records that revision) followed by
-`attachPackage` (attachment group + `package_install_id` FK links +
-mcp/restriction ingestion) — so a bootstrapped package appears on the
-packages tab and is manageable (detach/upgrade/trust) immediately after
-registration. The runtime source of truth is the DB. UI attach, detach,
-upgrade and downgrade leave repository files unchanged. The separate reviewed
-configuration save commits the current pins while preserving comments and
-unrelated sections; committed pins can recreate the project on another
-MAIster instance.
+Registration stores the requested pin and queues installation in the project
+transaction. The Packages panel can therefore show a pending or failed request
+before its first attachment exists. The worker resolves the package revision and
+attaches its members. A failed replacement retains the previous effective
+attachment. Settings → Git lets the operator review and commit the desired pins,
+including corrections to an unresolved package. A separate confirmation pushes
+the commit.
 
 #### `maister-package.yaml` v1 (Implemented, ADR-088)
 
