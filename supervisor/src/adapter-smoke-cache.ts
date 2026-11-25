@@ -149,7 +149,7 @@ export const READ_ONLY_SMOKE_PROBE_VERSION = 1;
 export const CAPABILITY_ENFORCEMENT_SMOKE_PROBE_VERSION = 2;
 const READ_ONLY_SMOKE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 
-function isMissingFile(err: unknown): boolean {
+export function isMissingFile(err: unknown): boolean {
   return (
     typeof err === "object" &&
     err !== null &&

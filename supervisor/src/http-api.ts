@@ -19,7 +19,7 @@ import type { AcpConnection } from "./acp-connection";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 
 import { z, ZodError, type ZodType } from "zod";
@@ -48,6 +48,7 @@ import {
 import { retainedOutputBudget } from "./bounded-acp-stream";
 import {
   adapterSmokeCachePath,
+  isMissingFile,
   readAdapterSmokeCache,
   smokeDiagnosticForAdapter,
   type AdapterSmokeCacheRead,
@@ -87,6 +88,7 @@ import {
   waitForChildExit,
 } from "./execution-fence";
 import { finishProgressTurn } from "./guardrail-progress";
+import { createDiagnosticsCache } from "./diagnostics-cache";
 import { executionHostCapabilities } from "./data-plane-capabilities";
 import {
   configuredWorkspaceSources,
@@ -211,6 +213,9 @@ export type CheckpointResponse = {
 export type InputBody = z.infer<typeof InputBodySchema>;
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
+// ADR-224: diagnostics snapshot freshness (fresh) and stale-servable window.
+const DIAGNOSTICS_TTL_MS = 30_000;
+const DIAGNOSTICS_STALE_WHILE_REVALIDATE_MS = 300_000;
 const SUPERVISOR_STARTED_AT_MS = Date.now();
 const SUPERVISOR_VERSION = process.env.npm_package_version ?? "0.0.1";
 const DIAGNOSTIC_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -260,6 +265,10 @@ export type RegisterRoutesOptions = {
   // ADR-183: the producer pause bound; tests shorten it (a code constant,
   // never an operator setting).
   producerPauseMaxMs?: number;
+  // ADR-224: diagnostics snapshot TTL / SWR overrides for tests (code
+  // constants in production, never operator settings).
+  diagnosticsCacheTtlMs?: number;
+  diagnosticsStaleWhileRevalidateMs?: number;
   spawnOverrides?: SpawnOverrides;
   // ADR-076 model-catalog resolver. Injected so tests can stub the source set
   // and the cache; main.ts wires the real registry (with Phase-2 sources) and
@@ -319,19 +328,43 @@ function countSessionsByStatus(
   return counts;
 }
 
+function queryValue(query: unknown, name: string): unknown {
+  return query !== null && typeof query === "object"
+    ? (query as Record<string, unknown>)[name]
+    : undefined;
+}
+
+function invalidQuery(
+  message: string,
+  reason: "health_query_invalid" | "diagnostics_query_invalid",
+): SupervisorError {
+  return new SupervisorError("PRECONDITION", message, { details: { reason } });
+}
+
 function parseHealthStreamOption(query: unknown): boolean {
-  const value =
-    query !== null && typeof query === "object"
-      ? (query as Record<string, unknown>).includeStream
-      : undefined;
+  const value = queryValue(query, "includeStream");
 
   if (value === undefined || value === "false") return false;
   if (value === "true") return true;
 
-  throw new SupervisorError(
-    "PRECONDITION",
+  throw invalidQuery(
     "includeStream must occur once with the literal value true or false",
-    { details: { reason: "health_query_invalid" } },
+    "health_query_invalid",
+  );
+}
+
+// ADR-224 DIAG-10: `refresh` forces a fresh probe; any other value — including
+// a repeated parameter, which Fastify parses as an array — is refused before
+// any compute starts.
+function parseDiagnosticsRefresh(query: unknown): boolean {
+  const value = queryValue(query, "refresh");
+
+  if (value === undefined) return false;
+  if (value === "1" || value === "true") return true;
+
+  throw invalidQuery(
+    "refresh must occur once with the literal value 1 or true",
+    "diagnostics_query_invalid",
   );
 }
 
@@ -634,6 +667,52 @@ async function diagnoseAdapterBinary(
   );
 
   return diagnostic;
+}
+
+// ADR-224: one full host probe. `startedAt` becomes `checkedAt`, so a cached
+// snapshot reports when its probe began, not when it was served.
+async function computeSupervisorDiagnostics(
+  runtimeRoot: string,
+  logger: Logger,
+  startedAt: number,
+): Promise<SupervisorDiagnosticsResponse> {
+  const smokeCache = await readAdapterSmokeCache(
+    adapterSmokeCachePath(runtimeRoot),
+  );
+
+  return {
+    status: "ready",
+    version: SUPERVISOR_VERSION,
+    checkedAt: new Date(startedAt).toISOString(),
+    adapters: await Promise.all(
+      listAdapterRuntimes().map((runtime) =>
+        diagnoseAdapterBinary(runtime, smokeCache, logger),
+      ),
+    ),
+    envRefs: diagnosticEnvRefs(),
+  };
+}
+
+// ADR-224 DIAG-07: the smoke cache is rewritten by an external script, so its
+// mtime is the snapshot's source version; an absent file is `null`.
+async function smokeCacheVersion(
+  runtimeRoot: string,
+  logger: Logger,
+): Promise<number | null> {
+  try {
+    return (await stat(adapterSmokeCachePath(runtimeRoot))).mtimeMs;
+  } catch (err) {
+    // A missing file is normal; any other failure is a host fault, so it is
+    // logged before the version degrades to `null`.
+    if (!isMissingFile(err)) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "adapter smoke cache cannot be inspected; treating the file as absent",
+      );
+    }
+
+    return null;
+  }
 }
 
 export function registerRoutes(opts: RegisterRoutesOptions): void {
@@ -2553,23 +2632,24 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
   });
 
-  app.get("/diagnostics", async (_req, reply) => {
-    const smokeCache = await readAdapterSmokeCache(
-      adapterSmokeCachePath(runtimeRoot),
-    );
-    const body: SupervisorDiagnosticsResponse = {
-      status: "ready",
-      version: SUPERVISOR_VERSION,
-      checkedAt: new Date().toISOString(),
-      adapters: await Promise.all(
-        listAdapterRuntimes().map((runtime) =>
-          diagnoseAdapterBinary(runtime, smokeCache, logger),
-        ),
-      ),
-      envRefs: diagnosticEnvRefs(),
-    };
+  // ADR-224: one snapshot per registered route set (DIAG-12: memory only).
+  const diagnostics = createDiagnosticsCache<SupervisorDiagnosticsResponse>({
+    ttlMs: opts.diagnosticsCacheTtlMs ?? DIAGNOSTICS_TTL_MS,
+    staleWhileRevalidateMs:
+      opts.diagnosticsStaleWhileRevalidateMs ??
+      DIAGNOSTICS_STALE_WHILE_REVALIDATE_MS,
+    now: Date.now,
+    compute: (startedAt) =>
+      computeSupervisorDiagnostics(runtimeRoot, logger, startedAt),
+    sourceVersion: () => smokeCacheVersion(runtimeRoot, logger),
+    logger: logger.child({ component: "diagnostics.cache" }),
+  });
 
-    reply.status(200).send(body);
+  app.get("/diagnostics", async (req, reply) => {
+    const refresh = parseDiagnosticsRefresh(req.query);
+
+    logger.debug({ refresh }, "http GET /diagnostics");
+    reply.status(200).send(await diagnostics.get({ force: refresh }));
   });
 
   // ADR-179: host env-var PRESENCE by name, for MCP readiness. Presence only —

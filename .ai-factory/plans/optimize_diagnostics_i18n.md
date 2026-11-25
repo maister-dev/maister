@@ -335,7 +335,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
 
 ### Phase 1: Supervisor. Exit: `pnpm -C supervisor lint typecheck test:unit test:integration` green
 
-- [ ] **Task 7: Diagnostics snapshot policy (TDD)** (depends on 2, 3)
+- [x] **Task 7: Diagnostics snapshot policy (TDD)** (depends on 2, 3)
   - **RED:** `supervisor/src/__tests__/diagnostics-cache.test.ts` (unit project). It uses a fake clock, a deferred `compute`, and a mutable `sourceVersion`. One test per requirement, each titled with its ID:
     - DIAG-01: a second call within the TTL resolves to the same object with `compute` called once;
     - DIAG-02: 20 concurrent calls during a pending compute → one compute;
@@ -360,7 +360,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
     - The level comes from the existing `LOG_LEVEL`.
   - Files: `supervisor/src/diagnostics-cache.ts` (new), the test (new).
 
-- [ ] **Task 8: `/diagnostics` route wiring (TDD)** (depends on 7)
+- [x] **Task 8: `/diagnostics` route wiring (TDD)** (depends on 7)
   - **RED:** `supervisor/src/__tests__/diagnostics-route.integration.test.ts` (integration project). It boots a real Fastify app via `registerRoutes`, with PATH-prepended shim executables `gemini`, `opencode` and `mimo` that append one line per invocation to a counter file and print a version. It proves wiring only; the policy is already unit-proven:
     - DIAG-02 e2e: 10 concurrent `GET /diagnostics` → each shim invoked exactly once, and all bodies are equal;
     - DIAG-05 wiring: `GET /diagnostics?refresh=1` → each shim invoked once more;
@@ -377,7 +377,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
   - **LOGGING:** the existing `[FIX] adapter diagnostics computed` DEBUG stays inside compute. Add a DEBUG `http GET /diagnostics { refresh }`.
   - Files: `supervisor/src/http-api.ts`, the new test, and the migrated tests.
 
-- [ ] **Task 9: Host-state v23 (TDD)** (depends on 2)
+- [x] **Task 9: Host-state v23 (TDD)** (depends on 2)
   - **RED:** `supervisor/src/__tests__/host-state-v23.integration.test.ts`:
     - IDX-12a: a fresh store has `session_process_run_idx` in `sqlite_master` with columns `(run_id, registered_at, command_id)`;
     - IDX-12b: a store created at v22 (reuse the CBS-02 upgrade fixture pattern) reopens at `user_version = 23` with the index;

@@ -792,6 +792,7 @@ export const REASON_TOKENS = [
   "legacy_field",
   "missing_envelope",
   "health_query_invalid",
+  "diagnostics_query_invalid",
   "stream_health_unavailable",
   "invalid_event_sequence",
   "invalid_event_span",
