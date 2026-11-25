@@ -186,7 +186,7 @@ Every requirement and edge case maps to **one** targeted, high-signal test (no t
 
 ### Phase 1: Supervisor Streaming & SQLite `fsync` Amplification Fix (Finding #3 — TDD)
 
-- [ ] **Task 2: [TDD] Extract shared `runtime/host-path-safety.ts` SSOT and coalesce post-rename runtime-object SQLite commit (`REQ-S3-01`, `REQ-S3-02`)** (depends on Task 1)
+- [x] **Task 2: [TDD] Extract shared `runtime/host-path-safety.ts` SSOT and coalesce post-rename runtime-object SQLite commit (`REQ-S3-01`, `REQ-S3-02`)** (depends on Task 1)
   - **RED**:
     - Add parameterized host-path parity tests to `supervisor/src/__tests__/runtime-events.test.ts` and `web/lib/execution-host/__tests__/runtime-events.test.ts` asserting code tokens (` //`, ` /*`, `<Button />`, `a / b`, `GET /api`, `https://x.io/a/b`) stay inline while real POSIX roots, multi-segment rooted paths, and `file://` URIs throw/redact.
     - Add integration test in `supervisor/src/__tests__/runtime-storage.integration.test.ts` asserting (a) `publishTextFrame` with ` //` and `<div />` creates **0** `runtime-objects/` files and (b) offloading `/Users/dev/secret.ts` increments `PRAGMA data_version` by 1 across insert + seal.
@@ -210,7 +210,7 @@ Every requirement and edge case maps to **one** targeted, high-signal test (no t
     - `supervisor/src/__tests__/runtime-storage.integration.test.ts`
   - **Green Gate**: `pnpm --filter @maister/supervisor test:unit src/__tests__/runtime-events.test.ts`, `pnpm --filter maister-web test:unit lib/execution-host/__tests__/runtime-events.test.ts`, and `pnpm --filter @maister/supervisor test:integration src/__tests__/runtime-storage.integration.test.ts`.
 
-- [ ] **Task 3: [TDD] Zero-spool in-memory fast-path, single UTF-8 decode, and bounded chunk-slice SQLite batching (`REQ-S3-03`, `REQ-S3-04`, `REQ-S3-05`)** (depends on Task 2)
+- [x] **Task 3: [TDD] Zero-spool in-memory fast-path, single UTF-8 decode, and bounded chunk-slice SQLite batching (`REQ-S3-03`, `REQ-S3-04`, `REQ-S3-05`)** (depends on Task 2)
   - **RED**:
     - Add unit tests in `supervisor/src/__tests__/bounded-acp-stream.test.ts` asserting:
       1. Complete newline-terminated frames perform **0** `spool.write`/`read`/`truncate` calls and **1** `TextDecoder.decode` call per frame.
@@ -244,7 +244,7 @@ Every requirement and edge case maps to **one** targeted, high-signal test (no t
     - `supervisor/src/__tests__/runtime-event-outbox.integration.test.ts`
   - **Green Gate**: `pnpm --filter @maister/supervisor test:unit src/__tests__/bounded-acp-stream.test.ts` and `pnpm --filter @maister/supervisor test:integration src/__tests__/runtime-event-outbox.integration.test.ts`.
 
-- [ ] **Task 4: [TDD] Tune SQLite WAL cache/temp pragmas, add bounded `physicalSnapshot()` amortization, and run Phase 1 full green gate (`REQ-S3-06`)** (depends on Task 3)
+- [x] **Task 4: [TDD] Tune SQLite WAL cache/temp pragmas, add bounded `physicalSnapshot()` amortization, and run Phase 1 full green gate (`REQ-S3-06`)** (depends on Task 3)
   - **RED**:
     - Add integration tests in `supervisor/src/__tests__/runtime-storage.integration.test.ts` asserting `PRAGMA cache_size === -65536`, `PRAGMA temp_store === 2`, and that 16 consecutive healthy writes execute `<= 2` `statfsSync` calls while `snapshot()` and within-8-MiB-margin operations measure fresh immediately.
     - Migrate `supervisor/src/__tests__/runtime-event-outbox.integration.test.ts` (L767–835) to assert the reconciled bounded-amortization contract (replacing exact `admissionMeasurements === 2` / `releaseMeasurements === 1` after 16 healthy loops with assertions covering both amortized reuse and fresh measurement on pressure/checkpoint/`snapshot()`).

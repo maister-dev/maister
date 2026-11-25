@@ -18,7 +18,11 @@ import {
   claudeModelOptions,
   claudeToolArbitrationOptions,
 } from "./claude-tool-arbitration";
-import { boundedAcpStream, type BoundedAcpClient } from "./bounded-acp-stream";
+import {
+  boundedAcpStream,
+  isOrdinaryTextNotification,
+  type BoundedAcpClient,
+} from "./bounded-acp-stream";
 import {
   clientCapabilitiesForAdapter,
   getAdapterRuntime,
@@ -75,6 +79,7 @@ export type CreateAcpConnectionArgs = {
   record: SessionRecord;
   emitter: EventEmitter;
   publishTextFrame?: (events: SessionTextFrameEvents) => void;
+  publishTextFrames?: (frames: readonly SessionTextFrameEvents[]) => void;
   logger: Logger;
   adapter: ExecutorAgent;
   /** Effective declared model, also supplied for executor-only legacy requests. */
@@ -1089,28 +1094,40 @@ export async function createAcpConnection(
     },
   };
 
+  const publishBatch =
+    args.publishTextFrames ??
+    (args.publishTextFrame
+      ? (frames: readonly SessionTextFrameEvents[]) => {
+          for (const pair of frames) args.publishTextFrame!(pair);
+        }
+      : undefined);
+
   const stream = boundedAcpStream({
     source: stdoutSource,
     stdin,
     client: clientImpl,
     adapter: args.adapter,
     onLine: emitLine,
+    ...(publishBatch
+      ? {
+          isBatchableTextFrame: (params, line) =>
+            isOrdinaryTextNotification(params) &&
+            extractCost(line, sessionId) === null,
+          onTextFrameBatch(frames) {
+            publishBatch(
+              frames.map(({ params, line }) => [
+                lineEvent(line),
+                updateEvent(params),
+              ]),
+            );
+          },
+        }
+      : {}),
     async onUpdateFrame(params, line) {
-      if (
-        args.publishTextFrame &&
-        (params.update.sessionUpdate === "agent_message_chunk" ||
-          params.update.sessionUpdate === "agent_thought_chunk" ||
-          params.update.sessionUpdate === "user_message_chunk") &&
-        params.update.content.type === "text" &&
-        extractCost(line, sessionId) === null
-      ) {
-        args.publishTextFrame([lineEvent(line), updateEvent(params)]);
-      } else {
-        if (params.update.sessionUpdate === "usage_update")
-          emitter.emit(SESSION_EVENT_CHANNEL, lineEvent(line, true));
-        else emitLine(line);
-        await clientImpl.sessionUpdate(params);
-      }
+      if (params.update.sessionUpdate === "usage_update")
+        emitter.emit(SESSION_EVENT_CHANNEL, lineEvent(line, true));
+      else emitLine(line);
+      await clientImpl.sessionUpdate(params);
     },
     onFailure(error) {
       record.abortOutput?.(error);

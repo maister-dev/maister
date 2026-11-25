@@ -460,7 +460,11 @@ export type HostState = {
   ): void;
   closeProducerWallet(walletId: string): void;
   bindProducerSession(walletId: string, hostSessionId: string): void;
-  tryReserveRuntimeFrame(walletId: string, frameBytes?: number): string | null;
+  tryReserveRuntimeFrame(
+    walletId: string,
+    frameBytes?: number,
+    rowCount?: number,
+  ): string | null;
   // ADR-183: whether the OUTBOX (unACKed pressure or no room under hard) is
   // what refuses frames, as opposed to runtime-file or physical headroom.
   runtimeEventOutboxRefusesFrames(): boolean;
@@ -496,6 +500,11 @@ export type HostState = {
     limit: number,
   ): CommandReceiptRow[];
   insertRuntimeObject(row: HostRuntimeObjectRow): void;
+  sealCapturedRuntimeObject(
+    row: HostRuntimeObjectRow,
+    fileId: string,
+    writtenBytes: number,
+  ): void;
   reserveRuntimeObject(
     row: HostRuntimeObjectRow,
     capacityBytes: number,
@@ -516,7 +525,7 @@ export type HostState = {
   ): HostRuntimeObjectRow;
   appendRuntimeEvent(input: AppendRuntimeEventInput): HostRuntimeEventRow;
   appendRuntimeFrameEvents(
-    inputs: readonly [AppendRuntimeEventInput, AppendRuntimeEventInput],
+    inputs: readonly AppendRuntimeEventInput[],
   ): readonly HostRuntimeEventRow[];
   putReceiptWithRuntimeEvent(
     receipt: CommandReceiptRow,
@@ -1122,6 +1131,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       // a power loss. Stage B chooses correctness over the local write latency.
       db.exec("PRAGMA synchronous = FULL");
     }
+    db.exec("PRAGMA cache_size = -65536");
+    db.exec("PRAGMA temp_store = MEMORY");
     applySchema(db, processContext, now().toISOString());
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -1322,10 +1333,10 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     inputs: readonly AppendRuntimeEventInput[],
   ): HostRuntimeEventRow[] =>
     storage.write(() => {
-      if (inputs.length < 1 || inputs.length > 2)
+      if (inputs.length < 1 || inputs.length > 32)
         throw new HostRuntimeEventError(
           "stream_corrupt",
-          "runtime event transaction must contain one event or one frame pair",
+          "runtime event transaction must contain between 1 and 32 frame events",
         );
       if (
         inputs.some(
@@ -1358,6 +1369,40 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         throw error;
       }
     });
+
+  const insertRuntimeObjectRow = (row: HostRuntimeObjectRow): void => {
+    db.prepare(
+      `INSERT INTO runtime_objects
+       (id, run_id, assignment_id, assignment_epoch, host_session_id, kind,
+        logical_name, mime_type, size_bytes, sha256, generation,
+        retention_class, state, private_path, created_at, sealed_at,
+        expires_at, deleted_at, last_error_json, producer_path, sealed_device, sealed_inode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      row.id,
+      row.runId,
+      row.assignmentId,
+      row.assignmentEpoch,
+      row.hostSessionId,
+      row.kind,
+      row.logicalName,
+      row.mimeType,
+      row.sizeBytes,
+      row.sha256,
+      row.generation,
+      row.retentionClass,
+      row.state,
+      row.privatePath,
+      row.createdAt,
+      row.sealedAt,
+      row.expiresAt,
+      row.deletedAt,
+      row.lastError ? JSON.stringify(row.lastError) : null,
+      row.producerPath,
+      row.sealedDevice,
+      row.sealedInode,
+    );
+  };
 
   const withRuntimeFileWrite = <T>(operation: () => T): T =>
     storage.write(() => {
@@ -1924,7 +1969,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     runtimeEventOutboxRefusesFrames() {
       return outboxRefusesFrames(db, limits);
     },
-    tryReserveRuntimeFrame(walletId, frameBytes = 1048576) {
+    tryReserveRuntimeFrame(walletId, frameBytes = 1048576, rowCount) {
       const reservedBytes = physicalReservationBytes(
         outboxBudgetSnapshot(db),
         8 * 1024 * 1024 + 4 * 16 * 1024,
@@ -1940,6 +1985,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             bootId,
             walletId,
             nowMs: now().getTime(),
+            rowCount,
           });
 
           if (reserved)
@@ -2331,42 +2377,18 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           },
           funding,
         );
-        state.insertRuntimeObject(row);
+        insertRuntimeObjectRow(row);
       });
     },
     insertRuntimeObject(row) {
       return storage.write(() => {
-        db.prepare(
-          `INSERT INTO runtime_objects
-           (id, run_id, assignment_id, assignment_epoch, host_session_id, kind,
-            logical_name, mime_type, size_bytes, sha256, generation,
-            retention_class, state, private_path, created_at, sealed_at,
-            expires_at, deleted_at, last_error_json, producer_path, sealed_device, sealed_inode)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          row.id,
-          row.runId,
-          row.assignmentId,
-          row.assignmentEpoch,
-          row.hostSessionId,
-          row.kind,
-          row.logicalName,
-          row.mimeType,
-          row.sizeBytes,
-          row.sha256,
-          row.generation,
-          row.retentionClass,
-          row.state,
-          row.privatePath,
-          row.createdAt,
-          row.sealedAt,
-          row.expiresAt,
-          row.deletedAt,
-          row.lastError ? JSON.stringify(row.lastError) : null,
-          row.producerPath,
-          row.sealedDevice,
-          row.sealedInode,
-        );
+        insertRuntimeObjectRow(row);
+      });
+    },
+    sealCapturedRuntimeObject(row, fileId, writtenBytes) {
+      return withRuntimeFileWrite(() => {
+        insertRuntimeObjectRow(row);
+        sealRuntimeFile(db, limits, fileId, writtenBytes);
       });
     },
     deleteRuntimeObject(id) {

@@ -1,9 +1,20 @@
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import type { SessionRecord } from "../types";
+
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import fs from "node:fs";
 import { randomUUID } from "node:crypto";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -12,12 +23,14 @@ import {
   type HostState,
 } from "../host-state";
 import { OUTBOX_BUDGET_SCHEMA } from "../outbox-budget";
+import { RuntimeEventPublisher } from "../runtime-event-publisher";
 import {
   DEFAULT_RUNTIME_LIMITS,
   MAX_RECEIPT_BODY_BYTES,
   SQLITE_WRITE_HEADROOM_BYTES,
   validateRuntimeLimits,
 } from "../runtime-limits";
+import { RuntimeObjectRegistry } from "../runtime-objects";
 import { createSqliteStorage } from "../sqlite-storage";
 import { reuseSqliteStatements } from "../sqlite-statements";
 
@@ -630,6 +643,238 @@ describe("AT-02 physical runtime storage", () => {
       observer.close();
       state.close();
       rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps inline code text frames out of runtime-objects and seals real offloads in one post-rename transaction", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "maister-offload-tx-"));
+    const objectsRoot = join(stateDir, "runtime-objects");
+    const state = openHostState({ stateDir });
+    const logger = pino({ level: "silent" });
+    const objects = new RuntimeObjectRegistry(state, objectsRoot);
+    const publisher = new RuntimeEventPublisher(
+      state,
+      logger,
+      () => new Date("2026-11-25T12:00:00.000Z"),
+      objects,
+    );
+    const walletId = randomUUID();
+    const assignmentId = randomUUID();
+    const sessionId = randomUUID();
+    const runId = "inline-code-no-offload";
+
+    try {
+      state.reserveProducerReceipt(
+        {
+          commandId: walletId,
+          runId,
+          kind: "session.create",
+          assignmentId,
+          epoch: 1,
+          hostSessionId: sessionId,
+          requestDigest: "inline-code-no-offload",
+          eventId: null,
+          phase: "accepted",
+          httpStatus: 202,
+          body: {},
+          receivedAt: "2026-11-25T12:00:00.000Z",
+          completedAt: null,
+        },
+        0,
+      );
+      const frameReservation = state.tryReserveRuntimeFrame(walletId, 1024);
+
+      expect(frameReservation).not.toBeNull();
+      const record = {
+        sessionId,
+        runId,
+        sessionName: "main",
+        assignmentId,
+        assignmentEpoch: 1,
+        createdByCommandId: walletId,
+        outputEventReservationId: frameReservation!,
+        terminalPublished: false,
+      } as unknown as SessionRecord;
+
+      const codeLine = JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "acp-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "const x = a / b; // comment\nreturn <Button />;",
+            },
+          },
+        },
+      });
+
+      publisher.publishTextFrame(record, [
+        {
+          type: "session.line",
+          sessionId,
+          monotonicId: 1,
+          line: codeLine,
+        },
+        {
+          type: "session.update",
+          sessionId,
+          monotonicId: 2,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "const x = a / b; // comment\nreturn <Button />;",
+            },
+          },
+        },
+      ]);
+
+      expect(existsSync(objectsRoot) ? readdirSync(objectsRoot) : []).toEqual(
+        [],
+      );
+      state.releaseRuntimeFrame(frameReservation!);
+
+      // Real host path offload must commit insertRuntimeObject + sealRuntimeFile
+      // in a single post-rename SQLite transaction (never separate insert + seal).
+      const offloadReservation = state.tryReserveRuntimeFrame(walletId, 1024);
+
+      expect(offloadReservation).not.toBeNull();
+      const insertSpy = vi.spyOn(state, "insertRuntimeObject");
+      const sealFileSpy = vi.spyOn(state, "sealRuntimeFile");
+      const execSpy = vi.spyOn(DatabaseSync.prototype, "exec");
+      const captured = objects.captureSessionContent({
+        runId,
+        assignmentId,
+        assignmentEpoch: 1,
+        hostSessionId: sessionId,
+        funding: {
+          kind: "frame",
+          walletId,
+          reservationId: offloadReservation!,
+        },
+        payload: {
+          line: "opened /Users/dev/secret.ts",
+        },
+      });
+      const commits = execSpy.mock.calls.filter(([sql]) => sql === "COMMIT");
+
+      // 1 commit for reserveRuntimeFile + 1 combined post-rename commit = 2 total
+      expect(commits).toHaveLength(2);
+      expect(insertSpy).not.toHaveBeenCalled();
+      expect(sealFileSpy).not.toHaveBeenCalled();
+      expect(state.getRuntimeObject(captured.objectId)?.state).toBe(
+        "available",
+      );
+      expect(state.getRuntimeFile(`object:${captured.objectId}`)?.sealed).toBe(
+        true,
+      );
+      state.releaseRuntimeFrame(offloadReservation!);
+
+      // Verify sealCapturedRuntimeObject rolls back runtime_objects insert if seal fails
+      const rollbackObjectId = randomUUID();
+
+      expect(() =>
+        state.sealCapturedRuntimeObject(
+          {
+            ...state.getRuntimeObject(captured.objectId)!,
+            id: rollbackObjectId,
+          },
+          `object:${rollbackObjectId}`,
+          10,
+        ),
+      ).toThrow();
+      expect(state.getRuntimeObject(rollbackObjectId)).toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+      state.close();
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("configures SQLite cache/temp pragmas and amortizes healthy physicalSnapshot checks while measuring fresh on snapshot or near threshold", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "maister-pragma-amortize-"));
+    let openedDb: DatabaseSync | undefined;
+    const origExec = DatabaseSync.prototype.exec;
+    const execSpy = vi
+      .spyOn(DatabaseSync.prototype, "exec")
+      .mockImplementation(function (this: DatabaseSync, sql: string) {
+        openedDb = this;
+
+        return origExec.call(this, sql);
+      });
+    const state = openHostState({ stateDir });
+
+    execSpy.mockRestore();
+    try {
+      expect(openedDb).toBeDefined();
+      expect(openedDb!.prepare("PRAGMA cache_size").get()).toEqual({
+        cache_size: -65536,
+      });
+      expect(openedDb!.prepare("PRAGMA temp_store").get()).toEqual({
+        temp_store: 2,
+      });
+    } finally {
+      state.close();
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+
+    const storageDir = mkdtempSync(join(tmpdir(), "maister-amortize-fs-"));
+    const file = join(storageDir, "state.sqlite");
+    const db = new DatabaseSync(file);
+
+    try {
+      db.exec(
+        "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; CREATE TABLE samples (value INTEGER)",
+      );
+      const storage = createSqliteStorage({
+        db,
+        file,
+        limits: DEFAULT_RUNTIME_LIMITS,
+      });
+      const statfsSpy = vi.spyOn(fs, "statfsSync");
+
+      syncBuiltinESMExports();
+      for (let i = 0; i < 16; i += 1) {
+        storage.write(() => {
+          db.prepare("INSERT INTO samples VALUES (?)").run(i);
+        });
+      }
+      const healthyMeasurements = statfsSpy.mock.calls.length;
+
+      expect(healthyMeasurements).toBeLessThanOrEqual(2);
+
+      // Explicit diagnostic snapshot always measures fresh
+      statfsSpy.mockClear();
+      storage.snapshot();
+      expect(statfsSpy.mock.calls.length).toBe(1);
+
+      // Near threshold (within 8 MiB of stateMaxBytes): measures fresh every write
+      const tightLimits = {
+        ...DEFAULT_RUNTIME_LIMITS,
+        // Tight ceiling within 8 MiB of SQLITE_WRITE_HEADROOM_BYTES
+        stateMaxBytes: SQLITE_WRITE_HEADROOM_BYTES + 4 * 1024 * 1024,
+      };
+      const tightStorage = createSqliteStorage({
+        db,
+        file,
+        limits: tightLimits,
+      });
+
+      statfsSpy.mockClear();
+      for (let i = 0; i < 4; i += 1) {
+        tightStorage.write(() => {
+          db.prepare("INSERT INTO samples VALUES (?)").run(100 + i);
+        });
+      }
+      expect(statfsSpy.mock.calls.length).toBe(4);
+    } finally {
+      vi.restoreAllMocks();
+      syncBuiltinESMExports();
+      db.close();
+      rmSync(storageDir, { recursive: true, force: true });
     }
   });
 });

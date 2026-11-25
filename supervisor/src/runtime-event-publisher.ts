@@ -211,6 +211,18 @@ export class RuntimeEventPublisher {
       });
 
       this.contentReferences.set(event, contentRef);
+      if (this.logger.isLevelEnabled("debug")) {
+        this.logger.debug(
+          {
+            runId: record.runId,
+            hostSessionId: record.sessionId,
+            eventType: event.type,
+            objectId: metadata.objectId,
+            sizeBytes: metadata.sizeBytes,
+          },
+          "runtime-event-payload-offloaded",
+        );
+      }
       const contextType = acpContextUpdateType(original.update);
 
       payload = {
@@ -424,21 +436,26 @@ export class RuntimeEventPublisher {
     };
   }
 
-  /** Both frame rows are durable before either canonical listener is called. */
-  publishTextFrame(
+  /** Frame pairs are durable in one SQLite commit before any listener runs. */
+  publishTextFrames(
     record: SessionRecord,
-    events: SessionTextFrameEvents,
+    frames: readonly SessionTextFrameEvents[],
   ): void {
+    if (frames.length === 0) return;
     if (record.terminalPublished)
       throw new SupervisorError(
         "ACP_PROTOCOL",
         "session output arrived after terminal evidence",
         { details: { reason: "required_output_incomplete" } },
       );
-    const inputs = [
-      this.sessionEventInput(record, events[0]),
-      this.sessionEventInput(record, events[1]),
-    ] as const;
+    const inputs: AppendRuntimeEventInput[] = [];
+
+    for (const pair of frames) {
+      inputs.push(
+        this.sessionEventInput(record, pair[0]),
+        this.sessionEventInput(record, pair[1]),
+      );
+    }
     const persisted = this.state.appendRuntimeFrameEvents(inputs);
 
     if (this.logger.isLevelEnabled("debug"))
@@ -447,11 +464,20 @@ export class RuntimeEventPublisher {
           runId: record.runId,
           hostSessionId: record.sessionId,
           firstSequence: persisted[0]!.sequence,
-          lastSequence: persisted[1]!.sequence,
+          lastSequence: persisted[persisted.length - 1]!.sequence,
           rows: persisted.length,
+          frames: frames.length,
         },
         "runtime-text-frame-appended",
       );
+  }
+
+  /** Both frame rows are durable before either canonical listener is called. */
+  publishTextFrame(
+    record: SessionRecord,
+    events: SessionTextFrameEvents,
+  ): void {
+    this.publishTextFrames(record, [events]);
   }
 
   publishSessionEvent(

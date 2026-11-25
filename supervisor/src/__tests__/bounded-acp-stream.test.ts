@@ -20,6 +20,11 @@ const spoolGate = vi.hoisted(() => ({
     entered: () => void;
     release: Promise<void>;
   }> | null,
+  counts: null as {
+    write: number;
+    read: number;
+    truncate: number;
+  } | null,
 }));
 
 vi.mock("node:fs/promises", async (original) => {
@@ -35,7 +40,32 @@ vi.mock("node:fs/promises", async (original) => {
         await gate.release;
       }
 
-      return actual.open(...args);
+      const handle = await actual.open(...args);
+      const counts = spoolGate.counts;
+
+      if (counts) {
+        const origWrite = handle.write.bind(handle);
+        const origRead = handle.read.bind(handle);
+        const origTruncate = handle.truncate.bind(handle);
+
+        handle.write = ((...writeArgs: unknown[]) => {
+          counts.write += 1;
+
+          return (origWrite as (...a: unknown[]) => unknown)(...writeArgs);
+        }) as typeof handle.write;
+        handle.read = ((...readArgs: unknown[]) => {
+          counts.read += 1;
+
+          return (origRead as (...a: unknown[]) => unknown)(...readArgs);
+        }) as typeof handle.read;
+        handle.truncate = ((...truncArgs: unknown[]) => {
+          counts.truncate += 1;
+
+          return (origTruncate as (...a: unknown[]) => unknown)(...truncArgs);
+        }) as typeof handle.truncate;
+      }
+
+      return handle;
     },
   };
 });
@@ -433,4 +463,205 @@ describe("bounded ACP framed-source contract", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("fast-paths complete in-memory frames with zero spool disk I/O and a single UTF-8 decode per frame", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bounded-acp-fastpath-"));
+    const source = new PassThrough();
+    const stdin = new PassThrough();
+    const failures: SupervisorError[] = [];
+    const { client, messages } = createClient();
+    const counts = { write: 0, read: 0, truncate: 0 };
+
+    spoolGate.counts = counts;
+    const decodeSpy = vi.spyOn(TextDecoder.prototype, "decode");
+    let resolveDrained: () => void = () => {};
+    const drained = new Promise<void>((resolve) => {
+      resolveDrained = resolve;
+    });
+    const notifications = [1, 2, 3].map((n) => ({
+      jsonrpc: "2.0" as const,
+      method: "session/update" as const,
+      params: {
+        sessionId: "fastpath-session",
+        update: {
+          sessionUpdate: "agent_message_chunk" as const,
+          content: { type: "text" as const, text: `chunk-${n}` },
+        },
+      },
+    }));
+    const result = {
+      jsonrpc: "2.0" as const,
+      id: 7,
+      result: { stopReason: "end_turn" },
+    };
+    const tap = captureAcpFrames({
+      source,
+      directory,
+      log: createWriteStream(join(directory, "stdout.log")),
+      onFailure: (error) => failures.push(error),
+      onDrained: resolveDrained,
+    });
+    const stream = boundedAcpStream({
+      source: tap,
+      stdin,
+      client,
+      onFailure: (error) => failures.push(error),
+    });
+    const reader = stream.readable.getReader();
+
+    try {
+      source.write(
+        `${notifications.map((n) => JSON.stringify(n)).join("\n")}\n${JSON.stringify(result)}\n`,
+      );
+      source.end();
+
+      const next = await reader.read();
+
+      expect(next.done).toBe(false);
+      expect(next.value).toEqual(result);
+      await expect(reader.read()).resolves.toEqual({
+        done: true,
+        value: undefined,
+      });
+      await drained;
+      expect(failures).toEqual([]);
+      expect(messages).toEqual(notifications);
+      expect(counts).toEqual({ write: 0, read: 0, truncate: 0 });
+      expect(decodeSpy).toHaveBeenCalledTimes(notifications.length + 1);
+    } finally {
+      spoolGate.counts = null;
+      decodeSpy.mockRestore();
+      await reader.cancel();
+      source.destroy();
+      stdin.destroy();
+      await drained;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid UTF-8 bytes on the fast-path even when onLine is unset", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bounded-acp-bad-utf8-"));
+    const source = new PassThrough();
+    const failures: SupervisorError[] = [];
+    let resolveDrained: () => void = () => {};
+    const drained = new Promise<void>((resolve) => {
+      resolveDrained = resolve;
+    });
+    const tap = captureAcpFrames({
+      source,
+      directory,
+      log: createWriteStream(join(directory, "stdout.log")),
+      onFailure: (error) => failures.push(error),
+      onDrained: resolveDrained,
+    });
+
+    tap.on("error", () => {});
+    try {
+      source.end(Buffer.from([0x7b, 0xff, 0xfe, 0x7d, 0x0a]));
+      const iter = tap[Symbol.asyncIterator]();
+
+      await expect(iter.next()).rejects.toMatchObject({
+        code: "ACP_PROTOCOL",
+        details: { reason: "required_output_incomplete" },
+      });
+      await drained;
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.code).toBe("ACP_PROTOCOL");
+    } finally {
+      source.destroy();
+      await drained;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["beforeWrite", "beforeFrame"] as const)(
+    "spills exact fast-path bytes to spool and publishes CapturedStdoutSegment when %s transitions to drain",
+    async (trigger) => {
+      const directory = await mkdtemp(
+        join(tmpdir(), `bounded-acp-${trigger}-`),
+      );
+      const source = new PassThrough();
+      const failures: SupervisorError[] = [];
+      const segments: Array<{
+        sizeBytes: number;
+        firstLogByteOffset: number;
+        completeFrames: number;
+        trailingFrameBytes: number;
+      }> = [];
+      const spoolBytesHistory: number[] = [];
+      let resolveDrained: () => void = () => {};
+      const drained = new Promise<void>((resolve) => {
+        resolveDrained = resolve;
+      });
+      let frameCalls = 0;
+      let writeCalls = 0;
+      const line1 = '{"a":1}\n';
+      const line2 = '{"b":2}\n';
+      const line3 = '{"c":3}\n';
+      const tap = captureAcpFrames({
+        source,
+        directory,
+        log: createWriteStream(join(directory, "stdout.log")),
+        onFailure: (error) => failures.push(error),
+        onDrained: resolveDrained,
+        onSpoolBytes: (bytes) => spoolBytesHistory.push(bytes),
+        onSegment: (seg) =>
+          segments.push({
+            sizeBytes: seg.sizeBytes,
+            firstLogByteOffset: seg.firstLogByteOffset,
+            completeFrames: seg.completeFrames,
+            trailingFrameBytes: seg.trailingFrameBytes,
+          }),
+        beforeWrite: async () => {
+          writeCalls += 1;
+
+          return trigger === "beforeWrite" && writeCalls === 2
+            ? { kind: "drain" }
+            : { kind: "capture" };
+        },
+        beforeFrame: async () => {
+          frameCalls += 1;
+
+          return trigger === "beforeFrame" && frameCalls === 2
+            ? { kind: "drain" }
+            : { kind: "decode", release: () => {} };
+        },
+      });
+      const yielded: string[] = [];
+
+      tap.on("error", () => {});
+      try {
+        source.write(line1);
+        const iter = tap[Symbol.asyncIterator]();
+        const first = await iter.next();
+
+        expect(first.done).toBe(false);
+        yielded.push((first.value as Buffer).toString("utf8"));
+
+        source.end(`${line2}${line3}`);
+        await expect(iter.next()).rejects.toMatchObject({
+          code: "ACP_PROTOCOL",
+          details: { outputFailure: "producer_output_incomplete" },
+        });
+        await drained;
+
+        const expectedSpillBytes = Buffer.byteLength(`${line2}${line3}`);
+
+        expect(yielded).toEqual([line1]);
+        expect(segments).toEqual([
+          {
+            sizeBytes: expectedSpillBytes,
+            firstLogByteOffset: Buffer.byteLength(line1),
+            completeFrames: 2,
+            trailingFrameBytes: 0,
+          },
+        ]);
+        expect(spoolBytesHistory).toContain(expectedSpillBytes);
+      } finally {
+        source.destroy();
+        await drained;
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });

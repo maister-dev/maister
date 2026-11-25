@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_RUNTIME_EVENT_BYTES,
   RuntimeEventEnvelopeSchema,
+  assertRuntimeEventPayloadSafe,
   deterministicRuntimeEventId,
   redactRuntimeEventPayload,
 } from "../runtime-events";
@@ -185,5 +186,50 @@ describe("Stage B runtime event envelope", () => {
         fixture("envelope.invalid-unsafe-payload.json"),
       ).success,
     ).toBe(false);
+  });
+
+  it("allows inline code slash tokens while rejecting real host paths and file URIs", () => {
+    const allowedInline = [
+      "const x = 1; // inline comment",
+      "/* block comment */ const y = 2;",
+      "<Button />",
+      "return <div className='box' />;",
+      "const ratio = a / b;",
+      "GET /api HTTP/1.1",
+      "redirect to /login",
+      "see https://example.com/a/b/c for docs",
+      "relative/path/to/file.ts",
+    ];
+
+    for (const text of allowedInline) {
+      expect(() => assertRuntimeEventPayloadSafe({ text })).not.toThrow();
+      expect(redactRuntimeEventPayload({ text })).toEqual({ text });
+    }
+
+    const rejectedHostPaths = [
+      "/Users/dev/project/src/index.ts",
+      "opened /home/alice/repo/main.ts",
+      'path="/var/log/maister.log"',
+      "(/etc/hosts)",
+      "/private/tmp/session.sock",
+      "/tmp/a",
+      "/opt/maister/config",
+      "/usr/local/bin/node",
+      "/app/server.js",
+      "/repos/demo",
+      "/maister/state",
+      "/.maister/runs",
+      "/foo/bar",
+      "file:///Users/dev/secret.txt",
+    ];
+
+    for (const text of rejectedHostPaths) {
+      expect(() => assertRuntimeEventPayloadSafe({ text })).toThrow(
+        /host filesystem path/,
+      );
+      expect(redactRuntimeEventPayload({ text })).toEqual({
+        text: "[REDACTED_HOST_PATH]",
+      });
+    }
   });
 });
