@@ -554,6 +554,7 @@ export type HostState = {
   hasRuntimeEventsAfter(streamId: string, sequence: string): boolean;
   ackRuntimeEvents(streamId: string, throughSequence: string): string;
   runtimeEventOutboxStats(): RuntimeEventOutboxStats;
+  maxReservableFrameCount(): number;
   runtimeEventHealthSnapshot(): RuntimeEventHealthSnapshot;
   // One bounded page (≤ 100 rows / 1 MiB). `grace` prunes rows ACKed before
   // `olderThan` and the replay grace; `retained_pressure` (ADR-183) prunes any
@@ -2774,6 +2775,22 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           ),
         },
       };
+    },
+    maxReservableFrameCount() {
+      const budget = outboxBudgetSnapshot(db);
+
+      if (budget.pressured) return 1;
+      const remainingHard =
+        limits.eventHardRows -
+        budget.regular.retainedCount -
+        budget.reservedRegularRows;
+      const remainingSoft =
+        limits.eventSoftRows -
+        budget.regular.unacknowledgedCount -
+        budget.reservedRegularRows;
+      const availableRows = Math.min(remainingHard, remainingSoft);
+
+      return Math.max(1, Math.floor((availableRows - 2) / 2));
     },
     runtimeEventHealthSnapshot() {
       const streamId = ensureRuntimeEventStream(db, now).stream_id;

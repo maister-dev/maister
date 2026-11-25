@@ -36,6 +36,7 @@ export function producerPressure(
     frameBytes: number,
     frameCount?: number,
   ) => Promise<FrameAdmission>;
+  maxSliceFrames: () => number;
   beforeWrite: (bytes: number) => Promise<LogWriteAdmission>;
   beginTeardown: () => void;
   shouldDrain: () => boolean;
@@ -166,6 +167,9 @@ export function producerPressure(
         () => ({ kind: "drain" }),
         true,
       );
+    },
+    maxSliceFrames() {
+      return state.maxReservableFrameCount?.() ?? 16;
     },
     beforeWrite(bytes) {
       return waitForCapacity<LogWriteAdmission>(

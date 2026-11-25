@@ -10,7 +10,8 @@
 import { randomUUID } from "node:crypto";
 
 import { sql } from "drizzle-orm";
-import { type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
@@ -18,6 +19,7 @@ import {
   buildAttentionConsumer,
   emitDecisionsDelta,
 } from "@/lib/notifications/attention-consumer";
+import { runDecisionsDeltaBackstop } from "@/lib/notifications/digest-trigger";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -356,5 +358,44 @@ describe("IT-NTF-17 concurrent delta writers", () => {
 
     expect(await emissions(first)).toHaveLength(1);
     expect(await emissions(second)).toHaveLength(1);
+  });
+
+  it("REQ-D5-02: completes emitDecisionsDelta and runDecisionsDeltaBackstop without self-deadlock on a max=1 pool", async () => {
+    const projectId = await seedProject();
+    const userId = await seedMember(projectId);
+
+    await db.insert(schema.notificationSubscriptions).values({
+      id: randomUUID(),
+      ownerUserId: userId,
+      transport: "web_push",
+      eventTypes: ["attention.decision_opened"],
+      enabled: true,
+    });
+
+    const singlePool = new Pool({
+      connectionString: testDatabase.databaseUrl,
+      max: 1,
+      connectionTimeoutMillis: 2_000,
+    });
+    const singleDb = drizzle(singlePool, { schema: fullSchema });
+
+    try {
+      const consumer = buildAttentionConsumer({ db: singleDb });
+
+      await consumer.handle([event(projectId)]);
+
+      const states = await db.execute(sql`
+        SELECT owner_user_id FROM attention_publication_states WHERE owner_user_id = ${userId}
+      `);
+
+      expect(states.rows).toHaveLength(1);
+
+      const backstop = await runDecisionsDeltaBackstop({ db: singleDb });
+
+      expect(backstop.candidates).toBe(1);
+      expect(backstop.errors).toEqual([]);
+    } finally {
+      await singlePool.end();
+    }
   });
 });

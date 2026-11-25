@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_DB_URL = process.env.DB_URL;
+const ORIGINAL_POOL_MAX = process.env.MAISTER_DB_POOL_MAX;
 
 async function importFresh() {
   vi.resetModules();
@@ -11,6 +12,7 @@ async function importFresh() {
 describe("db client factory", () => {
   beforeEach(() => {
     delete process.env.DB_URL;
+    delete process.env.MAISTER_DB_POOL_MAX;
   });
 
   afterEach(() => {
@@ -18,6 +20,11 @@ describe("db client factory", () => {
       delete process.env.DB_URL;
     } else {
       process.env.DB_URL = ORIGINAL_DB_URL;
+    }
+    if (ORIGINAL_POOL_MAX === undefined) {
+      delete process.env.MAISTER_DB_POOL_MAX;
+    } else {
+      process.env.MAISTER_DB_POOL_MAX = ORIGINAL_POOL_MAX;
     }
   });
 
@@ -39,5 +46,45 @@ describe("db client factory", () => {
 
     expect(db).toBeTruthy();
     expect(typeof db).toBe("object");
+  });
+
+  it("REQ-D5-01: configures default pool max=25 and finite timeouts, and honors MAISTER_DB_POOL_MAX", async () => {
+    process.env.DB_URL = "postgres://u:p@localhost:5432/x";
+    const { buildClient } = await importFresh();
+
+    const defaultDb = buildClient();
+    const defaultOptions = (
+      defaultDb.$client as unknown as {
+        options: {
+          max?: number;
+          connectionTimeoutMillis?: number;
+          idleTimeoutMillis?: number;
+        };
+      }
+    ).options;
+
+    expect(defaultOptions).toMatchObject({
+      max: 25,
+      connectionTimeoutMillis: 10_000,
+      idleTimeoutMillis: 30_000,
+    });
+
+    process.env.MAISTER_DB_POOL_MAX = "40";
+    const overrideDb = buildClient();
+    const overrideOptions = (
+      overrideDb.$client as unknown as {
+        options: {
+          max?: number;
+          connectionTimeoutMillis?: number;
+          idleTimeoutMillis?: number;
+        };
+      }
+    ).options;
+
+    expect(overrideOptions).toMatchObject({
+      max: 40,
+      connectionTimeoutMillis: 10_000,
+      idleTimeoutMillis: 30_000,
+    });
   });
 });

@@ -44,6 +44,7 @@ export interface AttentionConsumerDeps {
   decisionsFor?: (
     userId: string,
     role: "admin" | "member" | "viewer",
+    tx?: Db,
   ) => Promise<AttentionDecisionSnapshot>;
 }
 
@@ -117,8 +118,8 @@ export function buildAttentionConsumer(
       const client: Db = deps.db ?? getDb();
       const decisionsFor =
         deps.decisionsFor ??
-        (async (userId, role) =>
-          readAttentionDecisionSnapshot(client, userId, role));
+        (async (userId, role, tx) =>
+          readAttentionDecisionSnapshot(tx ?? client, userId, role));
 
       // One pass per READER, not per event: three events that move the same
       // reader's count are one notification, which is the whole point of D6.
@@ -194,6 +195,7 @@ export async function emitDecisionsDelta(
   decisionsFor: (
     userId: string,
     role: "admin" | "member" | "viewer",
+    tx?: Db,
   ) => Promise<AttentionDecisionSnapshot>,
 ): Promise<boolean> {
   return client.transaction(async (tx: Db) => {
@@ -201,7 +203,7 @@ export async function emitDecisionsDelta(
       sql`SELECT pg_advisory_xact_lock(${DECISION_DELTA_LOCK_NAMESPACE}::int, hashtext(${userId})::int)`,
     );
     const episodes = await lockUnpublishedAttentionEpisodes(tx, userId, role);
-    const current = await decisionsFor(userId, role);
+    const current = await decisionsFor(userId, role, tx);
     const previousRows = await tx.execute(
       sql`SELECT decisions,ordinary_decisions FROM attention_publication_states WHERE owner_user_id=${userId}`,
     );

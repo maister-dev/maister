@@ -340,6 +340,7 @@ export function captureAcpFrames(input: {
     frameBytes: number,
     frameCount?: number,
   ) => Promise<FrameAdmission>;
+  maxSliceFrames?: () => number;
   beforeWrite?: (bytes: number) => Promise<LogWriteAdmission>;
   spoolPath?: string;
   onSpoolBytes?: (bytes: number) => void;
@@ -396,10 +397,14 @@ export function captureAcpFrames(input: {
           // Fast-path complete newline-terminated lines inside the current
           // chunk without touching `.acp-frame-*.tmp` unless drain triggers.
           if (length === 0 && !draining) {
+            const maxFrames = Math.min(
+              MAX_CHUNK_BATCH_FRAMES,
+              Math.max(1, input.maxSliceFrames?.() ?? MAX_CHUNK_BATCH_FRAMES),
+            );
             const { sliceEnd, frameEnds } = scanCompleteLineSlice(
               chunk,
               offset,
-              MAX_CHUNK_BATCH_FRAMES,
+              maxFrames,
             );
 
             if (frameEnds.length > 0) {

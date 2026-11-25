@@ -356,7 +356,7 @@ Every requirement and edge case maps to **one** targeted, high-signal test (no t
 
 ### Phase 3: Database Pool Sizing, `emitDecisionsDelta` Deadlock Fix & Librarian Read-Model Consolidation (Finding #5 — TDD)
 
-- [ ] **Task 8: [TDD] Configure `pg.Pool` defaults/timeouts and thread transaction `tx` through `emitDecisionsDelta` (`REQ-D5-01`, `REQ-D5-02`)** (depends on Task 1)
+- [x] **Task 8: [TDD] Configure `pg.Pool` defaults/timeouts and thread transaction `tx` through `emitDecisionsDelta` (`REQ-D5-01`, `REQ-D5-02`)** (depends on Task 1)
   - **RED**:
     - Add unit test in `web/lib/db/__tests__/client.test.ts` asserting `buildClient()` configures `{ max: 25, connectionTimeoutMillis: 10_000, idleTimeoutMillis: 30_000 }` by default and honors `MAISTER_DB_POOL_MAX`.
     - Add unit test in `web/lib/notifications/__tests__/attention-consumer.test.ts` asserting `emitDecisionsDelta` passes the active `tx` as the 3rd argument to `decisionsFor`.
@@ -375,7 +375,7 @@ Every requirement and edge case maps to **one** targeted, high-signal test (no t
     - `web/lib/notifications/__tests__/attention-consumer.integration.test.ts`
   - **Green Gate**: `pnpm --filter maister-web test:unit lib/db/__tests__/client.test.ts lib/notifications/__tests__/attention-consumer.test.ts` and `pnpm --filter maister-web test:integration lib/notifications/__tests__/attention-consumer.integration.test.ts lib/notifications/__tests__/digest-trigger.integration.test.ts`.
 
-- [ ] **Task 9: [TDD] Eliminate Librarian 50-way transaction burst, duplicate `prepareKnowledgeCard` work, and nested vault transactions (`REQ-D5-03`, `REQ-D5-04`, `REQ-D5-05`)** (depends on Task 8)
+- [x] **Task 9: [TDD] Eliminate Librarian 50-way transaction burst, duplicate `prepareKnowledgeCard` work, and nested vault transactions (`REQ-D5-03`, `REQ-D5-04`, `REQ-D5-05`)** (depends on Task 8)
   - **RED**:
     - Add integration test in `web/lib/librarian/__tests__/governed-confirmations.integration.test.ts` with ≥ 12 governed cards (mix of pending eligible, pending stale/denied, accepted vault, accepted knowledge) running `getLibrarianConversationView` and `getLibrarianWorkView` against a **`max: 2` `pg.Pool`** (with `connectionTimeoutMillis: 2_000`) and spying on `prepareKnowledgeCard` call counts: verify RED fails on pool contention / duplicate `prepareKnowledgeCard` invocations.
   - **GREEN**:
@@ -406,7 +406,7 @@ Every requirement and edge case maps to **one** targeted, high-signal test (no t
 
 ### Phase 4: Final Contract Alignment, Full Verification & Quality Gate
 
-- [ ] **Task 10: Flip Phase 0 status tags to `(Implemented)` and pass all repo typecheck, lint, test, migration, ERD, docs, and contract gates** (depends on Tasks 4, 7, 9)
+- [x] **Task 10: Flip Phase 0 status tags to `(Implemented)` and pass all repo typecheck, lint, test, migration, ERD, docs, and contract gates** (depends on Tasks 4, 7, 9)
   - **Deliverable**:
     1. Flip the new `(Designed)` tags added in Task 1 inside `docs/system-analytics/execution-event-plane.md`, `docs/system-analytics/attention.md`, `docs/system-analytics/librarian-conversation.md`, and `docs/db/execution-hosts-domain.md` to `(Implemented)` so HEAD docs match shipped code 100% (per `docs/CLAUDE.md` R6).
     2. Verify every requirement (`REQ-S3-01..06`, `REQ-P4-01..06`, `REQ-D5-01..05`) against the final diff and ensure zero unused code, zero `any` regressions, zero `console.log`, and clean SOLID/KISS/DRY structure.

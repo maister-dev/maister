@@ -490,6 +490,7 @@ export async function spawnSession(
       onStorageFailure: opts.hostState?.reportRuntimeStorageFailure,
       storageAvailable: opts.hostState?.runtimeStorageAvailable,
       beforeFrame: pressure?.beforeFrame,
+      maxSliceFrames: pressure?.maxSliceFrames,
       beforeWrite: pressure?.beforeWrite,
       spoolPath: producerFiles?.spoolPath,
       onSpoolBytes: producerFiles?.recordSpoolBytes,

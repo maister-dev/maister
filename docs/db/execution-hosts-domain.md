@@ -34,7 +34,7 @@ on `execution_event_consumers.last_served_at` and the independent
 run FK: deleting its last examined run must not restart the scan. Consumer
 leases, domain application and retry/rearm behavior are defined in the
 [event-plane worker contract](../system-analytics/execution-event-plane.md#durable-bounded-projection-and-reconciliation-workers).
-Migration `0376_execution_event_consumer_horizon` (Designed) adds
+Migration `0376_execution_event_consumer_horizon` (Implemented) adds
 `execution_event_consumers.max_available_sequence bigint NOT NULL DEFAULT -1`
 with `CHECK (max_available_sequence >= -1)`
 (`execution_event_consumers_max_available_sequence_check`), backfills it from

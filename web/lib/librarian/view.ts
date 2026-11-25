@@ -563,14 +563,13 @@ export async function getLibrarianConversationView(
   const { conversation, segment } = await db.transaction((tx) =>
     lockOwnerConversation(tx, ownerId),
   );
-  const [eligibleIds, linkedWork] = await Promise.all([
-    readEligibleConfirmationIds(db, conversation),
-    getLinkedWork(
-      ownerId,
-      db as unknown as ReturnType<typeof import("@/lib/db/client").getDb>,
-    ),
-  ]);
+  const eligibleIds = await readEligibleConfirmationIds(db, conversation);
   const eligible = new Set(eligibleIds);
+  const linkedWork = await getLinkedWork(
+    ownerId,
+    db as unknown as ReturnType<typeof import("@/lib/db/client").getDb>,
+    { eligiblePendingCardIds: eligible },
+  );
   const common = await librarianConversationCommon(
     db,
     conversation,
