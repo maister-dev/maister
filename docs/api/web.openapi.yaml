@@ -7932,6 +7932,19 @@ paths:
             scope whose base ref is missing is hidden/disabled with a reason,
             never an error. All scopes share the ADR-066 `prepareDiff` pipeline +
             byte-cap truncation guard.
+        - name: raw
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1"]
+          description: |
+            **(Designed)** Opt-in flag to include the raw unified `diff` string
+            in the JSON response. When omitted, `diff` is omitted from the
+            response while `files` and `perFile` are served (using the shared
+            byte-bounded LRU prepared-diff cache when immutable refs match).
+            When `raw=1`, raw `diff` is read from git while cached `files` and
+            pre-serialized `perFile` are still reused.
       responses:
         "200":
           description: Workspace diff + changed-files summary.
@@ -7940,7 +7953,7 @@ paths:
               schema: { $ref: "#/components/schemas/RunDiffResponse" }
               examples:
                 current-review:
-                  summary: Flow base-to-working-tree review source.
+                  summary: Flow base-to-working-tree review source (default omits raw diff unless raw=1).
                   value:
                     runId: 00000000-0000-4000-8000-000000000001
                     scope: review
@@ -7956,7 +7969,6 @@ paths:
                     reviewSourceFingerprint: "sha256:source-digest"
                     sourceBranch: maister/task-1
                     targetBranch: main
-                    diff: "diff --git a/src/parser.ts b/src/parser.ts"
                     truncated: false
                     files:
                       - path: src/parser.ts
@@ -34492,7 +34504,6 @@ components:
           baseCommit,
           sourceBranch,
           targetBranch,
-          diff,
           truncated,
         ]
       properties:
@@ -34531,7 +34542,11 @@ components:
           description: ADR-138 opaque SHA-256 source proof when `scope=review`; null for every other scope.
         sourceBranch: { type: string }
         targetBranch: { type: string }
-        diff: { type: string }
+        diff:
+          type: string
+          description: |
+            **(Designed)** Raw unified diff text. Omitted by default unless
+            `?raw=1` is supplied (or on `prepare-failed` fallback).
         truncated:
           type: boolean
           description: |

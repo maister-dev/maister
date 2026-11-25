@@ -100,7 +100,7 @@ sequenceDiagram
     actor U as Reviewer
     participant W as POST /api/runs/{runId}/review-comments
     participant DB as Postgres
-    participant G as Diff source (diffRunWorkspace + prepare.ts)
+    participant G as Diff source (diffRunWorkspace + lib/diff/line-index.ts)
 
     U->>W: { filePath, side, line, body }
     W->>DB: requireProjectAction(answerHitl) — projectId from run row
@@ -263,10 +263,14 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
   each a single DB transaction with no artifact write, no supervisor call,
   and no deferred created or released.
 - POST (root) MUST validate `(filePath, side, line)` against the
-  server-recomputed scope-selected current diff (same `diffRunWorkspace` +
-  `lib/diff/prepare.ts` source the view renders) and store the
-  server-extracted `line_content`; a `truncated` diff or a file absent from
-  the parsed diff → 409 `PRECONDITION`.
+  server-recomputed scope-selected current diff parsed via pure unified-diff
+  hunk indexing (`lib/diff/line-index.ts` `parseDiffLineIndex` — byte-identical
+  `{ oldLines, newLines }` lookups decoupled from Shiki WASM and
+  `@git-diff-view/core`, Designed) and store the server-extracted
+  `line_content`; a `truncated` diff or a file absent from the parsed diff →
+  409 `PRECONDITION`. `diff-line-index` and `review-comments-diff` log `DEBUG`
+  timings/counts and `WARN` on malformed hunk headers or unavailable sources
+  (`LOG_LEVEL`-gated `pino`, never logging comment bodies).
 - GET is exactly one DB query for the run's comments plus AT MOST one
   in-memory diff parse — no N+1; zero threads short-circuit without
   computing a diff, an unavailable diff source (removed/GC'd workspace)

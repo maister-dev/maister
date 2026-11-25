@@ -297,16 +297,34 @@ back/forward restore each entry's choices without creating messages or fetching.
 - The workbench diff is run-scoped (`base..branch` only) and gated `readBoard`
   (`viewer`) for flow runs / `readScratchRun` for scratch runs; it adds NO new
   `runs.status` value and reuses the review diff response shape plus a `files` summary.
-  Flow runs render split/inline via `@git-diff-view/react` (`?diffview=`) with
+  Flow and scratch runs render split/inline via `@git-diff-view/react` (`?diffview=`) with
   per-file `additions`/`deletions` computed server-side (Implemented, ADR-066).
-  The run-detail scratch rework preserves the raw `diff` string for migration but adds
-  the same prepared `files`/`perFile` shape so scratch uses the shared Diff tab.
-- An oversized diff (over the `EXEC_MAX_BUFFER` 4 MiB bound) degrades to a bounded
-  prefix carrying `truncated: true` on the `…/diff` response and the review-panel
-  diff DTO — the diff readers (`diffRange`, `diffRunWorkspace`) NEVER throw on
-  size. The review panel MUST block promotion behind an explicit acknowledgement
-  when `truncated`, and both the workbench and review diff MUST render a
-  truncation banner (Implemented, ADR-066).
+  `GET /api/runs/{runId}/diff` MUST omit the raw `diff` string unless `?raw=1` is
+  explicitly supplied, MUST serialize `perFile` at most once per cache miss, and
+  MUST share a byte-bounded 32 MiB LRU cache (`lib/diff/cache.ts`, skipping entries
+  over 16 MiB) across `/diff` and `RunDetailLayout` keyed by immutable
+  `(worktreePath, baseSha, headSha)`, `review:<fingerprint>`, or content digest while
+  always enforcing `requireProjectAction` and `assertRunKnowledgeDisclosure` before
+  returning cached entries (Designed).
+- `prepareDiff` MUST enforce a total syntax budget (`MAX_TOTAL_SYNTAX_LINES = 8_000`)
+  downgrading trailing files to zero-Shiki monochrome plaintext bundles that still
+  hydrate in `@git-diff-view/react` with zero client lowlight fallback (ADR-066
+  FINDING G preserved), MUST yield the event loop (`setImmediate`) every 5 files with
+  `setEnableBuildTemplate(false)` scoped strictly inside each synchronous batch, and
+  MUST sanitize bundles in a single pass without `JSON.parse(JSON.stringify(...))`
+  (Designed).
+- Bounded diff readers (`diffRunWorkspace`, `diffRange`, `diffWorkingTree`) MUST
+  execute `git diff` at most once via `streamGitTruncatedTo(..., EXEC_MAX_BUFFER)`
+  (4 MiB), degrading to `{ text, truncated: true }` without re-spawning; `getInboxCardContext`
+  MUST compute `{ files, additions, deletions }` via `diffChangeStats` (`git diff --numstat`)
+  instead of fetching a full patch (Designed). The review panel MUST block promotion
+  behind an explicit acknowledgement when `truncated`, and both the workbench and
+  review diff MUST render a truncation banner (Implemented, ADR-066).
+- Logging (`LOG_LEVEL`-gated `pino`, zero payload/secret leakage): `worktree`,
+  `diff-prepare`, `diff-cache`, `inbox-context`, and `api-run-diff` emit `DEBUG`
+  diagnostics (cache hit/miss/evict/oversize, highlight counts, yields, duration),
+  `INFO` on truncation or syntax-budget plaintext fallback, and `WARN` on
+  `prepare-failed` or graceful fallback (Designed).
 
 ## Edge cases
 
@@ -327,9 +345,19 @@ back/forward restore each entry's choices without creating messages or fetching.
 - **Legacy run with null `workspaces.base_commit`** → diff base falls back to
   `resolveBaseRef(...)`; a run with no derivable base → `PRECONDITION` (409, the
   existing diff guard). No new `MaisterError` code.
-- **Oversized diff** (over `EXEC_MAX_BUFFER`, 4 MiB) → bounded prefix +
-  `truncated: true` on `…/diff`; the review panel blocks promotion until the
-  reviewer acknowledges (ADR-066). NOT a `409`/throw, NOT a silent partial render.
+- **Oversized diff** (over `EXEC_MAX_BUFFER`, 4 MiB) → single-spawn `streamGitTruncatedTo`
+  kills git cleanly and returns a bounded prefix + `truncated: true` on `…/diff`
+  (exact 4 MiB returns `truncated: false`; genuine non-zero git exit throws
+  `MaisterError("CONFLICT")`); the review panel blocks promotion until the
+  reviewer acknowledges (ADR-066). NOT a `409`/throw on size, NOT a silent partial render.
+- **Total syntax budget exceeded** (> `MAX_TOTAL_SYNTAX_LINES = 8_000`) → trailing files
+  render as monochrome plaintext via zero-Shiki server bundles without client lowlight
+  fallback; overlapping `prepareDiff` calls never corrupt `getEnableBuildTemplate()`
+  across `setImmediate` yields (Designed).
+- **Oversize cache entry or `?raw=1` after cached read** → single diff >16 MiB
+  bypasses the 32 MiB LRU without evicting healthy entries; `?raw=1` reads raw diff
+  text from git while reusing cached `files` and `preparedJson` without re-running
+  Shiki (Designed).
 
 ## Review Workspace (Implemented — ADR-138)
 

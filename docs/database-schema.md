@@ -5740,7 +5740,7 @@ databases; production migration remains a release operation.
 
 ## Peek paging and push hints (Implemented)
 
-Migration 0211 adds three bounded page-order indexes; 0212 adds transactional advisory notification triggers on existing canonical tables. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](system-analytics/run-peek-data.md).
+Migration 0211 adds three bounded page-order indexes; 0212 adds transactional advisory notification triggers on existing canonical tables; 0369 (`0369_optimize_peek_hint_triggers`, Designed) replaces the `execution_events_peek_hint` and `run_messages_peek_hint` functions with zero-`to_jsonb` column-direct functions (`public.maister_execution_events_peek_hint` behind a Postgres-valid `AFTER INSERT OR UPDATE ... WHEN (NEW.ingest_disposition = 'accepted' AND NEW.run_sequence IS NOT NULL)` guard, and `public.maister_run_messages_peek_hint`) while preserving all 7 trigger names asserted by `web/lib/runs/peek-wake.ts`. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](system-analytics/run-peek-data.md).
 
 ## Scheduled agent request input (Implemented)
 

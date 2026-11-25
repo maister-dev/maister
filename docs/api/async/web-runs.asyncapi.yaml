@@ -49,12 +49,20 @@ channels:
         role on the project derived from the run row. Projectless local-package
         assistant runs are restricted to their server-derived creator.
 
-        Enrolled native evidence runs additionally require current access to
-        their complete server-recorded source union. Unavailable sources or an
-        incomplete capture return HTTP 409 before streaming. Each asynchronous
-        event-batch read is followed by a current source check before enqueue;
-        revocation closes the stream. Consumer cancellation releases wake
-        waiters. No database locks span a network wait.
+        Enrolled native evidence runs and company runs additionally require
+        current access to their complete server-recorded source union.
+        Unavailable sources or an incomplete capture return HTTP 409 before
+        streaming. On enrolled/company/vault runs, each asynchronous non-empty
+        event-batch read is followed by a current source check before enqueue
+        plus a bounded 2,500 ms idle recheck; revocation closes the stream.
+        Ordinary non-enrolled project runs re-verify `requireProjectRoleForUser`
+        and disclosure at most once every 2,500 ms and before terminal close
+        without re-invoking NextAuth `auth()` inside the stream loop (Designed).
+        Event reads project only scalar metadata booleans (`payloadIsNull` and,
+        when `?context=1`, safe JSONB `contextUsageOnly`) without selecting or
+        transferring `execution_events.payload` JSONB to Node (Designed).
+        Consumer cancellation releases wake waiters. No database locks span a
+        network wait.
 
         Replay is exclusive of `Last-Event-ID` or the `lastEventId` query
         fallback. Invalid, negative, leading-zero, or overlong cursors return
@@ -87,8 +95,11 @@ channels:
         run.changed ticks. No SSE id/replay cursor; ready/resync causes canonical projection reads.
         Designed (ADR-216/217) — wait or autonomy writes use the same content-free
         invalidation after commit, including waits with no execution host event.
-        New metadata and final projection changes remain observable after execution settles. HTTP
-        heartbeats perform no data polling.
+        New metadata and final projection changes remain observable after execution settles.
+        Unrelated `transcript`, `execution_events`, foreign-`rootRunId`, and unrelated top-level
+        root `runs` hints are discarded in memory before any database authorization or ancestry
+        query; relevant `summary` hints re-verify immediately while relevant `transcript`/`execution`
+        bursts coalesce auth rechecks to 2,500 ms (Designed). HTTP heartbeats perform no data polling.
       message:
         oneOf:
           - $ref: "#/components/messages/RunPeekReady"
