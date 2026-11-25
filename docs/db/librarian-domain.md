@@ -386,6 +386,8 @@ erDiagram
 | `project_tokens_librarian_turn_idx` | `project_tokens` | `(librarian_turn_id)` | turn-end revocation and the turn FK cascade |
 | `token_audit_librarian_turn_idx` | `token_audit_log` | `(librarian_turn_id)` | a turn's project set for source masking |
 | `librarian_messages_body_tsv_idx` | `librarian_messages` | GIN `(body_tsv)` | history search |
+| `librarian_messages_segment_seq_idx` (migration `0410`, Designed) | `librarian_messages` | `(segment_id, seq)` | segment message retrieval in `retrieveLibrarianContext` (IDX-10) |
+| `librarian_turns_segment_knowledge_idx` (migration `0410`, Designed) | `librarian_turns` | `(segment_id)` WHERE `knowledge_access IS NOT NULL` | segment knowledge-turn retrieval in `retrieveLibrarianContext` (IDX-11) |
 | `librarian_operations_segment_digest_idx` | `librarian_operations` | `(segment_id, request_digest)` | the same-digest duplicate guard |
 | `librarian_cards_pending_idx` | `librarian_cards` | `(conversation_id)` WHERE `status='pending'` | pending cards, expiry and reset clearing |
 | `librarian_operations_history_idx` | `librarian_operations` | `(conversation_id, created_at DESC, id DESC)` | Owner history and work observation |

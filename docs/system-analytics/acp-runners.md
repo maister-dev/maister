@@ -337,6 +337,8 @@ The admin settings page fetches supervisor diagnostics, then runs
 stored runner readiness and the only path that materializes default runners.
 When diagnostics are unavailable it is a no-op (last-known
 readiness is preserved, not clobbered to `NotReady`).
+The page always requests a fresh compute (`refresh=1`, Designed — ADR-224);
+the snapshot rules are in [host diagnostics](host-diagnostics.md).
 
 ```mermaid
 sequenceDiagram
@@ -344,7 +346,7 @@ sequenceDiagram
     participant D as Supervisor /diagnostics
     participant RC as reconcilePlatformRunners
     participant DB as platform_acp_runners + runtime_settings
-    A->>D: fetch diagnostics
+    A->>D: fetch diagnostics (refresh=1)
     alt diagnostics unavailable (null)
         A->>RC: reconcile(db, null)
         RC-->>A: no-op (preserve last-known readiness)

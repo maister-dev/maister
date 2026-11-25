@@ -263,6 +263,8 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-221](#adr-221-reviewed-public-catalog-imports-and-host-approved-npm-mcps) | Reviewed public catalog imports and host-approved npm MCPs | Implemented | 2026-11-26 |
 | [ADR-222](#adr-222-package-capability-delivery) | Package capability delivery | Implemented | 2026-11-24 |
 | [ADR-223](#adr-223-prepare-package-mcps-on-the-assigned-supervisor) | Prepare package MCPs on the assigned supervisor | Implemented | 2026-11-24 |
+| [ADR-224](#adr-224-supervisor-diagnostics-snapshot-cache) | Supervisor diagnostics snapshot cache | Designed | 2026-11-25 |
+| [ADR-225](#adr-225-root-client-message-pruning) | Root client-message pruning | Designed | 2026-11-25 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2283,6 +2285,17 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   successor's permissions. Real route/transaction, rollback, replay and late
   answer controls are in `permission-terminal.integration.test.ts`; see
   [scratch runs](system-analytics/scratch-runs.md).
+- **`database-schema.md` repeats part of its index table (open, found 2026-11-25).**
+  The `## Indexes` table restarts its header row at a second
+  `project_members_user_idx` row, and about twenty index rows (for example
+  `runs_project_status_idx` and `node_attempts_run_idx`) appear in both halves
+  with diverging purposes. Collapse the halves into one canonical table; left
+  alone here because R9 forbids reflowing unrelated tables in passing.
+- **`supervisor.openapi.yaml` fails `redocly lint` on four pre-existing
+  `nullable-type-sibling` errors (open, found 2026-11-25).** The same four
+  errors are reported for the file at `master`, so they predate the ADR-224
+  `/diagnostics` edit, which adds none. `pnpm validate:contracts` passes; left
+  alone because R9 forbids touching unrelated schemas in passing.
 
 ### ADR-195: Operational agents with frozen completion contracts
 
@@ -2542,3 +2555,23 @@ Full record: [`decisions/adr-222.md`](decisions/adr-222.md)
 **Date:** 2026-11-24
 
 Full record: [`decisions/adr-223.md`](decisions/adr-223.md)
+
+---
+
+### ADR-224: Supervisor diagnostics snapshot cache
+
+**Status:** Designed
+**Date:** 2026-11-25
+
+Full record: [`decisions/adr-224.md`](decisions/adr-224.md)
+
+---
+
+### ADR-225: Root client-message pruning
+
+**Status:** Designed
+**Date:** 2026-11-25
+
+Full record: [`decisions/adr-225.md`](decisions/adr-225.md)
+
+---

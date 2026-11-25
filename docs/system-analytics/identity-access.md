@@ -387,6 +387,30 @@ flowchart TD
     Cascade --> Done["200 ok"]
 ```
 
+## Per-render memoization (Designed)
+
+Server reads that every authenticated page repeats are memoized for one React
+Server Components render with React `cache`. The memo scope is the render's
+async context, not a timer: outside it (route handlers, server actions, workers
+and scheduler jobs started outside a render) `cache` passes through, so every
+call re-reads the database, and "deleting a user invalidates authority on the
+next server request" is unchanged. Async work started inside a render,
+including an `after()` callback registered there, stays in that render's
+context after the response ends, so such work MUST NOT read through the
+memoized readers below.
+
+| Reader | Memo key | Bypass |
+| ------ | -------- | ------ |
+| `getDecisionsQueue` / `getDecisionsCount` (`web/lib/queries/decisions.ts`) | `(userId, role, projectId \|\| "", companyKey)` from `decisionsCacheKey`: `companyKey` is `"*"` for an absent `companyIds`, otherwise the JSON of the sorted unique ids (`[]` → `"[]"`) | explicit `client` argument |
+| `getSessionUser` and the Auth.js `jwt` callback (`web/lib/authz.ts`, `web/auth.ts`) | `getSessionUser` takes no argument, so its key is the render itself; the row lookup it shares with the `jwt` callback is keyed by the session user id (`loadUserCached`) | none; outside a render each call reads |
+| `getVisibleProjects` / `getActionableProjectIds` (`web/lib/queries/visible-projects.ts`) | the positional arguments on the default-client path | explicit `client` argument |
+
+- **MEMO-01:** Calls whose scopes normalize to the same `decisionsCacheKey` MUST share one computation within a render.
+- **MEMO-02:** `companyIds: []` MUST produce a different key from an absent `companyIds`, so a project-only read is never widened to every company.
+- **MEMO-03:** A call that passes an explicit `client` MUST compute on every call.
+- **MEMO-04:** A session user row MUST be read at most once per render across `getSessionUser()` and the `jwt` callback, and on every call outside a render.
+- **MEMO-05:** A memoized list MUST be returned as a fresh array on every call, so a caller mutating its result cannot change another caller's result.
+
 ## Expectations
 
 - Every protected app page and route handler MUST re-read the live `users` row before rendering; JWT claims (`role`, `mustChangePassword`) MUST NOT be treated as authority.

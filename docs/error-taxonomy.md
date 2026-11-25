@@ -542,6 +542,7 @@ Reason tokens (`SupervisorErrorBody.details.reason`, contract in
 | `legacy_field`        | a legacy path field after the strict flip (`details.field` names it)                                                                                                                                                                      | `PRECONDITION` passed through                     |
 | `missing_envelope`    | no envelope after the strict flip                                                                                                                                                                              | `PRECONDITION` passed through                     |
 | `health_query_invalid` | `/health` receives an empty, repeated, or non-literal `includeStream` value                                                                                                                                    | fix the probe query; no retry                     |
+| `diagnostics_query_invalid` | `GET /diagnostics` receives any `refresh` value other than one `1` or `true`, including a repeated parameter (409 `PRECONDITION`; no compute starts — ADR-224)                                               | fix the query; no retry                           |
 | `stream_health_unavailable` | the opt-in `includeStream=true` snapshot is internally inconsistent while runtime storage itself is available — a telemetry fault, NOT a storage-repair condition. The block is never omitted to impersonate an older host. Readiness probes do not pass `includeStream`, so this never refuses a launch. | diagnostics degrade to `unknown` lag; no retry needed for admission |
 | `steer_unsupported`   | a `session.steer` on a connection whose `initialize` did not advertise `_meta.steering.supported` (409 `CONFLICT`, no ACP call; + `parentCommandId`)                                                             | `CONFLICT`; the message is converted to a queued one (ADR-182) |
 | `steer_no_active_turn` | the steer's `parentCommandId` is not the session's active prompt, or the adapter answered `promptRequired`, `startedNewTurn` (the host cancels that turn) or `failed`, or the ACP call failed (409 `CONFLICT`; + `parentCommandId`, `activePromptCommandId`, `adapterOutcome`) | `CONFLICT`; converted to queued |
@@ -605,7 +606,7 @@ host). The stable
 `event_sequence_invalid`, `event_identity_conflict`, `event_stream_mismatch`,
 `event_schema_invalid`, `stale_assignment_epoch`, `event_redaction_failed`,
 `event_payload_oversize`, `event_payload_unstorable`, `event_outbox_backpressure`,
-`health_query_invalid`, `stream_health_unavailable`, `invalid_event_span`
+`health_query_invalid`, `diagnostics_query_invalid`, `stream_health_unavailable`, `invalid_event_span`
 (`GET /runtime-events/span`: `after >= through` or a non-canonical sequence,
 409; the same route answers a retained range it cannot read with
 `runtime_storage_unavailable`, 503),

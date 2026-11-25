@@ -1295,7 +1295,28 @@ paths:
         metadata. Does not return raw secret values. A binary that exists but
         cannot initialize its first-run writable state is reported as
         `available: false` with an adapter-specific `error`, not as a raw 500.
+
+        (Designed — ADR-224) The body is served from one in-memory snapshot per
+        supervisor process. A snapshot younger than 30 seconds is returned as
+        is; one younger than five minutes is returned while exactly one
+        background recompute starts; otherwise the request awaits a compute.
+        Concurrent non-forced requests share one in-flight compute. A change of
+        the adapter smoke-cache file invalidates the snapshot, and a failed
+        compute is never stored. `refresh=1` (or `true`) forces a compute that
+        started at or after the request arrived. See
+        `docs/system-analytics/host-diagnostics.md`.
       operationId: getSupervisorDiagnostics
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          description: |
+            Force a compute that started at or after this request arrived.
+            Omit it to accept the cached snapshot. Any other value, or a
+            repeated parameter, answers 409 `PRECONDITION`.
+          schema:
+            type: string
+            enum: ["1", "true"]
       responses:
         "200":
           description: Runtime diagnostics snapshot.
@@ -1303,6 +1324,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SupervisorDiagnosticsResponse"
+        "409":
+          description: Invalid or repeated refresh query value. No compute starts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                invalidQuery:
+                  value:
+                    code: PRECONDITION
+                    message: refresh must occur once with the literal value 1 or true
+                    details: { reason: diagnostics_query_invalid }
   /diagnostics/env-refs:
     post:
       tags: [health]
@@ -3615,6 +3647,10 @@ components:
         checkedAt:
           type: string
           format: date-time
+          description: |
+            Probe start time of the returned snapshot (Designed — ADR-224). A
+            cached snapshot keeps the time its compute started, not the time
+            of this response.
         adapters:
           type: array
           items:
@@ -5075,6 +5111,7 @@ components:
         - event_payload_oversize
         - event_outbox_backpressure
         - health_query_invalid
+        - diagnostics_query_invalid
         - stream_health_unavailable
         - runtime_storage_unavailable
         - runtime_storage_pressure

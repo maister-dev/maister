@@ -479,6 +479,26 @@ exit code, and a bounded stderr tail only. They must not include env values,
 provider tokens, generated config bodies, raw ACP frames, or any MCP `env` /
 `headers` map — neither its values nor its key names.
 
+#### Diagnostics snapshot _(Designed — ADR-224)_
+
+The route serves one in-memory snapshot per process instead of probing the
+host on every request:
+
+| Request state | Behavior |
+| ------------- | -------- |
+| Snapshot younger than 30 s | Returned as is; no process is spawned. |
+| Snapshot younger than 5 min | Returned; exactly one background recompute starts. |
+| No snapshot, an older one, or a changed smoke-cache `mtimeMs` | The request awaits a compute; concurrent requests share it. |
+| `refresh=1` or `refresh=true` | Awaits a compute that started at or after the request arrived. |
+| Any other `refresh` value, or a repeated parameter | `409 { code: "PRECONDITION", details: { reason: "diagnostics_query_invalid" } }`; no compute. |
+
+`checkedAt` is the probe start time of the returned snapshot. A failed compute
+is never stored and reaches every request waiting on it; a background failure is
+logged at WARN. Results are stored by generation, so an older compute that ends
+late never replaces a newer snapshot. The snapshot is not persisted; a restart
+starts empty. Web freshness classes and the full rule set:
+[host diagnostics](system-analytics/host-diagnostics.md).
+
 #### Capability adapter support matrix (Implemented snapshot + designed native activation)
 
 | Capability kind           | Claude adapter                                                                                              | Codex adapter                                                                                               | V1 behavior                                                                                                                                                                |
@@ -1291,7 +1311,8 @@ existing permanent command tombstone and cannot reactivate that command. The
 existing private state directory and Node 24 runtime provide storage and gating;
 no new service, mount, environment variable or port is required.
 
-The file carries a `PRAGMA user_version` (currently 16)
+The file carries a `PRAGMA user_version` (currently 22; version 23 is
+Designed and adds the index below)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at
@@ -1308,6 +1329,13 @@ is lost, the host mints a new key (unless pinned) — the web registrar then
 retires the idle old row or refuses registration while the old row still owns
 non-terminal runs; fences restart at the first command; handles are
 re-adopted lazily. Cross-host ACP resume is out of scope.
+
+**Version 23 (Designed, IDX-12)** adds `session_process_run_idx` on
+`session_process_obligations (run_id, registered_at, command_id)`. The existing
+partial index excludes released rows, so it cannot serve
+`sessionProcessesForRun`, which reads every obligation of a run on each run
+command. A fresh store creates the index with its schema; an older store gains it
+in one `BEGIN IMMEDIATE` step that also sets `user_version = 23`.
 
 Version 10 adds nullable request-schema, host-key, accepted-sequence and terminal
 stream/sequence receipt bindings. New admissions hash the same JCS request v2

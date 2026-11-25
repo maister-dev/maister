@@ -849,6 +849,17 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   paths. Migration `0379` permits null on host-owned rows and scopes the
   unique live Supervisor handle to its execution host. See
   [execution host storage](execution-hosts-domain.md#stage-c-workspace-ownership-migration-implemented-adr-219).
+- **(Designed, migration `0410`)** `workspaces_run_created_idx` on `(run_id,
+  created_at DESC, id ASC)` — the latest workspace of a run, the run-detail
+  join and the run delete cascade (IDX-01).
+- **(Designed, migration `0410`)** `runs_project_started_idx` on `(project_id,
+  started_at DESC, id DESC)` (IDX-02), `runs_started_id_idx` on `(started_at
+  DESC, id DESC)` (IDX-03), partial `runs_continuation_active_idx` on
+  `(run_kind, id) WHERE status IN ('Running','NeedsInput','NeedsInputIdle',
+  'WaitingOnChildren')` (IDX-04) and partial `runs_host_restart_recovery_idx`
+  on `(id) WHERE status='Crashed' AND run_kind='flow' AND parent_run_id IS NULL
+  AND agent_kind IS NULL` (IDX-05). Readers: [hot-path query plan
+  contract](../database-schema.md#hot-path-query-plan-contract).
 - **(ADR-140, migration 0105, Implemented)** `workspaces_pr_state_scan_idx` partial index
   on `(project_id) WHERE pr_url IS NOT NULL AND (pr_state IS NULL OR pr_state =
   'open')` — the `pr_state_scan` candidate query (open / never-checked PRs per

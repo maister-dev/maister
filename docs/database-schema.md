@@ -1831,6 +1831,12 @@ ALTER TABLE project_tokens ADD CONSTRAINT project_tokens_librarian_turn_fk
   the single active turn, reset against admission, and the daily cap.
 - **`librarian_messages.seq`** — the conversation's durable sequence and the
   replay cursor of [`librarian-stream.asyncapi.yaml`](api/async/librarian-stream.asyncapi.yaml).
+- **Segment retrieval indexes (Designed, migration `0410`)** —
+  `librarian_messages_segment_seq_idx` `(segment_id, seq)` and
+  `librarian_turns_segment_knowledge_idx` `(segment_id) WHERE knowledge_access
+  IS NOT NULL` serve `retrieveLibrarianContext`, which reads one segment's
+  messages and knowledge-bearing turns. See
+  [Hot-path query plan contract](#hot-path-query-plan-contract).
   It is allocated under the conversation row lock, strictly increases, and is
   never reused — not after a history clear or the retention purge, both of
   which delete rows, so the allocator cannot derive it from the surviving
@@ -2671,6 +2677,16 @@ workspace queries, `(runKind, taskId)` for board/latest-attempt lookups that
 must exclude scratch runs, and the existing `(taskId)` lookup for compatibility
 until all callers move to the typed index.
 
+Hot-path indexes **(Designed, migration `0410`)**: `runs_project_started_idx`
+`(project_id, started_at DESC, id DESC)` serves the Observatory run groups,
+`runs_started_id_idx` `(started_at DESC, id DESC)` serves the `/runs` ledger
+ordering, `runs_continuation_active_idx` `(run_kind, id) WHERE status IN
+('Running','NeedsInput','NeedsInputIdle','WaitingOnChildren')` serves the Flow
+and agent continuation candidate scans, and `runs_host_restart_recovery_idx`
+`(id) WHERE status='Crashed' AND run_kind='flow' AND parent_run_id IS NULL AND
+agent_kind IS NULL` serves host-restart recovery. See
+[Hot-path query plan contract](#hot-path-query-plan-contract).
+
 **(ADR-085 — Designed, migration `0047`.)** `deliveryPolicySnapshot`
 records the resolved policy used by this run: project default, launch override,
 and any promote-time override. The field is immutable after launch except for
@@ -3245,6 +3261,14 @@ numerator.
                                  //   the push so a retry reuses it
 }
 ```
+
+Hot-path index **(Designed, migration `0410`)**: `workspaces_run_created_idx`
+`(run_id, created_at DESC, id ASC)` serves the latest-workspace lateral of the
+`/runs` ledger and the run-detail join, and the `runs` delete cascade. No
+earlier unconditional index led with `run_id`: the partial unique
+`workspaces_active_host_run_uq` covers only live host-owned rows and cannot
+serve these readers. See
+[Hot-path query plan contract](#hot-path-query-plan-contract).
 
 An own run has at most one workspace; a shared-mode run tree can have many run
 rows referring to one workspace. `worktreePath` remains globally unique across
@@ -4803,6 +4827,8 @@ claim scan. Retention: events with `fanout_at IS NOT NULL` and zero referencing
 `webhook_deliveries` rows are pruned after 7 days by the
 `webhook_delivery` scheduler job's tail pass. Events referenced by any delivery
 row are kept indefinitely for replay and audit.
+Partial index `webhook_events_fanout_prune_idx` `(fanout_at) WHERE fanout_at IS
+NOT NULL` **(Designed, migration `0410`)** bounds that prune pass.
 
 ### `webhook_deliveries`
 
@@ -4837,6 +4863,11 @@ fanout transaction inserts with `ON CONFLICT DO NOTHING`. Partial index
 `(next_attempt_at) WHERE status = 'pending'` drives the drain-pass claim.
 Index `(subscription_id, created_at DESC)` supports the Deliveries-drawer
 log UI. Cascade: `ON DELETE CASCADE` from `webhook_subscriptions.id`.
+**(Designed, migration `0410`)** `webhook_deliveries_event_idx` `(event_id)`
+serves the prune pass's `NOT EXISTS` probe and the event delete cascade;
+partial `webhook_deliveries_settled_updated_idx` `(updated_at DESC, id DESC)
+WHERE status IN ('delivered','dead')` serves the attention-stream scan and the
+activity-feed deliveries.
 
 Retry schedule (delay after failure #n): `1m, 5m, 15m, 1h, 4h, 12h, 24h` →
 8 attempts total, then terminal `dead`. HTTP 410 Gone → `dead` immediately.
@@ -4956,6 +4987,9 @@ kind IN ('run.done', 'run.failed', 'run.crashed', 'run.abandoned')` — the
 newest terminal event of a run, kind-matched to its status. The `cause` block
 on `run.failed | run.crashed | run.abandoned` payloads is described in
 [domain events](system-analytics/domain-events.md#terminal-cause-implemented).
+**(Designed, migration `0410`)** `domain_events_project_occurred_idx` on
+`(project_id, occurred_at DESC, id DESC) WHERE project_id IS NOT NULL` serves the
+activity feed, the Observatory budget summary and the attention-stream scan.
 
 ### `domain_event_consumers`
 
@@ -5484,6 +5518,14 @@ Created via Drizzle:
 | `runs`                      | `runs_root_addressable_key_uq`                   | `(rootRunId, addressableKey)` UNIQUE WHERE `persistent`                              | **(Implemented, migration 0060)** one persistent child per `addressableKey` within a run-tree (star-routing).                                                                    |
 | `runs`                      | `runs_auto_task_uq`                              | `(taskId)` UNIQUE WHERE `launch_mode='auto'`                                         | **(Implemented, migration 0060, ADR-100)** one auto-DAG run per task — the DB backstop behind the auto-launcher's `hasAnyRun` belt (concurrent dedup via `onConflictDoNothing`). |
 | `runs`                      | `runs_ended_at_idx`                              | `(endedAt)` PARTIAL WHERE `ended_at IS NOT NULL`                                     | **(ADR-117, Implemented, migration 0083)** bounded `order by ended_at limit n` scan for the `system_sweep` cost-rollup backstop reconcile.                                       |
+| `runs` | `runs_project_started_idx` | `(projectId, startedAt DESC, id DESC)` | **(Designed, migration 0410)** IDX-02 Observatory run groups and breakdown. |
+| `runs` | `runs_started_id_idx` | `(startedAt DESC, id DESC)` | **(Designed, migration 0410)** IDX-03 `/runs` ledger ordering. |
+| `runs` | `runs_continuation_active_idx` | `(runKind, id)` PARTIAL WHERE `status IN ('Running','NeedsInput','NeedsInputIdle','WaitingOnChildren')` | **(Designed, migration 0410)** IDX-04 Flow and agent continuation candidate scans. |
+| `runs` | `runs_host_restart_recovery_idx` | `(id)` PARTIAL WHERE `status='Crashed' AND run_kind='flow' AND parent_run_id IS NULL AND agent_kind IS NULL` | **(Designed, migration 0410)** IDX-05 host-restart recovery scan. |
+| `workspaces` | `workspaces_run_created_idx` | `(runId, createdAt DESC, id ASC)` | **(Designed, migration 0410)** IDX-01 latest workspace per run; run-detail join; run delete cascade. |
+| `domain_events` | `domain_events_project_occurred_idx` | `(projectId, occurredAt DESC, id DESC)` PARTIAL WHERE `project_id IS NOT NULL` | **(Designed, migration 0410)** IDX-06 activity feed, budget summary, attention-stream scan. |
+| `librarian_messages` | `librarian_messages_segment_seq_idx` | `(segmentId, seq)` | **(Designed, migration 0410)** IDX-10 segment message retrieval. |
+| `librarian_turns` | `librarian_turns_segment_knowledge_idx` | `(segmentId)` PARTIAL WHERE `knowledge_access IS NOT NULL` | **(Designed, migration 0410)** IDX-11 segment knowledge-turn retrieval. |
 | `scratch_runs`              | `scratch_runs_project_status_idx`                | `(projectId, dialogStatus)`                                                          | Project scratch workspace lists.                                                                                                                                                 |
 | `scratch_attachments`       | `scratch_attachments_run_idx`                    | `(runId)`                                                                            | Run-level attachment lookup.                                                                                                                                                     |
 | `scratch_attachments`       | `scratch_attachments_message_idx`                | `(messageId)`                                                                        | Message attachment lookup.                                                                                                                                                       |
@@ -5560,6 +5602,9 @@ Created via Drizzle:
 | `webhook_events`            | `webhook_events_pending_fanout_idx`              | `(created_at)` PARTIAL `WHERE fanout_at IS NULL`                                     | **(ADR-077 Implemented)** Ordered fanout-pass claim scan                                                                                                                         |
 | `webhook_deliveries`        | `webhook_deliveries_due_idx`                     | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'`                               | **(ADR-077 Implemented)** Ordered drain-pass claim scan                                                                                                                          |
 | `webhook_deliveries`        | `webhook_deliveries_subscription_log_idx`        | `(subscription_id, created_at DESC)`                                                 | **(ADR-077 Implemented)** Deliveries-drawer log UI                                                                                                                               |
+| `webhook_events` | `webhook_events_fanout_prune_idx` | `(fanout_at)` PARTIAL `WHERE fanout_at IS NOT NULL` | **(Designed, migration 0410)** IDX-09 settled-event prune pass. |
+| `webhook_deliveries` | `webhook_deliveries_event_idx` | `(event_id)` | **(Designed, migration 0410)** IDX-07 prune `NOT EXISTS` probe and event delete cascade. |
+| `webhook_deliveries` | `webhook_deliveries_settled_updated_idx` | `(updated_at DESC, id DESC)` PARTIAL `WHERE status IN ('delivered','dead')` | **(Designed, migration 0410)** IDX-08 attention-stream scan and activity-feed deliveries. |
 | `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx`         | `(delivery_id)`                                                                      | **(ADR-077 Implemented)** Attempt history for a delivery                                                                                                                         |
 | `execution_hosts`           | `execution_hosts_local_active_uq`                | `(kind)` UNIQUE WHERE `kind='local_direct' AND retired_at IS NULL AND coalesce(transport->>'role', 'default')='default'` | **(Migration 0396)** At most one live legacy default (E-EH-01). |
 | `execution_assignments`     | `execution_assignments_run_active_uq`            | `(runId)` UNIQUE WHERE `state='active'`                                              | **(ADR-166, Implemented)** At most one active assignment per run (E-EH-02).                                                                                                      |
@@ -5581,6 +5626,39 @@ capability_ref_id)`, `project_flow_roles(project_id, role_ref)`,
 `scratch_capability_profiles.run_id`,
 `execution_event_consumers(consumer_name, run_id)`, and
 `assignments.hitl_request_id`) implicitly create their own indexes in Postgres.
+
+### Hot-path query plan contract
+
+**(Designed, migration `0410`)** Each index below MUST appear in the plan of
+the statements its reader emits.
+`web/lib/db/__tests__/hot-path-indexes.integration.test.ts` captures those
+statements from the public reader and asserts the index name in their
+`EXPLAIN` output (sequential scans and sorts disabled, so the assertion proves
+usability, not cost).
+
+| ID | Index | Reader | Test |
+| -- | ----- | ------ | ---- |
+| IDX-01 | `workspaces_run_created_idx` | `listRunsPage` latest-workspace lateral; `getRunDetail` join | `hot-path-indexes.integration.test.ts` |
+| IDX-02 | `runs_project_started_idx` | `getObservatoryOverview` run groups and breakdown | `hot-path-indexes.integration.test.ts` |
+| IDX-03 | `runs_started_id_idx` | `listRunsPage` ordering | `hot-path-indexes.integration.test.ts` |
+| IDX-04 | `runs_continuation_active_idx` | Flow and agent continuation candidate selection | `hot-path-indexes.integration.test.ts` |
+| IDX-05 | `runs_host_restart_recovery_idx` | `findHostRestartRecovery` | `hot-path-indexes.integration.test.ts` |
+| IDX-06 | `domain_events_project_occurred_idx` | activity feed; `getBudgetSummary`; attention-stream scan | `hot-path-indexes.integration.test.ts` |
+| IDX-07 | `webhook_deliveries_event_idx` | `runPrunePass` `NOT EXISTS` probe | `hot-path-indexes.integration.test.ts` |
+| IDX-08 | `webhook_deliveries_settled_updated_idx` | attention-stream scan; activity-feed deliveries | `hot-path-indexes.integration.test.ts` |
+| IDX-09 | `webhook_events_fanout_prune_idx` | `runPrunePass` | `hot-path-indexes.integration.test.ts` |
+| IDX-10 | `librarian_messages_segment_seq_idx` | `retrieveLibrarianContext` messages | `hot-path-indexes.integration.test.ts` |
+| IDX-11 | `librarian_turns_segment_knowledge_idx` | `retrieveLibrarianContext` knowledge turns | `hot-path-indexes.integration.test.ts` |
+
+Migration `0410` is a plain `CREATE INDEX` set that runs inside the migrator's
+single transaction under the session fence (`lock_timeout = 5s`,
+`statement_timeout = 120s`); the brief SHARE locks are acceptable at current
+data volumes. Each `CREATE INDEX` first waits for in-flight writers to its
+table, so the migration should run while no other instance is writing to these
+tables: a write transaction held past the lock timeout, or an index build past
+the statement timeout, fails the migration, which the next startup retries. A
+`CREATE INDEX CONCURRENTLY` pre-create path for large installations is
+(Phase 2).
 
 ## A/B stabilization persistence contract (Designed)
 
