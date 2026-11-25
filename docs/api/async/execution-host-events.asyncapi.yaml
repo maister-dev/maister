@@ -19,6 +19,12 @@ info:
     are host-derived durable outbox fields. The manager never accepts a client
     filesystem path, prompt, attachment bytes, environment value, or secret in
     this stream. Payloads are redacted before publication and capped at 1 MiB.
+    Host-path detection (shared between host and manager via
+    `runtime/host-path-safety.ts`) rejects and redacts real POSIX/host roots,
+    multi-segment rooted paths, and `file://` URIs while allowing inline code
+    tokens such as comments (` //`, ` /*`), JSX closing tags (`<div />`),
+    division (`a / b`), URLs (`https://...`), and single-segment route tokens
+    (`/api`, `/login`).
 
     v1 payloads are open JSON; the `session.exited` `reason`/`cause` fields
     are defined by `supervisor-sse.asyncapi.yaml` (including the ADR-183

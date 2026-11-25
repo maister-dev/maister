@@ -43,10 +43,17 @@ capture, exact live budgets, restart inventory and final sealed accounting.
 Updating captured byte counts frees no charged capacity and must not wake
 capacity waiters. The single TEMP update remains atomic and retains the
 storage-failure latch. Growth and durable writes retain physical headroom
-checks against the database, WAL, SHM and filesystem free space. Admission
-reuses a measurement only within the same synchronous operation; later
-operations measure again. Page and freelist counts remain available in
-diagnostic snapshots. Quota release, ACK and prune still wake waiters.
+checks against the database, WAL, SHM and filesystem free space. (Designed)
+When the host is not pressured and the last measured snapshot retains more than
+8 MiB of margin from every state-size, WAL-checkpoint and free-space threshold,
+`createSqliteStorage` may amortize `physicalSnapshot()` across up to 16
+operations or 512 KiB of estimated writes; it MUST measure fresh immediately on
+pressure, within 8 MiB of any threshold, on checkpoint, when a reservation
+exceeds remaining amortized margin, or on explicit `snapshot()`. `openHostState`
+configures `PRAGMA cache_size = -65536` and `PRAGMA temp_store = MEMORY`
+alongside `WAL` and `synchronous = FULL` (Designed). Page and freelist counts
+remain available in diagnostic snapshots. Quota release, ACK and prune still wake
+waiters.
 The hot outbox admission snapshot reads all three budget partitions, active
 frame credits, producer/teardown credits and the pressure bit in one SQLite
 statement. It returns fresh values from one read boundary, with no result
@@ -56,13 +63,23 @@ Frame-funded events do not re-read pressure to select a funding branch that
 cannot use control credits; terminal and completion funding rules are unchanged.
 
 A validated ordinary text-update frame may commit its raw line and semantic
-update as one bounded, synchronous WAL/FULL transaction. The two rows retain
-raw-before-update order and become observable only after their shared commit.
-A second-row failure rolls back both rows, sequence allocation and frame-credit
-spends. The pair uses the existing decoder/frame reservation and physical write
-headroom. Usage-bearing, permission, tool and invalid-frame paths keep individual
-publication. Required content objects remain durably sealed before the pair;
-no transaction spans an asynchronous callback.
+update as one bounded, synchronous WAL/FULL transaction. (Designed) Multiple
+consecutive complete ordinary text-update frames arriving in a single `<= 64 KiB`
+stdout read chunk (up to 16 frames / 32 events) may batch into one synchronous
+WAL/FULL SQLite transaction funded by one slice TEMP frame reservation
+(`frameCount * 2 + 2` rows) and one decoder permit, flushing immediately before
+any non-text frame, tool call, permission, usage, error or slice release. Every
+pair retains raw-before-update order and becomes observable only after the
+shared commit. Any row failure rolls back all rows in the transaction, sequence
+allocation and frame-credit spends atomically. Usage-bearing, permission, tool
+and invalid-frame paths keep individual publication. Required content objects
+remain durably sealed before the batch, committing their `runtime_objects` row
+and `runtime_files` seal together in one post-rename SQLite transaction
+(Designed); no transaction spans an asynchronous callback. Host-path safety
+shared via `runtime/host-path-safety.ts` matches real POSIX/host roots,
+multi-segment rooted paths and `file://` URIs while permitting inline code
+tokens (` //`, ` /*`, `<Button />`, `a / b`, `GET /api`, `https://...`) without
+offloading (Designed).
 
 ## Domain entities
 
@@ -360,7 +377,15 @@ pending permission replies per producer.
 
 `captureAcpFrames` owns bounded byte capture and UTF-8 validation; protocol
 dispatch assigns monotonic IDs and publishes raw/semantic events after durable
-commit. `boundedAcpStream` requires its object-mode output, with
+commit. (Designed) While retaining eager temporary-spool creation for exit-time
+stdout buffering, `captureAcpFrames` fast-paths complete newline-terminated
+frames arriving inside a single chunk completely in memory without writing,
+reading or truncating `.acp-frame-*.tmp` (enforcing UTF-8 validity via
+`node:buffer` `isUtf8` when `onLine` is unset or a single fatal `TextDecoder`
+otherwise, and spilling exact bytes to the spool whenever `beforeWrite` or
+`beforeFrame` transitions to `drain`), and `boundedAcpStream` decodes each frame
+at most once before passing the string to `parseFrame`. `boundedAcpStream`
+requires its object-mode output, with
 exactly one complete newline-terminated ACP frame per iterator value; a byte-mode
 source is refused at construction with `ACP_PROTOCOL`, reason
 `required_output_incomplete` and `outputFailure=producer_frame_invalid`.
@@ -534,7 +559,7 @@ prompt. A producer-permission failure retains its structured details instead
 of becoming a generic transport rejection; fence, pressure and intentional
 shutdown decisions keep their existing precedence (see [ADR-177](../decisions/adr-177.md)).
 
-SQLite admission measures DB/WAL/SHM size and disk free space; health snapshots also expose page/free-page counters. A synchronous frame reservation uses one fresh physical measurement for both admission and its bounded write, including all promised bytes and unchanged write headroom; the file-credit allocator uses the same free-space observation. A separate post-reservation observation refreshes pressure. No measurement survives the operation or crosses an asynchronous boundary. Pending object copies, logs, spools and producer wallets are durably charged before host-managed writes. Boot-scoped frame promises count transactionally in the live quota; spending one on a retained file commits that file's reservation before writing its bytes. Startup inventories retained files before admission. Native storage failures latch unavailable readiness and preserve evidence. Host, pressure/restart, pinned-reader, maximum-output and 20-producer memory tests exercise these paths. Exact defaults and physical headroom arithmetic live in [configuration](../configuration.md#ab-stabilization-resource-budget-implemented). These are application admission bounds; arbitrary same-UID agent writes are not an operating-system disk quota. Immutable sealing and retirement of agent output writers remain S3 work.
+SQLite admission measures DB/WAL/SHM size and disk free space; health snapshots also expose page/free-page counters. A synchronous frame reservation uses one physical measurement for both admission and its bounded write, including all promised bytes and unchanged write headroom; the file-credit allocator uses the same free-space observation. (Designed) Under healthy headroom (`!pressured` and > 8 MiB from every state, checkpoint and free-space threshold), `createSqliteStorage` may reuse that physical measurement for at most 16 operations or 512 KiB of estimated writes before re-measuring; pressure, margin `<= 8 MiB`, checkpoints, reservations exceeding remaining amortized margin and explicit `snapshot()` calls always measure fresh. Pending object copies, logs, spools and producer wallets are durably charged before host-managed writes. Boot-scoped frame promises count transactionally in the live quota; spending one on a retained file commits that file's reservation before writing its bytes. Startup inventories retained files before admission. Native storage failures latch unavailable readiness and preserve evidence. Host, pressure/restart, pinned-reader, maximum-output and 20-producer memory tests exercise these paths. Exact defaults and physical headroom arithmetic live in [configuration](../configuration.md#ab-stabilization-resource-budget-implemented). These are application admission bounds; arbitrary same-UID agent writes are not an operating-system disk quota. Immutable sealing and retirement of agent output writers remain S3 work.
 
 ## Durable bounded projection and reconciliation workers
 
@@ -564,7 +589,14 @@ The transcript v2 consumer replays existing canonical history into the same
 message sequence keys while persisting only fixed-size coalescing pointers per
 run/attempt in `run_transcript_states`. A tool-key index resolves one prior tool
 message. Text/result concatenation occurs in PostgreSQL, so applying a chunk
-does not download an ever-growing message into the worker.
+does not download an ever-growing message into the worker. (Designed) Through
+`projectBatch`, `canonicalTranscriptProjector` reads `runs` once, batch-validates
+distinct `node_attempts` once, locks each `(run_id, node_attempt_id)` scope once
+(preserving TRC-10 lock order), and coalesces contiguous `text`, `thought`,
+`usage` and same-`toolCallId` `tool_update` events in memory before flushing
+once per coalesced message and once per scope inside a savepoint; any SQL error
+rolls back the savepoint and replays per-event to poison the exact offending
+event.
 
 S5.2 P1 amendment (implemented; hosted CI qualification pending): scratch reply content also belongs
 to this durable consumer. A request-local stream must not write the same reply.
@@ -594,6 +626,11 @@ same transaction. Existing rollups are rebuilt per touched aggregate key using
 the `canonical-worker:v1:` source-cursor version, so replay starts each old
 aggregate from zero exactly once. SQL updates merge one model/runner bucket;
 the worker does not download the full event history or existing bucket maps.
+(Designed) Through `projectBatch`, `canonicalCostProjector` reads `runs` once,
+groups `usage.recorded` deltas by `(model, sessionName)` (accumulating
+`source_event_count` by group size), batch-validates distinct `node_attempts`,
+upserts `node_attempt_cost_rollups` once per `(nodeAttemptId, model)`, and calls
+`refreshRunnerBuckets` once per batch.
 The terminal-cost sweep remains an advisory bounded-quantum caller; canonical
 backlog has no terminal-status, lookback or reader-presence requirement.
 
@@ -612,10 +649,10 @@ without logging SQL statements, parameters, error messages, source contents or
 filesystem paths. The stored failure generation and its rearm contract are
 unchanged.
 
-1. Ingest commits canonical rows and contiguous promotion in Postgres. In the same transaction, seed/wake consumer rows for **every distinct run promoted**, including runs released by filling another run's stream gap. ACK follows this commit, regardless of projector success. Duplicate ingest may hint; hints carry no authority.
-2. Boot/restart performs bounded keyset backfill of missing registered consumer/run rows from canonical events. Persist the scan cursor. Cursor initialization commits separately from first application; no unbounded all-runs boot transaction.
-3. Candidate predicate: registered consumer, nonpoison state, due `next_retry_at`, no live claim, and canonical accepted events beyond cursor. Order by `last_served_at NULLS FIRST`, due/creation time and stable run/consumer key. Claim with `FOR UPDATE SKIP LOCKED`; unique token and DB-clock expiry. Claim **at processing time**, up to two simultaneous workers; do not preclaim eight items then spend their leases waiting in a local queue.
-4. One quantum is ≤100 events, ≤1 MiB aggregate payload (including hydrated reference content) and ~1 s soft work time; allow one legal maximum-envelope event so byte limit cannot starve it. Each DB apply transaction has a 5 s hard budget enforced by a monotonic client deadline, remaining-budget per-query statement/lock timeouts and explicit in-flight query cancellation. Immutable Drizzle table/relation metadata is compiled once per module; each transaction still creates its own session over its own guarded connection, with fresh query results and independent deadline/cancellation state. SQL-only transactions allocate no relational query registry. The first relational read lazily constructs a transaction-local registry over that same guarded session; nested savepoints receive independent registries and retain read-your-writes and rollback semantics. PostgreSQL 16 statement_timeout alone is not a transaction deadline. On deadline/shutdown await rollback before reusing the connection; if cancellation/rollback cannot be confirmed, discard that connection, retain the durable claim and surface service failure. Set a bounded idle-in-transaction timeout as a server backstop. Never commit after the deadline; token/cursor fencing remains mandatory. Test multiple slow statements and a blocked statement, not only one fast apply. Apply pure/domain DB writes and cursor under the same transaction and matching claim token/cursor. No HTTP, file hashing, prompt wait or Git inside that transaction.
+1. Ingest commits canonical rows and contiguous promotion in Postgres. In the same transaction, seed/wake consumer rows for **every distinct run promoted**, including runs released by filling another run's stream gap, advancing `execution_event_consumers.max_available_sequence` monotonically via `GREATEST` (Designed). ACK follows this commit, regardless of projector success. Duplicate ingest may hint; hints carry no authority.
+2. Boot/restart performs bounded keyset backfill of missing registered consumer/run rows from canonical events, populating `max_available_sequence` via `GREATEST` (Designed). Persist the scan cursor. Cursor initialization commits separately from first application; no unbounded all-runs boot transaction.
+3. Candidate predicate: registered consumer, nonpoison state, due `next_retry_at`, no live claim, and `max_available_sequence > COALESCE(last_run_sequence, -1)` served by the partial index `execution_event_consumers_due_service_idx` (Designed — replacing the correlated `EXISTS` probe over historical runs). Order by `last_served_at NULLS FIRST`, due/creation time and stable run/consumer key. Claim with `FOR UPDATE SKIP LOCKED`; unique token and DB-clock expiry. Claim **at processing time**, up to two simultaneous workers; do not preclaim eight items then spend their leases waiting in a local queue.
+4. One quantum is ≤100 events, ≤1 MiB aggregate payload (including hydrated reference content) and ~1 s soft work time; allow one legal maximum-envelope event so byte limit cannot starve it. Each DB apply transaction has a 5 s hard budget enforced by a monotonic client deadline, a single post-`BEGIN` `set_config` call for transaction-local `statement_timeout`, `lock_timeout` and `idle_in_transaction_session_timeout` (reading `client.processID` directly when present instead of `SELECT pg_backend_pid()`, skipping control statements `BEGIN`/`COMMIT`/`ROLLBACK`/`ABORT` — Designed), and explicit cumulative in-flight query cancellation via `pg_cancel_backend(backendPid)`. Immutable Drizzle table/relation metadata is compiled once per module; each transaction still creates its own session over its own guarded connection, with fresh query results and independent deadline/cancellation state. SQL-only transactions allocate no relational query registry. The first relational read lazily constructs a transaction-local registry over that same guarded session; nested savepoints receive independent registries and retain read-your-writes and rollback semantics. PostgreSQL 16 statement_timeout alone is not a transaction deadline. On deadline/shutdown await rollback before reusing the connection; if cancellation/rollback cannot be confirmed, discard that connection, retain the durable claim and surface service failure. Set a bounded idle-in-transaction timeout as a server backstop. Never commit after the deadline; token/cursor fencing remains mandatory. Test multiple slow statements and a blocked statement, not only one fast apply. Apply pure/domain DB writes and cursor under the same transaction and matching claim token/cursor; batch-capable projectors implement optional `projectBatch` (Designed). No HTTP, file hashing, prompt wait or Git inside that transaction.
 5. Commit claim first. Inside apply use an event/batch savepoint; rollback failing effects without losing the outer consumer record. Commit original sanitized error, event, attempts and retry/poison fields. If failure recording is separate, CAS exact claim generation and starting cursor, and require failure sequence > current cursor; stale recorder is a no-op.
 6. One quantum per pair then release claim/update `last_served_at`, yielding to other due pairs. Backlog remains due immediately. A 30 s lease exceeds the 5 s transaction budget; no external work runs under it. If an owner sub-operation needs longer, renew its separate 30 s lease at 10 s and fence every persistence boundary.
 7. Use postcommit wake hints plus an abortable due timer (at most 1 s idle latency, or next retry deadline) and durable candidate selection. This schedules already committed DB work; it does not poll the runtime filesystem or infer state from a timer. A completed SSE stream or a new event is never required.

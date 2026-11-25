@@ -167,6 +167,11 @@ sequenceDiagram
   semantics — as an OpenAPI path and the event schemas as an AsyncAPI channel.
   No gate enumerates routes against paths, so the pairing is a convention a
   reviewer has to hold.
+- **Single-transaction decision-delta snapshots (Designed).** `emitDecisionsDelta`
+  threads its active transaction `tx` into `decisionsFor(userId, role, tx)` so
+  `readAttentionDecisionSnapshot(tx, userId, role)` executes on the held
+  `PoolClient` without checking out additional connections from the outer
+  `pg.Pool`, eliminating connection-pool self-deadlock under concurrency.
 
 ## Clarification population (Designed — ADR-189)
 

@@ -76,7 +76,8 @@ removed.
 ## Connection pool
 
 `buildClient` reads `MAISTER_DB_POOL_MAX` for the Postgres pool size
-(default 10). Surface it in `.env.example` even though it is optional.
+(default `25`) and sets `connectionTimeoutMillis: 10_000` and
+`idleTimeoutMillis: 30_000`. Surface it in `.env.example` even though it is optional.
 
 ## Public API
 

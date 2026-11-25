@@ -1199,6 +1199,19 @@ transaction; since ADR-183 the grace is cut short while retained rows are at
 the soft budget (never for an unacknowledged row).
 Runtime writes also pass the physical guard described in
 [configuration](configuration.md#ab-stabilization-resource-budget-implemented).
+`openHostState` configures `PRAGMA cache_size = -65536` and
+`PRAGMA temp_store = MEMORY` alongside `WAL` and `synchronous = FULL`, and
+amortizes healthy `physicalSnapshot()` checks (`<= 16` ops / `512 KiB` while
+unpressured and `> 8 MiB` from every threshold; always fresh on pressure,
+near-threshold, checkpoint, or `snapshot()`). `captureAcpFrames` fast-paths
+complete in-memory newline-terminated lines without disk spooling while
+retaining UTF-8 validation and drain spill, and batches up to 16 consecutive
+ordinary text-update frames from one stdout chunk into a single SQLite
+`BEGIN IMMEDIATE ... COMMIT`. Host-path payload safety shares
+`runtime/host-path-safety.ts` with the web tier so code comments, JSX, and
+single-segment route tokens stay inline while real POSIX roots, multi-segment
+paths, and `file://` URIs offload to runtime objects (sealing `runtime_objects`
+and `runtime_files` in one post-rename transaction).
 A native SQLite/filesystem capacity or I/O failure stops live producers and
 latches `GET /health` to `503 EXECUTOR_UNAVAILABLE` with
 `runtime_storage_unavailable`. Existing receipts/events and unfinished captured
