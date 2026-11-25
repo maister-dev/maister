@@ -130,7 +130,7 @@ sequenceDiagram
 ## As built
 
 - **One subscription in the shared shell.** `AttentionStreamProvider` in `AppLayout`
-  (wrapping `{shell}` inside `AttentionReviewProvider`, Designed) owns the single
+  (wrapping `{shell}` inside `AttentionReviewProvider`, Implemented) owns the single
   `/api/attention/stream` connection shared by `StatusBar`'s `AttentionLiveRefresh`
   and `<main>`'s `TaskLaunchIntentStatus` (at most one attention socket per tab).
   Each tick refreshes the current page and shared badges. When
@@ -138,14 +138,14 @@ sequenceDiagram
   `EventSource` and cancels reconnect timers without incrementing error backoff,
   and `AttentionLiveRefresh` defers `router.refresh()` until `"visible"`, resuming
   with the ADR-171 D7 cursor/counters and preserving K13 review revalidation
-  (Designed). The first connect carries the render's cursor and counts
+  (Implemented). The first connect carries the render's cursor and counts
   (ADR-171 D7), so the stream scans the gap between rendering and subscribing
   itself. A page that is current is not refreshed at all, and a decision that
   became visible in that gap still ticks. Page navigation does not create
   duplicate attention connections. Server-side `GET /api/attention/stream` and
   `librarianStreamFrames` use abort-aware `node:timers/promises` sleeps and
   remove abort listeners in `finally` (zero listener accumulation; `DEBUG` log on
-  abort exit, Designed).
+  abort exit, Implemented).
 - **Invalidate after a form becomes actionable.** The scan includes the
   `run.needs_input` row in `webhook_events`, which commits with the run's parked
   status and is indexed by project and event time. HITL creation can emit its

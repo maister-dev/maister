@@ -1257,7 +1257,7 @@ Every Run exposes two metrics computed by the pure projection
   web or supervisor restarts, and consecutive sessions of the same run. The
   execution host resumes delivery from its durable acknowledgement watermark;
   neither the browser nor the web tier reads host runtime files.
-  **(Designed)** Event queries project only scalar metadata booleans
+  **(Implemented)** Event queries project only scalar metadata booleans
   (`payloadIsNull` and, only when `?context=1`, safe JSONB `contextUsageOnly`)
   without transferring `execution_events.payload` JSONB to Node. In-loop
   authorization uses `requireProjectRoleForUser` (never re-invoking NextAuth
@@ -1515,7 +1515,7 @@ promotion policy.
 - The browser stream client may show `connecting`, `live`, `reconnecting`, or
   `disconnected`. An unexpected close retries with a bounded delay and the
   existing `lastEventId`; terminal runs and unmounted/replaced screens cancel
-  timers and close their EventSource. **(Designed)** Tick-only `useRunStream`
+  timers and close their EventSource. **(Implemented)** Tick-only `useRunStream`
   (`retain: false`) closes its `EventSource` and cancels reconnect timers while
   `document.visibilityState === "hidden"` without incrementing error backoff,
   reconnecting on `"visible"` with one catch-up tick; streaming UI consumers

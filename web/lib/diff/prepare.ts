@@ -349,20 +349,22 @@ export async function prepareDiff(
 
   const files = summarizeSections(sections);
   const perFile: PreparedFile[] = [];
+  const DIFF_YIELD_BUDGET_MS = 16;
   let yieldCount = 0;
+  let index = 0;
 
-  for (
-    let start = 0;
-    start < sectionPlans.length;
-    start += DIFF_YIELD_BATCH_SIZE
-  ) {
-    const end = Math.min(start + DIFF_YIELD_BATCH_SIZE, sectionPlans.length);
+  while (index < sectionPlans.length) {
+    const batchEnd = Math.min(
+      index + DIFF_YIELD_BATCH_SIZE,
+      sectionPlans.length,
+    );
+    const batchStartedAt = performance.now();
     const wasBuildingTemplates = getEnableBuildTemplate();
 
     setEnableBuildTemplate(false);
     try {
-      for (let i = start; i < end; i += 1) {
-        const plan = sectionPlans[i];
+      while (index < batchEnd) {
+        const plan = sectionPlans[index];
         const highlighter = plan.usePlaintext
           ? plaintextDiffHighlighter
           : shikiDiffHighlighter;
@@ -374,12 +376,20 @@ export async function prepareDiff(
             buildBundle(plan.section, plan.fileLang, highlighter),
           ),
         });
+        index += 1;
+
+        if (
+          index < batchEnd &&
+          performance.now() - batchStartedAt >= DIFF_YIELD_BUDGET_MS
+        ) {
+          break;
+        }
       }
     } finally {
       setEnableBuildTemplate(wasBuildingTemplates);
     }
 
-    if (end < sectionPlans.length) {
+    if (index < sectionPlans.length) {
       yieldCount += 1;
       await yieldToEventLoop();
     }

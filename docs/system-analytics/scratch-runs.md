@@ -138,7 +138,7 @@ workspace-backed Flow and agent runs:
   replacing the conversation as the landing view.
 - **Diff** uses `GET /api/runs/{runId}/diff` and the shared prepared diff
   renderer (`files`/`perFile`); the raw `diff` string is omitted unless
-  `?raw=1` is requested (Designed).
+  `?raw=1` is requested (Implemented).
 
 ## State machine
 
@@ -966,13 +966,13 @@ it does not poll, create a second stream wire contract, change
 `runs.status`/`scratch_runs.dialog_status`, or alter prompt/recovery semantics.
 
 `ScratchRunDetailLayout` owns the single `<RunStreamProvider>` subscription
-shared by `ScratchConversation` and `LiveRunInspector` (Designed — at most one
+shared by `ScratchConversation` and `LiveRunInspector` (Implemented — at most one
 `/api/runs/{runId}/stream` socket per scratch tab). Tick-only subscriptions
 pause while `document.visibilityState === "hidden"` and issue one catch-up tick
 on `"visible"`; `ScratchConversation` uses leading-coalescing refresh throttling
 (250 ms) instead of trailing debounces and calls `router.refresh()` after a
 successful `recover()` so a recovered `Crashed` run re-activates
-`<RunStreamProvider>` (Designed). It cancels retry timers and closes the
+`<RunStreamProvider>` (Implemented). It cancels retry timers and closes the
 EventSource on unmount, run replacement, or terminal state, so an inactive
 conversation cannot retain a live reconnect loop. Connection errors are
 localized feedback, not browser console diagnostics or raw server messages.

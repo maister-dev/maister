@@ -57,10 +57,10 @@ channels:
         plus a bounded 2,500 ms idle recheck; revocation closes the stream.
         Ordinary non-enrolled project runs re-verify `requireProjectRoleForUser`
         and disclosure at most once every 2,500 ms and before terminal close
-        without re-invoking NextAuth `auth()` inside the stream loop (Designed).
+        without re-invoking NextAuth `auth()` inside the stream loop (Implemented).
         Event reads project only scalar metadata booleans (`payloadIsNull` and,
         when `?context=1`, safe JSONB `contextUsageOnly`) without selecting or
-        transferring `execution_events.payload` JSONB to Node (Designed).
+        transferring `execution_events.payload` JSONB to Node (Implemented).
         Consumer cancellation releases wake waiters. No database locks span a
         network wait.
 
@@ -99,7 +99,7 @@ channels:
         Unrelated `transcript`, `execution_events`, foreign-`rootRunId`, and unrelated top-level
         root `runs` hints are discarded in memory before any database authorization or ancestry
         query; relevant `summary` hints re-verify immediately while relevant `transcript`/`execution`
-        bursts coalesce auth rechecks to 2,500 ms (Designed). HTTP heartbeats perform no data polling.
+        bursts coalesce auth rechecks to 2,500 ms (Implemented). HTTP heartbeats perform no data polling.
       message:
         oneOf:
           - $ref: "#/components/messages/RunPeekReady"

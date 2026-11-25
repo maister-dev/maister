@@ -229,10 +229,10 @@ async function seedSharedChild(args: {
   return childRunId;
 }
 
-async function getDiff(runId: string): Promise<Response> {
+async function getDiff(runId: string, query = ""): Promise<Response> {
   const { GET } = await import("@/app/api/runs/[runId]/diff/route");
 
-  return GET(new Request(`http://x/api/runs/${runId}/diff`), {
+  return GET(new Request(`http://x/api/runs/${runId}/diff${query}`), {
     params: Promise.resolve({ runId }),
   } as never);
 }
@@ -259,7 +259,19 @@ describe("ADR-102 T12 — reviewable diff resolves the TREE workspace for a reus
     // The shared tree diff — NOT empty, NOT the child's own (absent) workspace.
     expect(body.baseCommit).toBe(fx.baseSha);
     expect(body.sourceBranch).toBe(fx.branch);
-    expect(body.diff).toContain("shared-change.txt");
+    expect("diff" in body).toBe(false);
+    expect(
+      (body.files as Array<{ path: string }>).some(
+        (f) => f.path === "shared-change.txt",
+      ),
+    ).toBe(true);
+
+    const rawRes = await getDiff(reuserChild, "?raw=1");
+
+    expect(rawRes.status).toBe(200);
+    const rawBody = (await rawRes.json()) as Record<string, any>;
+
+    expect(rawBody.diff).toContain("shared-change.txt");
   });
 
   it("run-diff-source.computeRunDiff for a reuser shared child resolves the shared tree diff (no PRECONDITION)", async () => {

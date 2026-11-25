@@ -25,7 +25,7 @@ export function AttentionStreamProvider({
   children,
   since,
 }: {
-  children: ReactNode;
+  children?: ReactNode;
   since?: AttentionStreamSince;
 }): ReactElement {
   const watch = useAttentionReviewWatch();

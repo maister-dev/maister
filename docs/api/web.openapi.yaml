@@ -7939,7 +7939,7 @@ paths:
             type: string
             enum: ["1"]
           description: |
-            **(Designed)** Opt-in flag to include the raw unified `diff` string
+            **(Implemented)** Opt-in flag to include the raw unified `diff` string
             in the JSON response. When omitted, `diff` is omitted from the
             response while `files` and `perFile` are served (using the shared
             byte-bounded LRU prepared-diff cache when immutable refs match).
@@ -34545,7 +34545,7 @@ components:
         diff:
           type: string
           description: |
-            **(Designed)** Raw unified diff text. Omitted by default unless
+            **(Implemented)** Raw unified diff text. Omitted by default unless
             `?raw=1` is supplied (or on `prepare-failed` fallback).
         truncated:
           type: boolean

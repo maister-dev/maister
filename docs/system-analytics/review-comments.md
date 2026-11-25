@@ -266,7 +266,7 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
   server-recomputed scope-selected current diff parsed via pure unified-diff
   hunk indexing (`lib/diff/line-index.ts` `parseDiffLineIndex` — byte-identical
   `{ oldLines, newLines }` lookups decoupled from Shiki WASM and
-  `@git-diff-view/core`, Designed) and store the server-extracted
+  `@git-diff-view/core`, Implemented) and store the server-extracted
   `line_content`; a `truncated` diff or a file absent from the parsed diff →
   409 `PRECONDITION`. `diff-line-index` and `review-comments-diff` log `DEBUG`
   timings/counts and `WARN` on malformed hunk headers or unavailable sources
