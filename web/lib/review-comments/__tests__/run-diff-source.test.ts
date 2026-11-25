@@ -16,9 +16,9 @@
 //     failure (GC'd worktree, git error) degrades every open root to
 //     "outdated" instead of throwing.
 //
-// The diff fixture goes through the REAL `prepareDiff` parse path (house rule
-// from anchor.test.ts / the route tests: mock the git source, never the
-// parser).
+// The diff fixture goes through the REAL `parseDiffLineIndex` parse path (house
+// rule from anchor.test.ts / the route tests: mock the git source, never the
+// parser) and asserts zero calls to `prepareDiff` (PERF-11).
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ReviewComment } from "@/lib/review-comments/service";
@@ -26,19 +26,21 @@ import type { ReviewComment } from "@/lib/review-comments/service";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import { parseDiffLineIndex } from "@/lib/diff/line-index";
 import { prepareDiff } from "@/lib/diff/prepare";
 import {
-  diffRunWorkspace,
-  diffWorkingTree,
-  resolveBaseRef,
-} from "@/lib/worktree";
-import {
   computeReviewDiff,
+  computeRunDiff,
   getReviewGateThreadCounts,
   placementOf,
   summarizeReviewThreads,
 } from "@/lib/review-comments/run-diff-source";
 import { listThreads } from "@/lib/review-comments/service";
+import {
+  diffRunWorkspace,
+  diffWorkingTree,
+  resolveBaseRef,
+} from "@/lib/worktree";
 
 // ---------------------------------------------------------------------------
 // Boundary mocks. The module imports `listThreads` (service) and the worktree
@@ -74,6 +76,14 @@ const fakeDb = {
 };
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
+vi.mock("@/lib/diff/prepare", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/diff/prepare")>();
+
+  return {
+    ...actual,
+    prepareDiff: vi.fn(actual.prepareDiff),
+  };
+});
 vi.mock("@/lib/worktree", () => ({
   diffRunWorkspace: vi.fn(),
   diffWorkingTree: vi.fn(),
@@ -183,12 +193,28 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// computeReviewDiff — scoped diff source for inline review comments
+// computeReviewDiff / computeRunDiff — scoped diff source without Shiki WASM
 // ---------------------------------------------------------------------------
 
 describe("computeReviewDiff", () => {
-  it("uses the working-tree diff for uncommitted review anchors", async () => {
-    const prepared = await computeReviewDiff(
+  it("computes committed run diff via parseDiffLineIndex with 0 calls to prepareDiff", async () => {
+    vi.mocked(diffRunWorkspace).mockResolvedValue({
+      text: FIXTURE_DIFF,
+      truncated: false,
+    });
+
+    const index = await computeRunDiff(
+      fakeDb as unknown as NodePgDatabase<typeof schema>,
+      { id: "run-1", projectId: "p-1" },
+    );
+
+    expect(placementOf(index, rootRow())).toBe("inline");
+    expect(diffRunWorkspace).toHaveBeenCalledTimes(1);
+    expect(prepareDiff).not.toHaveBeenCalled();
+  });
+
+  it("uses the working-tree diff for uncommitted review anchors with 0 calls to prepareDiff", async () => {
+    const index = await computeReviewDiff(
       fakeDb as unknown as NodePgDatabase<typeof schema>,
       { id: "run-1", projectId: "p-1" },
       "uncommitted",
@@ -196,7 +222,7 @@ describe("computeReviewDiff", () => {
 
     expect(
       placementOf(
-        prepared,
+        index,
         rootRow({
           filePath: "docs/new.md",
           line: 1,
@@ -206,18 +232,68 @@ describe("computeReviewDiff", () => {
     ).toBe("inline");
     expect(diffWorkingTree).toHaveBeenCalledWith("/tmp/wt");
     expect(diffRunWorkspace).not.toHaveBeenCalled();
+    expect(prepareDiff).not.toHaveBeenCalled();
   });
 
-  it("uses the workspace base through the working tree for review anchors", async () => {
-    const prepared = await computeReviewDiff(
+  it("filters non-reviewable materialized paths from uncommitted review anchors", async () => {
+    const mixedDiff = `${UNTRACKED_DIFF}${withFinalNewline([
+      "diff --git a/.claude/settings.local.json b/.claude/settings.local.json",
+      "new file mode 100644",
+      "index 0000000..2222222",
+      "--- /dev/null",
+      "+++ b/.claude/settings.local.json",
+      "@@ -0,0 +1,1 @@",
+      "+{}",
+    ])}`;
+
+    vi.mocked(diffWorkingTree).mockResolvedValue({
+      text: mixedDiff,
+      truncated: false,
+      nameStatus: [
+        { path: "docs/new.md", status: "A" },
+        { path: ".claude/settings.local.json", status: "A" },
+      ],
+    });
+
+    const index = await computeReviewDiff(
       fakeDb as unknown as NodePgDatabase<typeof schema>,
       { id: "run-1", projectId: "p-1" },
-      "review" as never,
+      "uncommitted",
     );
 
     expect(
       placementOf(
-        prepared,
+        index,
+        rootRow({
+          filePath: "docs/new.md",
+          line: 1,
+          lineContent: "# Draft",
+        }),
+      ),
+    ).toBe("inline");
+    expect(
+      placementOf(
+        index,
+        rootRow({
+          filePath: ".claude/settings.local.json",
+          line: 1,
+          lineContent: "{}",
+        }),
+      ),
+    ).toBe("outdated");
+    expect(prepareDiff).not.toHaveBeenCalled();
+  });
+
+  it("uses the workspace base through the working tree for review anchors with 0 calls to prepareDiff", async () => {
+    const index = await computeReviewDiff(
+      fakeDb as unknown as NodePgDatabase<typeof schema>,
+      { id: "run-1", projectId: "p-1" },
+      "review",
+    );
+
+    expect(
+      placementOf(
+        index,
         rootRow({
           filePath: "docs/new.md",
           line: 1,
@@ -227,38 +303,39 @@ describe("computeReviewDiff", () => {
     ).toBe("inline");
     expect(diffWorkingTree).toHaveBeenCalledWith("/tmp/wt", "abc123");
     expect(diffRunWorkspace).not.toHaveBeenCalled();
+    expect(prepareDiff).not.toHaveBeenCalled();
   });
 });
 
 // ---------------------------------------------------------------------------
-// placementOf — total mapping over (prepared | null, root)
+// placementOf — total mapping over (DiffLineIndex | DiffPrepResult | null, root)
 // ---------------------------------------------------------------------------
 
 describe("placementOf", () => {
-  it("returns inline when the stored content matches the current diff at the anchor", async () => {
-    const prepared = await prepareDiff(FIXTURE_DIFF, false);
+  it("returns inline when the stored content matches the current diff at the anchor", () => {
+    const index = parseDiffLineIndex(FIXTURE_DIFF, false);
 
-    expect(placementOf(prepared, rootRow())).toBe("inline");
+    expect(placementOf(index, rootRow())).toBe("inline");
   });
 
-  it("returns outdated when the content at the anchor differs", async () => {
-    const prepared = await prepareDiff(FIXTURE_DIFF, false);
+  it("returns outdated when the content at the anchor differs", () => {
+    const index = parseDiffLineIndex(FIXTURE_DIFF, false);
 
     expect(
-      placementOf(prepared, rootRow({ lineContent: "const added = 99;" })),
+      placementOf(index, rootRow({ lineContent: "const added = 99;" })),
     ).toBe("outdated");
   });
 
-  it("returns outdated when no prepared diff is available", () => {
+  it("returns outdated when no diff index is available", () => {
     expect(placementOf(null, rootRow())).toBe("outdated");
   });
 
-  it("returns outdated for a defective root with null anchor fields", async () => {
-    const prepared = await prepareDiff(FIXTURE_DIFF, false);
+  it("returns outdated for a defective root with null anchor fields", () => {
+    const index = parseDiffLineIndex(FIXTURE_DIFF, false);
 
     expect(
       placementOf(
-        prepared,
+        index,
         rootRow({ filePath: null, side: null, line: null, lineContent: null }),
       ),
     ).toBe("outdated");
@@ -270,8 +347,8 @@ describe("placementOf", () => {
 // ---------------------------------------------------------------------------
 
 describe("summarizeReviewThreads", () => {
-  it("counts open roots and the open-and-outdated subset", async () => {
-    const prepared = await prepareDiff(FIXTURE_DIFF, false);
+  it("counts open roots and the open-and-outdated subset", () => {
+    const index = parseDiffLineIndex(FIXTURE_DIFF, false);
     const threads = [
       // open + inline → openCount only
       thread(rootRow()),
@@ -288,7 +365,7 @@ describe("summarizeReviewThreads", () => {
       ),
     ];
 
-    expect(summarizeReviewThreads(threads, prepared)).toEqual({
+    expect(summarizeReviewThreads(threads, index)).toEqual({
       openCount: 2,
       outdatedCount: 1,
     });
@@ -303,17 +380,17 @@ describe("summarizeReviewThreads", () => {
     });
   });
 
-  it("returns zeros for no threads", async () => {
-    const prepared = await prepareDiff(FIXTURE_DIFF, false);
+  it("returns zeros for no threads", () => {
+    const index = parseDiffLineIndex(FIXTURE_DIFF, false);
 
-    expect(summarizeReviewThreads([], prepared)).toEqual({
+    expect(summarizeReviewThreads([], index)).toEqual({
       openCount: 0,
       outdatedCount: 0,
     });
   });
 
-  it("ignores replies — only the root's status and placement count", async () => {
-    const prepared = await prepareDiff(FIXTURE_DIFF, false);
+  it("ignores replies — only the root's status and placement count", () => {
+    const index = parseDiffLineIndex(FIXTURE_DIFF, false);
     const reply = rootRow({
       parentId: "c-root",
       filePath: null,
@@ -323,7 +400,7 @@ describe("summarizeReviewThreads", () => {
     });
     const threads = [thread(rootRow({ id: "c-root" }), [reply, reply])];
 
-    expect(summarizeReviewThreads(threads, prepared)).toEqual({
+    expect(summarizeReviewThreads(threads, index)).toEqual({
       openCount: 1,
       outdatedCount: 0,
     });
@@ -331,7 +408,7 @@ describe("summarizeReviewThreads", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getReviewGateThreadCounts — layout glue (one query + at most one diff prep)
+// getReviewGateThreadCounts — layout glue (one query + at most one diff parse)
 // ---------------------------------------------------------------------------
 
 describe("getReviewGateThreadCounts", () => {
@@ -346,9 +423,10 @@ describe("getReviewGateThreadCounts", () => {
     expect(listThreads).toHaveBeenCalledTimes(1);
     expect(diffRunWorkspace).not.toHaveBeenCalled();
     expect(resolveBaseRef).not.toHaveBeenCalled();
+    expect(prepareDiff).not.toHaveBeenCalled();
   });
 
-  it("computes placement-aware counts with exactly one diff computation", async () => {
+  it("computes placement-aware counts with exactly one diff parse and 0 calls to prepareDiff", async () => {
     vi.mocked(listThreads).mockResolvedValue([
       thread(rootRow()),
       thread(rootRow({ lineContent: "const added = 99;" })),
@@ -365,9 +443,10 @@ describe("getReviewGateThreadCounts", () => {
     expect(diffRunWorkspace).toHaveBeenCalledTimes(1);
     // baseCommit is recorded on the workspace row → no merge-base resolution.
     expect(resolveBaseRef).not.toHaveBeenCalled();
+    expect(prepareDiff).not.toHaveBeenCalled();
   });
 
-  it("uses the review source for Flow review-gate placement counts", async () => {
+  it("uses the review source for Flow review-gate placement counts with 0 calls to prepareDiff", async () => {
     vi.mocked(listThreads).mockResolvedValue([
       thread(
         rootRow({
@@ -383,6 +462,7 @@ describe("getReviewGateThreadCounts", () => {
     expect(counts).toEqual({ openCount: 1, outdatedCount: 0 });
     expect(diffWorkingTree).toHaveBeenCalledWith("/tmp/wt", "abc123");
     expect(diffRunWorkspace).not.toHaveBeenCalled();
+    expect(prepareDiff).not.toHaveBeenCalled();
   });
 
   it("degrades every open root to outdated when the diff source fails", async () => {
@@ -395,5 +475,6 @@ describe("getReviewGateThreadCounts", () => {
     const counts = await getReviewGateThreadCounts("run-1", "p-1");
 
     expect(counts).toEqual({ openCount: 2, outdatedCount: 2 });
+    expect(prepareDiff).not.toHaveBeenCalled();
   });
 });

@@ -297,8 +297,6 @@ describe("ADR-102 T12 — reviewable diff resolves the TREE workspace for a reus
     expect(thrown).toBeUndefined();
 
     // The shared tree diff is produced (the committed change appears).
-    const files = prepared?.files ?? [];
-
-    expect(files.some((f) => f.path === "shared-change.txt")).toBe(true);
+    expect(prepared?.files.has("shared-change.txt")).toBe(true);
   });
 });

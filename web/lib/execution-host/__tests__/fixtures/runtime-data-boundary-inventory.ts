@@ -2880,7 +2880,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["fetchRemote", "node:child_process.execFile", "spawn", "git"],
         ["remoteBranchHead", "node:child_process.execFile", "spawn", "git"],
         ["pruneWorktrees", "node:child_process.execFile", "spawn", "git"],
-        ["diffRange", "node:child_process.execFile", "spawn", "git"],
         ["streamGitTruncatedTo", "node:child_process.spawn", "spawn", "git"],
         ["withTempIndexCopy", "node:fs/promises.mkdtemp", "write"],
         ["withTempIndexCopy", "node:fs/promises.copyFile", "write"],

@@ -1,11 +1,14 @@
 // Pure anchor extraction + placement matching for review comments (ADR-072,
-// docs/system-analytics/review-comments.md). Operates on the SAME prepared
-// diff the view renders (`prepareDiff` bundles hydrate the client `DiffFile`),
-// so an anchor always points at what the reviewer actually saw: the bundle's
-// `oldFileDiffLines`/`newFileDiffLines` are keyed by the per-side 1-based file
-// line number — the exact (lineNumber, SplitSide) the diff widget emits.
+// docs/system-analytics/review-comments.md). Operates primarily on the pure
+// unified-diff line index (`DiffLineIndex` from `parseDiffLineIndex`, zero
+// Shiki WASM) and also accepts `DiffPrepResult` for backward compatibility,
+// keying every lookup by the per-side 1-based file line number — the exact
+// (lineNumber, SplitSide) the diff widget emits.
 
+import type { DiffLineIndex } from "@/lib/diff/line-index";
 import type { DiffPrepResult, PreparedFile } from "@/lib/diff/prepare";
+
+export type AnchorDiffSource = DiffLineIndex | DiffPrepResult;
 
 export type AnchorSide = "old" | "new";
 
@@ -32,18 +35,34 @@ type LineLookup =
   | { found: true; content: string }
   | { found: false; reason: "file_absent" | "line_absent" };
 
-// The diff parser keeps each data line's trailing LF (absent only at the
-// physical end of the diff text); `line_content` is the line as displayed —
-// strip exactly that one LF, preserving every other byte (CR, trailing spaces).
+// The @git-diff-view/core parser keeps each data line's trailing LF (absent
+// only at the physical end of the diff text); `line_content` is the line as
+// displayed — strip exactly that one LF, preserving every other byte (CR,
+// trailing spaces).
 function stripTrailingNewline(text: string): string {
   return text.endsWith("\n") ? text.slice(0, -1) : text;
 }
 
 function lookupLine(
-  prepared: DiffPrepResult,
+  source: AnchorDiffSource,
   position: AnchorPosition,
 ): LineLookup {
-  const file = prepared.perFile.find((f) => f.path === position.filePath);
+  if (!("perFile" in source)) {
+    const file = source.files.get(position.filePath);
+
+    if (!file) return { found: false, reason: "file_absent" };
+
+    const bySide = position.side === "old" ? file.oldLines : file.newLines;
+    const content = bySide.get(position.line);
+
+    if (content === undefined) {
+      return { found: false, reason: "line_absent" };
+    }
+
+    return { found: true, content };
+  }
+
+  const file = source.perFile.find((f) => f.path === position.filePath);
 
   if (!file) return { found: false, reason: "file_absent" };
 
@@ -59,14 +78,14 @@ function lookupLine(
 }
 
 export function extractAnchorContent(
-  prepared: DiffPrepResult,
+  source: AnchorDiffSource,
   position: AnchorPosition,
 ): AnchorExtraction {
   // POST-time rule (ADR-072): anchors cannot be validated against a partial
   // diff — refuse even when the position survives in the truncated prefix.
-  if (prepared.truncated) return { ok: false, reason: "diff_truncated" };
+  if (source.truncated) return { ok: false, reason: "diff_truncated" };
 
-  const hit = lookupLine(prepared, position);
+  const hit = lookupLine(source, position);
 
   if (!hit.found) return { ok: false, reason: hit.reason };
 
@@ -74,12 +93,12 @@ export function extractAnchorContent(
 }
 
 export function computePlacement(
-  prepared: DiffPrepResult,
+  source: AnchorDiffSource,
   anchor: StoredAnchor,
 ): Placement {
   // GET-time, unlike extraction, ignores `truncated`: threads match against
   // the surviving prefix; a file past the bound is simply absent -> outdated.
-  const hit = lookupLine(prepared, anchor);
+  const hit = lookupLine(source, anchor);
 
   return hit.found && hit.content === anchor.lineContent
     ? "inline"

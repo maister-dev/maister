@@ -1,8 +1,8 @@
 import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import type { DiffPrepResult } from "@/lib/diff/prepare";
-import type { Placement } from "@/lib/review-comments/anchor";
+import type { DiffLineIndex } from "@/lib/diff/line-index";
+import type { AnchorDiffSource, Placement } from "@/lib/review-comments/anchor";
 import type {
   ReviewComment,
   ReviewCommentThread,
@@ -14,13 +14,14 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { projects, runs, workspaces } from "@/lib/db/schema";
-import { filterDiffByPath, prepareDiff } from "@/lib/diff/prepare";
+import { parseDiffLineIndex } from "@/lib/diff/line-index";
+import { filterDiffByPath } from "@/lib/diff/prepare";
 import { MaisterError } from "@/lib/errors";
 import { computePlacement } from "@/lib/review-comments/anchor";
 import { listThreads } from "@/lib/review-comments/service";
-import { isReviewableChangeEntry } from "@/lib/runs/reviewable-changes";
 import { type RunDiffScope } from "@/lib/runs/diff-scopes";
 import { readReviewSource } from "@/lib/runs/review-source";
+import { isReviewableChangeEntry } from "@/lib/runs/reviewable-changes";
 import {
   diffRunWorkspace,
   diffWorkingTree,
@@ -160,13 +161,13 @@ async function loadReviewDiffRows(
   return { workspace, project };
 }
 
-// The same diff source the review view renders (diffRunWorkspace +
-// prepareDiff over the committed base..branch range) — computed at most ONCE
-// per request.
+// The same diff source the review view renders (diffRunWorkspace over the
+// committed base..branch range), indexed via pure `parseDiffLineIndex` without
+// Shiki WASM — computed at most ONCE per request.
 export async function computeRunDiff(
   dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
-): Promise<DiffPrepResult> {
+): Promise<DiffLineIndex> {
   const { workspace, project } = await loadReviewDiffRows(dbh, run);
 
   const base =
@@ -182,26 +183,26 @@ export async function computeRunDiff(
     branch: workspace.branch,
   });
 
-  return prepareDiff(text, truncated);
+  return parseDiffLineIndex(text, truncated);
 }
 
 async function computeUncommittedReviewDiff(
   dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
-): Promise<DiffPrepResult> {
+): Promise<DiffLineIndex> {
   const { workspace } = await loadReviewDiffRows(dbh, run);
   const { text, truncated } = await diffWorkingTree(workspace.worktreePath);
   const reviewableDiff = filterDiffByPath(text, (path, oldPath) =>
     isReviewableChangeEntry({ path, oldPath }),
   );
 
-  return prepareDiff(reviewableDiff, truncated);
+  return parseDiffLineIndex(reviewableDiff, truncated);
 }
 
 async function computeCurrentReviewDiff(
   dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
-): Promise<DiffPrepResult> {
+): Promise<DiffLineIndex> {
   const { workspace, project } = await loadReviewDiffRows(dbh, run);
   const baseCommit =
     workspace.baseCommit ??
@@ -215,27 +216,44 @@ async function computeCurrentReviewDiff(
     baseCommit,
   });
 
-  return prepareDiff(source.diff, source.truncated);
+  return parseDiffLineIndex(source.diff, source.truncated);
 }
 
-export function computeReviewDiff(
+export async function computeReviewDiff(
   dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
   scope: ReviewCommentScope,
-): Promise<DiffPrepResult> {
-  if (scope === "run") return computeRunDiff(dbh, run);
-  if (scope === "review") return computeCurrentReviewDiff(dbh, run);
+): Promise<DiffLineIndex> {
+  const startedAt = performance.now();
+  const index =
+    scope === "run"
+      ? await computeRunDiff(dbh, run)
+      : scope === "review"
+        ? await computeCurrentReviewDiff(dbh, run)
+        : await computeUncommittedReviewDiff(dbh, run);
+  const durationMs = Math.round((performance.now() - startedAt) * 100) / 100;
 
-  return computeUncommittedReviewDiff(dbh, run);
+  log.debug(
+    {
+      runId: run.id,
+      scope,
+      fileCount: index.files.size,
+      truncated: index.truncated,
+      durationMs,
+    },
+    "computeReviewDiff",
+  );
+
+  return index;
 }
 
 // Roots carry all anchor fields (DB CHECK); the null guard only keeps the
 // mapping total — a defective row degrades to "outdated", never a crash.
 export function placementOf(
-  prepared: DiffPrepResult | null,
+  source: AnchorDiffSource | null,
   root: ReviewComment,
 ): Placement {
-  if (!prepared) return "outdated";
+  if (!source) return "outdated";
 
   const { filePath, side, line, lineContent } = root;
 
@@ -248,7 +266,7 @@ export function placementOf(
     return "outdated";
   }
 
-  return computePlacement(prepared, { filePath, side, line, lineContent });
+  return computePlacement(source, { filePath, side, line, lineContent });
 }
 
 export interface ReviewThreadCounts {
@@ -262,11 +280,11 @@ export interface ReviewThreadCounts {
 // matching the GET route's read behavior.
 export function summarizeReviewThreads(
   threads: ReviewCommentThread[],
-  prepared: DiffPrepResult | null,
+  source: AnchorDiffSource | null,
 ): ReviewThreadCounts {
   const openRoots = threads.filter((t) => t.root.status === "open");
   const outdatedCount = openRoots.filter(
-    (t) => placementOf(prepared, t.root) === "outdated",
+    (t) => placementOf(source, t.root) === "outdated",
   ).length;
 
   return { openCount: openRoots.length, outdatedCount };
@@ -287,10 +305,10 @@ export async function getReviewGateThreadCounts(
     return { openCount: 0, outdatedCount: 0 };
   }
 
-  let prepared: DiffPrepResult | null = null;
+  let diffIndex: DiffLineIndex | null = null;
 
   try {
-    prepared = await computeReviewDiff(dbh, { id: runId, projectId }, scope);
+    diffIndex = await computeReviewDiff(dbh, { id: runId, projectId }, scope);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
@@ -300,5 +318,5 @@ export async function getReviewGateThreadCounts(
     );
   }
 
-  return summarizeReviewThreads(threads, prepared);
+  return summarizeReviewThreads(threads, diffIndex);
 }

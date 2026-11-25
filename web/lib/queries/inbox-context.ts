@@ -7,12 +7,11 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
-import { prepareDiffSummary } from "@/lib/diff/prepare";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveManifest } from "@/lib/flows/graph/current-node-kind";
 import { projectRunTranscript } from "@/lib/runs/run-transcript-projector";
 import { interpretScratchUpdate } from "@/lib/scratch-runs/transcript";
-import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
+import { diffChangeStats, resolveBaseRef } from "@/lib/worktree";
 import {
   consecutiveFailedAttempts,
   consecutiveFailedRuns,
@@ -286,18 +285,21 @@ async function loadDiffSummary(
         branch: workspace.branch,
         mainBranch: project.mainBranch,
       }));
-    const { text, truncated } = await diffRunWorkspace({
-      projectRepoPath: workspace.worktreePath,
-      baseCommit: base,
+    const stats = await diffChangeStats({
+      worktreePath: workspace.worktreePath,
+      baseRef: base,
       branch: workspace.branch,
     });
-    const summary = prepareDiffSummary(text, truncated);
+    const files = stats.length;
+    const additions = stats.reduce((sum, entry) => sum + entry.additions, 0);
+    const deletions = stats.reduce((sum, entry) => sum + entry.deletions, 0);
 
-    return {
-      files: summary.files.length,
-      additions: summary.files.reduce((sum, f) => sum + (f.additions ?? 0), 0),
-      deletions: summary.files.reduce((sum, f) => sum + (f.deletions ?? 0), 0),
-    };
+    log.debug(
+      { runId: run.id, files, additions, deletions },
+      "[inbox-context] diff numstat loaded",
+    );
+
+    return { files, additions, deletions };
   } catch (err) {
     log.warn({ runId: run.id, err }, "[inbox-context] diff read failed");
 
