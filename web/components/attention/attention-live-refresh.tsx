@@ -1,17 +1,15 @@
 "use client";
 
 import type { RunStreamLivenessLabels } from "@/components/feedback/run-stream-liveness";
+import type { AttentionStreamSince } from "@/lib/use-attention-stream";
 import type { ReactElement } from "react";
 
-import { useEffect, useRef, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import { useAttentionReviewWatch } from "@/components/attention/attention-review-watch";
-import {
-  useAttentionStream,
-  type AttentionStreamSince,
-} from "@/lib/use-attention-stream";
+import { useSharedAttentionStream } from "@/components/attention/attention-stream-provider";
+import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 
 /**
  * Keeps the app shell and current page fresh from the attention stream.
@@ -33,13 +31,27 @@ export function AttentionLiveRefresh({
   const router = useRouter();
   const watch = useAttentionReviewWatch();
   const invalidateReview = watch?.invalidate;
-  const { shellTick, liveness, reconnect, reviewResync } = useAttentionStream(
-    since,
-    watch?.selection,
-  );
+  const { shellTick, liveness, reconnect, reviewResync } =
+    useSharedAttentionStream(since, watch?.selection);
   const seenRef = useRef(0);
   const [refreshing, startRefresh] = useTransition();
+  const [visibilityRev, setVisibilityRev] = useState(0);
   const seenReviewResync = useRef(0);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState !== "hidden") {
+        setVisibilityRev((rev) => rev + 1);
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (seenReviewResync.current === reviewResync) return;
@@ -48,13 +60,21 @@ export function AttentionLiveRefresh({
   }, [invalidateReview, reviewResync]);
 
   useEffect(() => {
-    if (refreshing || shellTick === 0 || shellTick === seenRef.current) return;
+    if (
+      (typeof document !== "undefined" &&
+        document.visibilityState === "hidden") ||
+      refreshing ||
+      shellTick === 0 ||
+      shellTick === seenRef.current
+    ) {
+      return;
+    }
     seenRef.current = shellTick;
     // Every tick means something the page shows moved since the render (D7)
     // or since the last tick — including while disconnected.
     // Keep the latest tick pending until React commits the current server render.
     startRefresh(() => router.refresh());
-  }, [refreshing, router, shellTick]);
+  }, [refreshing, router, shellTick, visibilityRev]);
 
   return (
     <RunStreamLiveness

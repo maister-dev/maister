@@ -68,6 +68,7 @@ export function useRunStream(
   const lifecycleRef = useRef(initialRunStreamLifecycle);
   const cursorRunRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const needsVisibilityCatchUpRef = useRef(false);
   const [reconnectKey, setReconnectKey] = useState(0);
 
   const reconnect = useCallback(() => {
@@ -76,8 +77,10 @@ export function useRunStream(
       reconnectTimerRef.current = null;
     }
     if (sourceRef.current) {
-      sourceRef.current.close();
+      const current = sourceRef.current;
+
       sourceRef.current = null;
+      current.close();
     }
     lifecycleRef.current = advanceRunStreamLifecycle(
       lifecycleRef.current,
@@ -94,6 +97,7 @@ export function useRunStream(
     if (cursorRunRef.current !== runId) {
       cursorRunRef.current = runId;
       lastEventIdRef.current = null;
+      needsVisibilityCatchUpRef.current = false;
     }
     if (!runId) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -106,99 +110,166 @@ export function useRunStream(
 
       return;
     }
-    if (lifecycleRef.current.kind === "closed") {
-      lifecycleRef.current = initialRunStreamLifecycle;
+
+    const pauseWhenHidden = !retain;
+    const activeRunId = runId;
+    let disposed = false;
+
+    function isDocumentHidden(): boolean {
+      return (
+        typeof document !== "undefined" && document.visibilityState === "hidden"
+      );
     }
-    setStatus("connecting");
-    setLiveness(lifecycleRef.current.kind);
-    const origin =
-      typeof window !== "undefined"
-        ? window.location.origin
-        : "http://localhost";
-    const url = new URL(
-      buildRunStreamUrl(origin, runId, lastEventIdRef.current, replay),
-    );
 
-    url.searchParams.set("context", "1");
-    const es = new EventSource(url.toString());
-
-    sourceRef.current = es;
-    es.onopen = () => {
-      if (sourceRef.current !== es) return;
-      lifecycleRef.current = advanceRunStreamLifecycle(
-        lifecycleRef.current,
-        "opened",
-      );
-      setStatus("open");
-      setLiveness(lifecycleRef.current.kind);
-      setError(null);
-    };
-    es.onmessage = (msg) => {
-      if (sourceRef.current !== es) return;
-      try {
-        const parsed = JSON.parse(msg.data) as RunStreamEvent;
-
-        if (parsed.type === "session.context_snapshot") {
-          const snapshot = ContextSnapshotSchema.safeParse(parsed);
-
-          if (snapshot.success && snapshot.data.runId === runId) {
-            if (snapshot.data.nodeAttemptId === null) setContext(snapshot.data);
-            else setAttemptContext(snapshot.data);
-          }
-
-          return;
-        }
-        const cursor = runStreamCursor(parsed, msg.lastEventId);
-
-        if (cursor !== null) {
-          lastEventIdRef.current = cursor;
-          setLastEventId(cursor);
-        }
-        if (parsed.contextUsageOnly === true) return;
-        setEventCount((c) => c + 1);
-        if (retain) setEvents((cur) => [...cur, parsed]);
-      } catch {
-        /* skip malformed */
-      }
-    };
-    es.onerror = () => {
-      if (sourceRef.current !== es) return;
-      setError("eventsource error");
-
-      es.close();
-      sourceRef.current = null;
-      setStatus("closed");
-      lifecycleRef.current = advanceRunStreamLifecycle(
-        lifecycleRef.current,
-        "unexpected_close",
-      );
-      setLiveness(lifecycleRef.current.kind);
-
-      const delay = reconnectDelayMs(
-        lifecycleRef.current.retryAttempt - 1,
-        lifecycleRef.current.kind,
-      );
-
-      if (delay === null) return;
-
-      reconnectTimerRef.current = setTimeout(() => {
-        lifecycleRef.current = advanceRunStreamLifecycle(
-          lifecycleRef.current,
-          "retrying",
-        );
-        setLiveness(lifecycleRef.current.kind);
-        reconnectTimerRef.current = null;
-        setReconnectKey((key) => key + 1);
-      }, delay);
-    };
-
-    return () => {
+    function clearReconnectTimer(): void {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-      es.close();
-      if (sourceRef.current === es) sourceRef.current = null;
+    }
+
+    function closeSource(): void {
+      const current = sourceRef.current;
+
+      sourceRef.current = null;
+      current?.close();
+    }
+
+    function connect(): void {
+      if (disposed || sourceRef.current !== null) return;
+      if (pauseWhenHidden && isDocumentHidden()) {
+        needsVisibilityCatchUpRef.current = true;
+
+        return;
+      }
+
+      clearReconnectTimer();
+      if (lifecycleRef.current.kind === "closed") {
+        lifecycleRef.current = initialRunStreamLifecycle;
+      }
+      setStatus("connecting");
+      setLiveness(lifecycleRef.current.kind);
+      const origin =
+        typeof window !== "undefined"
+          ? window.location.origin
+          : "http://localhost";
+      const url = new URL(
+        buildRunStreamUrl(origin, activeRunId, lastEventIdRef.current, replay),
+      );
+
+      url.searchParams.set("context", "1");
+      const es = new EventSource(url.toString());
+
+      sourceRef.current = es;
+      es.onopen = () => {
+        if (sourceRef.current !== es) return;
+        lifecycleRef.current = advanceRunStreamLifecycle(
+          lifecycleRef.current,
+          "opened",
+        );
+        setStatus("open");
+        setLiveness(lifecycleRef.current.kind);
+        setError(null);
+        if (pauseWhenHidden && needsVisibilityCatchUpRef.current) {
+          needsVisibilityCatchUpRef.current = false;
+          setEventCount((c) => c + 1);
+        }
+      };
+      es.onmessage = (msg) => {
+        if (sourceRef.current !== es) return;
+        try {
+          const parsed = JSON.parse(msg.data) as RunStreamEvent;
+
+          if (parsed.type === "session.context_snapshot") {
+            const snapshot = ContextSnapshotSchema.safeParse(parsed);
+
+            if (snapshot.success && snapshot.data.runId === activeRunId) {
+              if (snapshot.data.nodeAttemptId === null)
+                setContext(snapshot.data);
+              else setAttemptContext(snapshot.data);
+            }
+
+            return;
+          }
+          const cursor = runStreamCursor(parsed, msg.lastEventId);
+
+          if (cursor !== null) {
+            lastEventIdRef.current = cursor;
+            setLastEventId(cursor);
+          }
+          if (parsed.contextUsageOnly === true) return;
+          setEventCount((c) => c + 1);
+          if (retain) setEvents((cur) => [...cur, parsed]);
+        } catch {
+          /* skip malformed */
+        }
+      };
+      es.onerror = () => {
+        if (sourceRef.current !== es) return;
+        if (pauseWhenHidden && isDocumentHidden()) {
+          clearReconnectTimer();
+          closeSource();
+          needsVisibilityCatchUpRef.current = true;
+          lifecycleRef.current = initialRunStreamLifecycle;
+
+          return;
+        }
+        setError("eventsource error");
+
+        sourceRef.current = null;
+        es.close();
+        setStatus("closed");
+        lifecycleRef.current = advanceRunStreamLifecycle(
+          lifecycleRef.current,
+          "unexpected_close",
+        );
+        setLiveness(lifecycleRef.current.kind);
+
+        const delay = reconnectDelayMs(
+          lifecycleRef.current.retryAttempt - 1,
+          lifecycleRef.current.kind,
+        );
+
+        if (delay === null) return;
+
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          if (disposed || (pauseWhenHidden && isDocumentHidden())) return;
+          lifecycleRef.current = advanceRunStreamLifecycle(
+            lifecycleRef.current,
+            "retrying",
+          );
+          setLiveness(lifecycleRef.current.kind);
+          setReconnectKey((key) => key + 1);
+        }, delay);
+      };
+    }
+
+    function onVisibilityChange(): void {
+      if (disposed || !pauseWhenHidden) return;
+      if (isDocumentHidden()) {
+        clearReconnectTimer();
+        closeSource();
+        needsVisibilityCatchUpRef.current = true;
+        lifecycleRef.current = initialRunStreamLifecycle;
+      } else if (sourceRef.current === null) {
+        lifecycleRef.current = initialRunStreamLifecycle;
+        connect();
+      }
+    }
+
+    connect();
+    if (pauseWhenHidden && typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+
+    return () => {
+      disposed = true;
+      if (pauseWhenHidden && typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+      clearReconnectTimer();
+      closeSource();
     };
   }, [runId, reconnectKey, replay, retain]);
 

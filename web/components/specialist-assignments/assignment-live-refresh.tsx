@@ -1,13 +1,17 @@
 "use client";
 
+import type { CoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import type { ReactElement } from "react";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { createCoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import { useRunStream } from "@/lib/use-run-stream";
+
+const ASSIGNMENT_REFRESH_COALESCE_MS = 750;
 
 export function AssignmentLiveRefresh({
   assignmentId,
@@ -22,44 +26,62 @@ export function AssignmentLiveRefresh({
   const router = useRouter();
   const { eventCount, liveness } = useRunStream(runId, { retain: false });
   const [unavailable, setUnavailable] = useState(false);
+  const revisionRef = useRef(revision);
+  const refresherRef = useRef<CoalescedRefresher | null>(null);
+
+  useEffect(() => {
+    revisionRef.current = revision;
+  }, [revision]);
 
   useEffect(() => {
     if (!runId || liveness !== "live") return;
-    const controller = new AbortController();
-    const timer = setTimeout(async () => {
-      try {
-        const response = await fetch(
-          `/api/specialist-assignments/${encodeURIComponent(assignmentId)}`,
-          { signal: controller.signal },
-        );
 
-        if (!response.ok) {
+    const refresher = createCoalescedRefresher({
+      intervalMs: ASSIGNMENT_REFRESH_COALESCE_MS,
+      run: async (signal) => {
+        try {
+          const response = await fetch(
+            `/api/specialist-assignments/${encodeURIComponent(assignmentId)}`,
+            { signal },
+          );
+
+          if (signal.aborted) return;
+          if (!response.ok) {
+            setUnavailable(true);
+
+            return;
+          }
+          const value: unknown = await response.json();
+
+          if (signal.aborted) return;
+          setUnavailable(false);
+          if (
+            value &&
+            typeof value === "object" &&
+            "revision" in value &&
+            value.revision !== revisionRef.current
+          )
+            router.refresh();
+        } catch {
+          if (signal.aborted) return;
           setUnavailable(true);
-
-          return;
         }
-        const value: unknown = await response.json();
+      },
+    });
 
-        if (controller.signal.aborted) return;
-        setUnavailable(false);
-        if (
-          value &&
-          typeof value === "object" &&
-          "revision" in value &&
-          value.revision !== revision
-        )
-          router.refresh();
-      } catch {
-        if (controller.signal.aborted) return;
-        setUnavailable(true);
-      }
-    }, 750);
+    refresherRef.current = refresher;
 
     return () => {
-      clearTimeout(timer);
-      controller.abort();
+      refresher.dispose();
+      refresherRef.current = null;
     };
-  }, [assignmentId, revision, runId, router, eventCount, liveness]);
+  }, [assignmentId, runId, router, liveness]);
+
+  useEffect(() => {
+    if (!runId || liveness !== "live") return;
+
+    refresherRef.current?.trigger();
+  }, [assignmentId, eventCount, liveness, runId]);
 
   return (
     <div className="flex items-center gap-2">

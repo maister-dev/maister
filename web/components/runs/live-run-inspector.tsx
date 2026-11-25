@@ -6,6 +6,7 @@ import type {
   RunInspectorProps,
 } from "@/components/runs/run-inspector";
 import type { RunCostSummary } from "@/lib/queries/run";
+import type { CoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import type { CostSummaryFactLabels } from "@/lib/runs/cost-summary-facts";
 import type { ReactElement } from "react";
 
@@ -14,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { RunInspector } from "@/components/runs/run-inspector";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
+import { createCoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
   CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
@@ -72,63 +74,93 @@ export function LiveRunInspector({
   );
   const [nowMs, setNowMs] = useState<number | null>(null);
   const { eventCount, context } = useRunPageStream(rest.runId, live);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const changeSummaryRefresherRef = useRef<CoalescedRefresher | null>(null);
 
   useEffect(() => {
-    if (!live || eventCount === 0) return;
+    if (!live) return;
 
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      void (async () => {
+    const refresher = createCoalescedRefresher({
+      intervalMs: CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
+      run: async (signal) => {
         try {
           const res = await fetch(
             changeSummaryRefreshUrl(rest.runId, changeScope),
+            { signal },
           );
 
+          if (signal.aborted) return;
           if (!res.ok) {
             setStale(true);
 
             return;
           }
-          setChangeSummary((await res.json()) as RunInspectorChangeSummary);
+          const nextSummary = (await res.json()) as RunInspectorChangeSummary;
+
+          if (signal.aborted) return;
+          setChangeSummary(nextSummary);
           setStale(false);
         } catch {
+          if (signal.aborted) return;
           setStale(true);
         }
-      })();
-    }, CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS);
+      },
+    });
+
+    changeSummaryRefresherRef.current = refresher;
 
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      refresher.dispose();
+      changeSummaryRefresherRef.current = null;
     };
-  }, [eventCount, live, changeScope, rest.runId]);
-
-  // Re-poll cost on the same SSE tick (separate debounce timer): canonical usage
-  // is appended per event during the turn. A failed poll keeps the last good
-  // snapshot (no stale badge — cost is advisory).
-  const costTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  }, [live, changeScope, rest.runId]);
 
   useEffect(() => {
-    if (!live || !liveCost || eventCount === 0) return;
+    if (!live || eventCount === 0) return;
 
-    if (costTimerRef.current) clearTimeout(costTimerRef.current);
-    costTimerRef.current = setTimeout(() => {
-      void (async () => {
+    changeSummaryRefresherRef.current?.trigger();
+  }, [eventCount, live]);
+
+  // Re-poll cost on the same SSE tick (separate coalesced refresher): canonical
+  // usage is appended per event during the turn. A failed poll keeps the last
+  // good snapshot (no stale badge — cost is advisory).
+  const hasLiveCost = Boolean(liveCost);
+  const costRefresherRef = useRef<CoalescedRefresher | null>(null);
+
+  useEffect(() => {
+    if (!live || !hasLiveCost) return;
+
+    const refresher = createCoalescedRefresher({
+      intervalMs: CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
+      run: async (signal) => {
         try {
-          const res = await fetch(costSummaryRefreshUrl(rest.runId));
+          const res = await fetch(costSummaryRefreshUrl(rest.runId), {
+            signal,
+          });
 
-          if (!res.ok) return;
-          setCost((await res.json()) as RunCostSummary);
+          if (signal.aborted || !res.ok) return;
+          const nextCost = (await res.json()) as RunCostSummary;
+
+          if (signal.aborted) return;
+          setCost(nextCost);
         } catch {
           // keep last good cost
         }
-      })();
-    }, CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS);
+      },
+    });
+
+    costRefresherRef.current = refresher;
 
     return () => {
-      if (costTimerRef.current) clearTimeout(costTimerRef.current);
+      refresher.dispose();
+      costRefresherRef.current = null;
     };
-  }, [eventCount, live, liveCost, rest.runId]);
+  }, [live, hasLiveCost, rest.runId]);
+
+  useEffect(() => {
+    if (!live || !hasLiveCost || eventCount === 0) return;
+
+    costRefresherRef.current?.trigger();
+  }, [eventCount, live, hasLiveCost]);
 
   // Tick elapsed wall-clock once a second while the run is live and unfinished.
   useEffect(() => {

@@ -26,8 +26,14 @@ const TestIntlProvider = NextIntlClientProvider as ComponentType<{
   children?: ReactNode;
 }>;
 
-const { stream } = vi.hoisted(() => ({ stream: { eventCount: 0 } }));
+const { router, stream } = vi.hoisted(() => ({
+  router: { refresh: vi.fn() },
+  stream: { eventCount: 0 },
+}));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
 vi.mock("@/lib/use-run-stream", () => ({
   useRunStream: () => ({ eventCount: stream.eventCount }),
 }));
@@ -152,6 +158,7 @@ function notice(): string {
 }
 
 beforeEach(() => {
+  router.refresh.mockReset();
   stream.eventCount = 0;
   dialogStatus = "Running";
   runStatus = "Running";
@@ -174,20 +181,22 @@ beforeEach(() => {
             { status: 202 },
           )
         : init?.method === "POST" && url.endsWith("/recover")
-          ? new Response(
-              JSON.stringify({
-                code: "CONFLICT",
-                message: "scratch run is not recoverable",
-                details: {
-                  reason: "scratch_not_recoverable",
-                  status: recoverRefusal,
-                  ...(recoverRefusal === "NeedsInputIdle"
-                    ? { next: "respond" }
-                    : {}),
-                },
-              }),
-              { status: 409 },
-            )
+          ? recoverRefusal !== null
+            ? new Response(
+                JSON.stringify({
+                  code: "CONFLICT",
+                  message: "scratch run is not recoverable",
+                  details: {
+                    reason: "scratch_not_recoverable",
+                    status: recoverRefusal,
+                    ...(recoverRefusal === "NeedsInputIdle"
+                      ? { next: "respond" }
+                      : {}),
+                  },
+                }),
+                { status: 409 },
+              )
+            : new Response(JSON.stringify({ ok: true }), { status: 200 })
           : new Response(JSON.stringify(detail()), { status: 200 }),
     ),
   );
@@ -365,5 +374,51 @@ describe("scratch delivery feedback (ADR-182)", () => {
     // described.
     await refresh("Running");
     expect(notice()).toBe("");
+  });
+});
+
+describe("scratch live refresh and recovery (PERF-07, PERF-08, EDGE-PERF-05)", () => {
+  it("refreshes periodically under continuous 20 Hz eventCount ticks instead of starving", async () => {
+    await render();
+    await act(async () => {});
+
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock.mockClear();
+
+    for (let tick = 0; tick < 20; tick += 1) {
+      stream.eventCount += 1;
+      await render();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    }
+
+    const detailRefreshes = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url === "/api/scratch-runs/run-1" &&
+        (init?.method === undefined || init.method === "GET"),
+    );
+
+    expect(detailRefreshes.length).toBeGreaterThanOrEqual(3);
+    expect(detailRefreshes.length).toBeLessThanOrEqual(5);
+  });
+
+  it("calls router.refresh() after a successful recover() on a Crashed run", async () => {
+    dialogStatus = "Crashed";
+    runStatus = "Crashed";
+    recoverRefusal = null;
+    await render();
+    await act(async () => {});
+
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent === "recover")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {});
+
+    expect(router.refresh).toHaveBeenCalledTimes(1);
   });
 });

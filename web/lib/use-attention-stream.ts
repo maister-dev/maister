@@ -118,6 +118,7 @@ function streamUrl(
 export function useAttentionStream(
   since?: AttentionStreamSince,
   review?: ReviewSelector | null,
+  enabled = true,
 ): UseAttentionStreamResult {
   const [tick, setTick] = useState(0);
   const [shellTick, setShellTick] = useState(0);
@@ -171,8 +172,10 @@ export function useAttentionStream(
       reconnectTimerRef.current = null;
     }
     if (sourceRef.current) {
-      sourceRef.current.close();
+      const current = sourceRef.current;
+
       sourceRef.current = null;
+      current.close();
     }
     lifecycleRef.current = advanceRunStreamLifecycle(
       lifecycleRef.current,
@@ -183,121 +186,177 @@ export function useAttentionStream(
   }, []);
 
   useEffect(() => {
-    if (lifecycleRef.current.kind === "closed") {
-      lifecycleRef.current = initialRunStreamLifecycle;
+    if (!enabled) return;
+
+    let disposed = false;
+
+    function isDocumentHidden(): boolean {
+      return (
+        typeof document !== "undefined" && document.visibilityState === "hidden"
+      );
     }
-    setLiveness(lifecycleRef.current.kind);
 
-    const origin =
-      typeof window !== "undefined"
-        ? window.location.origin
-        : "http://localhost";
-    const source = new EventSource(
-      streamUrl(
-        origin,
-        lastEventIdRef.current,
-        countersRef.current,
-        reviewKind,
-        reviewId,
-      ),
-    );
-
-    sourceRef.current = source;
-    source.onopen = () => {
-      if (sourceRef.current !== source) return;
-      lifecycleRef.current = advanceRunStreamLifecycle(
-        lifecycleRef.current,
-        "opened",
-      );
-      setLiveness(lifecycleRef.current.kind);
-      if (reviewId !== undefined) setReviewResync((current) => current + 1);
-    };
-    source.addEventListener("attention.tick", (event) => {
-      if (sourceRef.current !== source) return;
-      try {
-        const frame = JSON.parse(
-          (event as MessageEvent<string>).data,
-        ) as AttentionTickFrame;
-
-        setChanged(frame.changed);
-        setTick((current) => current + 1);
-        const matchesRenderedReviewQueue =
-          frame.changed.length === 1 &&
-          frame.changed[0] === "reviews" &&
-          frame.reviews !== undefined &&
-          frame.reviewVersion !== undefined &&
-          frame.reviews === reviewRender.current.reviews &&
-          frame.reviewVersion === reviewRender.current.reviewVersion;
-
-        if (!matchesRenderedReviewQueue) setShellTick((current) => current + 1);
-        if (reviewId !== undefined && frame.changed.includes("reviews"))
-          setReviewResync((current) => current + 1);
-
-        const id = (event as MessageEvent<string>).lastEventId;
-
-        // Same spelling the route parses and the AsyncAPI declares. The
-        // counters travel with the cursor they were read at.
-        if (isSseCursor(id)) {
-          lastEventIdRef.current = id;
-          countersRef.current = {
-            decisions: frame.decisions,
-            updates: frame.updates,
-            reviews: frame.reviews ?? countersRef.current?.reviews,
-            reviewVersion:
-              frame.reviewVersion ?? countersRef.current?.reviewVersion,
-          };
-        }
-      } catch {
-        /* a malformed frame is skipped, never thrown at the reader */
-      }
-    });
-    source.addEventListener("attention.stream_timeout", (event) => {
-      if (reviewId === undefined || sourceRef.current !== source) return;
-      const frame = JSON.parse((event as MessageEvent<string>).data) as {
-        reason: string;
-      };
-
-      if (frame.reason === "access_revoked")
-        setReviewResync((current) => current + 1);
-    });
-    source.onerror = () => {
-      if (sourceRef.current !== source) return;
-
-      source.close();
-      sourceRef.current = null;
-      lifecycleRef.current = advanceRunStreamLifecycle(
-        lifecycleRef.current,
-        "unexpected_close",
-      );
-      setLiveness(lifecycleRef.current.kind);
-
-      const delay = reconnectDelayMs(
-        lifecycleRef.current.retryAttempt - 1,
-        lifecycleRef.current.kind,
-      );
-
-      if (delay === null) return;
-
-      reconnectTimerRef.current = setTimeout(() => {
-        lifecycleRef.current = advanceRunStreamLifecycle(
-          lifecycleRef.current,
-          "retrying",
-        );
-        setLiveness(lifecycleRef.current.kind);
-        reconnectTimerRef.current = null;
-        setReconnectKey((key) => key + 1);
-      }, delay);
-    };
-
-    return () => {
+    function clearReconnectTimer(): void {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-      source.close();
-      if (sourceRef.current === source) sourceRef.current = null;
+    }
+
+    function closeSource(): void {
+      const current = sourceRef.current;
+
+      sourceRef.current = null;
+      current?.close();
+    }
+
+    function connect(): void {
+      if (disposed || sourceRef.current !== null || isDocumentHidden()) return;
+
+      clearReconnectTimer();
+      if (lifecycleRef.current.kind === "closed") {
+        lifecycleRef.current = initialRunStreamLifecycle;
+      }
+      setLiveness(lifecycleRef.current.kind);
+
+      const origin =
+        typeof window !== "undefined"
+          ? window.location.origin
+          : "http://localhost";
+      const source = new EventSource(
+        streamUrl(
+          origin,
+          lastEventIdRef.current,
+          countersRef.current,
+          reviewKind,
+          reviewId,
+        ),
+      );
+
+      sourceRef.current = source;
+      source.onopen = () => {
+        if (sourceRef.current !== source) return;
+        lifecycleRef.current = advanceRunStreamLifecycle(
+          lifecycleRef.current,
+          "opened",
+        );
+        setLiveness(lifecycleRef.current.kind);
+        if (reviewId !== undefined) setReviewResync((current) => current + 1);
+      };
+      source.addEventListener("attention.tick", (event) => {
+        if (sourceRef.current !== source) return;
+        try {
+          const frame = JSON.parse(
+            (event as MessageEvent<string>).data,
+          ) as AttentionTickFrame;
+
+          setChanged(frame.changed);
+          setTick((current) => current + 1);
+          const matchesRenderedReviewQueue =
+            frame.changed.length === 1 &&
+            frame.changed[0] === "reviews" &&
+            frame.reviews !== undefined &&
+            frame.reviewVersion !== undefined &&
+            frame.reviews === reviewRender.current.reviews &&
+            frame.reviewVersion === reviewRender.current.reviewVersion;
+
+          if (!matchesRenderedReviewQueue)
+            setShellTick((current) => current + 1);
+          if (reviewId !== undefined && frame.changed.includes("reviews"))
+            setReviewResync((current) => current + 1);
+
+          const id = (event as MessageEvent<string>).lastEventId;
+
+          // Same spelling the route parses and the AsyncAPI declares. The
+          // counters travel with the cursor they were read at.
+          if (isSseCursor(id)) {
+            lastEventIdRef.current = id;
+            countersRef.current = {
+              decisions: frame.decisions,
+              updates: frame.updates,
+              reviews: frame.reviews ?? countersRef.current?.reviews,
+              reviewVersion:
+                frame.reviewVersion ?? countersRef.current?.reviewVersion,
+            };
+          }
+        } catch {
+          /* a malformed frame is skipped, never thrown at the reader */
+        }
+      });
+      source.addEventListener("attention.stream_timeout", (event) => {
+        if (reviewId === undefined || sourceRef.current !== source) return;
+        const frame = JSON.parse((event as MessageEvent<string>).data) as {
+          reason: string;
+        };
+
+        if (frame.reason === "access_revoked")
+          setReviewResync((current) => current + 1);
+      });
+      source.onerror = () => {
+        if (sourceRef.current !== source) return;
+        if (isDocumentHidden()) {
+          clearReconnectTimer();
+          closeSource();
+          lifecycleRef.current = initialRunStreamLifecycle;
+
+          return;
+        }
+
+        sourceRef.current = null;
+        source.close();
+        lifecycleRef.current = advanceRunStreamLifecycle(
+          lifecycleRef.current,
+          "unexpected_close",
+        );
+        setLiveness(lifecycleRef.current.kind);
+
+        const delay = reconnectDelayMs(
+          lifecycleRef.current.retryAttempt - 1,
+          lifecycleRef.current.kind,
+        );
+
+        if (delay === null) return;
+
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          if (disposed || isDocumentHidden()) return;
+          lifecycleRef.current = advanceRunStreamLifecycle(
+            lifecycleRef.current,
+            "retrying",
+          );
+          setLiveness(lifecycleRef.current.kind);
+          setReconnectKey((key) => key + 1);
+        }, delay);
+      };
+    }
+
+    function onVisibilityChange(): void {
+      if (disposed) return;
+      if (isDocumentHidden()) {
+        clearReconnectTimer();
+        closeSource();
+        // Reset retry backoff so returning to visible reconnects immediately.
+        lifecycleRef.current = initialRunStreamLifecycle;
+      } else if (sourceRef.current === null) {
+        lifecycleRef.current = initialRunStreamLifecycle;
+        connect();
+      }
+    }
+
+    connect();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+
+    return () => {
+      disposed = true;
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+      clearReconnectTimer();
+      closeSource();
     };
-  }, [reconnectKey, reviewKind, reviewId]);
+  }, [enabled, reconnectKey, reviewKind, reviewId]);
 
   return { tick, shellTick, changed, liveness, reviewResync, reconnect };
 }

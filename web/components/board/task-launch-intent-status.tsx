@@ -9,8 +9,8 @@ import { useEffect } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 
+import { useSharedAttentionStream } from "@/components/attention/attention-stream-provider";
 import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
-import { useAttentionStream } from "@/lib/use-attention-stream";
 import { taskLaunchReasonKey } from "@/lib/tasks/launch-reason";
 
 export { taskLaunchReasonKey } from "@/lib/tasks/launch-reason";
@@ -38,7 +38,7 @@ export function TaskLaunchIntentStatus({
 }): ReactElement {
   const t = useTranslations("launch");
   const locale = useLocale();
-  const { tick, liveness, reconnect } = useAttentionStream();
+  const { tick, liveness, reconnect } = useSharedAttentionStream();
 
   useEffect(() => {
     if (tick > 0) void onRefresh();

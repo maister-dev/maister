@@ -9,9 +9,11 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { RunningLiveCommand } from "@/lib/capabilities/running-catalog";
 import type { ReactElement } from "react";
+import type { CoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import type { HitlErrorMessage } from "@/lib/ui-error-message";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -50,6 +52,7 @@ import {
   latestContextSnapshot,
   type ContextSnapshot,
 } from "@/lib/runs/context-snapshot";
+import { createCoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import { isStaleViewErrorCode } from "@/lib/ui-error-message";
 import {
   canReplayHitlAnswer,
@@ -57,8 +60,19 @@ import {
   isStoredAnswerDeliveryReason,
 } from "@/lib/hitl-response-contract";
 
+const DETAIL_REFRESH_COALESCE_MS = 250;
+
 const shell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
+
+// Standalone DOM tests mount ScratchConversation outside Next's AppRouterContext.
+function useOptionalRouter(): ReturnType<typeof useRouter> | null {
+  try {
+    return useRouter();
+  } catch {
+    return null;
+  }
+}
 
 // Lifted so a compact/docked host (Flow Studio) can render the run status +
 // token-budget meter on its own collapsible panel header (visible even when the
@@ -128,6 +142,7 @@ export function ScratchConversation({
 }): ReactElement {
   const t = useTranslations("scratch");
   const tRun = useTranslations("run");
+  const router = useOptionalRouter();
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
@@ -201,10 +216,10 @@ export function ScratchConversation({
     interruptEndpoint ?? `/api/scratch-runs/${runId}/interrupt`;
 
   const fetchDetail = useCallback(
-    (): Promise<void> =>
-      fetch(`/api/scratch-runs/${runId}`)
+    (signal?: AbortSignal): Promise<void> =>
+      fetch(`/api/scratch-runs/${runId}`, signal ? { signal } : undefined)
         .then(async (response) => {
-          if (activeRunId.current !== runId) return;
+          if (signal?.aborted || activeRunId.current !== runId) return;
 
           if (!response.ok) {
             setError(t(errorText(await response.json().catch(() => null))));
@@ -214,25 +229,30 @@ export function ScratchConversation({
 
           const nextDetail = (await response.json()) as ScratchDetail;
 
-          if (activeRunId.current !== runId) return;
+          if (signal?.aborted || activeRunId.current !== runId) return;
           setDetail(nextDetail);
           setDetailRevision((current) => current + 1);
         })
         .catch(() => {
+          if (signal?.aborted) return;
           if (activeRunId.current === runId) setError(t("errorGeneric"));
         })
         .finally(() => {
-          if (activeRunId.current === runId) setLoading(false);
+          if (!signal?.aborted && activeRunId.current === runId)
+            setLoading(false);
         }),
     [runId],
   );
 
-  const loadDetail = useCallback((): Promise<void> => {
-    setLoading(true);
-    setError(null);
+  const loadDetail = useCallback(
+    (signal?: AbortSignal): Promise<void> => {
+      setLoading(true);
+      setError(null);
 
-    return fetchDetail();
-  }, [fetchDetail]);
+      return fetchDetail(signal);
+    },
+    [fetchDetail],
+  );
 
   // The mount, and every switch to another run, starts a fresh load.
   const [loadingRunId, setLoadingRunId] = useState(runId);
@@ -311,15 +331,27 @@ export function ScratchConversation({
     return () => controller.abort();
   }, [composerAgent, detail?.run.projectSlug, detailRevision, runId]);
 
+  const refresherRef = useRef<CoalescedRefresher | null>(null);
+
+  useEffect(() => {
+    const refresher = createCoalescedRefresher({
+      intervalMs: DETAIL_REFRESH_COALESCE_MS,
+      run: (signal) => loadDetail(signal),
+    });
+
+    refresherRef.current = refresher;
+
+    return () => {
+      refresher.dispose();
+      refresherRef.current = null;
+    };
+  }, [loadDetail]);
+
   useEffect(() => {
     if (eventCount === 0 && transcriptRevision === null) return;
 
-    const refreshTimer = setTimeout(() => {
-      void loadDetail();
-    }, 250);
-
-    return () => clearTimeout(refreshTimer);
-  }, [eventCount, transcriptRevision, loadDetail]);
+    refresherRef.current?.trigger();
+  }, [eventCount, transcriptRevision]);
 
   const attachmentsByMessage = useMemo(() => {
     const result = new Map<string, ScratchDetail["attachments"]>();
@@ -506,6 +538,7 @@ export function ScratchConversation({
         }
 
         await loadDetail();
+        router?.refresh();
         onMessageSettled?.();
 
         return true;
@@ -517,7 +550,7 @@ export function ScratchConversation({
         setPendingAction(null);
       }
     },
-    [loadDetail, onMessageSettled, resolvedRecoverEndpoint],
+    [loadDetail, onMessageSettled, resolvedRecoverEndpoint, router],
   );
 
   const interrupt = useCallback(async (): Promise<boolean> => {
