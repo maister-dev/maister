@@ -393,7 +393,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
 
 ### Phase 2: Postgres indexes. Exit: web unit + integration green; `pnpm -C web db:generate` → "No schema changes"; `pnpm --filter maister-web db:erd --check` clean
 
-- [ ] **Task 10: Plan-capture harness + RED index tests** (depends on 6)
+- [x] **Task 10: Plan-capture harness + RED index tests** (depends on 6)
   - New `web/test-support/query-plan-capture.ts`:
     - `capturePlans(db, run: () => Promise<unknown>, { tables })` wraps the pg client's `query` and records the `(text, values)` that the **public reader** actually emits;
     - for each statement touching `tables`, it runs `EXPLAIN (FORMAT JSON)` with the same values inside a transaction with `SET LOCAL enable_seqscan = off; SET LOCAL enable_sort = off`;
@@ -423,7 +423,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
   - If an entry point can't be driven without a heavy fixture, use its smallest existing integration fixture rather than hand-copied SQL.
   - **LOGGING:** test-only.
 
-- [ ] **Task 11: Declare indexes + migration 0410 (GREEN)** (depends on 10)
+- [x] **Task 11: Declare indexes + migration 0410 (GREEN)** (depends on 10)
   - **GREEN:**
     - add the D6 indexes to the `schema.ts` table builders, with `.desc()`/`.asc()` exactly as specified and `.where(sql\`…\`)` for partials;
     - run `pnpm -C web db:generate` to produce `0410_hot_path_indexes.sql`, the snapshot and the journal entry;
