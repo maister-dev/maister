@@ -5662,6 +5662,9 @@ export const executionEventConsumers = pgTable(
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
     lastRunSequence: bigint("last_run_sequence", { mode: "bigint" }),
+    maxAvailableSequence: bigint("max_available_sequence", { mode: "bigint" })
+      .notNull()
+      .default(sql`-1`),
     state: text("state", { enum: ["ready", "retrying", "poisoned"] })
       .notNull()
       .default("ready"),
@@ -5700,6 +5703,15 @@ export const executionEventConsumers = pgTable(
     idxService: index("execution_event_consumers_service_idx")
       .on(t.lastServedAt.asc().nullsFirst(), t.runId, t.consumerName)
       .where(sql`${t.state} <> 'poisoned'`),
+    idxDueService: index("execution_event_consumers_due_service_idx")
+      .on(t.lastServedAt.asc().nullsFirst(), t.runId, t.consumerName)
+      .where(
+        sql`${t.state} <> 'poisoned' AND ${t.maxAvailableSequence} > COALESCE(${t.lastRunSequence}, -1)`,
+      ),
+    chkMaxAvailableSequence: check(
+      "execution_event_consumers_max_available_sequence_check",
+      sql`${t.maxAvailableSequence} >= -1`,
+    ),
     // The service index is partial on `state <> 'poisoned'`, so the operator
     // poison count and its keyset page had no index at all. Complement, in the
     // page's own keyset order.

@@ -2,6 +2,8 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
+import { sql } from "drizzle-orm";
+
 import { executionEventConsumers } from "@/lib/db/schema";
 
 // Names are versioned durable cursor identities. Keep this data-only module
@@ -19,6 +21,7 @@ export const CANONICAL_PROJECTION_CONSUMERS = {
 export async function seedCanonicalProjectionConsumers(
   tx: Db,
   runId: string,
+  maxAvailableSequence: bigint = -1n,
 ): Promise<void> {
   await tx
     .insert(executionEventConsumers)
@@ -26,7 +29,16 @@ export async function seedCanonicalProjectionConsumers(
       Object.values(CANONICAL_PROJECTION_CONSUMERS).map((consumerName) => ({
         consumerName,
         runId,
+        maxAvailableSequence,
       })),
     )
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: [
+        executionEventConsumers.consumerName,
+        executionEventConsumers.runId,
+      ],
+      set: {
+        maxAvailableSequence: sql`GREATEST(${executionEventConsumers.maxAvailableSequence}, EXCLUDED.max_available_sequence)`,
+      },
+    });
 }

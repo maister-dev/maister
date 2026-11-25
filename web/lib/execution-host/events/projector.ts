@@ -46,6 +46,15 @@ export class ExecutionEventProjectionError extends Error {
 export type ExecutionEventProjector = {
   consumerName: string;
   project: (tx: Db, event: ExecutionEvent) => Promise<void>;
+  // Optional batch hook executed inside the single projection transaction.
+  // Must call `onProgress(event)` before attributing deterministic/transient
+  // failures to a specific event and return the number of prefix events applied.
+  projectBatch?: (
+    tx: Db,
+    events: readonly ExecutionEvent[],
+    onProgress: (event: ExecutionEvent) => void,
+    softDeadline: number,
+  ) => Promise<number>;
   // A hydrated event reports its loaded byte size in payloadBytes. This is an
   // in-memory projection value; the canonical envelope is never rewritten.
   prepare?: (
@@ -163,10 +172,32 @@ async function ensureConsumer(
   consumerName: string,
   runId: string,
 ): Promise<void> {
+  const [horizon] = await tx
+    .select({
+      maxSeq: sql<string>`COALESCE(MAX(${executionEvents.runSequence}), -1)::text`,
+    })
+    .from(executionEvents)
+    .where(
+      and(
+        eq(executionEvents.runId, runId),
+        eq(executionEvents.ingestDisposition, "accepted"),
+        sql`${executionEvents.runSequence} IS NOT NULL`,
+      ),
+    );
+  const maxAvailableSequence = BigInt(horizon?.maxSeq ?? "-1");
+
   await tx
     .insert(executionEventConsumers)
-    .values({ consumerName, runId })
-    .onConflictDoNothing();
+    .values({ consumerName, runId, maxAvailableSequence })
+    .onConflictDoUpdate({
+      target: [
+        executionEventConsumers.consumerName,
+        executionEventConsumers.runId,
+      ],
+      set: {
+        maxAvailableSequence: sql`GREATEST(${executionEventConsumers.maxAvailableSequence}, EXCLUDED.max_available_sequence)`,
+      },
+    });
 }
 
 /** Claims one due pair at processing time; callers never queue leased work. */
@@ -191,7 +222,7 @@ export async function claimNextExecutionProjection(input: {
           sql`${executionEventConsumers.state} <> 'poisoned'`,
           sql`(${executionEventConsumers.nextRetryAt} IS NULL OR ${executionEventConsumers.nextRetryAt} <= clock_timestamp())`,
           sql`(${executionEventConsumers.claimExpiresAt} IS NULL OR ${executionEventConsumers.claimExpiresAt} <= clock_timestamp())`,
-          sql`EXISTS (SELECT 1 FROM ${executionEvents} WHERE ${executionEvents.runId} = ${executionEventConsumers.runId} AND ${executionEvents.ingestDisposition} = 'accepted' AND ${executionEvents.runSequence} > COALESCE(${executionEventConsumers.lastRunSequence}, -1))`,
+          sql`${executionEventConsumers.maxAvailableSequence} > COALESCE(${executionEventConsumers.lastRunSequence}, -1)`,
         ),
       )
       .orderBy(
@@ -428,25 +459,65 @@ export async function applyClaimedExecutionProjection(input: {
         const projectedEvents: ExecutionEvent[] = [];
         const softDeadline = performance.now() + 1_000;
 
-        for (const event of events) {
-          if (projected > 0 && performance.now() >= softDeadline) break;
-          if (event.runSequence === null) {
-            throw new MaisterError(
-              "ACP_PROTOCOL",
-              "accepted execution event has no run sequence",
-            );
+        if (input.projector.projectBatch && events.length > 0) {
+          for (const event of events) {
+            if (event.runSequence === null) {
+              throw new MaisterError(
+                "ACP_PROTOCOL",
+                "accepted execution event has no run sequence",
+              );
+            }
           }
-          failedEventId = event.id;
-          failedSequence = event.runSequence;
+          const firstEvent = events[0]!;
+
+          failedEventId = firstEvent.id;
+          failedSequence = firstEvent.runSequence;
+          let count: number;
+
           try {
-            await input.projector.project(tx, event);
+            count = await input.projector.projectBatch(
+              tx,
+              events,
+              (event) => {
+                failedEventId = event.id;
+                failedSequence = event.runSequence;
+              },
+              softDeadline,
+            );
           } catch (error) {
             failure = error;
             throw error;
           }
-          last = event.runSequence;
-          projected += 1;
-          projectedEvents.push(event);
+          const applied = Math.min(Math.max(count, 0), events.length);
+
+          if (applied > 0) {
+            const slice = events.slice(0, applied);
+
+            projected = applied;
+            projectedEvents.push(...slice);
+            last = slice[slice.length - 1]!.runSequence;
+          }
+        } else {
+          for (const event of events) {
+            if (projected > 0 && performance.now() >= softDeadline) break;
+            if (event.runSequence === null) {
+              throw new MaisterError(
+                "ACP_PROTOCOL",
+                "accepted execution event has no run sequence",
+              );
+            }
+            failedEventId = event.id;
+            failedSequence = event.runSequence;
+            try {
+              await input.projector.project(tx, event);
+            } catch (error) {
+              failure = error;
+              throw error;
+            }
+            last = event.runSequence;
+            projected += 1;
+            projectedEvents.push(event);
+          }
         }
         await tx
           .update(executionEventConsumers)

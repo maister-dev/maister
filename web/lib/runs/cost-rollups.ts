@@ -417,49 +417,115 @@ async function refreshRunnerBuckets(
   ) WHERE r.run_id = ${runId} AND r.source_cursor LIKE 'canonical-worker:v1:%'`);
 }
 
-export const canonicalCostProjector: ExecutionEventProjector = {
-  consumerName: CANONICAL_PROJECTION_CONSUMERS.cost,
-  project: async (tx, event) => {
-    if (event.eventType !== "usage.recorded") return;
-    const payload = event.payload ?? {};
-    const record = parseCostRecord(
-      JSON.stringify({
-        input_tokens: payload.inputTokens,
-        output_tokens: payload.outputTokens,
-        cache_read_input_tokens: payload.cacheReadInputTokens,
-        cache_creation_input_tokens: payload.cacheCreationInputTokens,
-        model: payload.model,
-        sessionName: payload.sessionName,
-        nodeAttemptId: payload.nodeAttemptId,
-        resumed: payload.resumed,
-      }),
-    );
+function parseEventCostRecord(
+  event: schema.ExecutionEvent,
+): ParsedCostRecord | null {
+  if (event.eventType !== "usage.recorded") return null;
+  const payload = event.payload ?? {};
 
-    if (!record) return;
-    const [run] = await tx
-      .select({
-        id: runs.id,
-        projectId: runs.projectId,
-        taskId: runs.taskId,
-        flowId: runs.flowId,
-      })
-      .from(runs)
-      .where(eq(runs.id, event.runId))
-      .limit(1);
+  return parseCostRecord(
+    JSON.stringify({
+      input_tokens: payload.inputTokens,
+      output_tokens: payload.outputTokens,
+      cache_read_input_tokens: payload.cacheReadInputTokens,
+      cache_creation_input_tokens: payload.cacheCreationInputTokens,
+      model: payload.model,
+      sessionName: payload.sessionName,
+      nodeAttemptId: payload.nodeAttemptId,
+      resumed: payload.resumed,
+    }),
+  );
+}
 
-    if (!run)
-      throw new MaisterError("CONFLICT", "cost event references a missing run");
-    const totals = emptyTotals();
+type RunCostBucketGroup = {
+  model: string;
+  sessionName: string;
+  totals: TokenTotals;
+  count: number;
+};
 
-    addRecord(totals, record);
+type AttemptCostGroup = {
+  nodeAttemptId: string;
+  nodeId: string;
+  model: string;
+  totals: TokenTotals;
+  count: number;
+};
+
+async function projectCostBatch(
+  tx: DbClient,
+  events: readonly schema.ExecutionEvent[],
+  onProgress: (event: schema.ExecutionEvent) => void,
+): Promise<number> {
+  const parsed: Array<{
+    event: schema.ExecutionEvent;
+    record: ParsedCostRecord;
+  }> = [];
+
+  for (const event of events) {
+    const record = parseEventCostRecord(event);
+
+    if (record) parsed.push({ event, record });
+  }
+  if (parsed.length === 0) return events.length;
+
+  const first = parsed[0]!;
+  const runId = first.event.runId;
+  const [run] = await tx
+    .select({
+      id: runs.id,
+      projectId: runs.projectId,
+      taskId: runs.taskId,
+      flowId: runs.flowId,
+    })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .limit(1);
+
+  if (!run) {
+    onProgress(first.event);
+    throw new MaisterError("CONFLICT", "cost event references a missing run");
+  }
+
+  const runGroups = new Map<string, RunCostBucketGroup>();
+  const distinctAttemptIds = new Set<string>();
+
+  for (const { record } of parsed) {
+    const groupKey = `${record.model}\0${record.sessionName}`;
+    let group = runGroups.get(groupKey);
+
+    if (!group) {
+      group = {
+        model: record.model,
+        sessionName: record.sessionName,
+        totals: emptyTotals(),
+        count: 0,
+      };
+      runGroups.set(groupKey, group);
+    }
+    addRecord(group.totals, record);
+    group.count += 1;
+    if (record.nodeAttemptId) distinctAttemptIds.add(record.nodeAttemptId);
+  }
+
+  const lastSequence = parsed[parsed.length - 1]!.event.runSequence;
+  const sourceCursor = `canonical-worker:v1:${lastSequence}`;
+  const now = new Date();
+
+  for (const group of runGroups.values()) {
     const bucket = {
-      inputTokens: record.inputTokens,
-      outputTokens: record.outputTokens,
-      cacheReadTokens: record.cacheReadTokens,
-      cacheCreationTokens: record.cacheCreationTokens,
+      inputTokens: group.totals.inputTokens,
+      outputTokens: group.totals.outputTokens,
+      cacheReadTokens: group.totals.cacheReadTokens,
+      cacheCreationTokens: group.totals.cacheCreationTokens,
     };
-    const sourceCursor = `canonical-worker:v1:${event.runSequence}`;
-    const now = new Date();
+    const bucketRecord: ParsedCostRecord = {
+      model: group.model,
+      sessionName: group.sessionName,
+      nodeAttemptId: null,
+      ...bucket,
+      resumed: false,
+    };
 
     await tx
       .insert(runCostRollups)
@@ -468,80 +534,119 @@ export const canonicalCostProjector: ExecutionEventProjector = {
         projectId: run.projectId,
         taskId: run.taskId,
         flowId: run.flowId,
-        ...totals,
-        byModel: { [record.model]: bucket },
-        bySession: { [record.sessionName]: bucket },
+        ...group.totals,
+        byModel: { [group.model]: bucket },
+        bySession: { [group.sessionName]: bucket },
         byRunner: {},
-        sourceEventCount: 1,
+        sourceEventCount: group.count,
         sourceCursor,
         updatedAt: now,
       })
       .onConflictDoUpdate({
         target: runCostRollups.runId,
         set: {
-          ...incrementTotals(runCostRollups, totals),
+          ...incrementTotals(runCostRollups, group.totals),
           byModel: incrementBucket(
             runCostRollups.byModel,
-            record.model,
-            record,
+            group.model,
+            bucketRecord,
           ),
           bySession: incrementBucket(
             runCostRollups.bySession,
-            record.sessionName,
-            record,
+            group.sessionName,
+            bucketRecord,
           ),
-          sourceEventCount: sql`(CASE WHEN ${runCostRollups.sourceCursor} LIKE 'canonical-worker:v1:%' THEN ${runCostRollups.sourceEventCount} ELSE 0 END) + 1`,
+          sourceEventCount: sql`(CASE WHEN ${runCostRollups.sourceCursor} LIKE 'canonical-worker:v1:%' THEN ${runCostRollups.sourceEventCount} ELSE 0 END) + ${group.count}`,
           sourceCursor,
           updatedAt: now,
         },
       });
-    await refreshRunnerBuckets(tx, event.runId);
-    if (!record.nodeAttemptId) return;
-    const [attempt] = await tx
+  }
+
+  await refreshRunnerBuckets(tx, runId);
+
+  if (distinctAttemptIds.size > 0) {
+    const ownedRows = await tx
       .select({ id: nodeAttempts.id, nodeId: nodeAttempts.nodeId })
       .from(nodeAttempts)
       .where(
         and(
-          eq(nodeAttempts.id, record.nodeAttemptId),
-          eq(nodeAttempts.runId, event.runId),
+          eq(nodeAttempts.runId, runId),
+          inArray(nodeAttempts.id, [...distinctAttemptIds]),
         ),
-      )
-      .limit(1);
-
-    if (!attempt) {
-      log.warn(
-        { runId: event.runId, eventId: event.id },
-        "cost-event-has-no-owned-node-attempt",
       );
+    const ownedAttempts = new Map(ownedRows.map((row) => [row.id, row.nodeId]));
+    const attemptGroups = new Map<string, AttemptCostGroup>();
 
-      return;
+    for (const { event, record } of parsed) {
+      if (!record.nodeAttemptId) continue;
+      const nodeId = ownedAttempts.get(record.nodeAttemptId);
+
+      if (!nodeId) {
+        log.warn(
+          { runId: event.runId, eventId: event.id },
+          "cost-event-has-no-owned-node-attempt",
+        );
+        continue;
+      }
+      const attemptKey = `${record.nodeAttemptId}\0${record.model}`;
+      let group = attemptGroups.get(attemptKey);
+
+      if (!group) {
+        group = {
+          nodeAttemptId: record.nodeAttemptId,
+          nodeId,
+          model: record.model,
+          totals: emptyTotals(),
+          count: 0,
+        };
+        attemptGroups.set(attemptKey, group);
+      }
+      addRecord(group.totals, record);
+      group.count += 1;
     }
-    await tx
-      .insert(nodeAttemptCostRollups)
-      .values({
-        runId: run.id,
-        projectId: run.projectId,
-        nodeAttemptId: attempt.id,
-        nodeId: attempt.nodeId,
-        model: record.model,
-        ...totals,
-        sourceEventCount: 1,
-        sourceCursor,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [
-          nodeAttemptCostRollups.nodeAttemptId,
-          nodeAttemptCostRollups.model,
-        ],
-        set: {
-          ...incrementTotals(nodeAttemptCostRollups, totals),
-          sourceEventCount: sql`(CASE WHEN ${nodeAttemptCostRollups.sourceCursor} LIKE 'canonical-worker:v1:%' THEN ${nodeAttemptCostRollups.sourceEventCount} ELSE 0 END) + 1`,
+
+    for (const group of attemptGroups.values()) {
+      await tx
+        .insert(nodeAttemptCostRollups)
+        .values({
+          runId: run.id,
+          projectId: run.projectId,
+          nodeAttemptId: group.nodeAttemptId,
+          nodeId: group.nodeId,
+          model: group.model,
+          ...group.totals,
+          sourceEventCount: group.count,
           sourceCursor,
           updatedAt: now,
-        },
-      });
+        })
+        .onConflictDoUpdate({
+          target: [
+            nodeAttemptCostRollups.nodeAttemptId,
+            nodeAttemptCostRollups.model,
+          ],
+          set: {
+            ...incrementTotals(nodeAttemptCostRollups, group.totals),
+            sourceEventCount: sql`(CASE WHEN ${nodeAttemptCostRollups.sourceCursor} LIKE 'canonical-worker:v1:%' THEN ${nodeAttemptCostRollups.sourceEventCount} ELSE 0 END) + ${group.count}`,
+            sourceCursor,
+            updatedAt: now,
+          },
+        });
+    }
+  }
+
+  onProgress(events[events.length - 1]!);
+
+  return events.length;
+}
+
+export const canonicalCostProjector: ExecutionEventProjector = {
+  consumerName: CANONICAL_PROJECTION_CONSUMERS.cost,
+  project: async (tx, event) => {
+    await projectCostBatch(tx as unknown as DbClient, [event], () => {});
   },
+  projectBatch: async (tx, events, onProgress) =>
+    projectCostBatch(tx as unknown as DbClient, events, onProgress),
 };
 
 export async function reconcileManyRunCostRollups(

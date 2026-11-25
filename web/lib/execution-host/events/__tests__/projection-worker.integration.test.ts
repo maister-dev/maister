@@ -6,7 +6,8 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Client } from "pg";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   backfillProjectionConsumers,
@@ -21,6 +22,7 @@ import {
   rearmExecutionProjection,
 } from "../projector";
 import { projectionLimitsFromEnv } from "../projection-limits";
+import { projectionTransaction } from "../projection-transaction";
 
 import { depositPromptReceipt } from "@/lib/execution-host/prompt-evidence";
 import {
@@ -365,7 +367,7 @@ describe("autonomous canonical projection worker", () => {
         leaseMs: 60000,
       });
       await database.pool.query(
-        "INSERT INTO execution_event_consumers (consumer_name, run_id) VALUES ($1, $2)",
+        "INSERT INTO execution_event_consumers (consumer_name, run_id, max_available_sequence) VALUES ($1, $2, 5)",
         [consumerName, runId],
       );
       const claim = await claimNextExecutionProjection({
@@ -843,5 +845,195 @@ describe("autonomous canonical projection worker", () => {
     } finally {
       await worker.stop();
     }
+  }, 25_000);
+
+  it("REQ-P4-01: configures timeouts once after BEGIN using client.processID and enforces cumulative multi-query deadline", async () => {
+    const executedSql: string[] = [];
+    const origQuery = Client.prototype.query;
+    const querySpy = vi
+      .spyOn(Client.prototype, "query")
+      .mockImplementation(function (this: Client, ...args: unknown[]) {
+        const first = args[0];
+        const text =
+          typeof first === "string"
+            ? first
+            : first &&
+                typeof first === "object" &&
+                "text" in first &&
+                typeof first.text === "string"
+              ? first.text
+              : "";
+
+        executedSql.push(text.trim().toLowerCase());
+
+        return (origQuery as (...a: unknown[]) => unknown).apply(this, args);
+      });
+
+    try {
+      await projectionTransaction(database.db, async (tx) => {
+        for (let i = 1; i <= 5; i += 1) {
+          await tx.execute(sql`SELECT ${i}::int AS n`);
+        }
+      });
+
+      const pidQueries = executedSql.filter((q) =>
+        q.includes("pg_backend_pid"),
+      );
+      const setConfigQueries = executedSql.filter((q) =>
+        q.includes("set_config"),
+      );
+
+      expect(pidQueries).toHaveLength(0);
+      expect(setConfigQueries).toHaveLength(1);
+      const commitIdx = executedSql.findIndex((q) => q === "commit");
+
+      expect(commitIdx).toBeGreaterThan(0);
+      expect(executedSql[commitIdx - 1]).not.toContain("set_config");
+    } finally {
+      querySpy.mockRestore();
+    }
+
+    // Two sequential 3s queries exceed the 5s cumulative deadline even though
+    // each individual statement fits inside statement_timeout = 5000ms.
+    const rollbackRunId = await seedRun(0);
+    const markerEventId = randomUUID();
+
+    await expect(
+      projectionTransaction(database.db, async (tx) => {
+        await tx.execute(
+          sql`INSERT INTO projection_worker_effects (consumer_name, event_id, run_id)
+              VALUES ('deadline-rollback-test', ${markerEventId}, ${rollbackRunId})`,
+        );
+        await tx.execute(sql`SELECT pg_sleep(3)`);
+        await tx.execute(sql`SELECT pg_sleep(3)`);
+      }),
+    ).rejects.toMatchObject({
+      details: { reason: "projection_transaction_deadline" },
+    });
+
+    const surviving = await database.pool.query(
+      "SELECT 1 FROM projection_worker_effects WHERE event_id = $1",
+      [markerEventId],
+    );
+
+    expect(surviving.rows).toHaveLength(0);
+  }, 25_000);
+
+  it("REQ-P4-02 + REQ-P4-03: enforces max_available_sequence CHECK, advances via GREATEST, and uses due partial index", async () => {
+    const checkRunId = await seedRun(1);
+    const checkConsumer = `horizon-check-${randomUUID()}`;
+
+    await expect(
+      database.pool.query(
+        "INSERT INTO execution_event_consumers (consumer_name, run_id, max_available_sequence) VALUES ($1, $2, -2)",
+        [checkConsumer, checkRunId],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    // Seed 300 caught-up historical runs + 1 due active run for an isolated consumer
+    const dueConsumer = `horizon-due-${randomUUID()}`;
+    const historicalRunIds: string[] = [];
+
+    for (let i = 0; i < 300; i += 1) {
+      historicalRunIds.push(randomUUID());
+    }
+    await database.pool.query(
+      `INSERT INTO runs (id, project_id, run_kind, status, flow_version, flow_revision)
+       SELECT id, $1, 'scratch', 'Done', 'scratch', 'horizon-test'
+       FROM unnest($2::text[]) AS id`,
+      [projectId, historicalRunIds],
+    );
+    await database.pool.query(
+      `INSERT INTO execution_event_consumers (consumer_name, run_id, last_run_sequence, max_available_sequence, last_served_at)
+       SELECT $1, id, 0, 0, now() - interval '1 hour'
+       FROM unnest($2::text[]) AS id`,
+      [dueConsumer, historicalRunIds],
+    );
+
+    const activeRunId = await seedRun(3);
+
+    while (
+      !(await backfillProjectionConsumers(database.db, dueConsumer)).complete
+    ) {
+      // drain backfill pages
+    }
+    const seededHorizon = await database.pool.query<{ max_seq: string }>(
+      "SELECT max_available_sequence::text AS max_seq FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+      [dueConsumer, activeRunId],
+    );
+
+    expect(seededHorizon.rows).toEqual([{ max_seq: "2" }]);
+
+    // Verify monotonic GREATEST semantics: re-backfilling after a higher horizon
+    // is recorded must never regress max_available_sequence.
+    await database.pool.query(
+      "UPDATE execution_event_consumers SET max_available_sequence = 10 WHERE consumer_name = $1 AND run_id = $2",
+      [dueConsumer, activeRunId],
+    );
+    await database.pool.query(
+      "UPDATE execution_projection_backfills SET after_run_id = NULL, completed_at = NULL WHERE consumer_name = $1",
+      [dueConsumer],
+    );
+    while (
+      !(await backfillProjectionConsumers(database.db, dueConsumer)).complete
+    ) {
+      // re-run backfill
+    }
+    const monotonicHorizon = await database.pool.query<{ max_seq: string }>(
+      "SELECT max_available_sequence::text AS max_seq FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+      [dueConsumer, activeRunId],
+    );
+
+    expect(monotonicHorizon.rows).toEqual([{ max_seq: "10" }]);
+
+    // Mark every run other than activeRunId caught up for this isolated consumer
+    // so only activeRunId is due alongside the 300+ historical caught-up rows.
+    await database.pool.query(
+      `UPDATE execution_event_consumers
+       SET last_run_sequence = max_available_sequence, last_served_at = now() - interval '1 hour'
+       WHERE consumer_name = $1 AND run_id <> $2`,
+      [dueConsumer, activeRunId],
+    );
+
+    await database.pool.query("ANALYZE execution_event_consumers");
+    const planResult = await database.pool.query<{ "QUERY PLAN": unknown }>(
+      `EXPLAIN (FORMAT JSON)
+       SELECT consumer_name, run_id
+       FROM execution_event_consumers
+       WHERE consumer_name = ANY($1::text[])
+         AND state <> 'poisoned'
+         AND max_available_sequence > COALESCE(last_run_sequence, -1)
+         AND (next_retry_at IS NULL OR next_retry_at <= clock_timestamp())
+         AND (claim_expires_at IS NULL OR claim_expires_at <= clock_timestamp())
+       ORDER BY last_served_at ASC NULLS FIRST, COALESCE(next_retry_at, created_at), run_id, consumer_name
+       LIMIT 1`,
+      [[dueConsumer]],
+    );
+    const planJson = JSON.stringify(planResult.rows[0]?.["QUERY PLAN"]);
+
+    expect(planJson).toContain("execution_event_consumers_due_service_idx");
+
+    const claimed = await claimNextExecutionProjection({
+      db: database.db,
+      consumerNames: [dueConsumer],
+      owner: "horizon-worker",
+    });
+
+    expect(claimed?.runId).toBe(activeRunId);
+
+    // Once caught up (last_run_sequence = max_available_sequence), no due rows remain.
+    await database.pool.query(
+      `UPDATE execution_event_consumers
+       SET last_run_sequence = max_available_sequence, claim_owner = NULL, claim_expires_at = NULL
+       WHERE consumer_name = $1 AND run_id = $2`,
+      [dueConsumer, activeRunId],
+    );
+    const afterCaughtUp = await claimNextExecutionProjection({
+      db: database.db,
+      consumerNames: [dueConsumer],
+      owner: "horizon-worker",
+    });
+
+    expect(afterCaughtUp).toBeNull();
   }, 25_000);
 });
