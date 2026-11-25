@@ -361,6 +361,8 @@ export async function GET(req: NextRequest): Promise<Response> {
   }
   const encoder = new TextEncoder();
   const startedAt = Date.now();
+  const cancelController = new AbortController();
+  const signal = AbortSignal.any([req.signal, cancelController.signal]);
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -388,7 +390,7 @@ export async function GET(req: NextRequest): Promise<Response> {
         }
       };
 
-      req.signal.addEventListener("abort", close, { once: true });
+      signal.addEventListener("abort", close, { once: true });
 
       const counters = async (): Promise<AttentionCounters> => {
         // `computeDecisionsQueue`, NOT the React-cached `getDecisionsQueue`: a
@@ -426,6 +428,7 @@ export async function GET(req: NextRequest): Promise<Response> {
         projectIds: string[],
         current: AttentionCounters,
       ): void => {
+        if (closed || signal.aborted) return;
         const frame: AttentionTickEvent = {
           type: "attention.tick",
           id: String(watermarkMs),
@@ -494,10 +497,13 @@ export async function GET(req: NextRequest): Promise<Response> {
 
       try {
         if (resumeFrom === null) {
-          emitTick([], [], await counters());
+          const initial = await counters();
+
+          if (closed || signal.aborted) return;
+          emitTick([], [], initial);
         }
 
-        while (!req.signal.aborted && !closed) {
+        while (!signal.aborted && !closed) {
           // D6: authority is re-established every iteration — the ROLE as well
           // as the memberships. Reusing the role captured at connect time meant
           // a demoted admin kept the see-every-project bypass for as long as
@@ -505,6 +511,7 @@ export async function GET(req: NextRequest): Promise<Response> {
           // streaming; neither is bounded by the quiet cap while events arrive.
           const live = await currentAuthority(user.id);
 
+          if (closed || signal.aborted) break;
           if (live === null) {
             controller.enqueue(
               encoder.encode(
@@ -523,10 +530,14 @@ export async function GET(req: NextRequest): Promise<Response> {
           user = live;
 
           const projectIds = await getVisibleProjectIds(user.id, user.role);
+
+          if (closed || signal.aborted) break;
           const changed =
             projectIds.length === 0
               ? []
               : await scanChangedProjects(projectIds, watermark);
+
+          if (closed || signal.aborted) break;
           const dueCounters =
             sentDecisions < 0 ||
             Date.now() - lastCounterCheckAt >= COUNTER_INTERVAL_MS;
@@ -534,6 +545,7 @@ export async function GET(req: NextRequest): Promise<Response> {
           if (changed.length > 0) {
             const current = await counters();
 
+            if (closed || signal.aborted) break;
             const newest = changed.reduce((best, row) =>
               row.atMs >= best.atMs ? row : best,
             );
@@ -558,6 +570,7 @@ export async function GET(req: NextRequest): Promise<Response> {
           } else if (dueCounters) {
             const current = await counters();
 
+            if (closed || signal.aborted) break;
             if (sentDecisionSignature === null)
               sentDecisionSignature = current.decisionSignature;
             const movedReview = reviewChanged(current);
@@ -595,6 +608,7 @@ export async function GET(req: NextRequest): Promise<Response> {
           }
 
           if (Date.now() - lastChangeAt > MAX_QUIET_MS) {
+            if (closed || signal.aborted) break;
             controller.enqueue(
               encoder.encode(
                 sseFrame({
@@ -609,26 +623,28 @@ export async function GET(req: NextRequest): Promise<Response> {
             break;
           }
 
-          if (!req.signal.aborted && !closed) {
+          if (!signal.aborted && !closed) {
             await delay(POLL_INTERVAL_MS, undefined, {
-              signal: req.signal,
+              signal,
             }).catch(() => {});
           }
         }
       } catch (err) {
-        log.warn(
-          {
-            userId: user.id,
-            err: err instanceof Error ? err.message : String(err),
-          },
-          "attention stream loop error",
-        );
+        if (!closed && !signal.aborted) {
+          log.warn(
+            {
+              userId: user.id,
+              err: err instanceof Error ? err.message : String(err),
+            },
+            "attention stream loop error",
+          );
+        }
       } finally {
-        req.signal.removeEventListener("abort", close);
+        signal.removeEventListener("abort", close);
         close();
         const durationMs = Date.now() - startedAt;
 
-        if (req.signal.aborted) {
+        if (signal.aborted) {
           log.debug(
             {
               userId: user.id,
@@ -647,6 +663,9 @@ export async function GET(req: NextRequest): Promise<Response> {
           "attention stream disconnect",
         );
       }
+    },
+    cancel(reason: unknown) {
+      cancelController.abort(reason);
     },
   });
 

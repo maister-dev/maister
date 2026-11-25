@@ -13,7 +13,7 @@ const MIB = 1024 * 1024;
 
 function makeEntry(path: string, byteSize: number): PreparedDiffCacheEntry {
   return {
-    files: [{ path, status: "M" }],
+    files: [{ path, status: "M", additions: 1, deletions: 0 }],
     prepared: {
       files: [{ path, status: "M", additions: 1, deletions: 0 }],
       perFile: [],
@@ -106,6 +106,75 @@ describe("prepared diff byte-bounded LRU cache", () => {
     expect(getPreparedDiffCacheStats()).toEqual({
       entries: 2,
       totalBytes: 20 * MIB,
+      maxBytes: DIFF_CACHE_MAX_BYTES,
+    });
+  });
+
+  it("evicts an existing entry when overwritten with an oversize entry for the same key", () => {
+    const small = makeEntry("src/a.ts", 4 * MIB);
+    const healthy = makeEntry("src/b.ts", 6 * MIB);
+    const oversize = makeEntry("src/a.ts", DIFF_CACHE_MAX_BYTES / 2 + 1);
+
+    setCachedPreparedDiff("sha:/repo:base:a", small);
+    setCachedPreparedDiff("sha:/repo:base:b", healthy);
+    setCachedPreparedDiff("sha:/repo:base:a", oversize);
+
+    expect(getCachedPreparedDiff("sha:/repo:base:a")).toBeUndefined();
+    expect(getCachedPreparedDiff("sha:/repo:base:b")).toBe(healthy);
+    expect(getPreparedDiffCacheStats()).toEqual({
+      entries: 1,
+      totalBytes: 6 * MIB,
+      maxBytes: DIFF_CACHE_MAX_BYTES,
+    });
+  });
+
+  it("rejects invalid or negative byteSize values without corrupting cache state", () => {
+    const healthy = makeEntry("src/ok.ts", 2 * MIB);
+
+    setCachedPreparedDiff("sha:/repo:base:ok", healthy);
+
+    for (const badSize of [
+      -1,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      setCachedPreparedDiff(
+        "sha:/repo:base:bad",
+        makeEntry("src/bad.ts", badSize),
+      );
+      expect(getCachedPreparedDiff("sha:/repo:base:bad")).toBeUndefined();
+    }
+
+    expect(getCachedPreparedDiff("sha:/repo:base:ok")).toBe(healthy);
+    expect(getPreparedDiffCacheStats()).toEqual({
+      entries: 1,
+      totalBytes: 2 * MIB,
+      maxBytes: DIFF_CACHE_MAX_BYTES,
+    });
+  });
+
+  it("evicts multiple LRU entries to make room for a larger entry", () => {
+    const e1 = makeEntry("src/1.ts", 8 * MIB);
+    const e2 = makeEntry("src/2.ts", 8 * MIB);
+    const e3 = makeEntry("src/3.ts", 8 * MIB);
+    const e4 = makeEntry("src/4.ts", 8 * MIB);
+    const big = makeEntry("src/big.ts", 14 * MIB);
+
+    setCachedPreparedDiff("sha:1", e1);
+    setCachedPreparedDiff("sha:2", e2);
+    setCachedPreparedDiff("sha:3", e3);
+    setCachedPreparedDiff("sha:4", e4);
+    setCachedPreparedDiff("sha:big", big);
+
+    expect(getCachedPreparedDiff("sha:1")).toBeUndefined();
+    expect(getCachedPreparedDiff("sha:2")).toBeUndefined();
+    expect(getCachedPreparedDiff("sha:3")).toBe(e3);
+    expect(getCachedPreparedDiff("sha:4")).toBe(e4);
+    expect(getCachedPreparedDiff("sha:big")).toBe(big);
+    expect(getPreparedDiffCacheStats()).toEqual({
+      entries: 3,
+      totalBytes: 30 * MIB,
       maxBytes: DIFF_CACHE_MAX_BYTES,
     });
   });

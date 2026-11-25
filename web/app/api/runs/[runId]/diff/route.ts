@@ -223,7 +223,7 @@ async function resolveCachedOrPrepare(input: {
 
   if (cached) {
     return {
-      files: enrichDiffFiles(input.nameStatus, cached.prepared),
+      files: cached.files,
       prepared: cached.prepared,
       preparedJson: cached.preparedJson,
       renderUnavailableReason: null,
@@ -466,6 +466,9 @@ export async function GET(
     }
 
     if (run.runKind === "scratch") {
+      await requireProjectAction(run.projectId, "readScratchRun");
+      await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
+
       if (scope === "review") {
         throw new MaisterError(
           "PRECONDITION",
@@ -474,9 +477,6 @@ export async function GET(
       }
 
       const { scratch, workspace } = await loadScratchDiffRows(db, runId);
-
-      await requireProjectAction(run.projectId, "readScratchRun");
-      await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
       const targetBranch = scratch.targetBranch ?? scratch.baseBranch;
       // The scratch agent edits files without committing, so the diff must be
@@ -666,6 +666,7 @@ export async function GET(
         workspace.worktreePath,
         workspace.branch,
       ).catch(() => null);
+      const upperRef = headSha ?? workspace.branch;
       const cacheKey = headSha
         ? `sha:${workspace.worktreePath}:${base}:${headSha}`
         : null;
@@ -675,7 +676,7 @@ export async function GET(
         cacheHit = true;
         prepared = cached.prepared;
         preparedJson = cached.preparedJson;
-        files = enrichDiffFiles(cached.files, cached.prepared);
+        files = cached.files;
         renderUnavailableReason = null;
 
         if (includeRaw) {
@@ -683,7 +684,7 @@ export async function GET(
             scope,
             worktreePath: workspace.worktreePath,
             base,
-            branch: workspace.branch,
+            branch: upperRef,
           });
 
           rawDiff = ranged.text;
@@ -693,12 +694,12 @@ export async function GET(
           scope,
           worktreePath: workspace.worktreePath,
           base,
-          branch: workspace.branch,
+          branch: upperRef,
         });
         const nameStatus = await diffNameStatus({
           worktreePath: workspace.worktreePath,
           baseRef: base,
-          branch: workspace.branch,
+          branch: upperRef,
         });
         const prep = await prepareDiffForResponse({
           runId,

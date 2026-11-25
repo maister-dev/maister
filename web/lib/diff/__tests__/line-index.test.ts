@@ -12,6 +12,11 @@ import { describe, expect, it } from "vitest";
 
 import { parseDiffLineIndex } from "@/lib/diff/line-index";
 import { prepareDiff } from "@/lib/diff/prepare";
+import {
+  parsePath,
+  repoRelPath,
+  unescapeGitQuotedPath,
+} from "@/lib/diff/sections";
 
 const withFinalNewline = (lines: string[]): string => `${lines.join("\n")}\n`;
 
@@ -301,6 +306,13 @@ describe("parseDiffLineIndex — parity with prepareDiff", () => {
       "@@ -1 +1 @@",
       "-const q = 1;",
       "+const q = 2;",
+      'diff --git "a/\\320\\277\\321\\200\\320\\270\\320\\262\\320\\265\\321\\202.ts" "b/\\320\\277\\321\\200\\320\\270\\320\\262\\320\\265\\321\\202.ts"',
+      "index 8888888..9999999 100644",
+      '--- "a/\\320\\277\\321\\200\\320\\270\\320\\262\\320\\265\\321\\202.ts"',
+      '+++ "b/\\320\\277\\321\\200\\320\\270\\320\\262\\320\\265\\321\\202.ts"',
+      "@@ -1 +1 @@",
+      "-const ru = 1;",
+      "+const ru = 2;",
     ]);
 
     const indexed = await assertParityWithPrepareDiff(diff);
@@ -319,6 +331,50 @@ describe("parseDiffLineIndex — parity with prepareDiff", () => {
     expect(indexed.files.get("notes/deleted.md")?.newLines.size).toBe(0);
     expect(indexed.files.get("assets/logo.png")?.oldLines.size).toBe(0);
     expect(indexed.files.get("assets/logo.png")?.newLines.size).toBe(0);
+    expect(indexed.files.get("dir/my file.ts")?.oldLines.get(1)).toBe(
+      "const q = 1;",
+    );
+    expect(indexed.files.get("dir/my file.ts")?.newLines.get(1)).toBe(
+      "const q = 2;",
+    );
+    expect(indexed.files.get("привет.ts")?.oldLines.get(1)).toBe(
+      "const ru = 1;",
+    );
+    expect(indexed.files.get("привет.ts")?.newLines.get(1)).toBe(
+      "const ru = 2;",
+    );
+  });
+
+  it("matches prepareDiff when a bare empty line appears right before the next diff --git section", async () => {
+    const diff = withFinalNewline([
+      "diff --git a/first.ts b/first.ts",
+      "index 1111111..2222222 100644",
+      "--- a/first.ts",
+      "+++ b/first.ts",
+      "@@ -1,2 +1,2 @@",
+      "-const a = 1;",
+      "+const a = 2;",
+      "",
+      "diff --git a/second.ts b/second.ts",
+      "index 3333333..4444444 100644",
+      "--- a/second.ts",
+      "+++ b/second.ts",
+      "@@ -1 +1 @@",
+      "-const b = 1;",
+      "+const b = 2;",
+    ]);
+
+    const indexed = await assertParityWithPrepareDiff(diff);
+
+    expect(indexed.files.get("first.ts")?.oldLines).toEqual(
+      new Map([[1, "const a = 1;"]]),
+    );
+    expect(indexed.files.get("first.ts")?.newLines).toEqual(
+      new Map([[1, "const a = 2;"]]),
+    );
+    expect(indexed.files.get("second.ts")?.newLines.get(1)).toBe(
+      "const b = 2;",
+    );
   });
 
   it("handles empty/whitespace diffs and propagates truncated flag", async () => {
@@ -392,11 +448,38 @@ describe("parseDiffLineIndex — resilience & import isolation", () => {
   it("has zero imports of shiki or @git-diff-view/core", () => {
     const sourcePath = path.resolve(__dirname, "../line-index.ts");
     const source = readFileSync(sourcePath, "utf8");
+    const sectionsPath = path.resolve(__dirname, "../sections.ts");
+    const sectionsSource = readFileSync(sectionsPath, "utf8");
 
     expect(source).toContain('import "server-only"');
     expect(source).not.toMatch(/from\s+["'][^"']*shiki[^"']*["']/);
     expect(source).not.toMatch(/import\s+["'][^"']*shiki[^"']*["']/);
     expect(source).not.toMatch(/from\s+["']@git-diff-view\/core["']/);
     expect(source).not.toMatch(/import\s+["']@git-diff-view\/core["']/);
+    expect(sectionsSource).not.toMatch(/from\s+["'][^"']*shiki[^"']*["']/);
+    expect(sectionsSource).not.toMatch(/from\s+["']@git-diff-view\/core["']/);
+    expect(sectionsSource).not.toMatch(/from\s+["']node:/);
+  });
+
+  it("unescapes git C-quoted paths with quotes, backslashes, tabs, newlines, and octal UTF-8", () => {
+    expect(unescapeGitQuotedPath("plain/path.ts")).toBe("plain/path.ts");
+    expect(unescapeGitQuotedPath('"a/dir/my file.ts"')).toBe(
+      "a/dir/my file.ts",
+    );
+    expect(repoRelPath('"b/dir/my file.ts"')).toBe("dir/my file.ts");
+    expect(
+      unescapeGitQuotedPath(
+        '"b/\\320\\277\\321\\200\\320\\270\\320\\262\\320\\265\\321\\202.ts"',
+      ),
+    ).toBe("b/привет.ts");
+    expect(unescapeGitQuotedPath('"a/quote\\"back\\\\tab\\tline\\n.ts"')).toBe(
+      'a/quote"back\\tab\tline\n.ts',
+    );
+    expect(
+      parsePath('diff --git "a/dir/my file.ts" "b/dir/my file.ts"', []),
+    ).toBe("dir/my file.ts");
+    expect(
+      parsePath("diff --git a/old.ts b/new.ts", ['+++ "b/dir/my file.ts"']),
+    ).toBe("dir/my file.ts");
   });
 });

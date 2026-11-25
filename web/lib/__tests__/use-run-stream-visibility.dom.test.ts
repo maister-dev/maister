@@ -114,6 +114,10 @@ describe("useRunStream visibility pause/resume", () => {
     expect(latest?.eventCount).toBe(2);
     expect(latest?.liveness).toBe("live");
 
+    // Synthetic session.stream_ready right after visibility-resume open does not double-tick.
+    act(() => resumed.emit({ type: "session.stream_ready", replay: false }));
+    expect(latest?.eventCount).toBe(2);
+
     // Verify a pending error reconnect timer is cancelled on hide without incrementing backoff.
     act(() => resumed.onerror?.());
     expect(latest?.liveness).toBe("reconnecting");
@@ -153,5 +157,68 @@ describe("useRunStream visibility pause/resume", () => {
     expect(MockRunEventSource.instances).toHaveLength(1);
     expect(latest?.eventCount).toBe(1);
     expect(latest?.events).toHaveLength(1);
+  });
+
+  it("opens zero EventSources when mounted while hidden and connects on visible", () => {
+    setVisibilityState("hidden");
+    act(() =>
+      root.render(
+        createElement(Harness, { runId: "run-hidden", retain: false }),
+      ),
+    );
+    expect(MockRunEventSource.instances).toHaveLength(0);
+
+    act(() => transitionVisibility("visible"));
+    expect(MockRunEventSource.instances).toHaveLength(1);
+    expect(new URL(MockRunEventSource.instances[0].url).pathname).toBe(
+      "/api/runs/run-hidden/stream",
+    );
+  });
+
+  it("resets liveness, retry budget, error, cursor, and events cleanly when switching runId from A to B", () => {
+    act(() =>
+      root.render(createElement(Harness, { runId: "run-1", retain: true })),
+    );
+    const first = MockRunEventSource.instances[0];
+
+    act(() => first.onopen?.());
+    act(() => first.emit({ type: "session.update", runSequence: "9" }, "9"));
+    expect(latest?.events).toHaveLength(1);
+    expect(latest?.lastEventId).toBe("9");
+
+    // Exhaust all 3 automatic retries on run-1 so it reaches "disconnected".
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(500));
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(2000));
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+
+    expect(latest?.liveness).toBe("disconnected");
+    expect(latest?.error).toBe("eventsource error");
+
+    const countBeforeSwitch = MockRunEventSource.instances.length;
+
+    // Switching to run-2 must reset state and grant a full automatic retry budget.
+    act(() =>
+      root.render(createElement(Harness, { runId: "run-2", retain: true })),
+    );
+    expect(MockRunEventSource.instances).toHaveLength(countBeforeSwitch + 1);
+    expect(latest?.liveness).toBe("connecting");
+    expect(latest?.error).toBeNull();
+    expect(latest?.lastEventId).toBeNull();
+    expect(latest?.events).toHaveLength(0);
+    expect(latest?.eventCount).toBe(0);
+
+    const run2Source = MockRunEventSource.instances.at(-1)!;
+
+    expect(new URL(run2Source.url).searchParams.get("lastEventId")).toBeNull();
+
+    // First error on run-2 enters "reconnecting" and schedules the 500ms retry.
+    act(() => run2Source.onerror?.());
+    expect(latest?.liveness).toBe("reconnecting");
+    act(() => vi.advanceTimersByTime(500));
+    expect(MockRunEventSource.instances).toHaveLength(countBeforeSwitch + 2);
   });
 });

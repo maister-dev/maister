@@ -5,7 +5,7 @@ import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 
 import { ArrowPathIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { Button } from "@heroui/react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 
@@ -39,36 +39,50 @@ export function TaskLaunchIntentStatus({
   const t = useTranslations("launch");
   const locale = useLocale();
   const { tick, liveness, reconnect } = useSharedAttentionStream();
-
-  useEffect(() => {
-    if (tick > 0) void onRefresh();
-  }, [tick, onRefresh]);
-  useEffect(() => {
-    if (liveness === "live") void onRefresh();
-  }, [liveness, onRefresh]);
   const canChange =
     receipt &&
     !uncertain &&
     ["queued", "preparing", "held", "run_bound"].includes(receipt.state) &&
     (!receipt.runId || receipt.runStatus === "Pending");
   const complete =
-    receipt && ["cancelled", "failed", "settled"].includes(receipt.state);
-  const stateKey = complete
-    ? receipt.state
-    : receipt?.state === "held"
-      ? "held"
-      : receipt?.queueReason === "capacity" ||
-          receipt?.runStatus === "Pending" ||
-          receipt?.reason === "launch_parent_capacity_wait" ||
-          receipt?.reason === "launch_capacity_wait"
-        ? "waiting"
-        : receipt?.state === "queued"
-          ? "queued"
-          : receipt?.state === "preparing"
-            ? "preparing"
-            : receipt?.state === "run_bound"
-              ? "running"
-              : (receipt?.state ?? "accepted");
+    receipt !== null &&
+    ["cancelled", "failed", "settled"].includes(receipt.state);
+  const seenTickRef = useRef(tick);
+  const prevLivenessRef = useRef(liveness);
+
+  useEffect(() => {
+    const prevTick = seenTickRef.current;
+    const prevLiveness = prevLivenessRef.current;
+
+    seenTickRef.current = tick;
+    prevLivenessRef.current = liveness;
+
+    if (complete) return;
+
+    const hasNewTick = tick > prevTick;
+    const becameLive = prevLiveness !== "live" && liveness === "live";
+
+    if (hasNewTick || becameLive) {
+      void onRefresh();
+    }
+  }, [complete, liveness, onRefresh, tick]);
+  const stateKey =
+    complete && receipt
+      ? receipt.state
+      : receipt?.state === "held"
+        ? "held"
+        : receipt?.queueReason === "capacity" ||
+            receipt?.runStatus === "Pending" ||
+            receipt?.reason === "launch_parent_capacity_wait" ||
+            receipt?.reason === "launch_capacity_wait"
+          ? "waiting"
+          : receipt?.state === "queued"
+            ? "queued"
+            : receipt?.state === "preparing"
+              ? "preparing"
+              : receipt?.state === "run_bound"
+                ? "running"
+                : (receipt?.state ?? "accepted");
   const deliveryStrategy = receipt?.snapshot.deliveryPolicy?.strategy;
   const deliveryKey =
     deliveryStrategy === "publish_branch"

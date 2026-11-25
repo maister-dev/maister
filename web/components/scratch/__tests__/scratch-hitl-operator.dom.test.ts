@@ -21,6 +21,9 @@ const TestIntlProvider = NextIntlClientProvider as ComponentType<{
 
 const { stream } = vi.hoisted(() => ({ stream: { eventCount: 0 } }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 vi.mock("@/lib/use-run-stream", () => ({
   useRunStream: () => ({ eventCount: stream.eventCount }),
 }));

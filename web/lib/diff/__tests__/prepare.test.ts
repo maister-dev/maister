@@ -604,4 +604,47 @@ describe("prepareDiff — syntax budget, yield safety & single-pass sanitizer (P
     jsonParseSpy.mockRestore();
     expect(result).toEqual(JSON.parse(JSON.stringify(result)));
   });
+
+  it("downgrades a leading file exceeding maxLineToIgnoreSyntax without starving subsequent small files", async () => {
+    const oversizedPlusSmall = [
+      buildAddedTsSection("pnpm-lock.yaml", 3_000, "lock"),
+      buildAddedTsSection("src/feature.ts", 50, "feat"),
+    ].join("\n");
+
+    const shikiAstSpy = vi.spyOn(shikiDiffHighlighter, "getAST");
+    const result = await prepareDiff(oversizedPlusSmall);
+
+    expect(result.perFile).toHaveLength(2);
+
+    const lockFile = result.perFile.find((f) => f.path === "pnpm-lock.yaml");
+    const featureFile = result.perFile.find((f) => f.path === "src/feature.ts");
+
+    expect(lockFile?.fileLang).toBe("plaintext");
+    expect(featureFile?.fileLang).toBe("typescript");
+
+    const highlightedPaths = new Set(
+      shikiAstSpy.mock.calls.map((call) => call[1]),
+    );
+
+    expect(highlightedPaths.has("pnpm-lock.yaml")).toBe(false);
+    expect(highlightedPaths.has("src/feature.ts")).toBe(true);
+  });
+
+  it("restores getEnableBuildTemplate() when buildBundle throws", async () => {
+    const initialFlag = getEnableBuildTemplate();
+
+    setEnableBuildTemplate(true);
+    try {
+      vi.spyOn(shikiDiffHighlighter, "getAST").mockImplementationOnce(() => {
+        throw new Error("simulated shiki failure");
+      });
+
+      await expect(prepareDiff(TWO_FILE_DIFF)).rejects.toThrow(
+        "simulated shiki failure",
+      );
+      expect(getEnableBuildTemplate()).toBe(true);
+    } finally {
+      setEnableBuildTemplate(initialFlag);
+    }
+  });
 });

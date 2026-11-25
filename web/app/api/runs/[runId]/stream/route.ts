@@ -11,6 +11,7 @@ import pino from "pino";
 import {
   httpStatusForAuthz,
   requireActiveSession,
+  requireActiveUserById,
   requireProjectRoleForUser,
 } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -25,12 +26,7 @@ import {
   readContextSnapshot,
   readCurrentAttemptId,
 } from "@/lib/runs/context-reader";
-import {
-  executionEvents,
-  localPackages,
-  projects,
-  runs,
-} from "@/lib/db/schema";
+import { executionEvents, runs } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { keepaliveMs } from "@/lib/runs/keepalive-config";
 import {
@@ -66,6 +62,29 @@ type RunLite = {
   isGoverned: boolean;
 };
 
+function runGovernedSql() {
+  return sql<boolean>`COALESCE(
+    ${runs.knowledgeAccess} IS NOT NULL
+    OR ${runs.resultContract}->>'nativeContract' = ${FINDINGS_CONTRACT}
+    OR EXISTS (
+      SELECT 1 FROM agent_memory_injections memory
+      WHERE memory.run_id = ${runs.id}
+        AND memory.application_state <> 'retired'
+    ),
+    false
+  )`;
+}
+
+async function isRunGoverned(runId: string): Promise<boolean> {
+  const db = getDb() as unknown as Db;
+  const rows = await db
+    .select({ isGoverned: runGovernedSql() })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  return rows[0]?.isGoverned === true;
+}
+
 async function loadRunLite(runId: string): Promise<RunLite | null> {
   const db = getDb() as unknown as Db;
   const rows = await db
@@ -78,20 +97,9 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
       companyId: runs.companyId,
       createdByUserId: runs.createdByUserId,
       localPackageId: runs.localPackageId,
-      isGoverned: sql<boolean>`COALESCE(
-        ${runs.knowledgeAccess} IS NOT NULL
-        OR ${runs.resultContract}->>'nativeContract' = ${FINDINGS_CONTRACT}
-        OR EXISTS (
-          SELECT 1 FROM agent_memory_injections memory
-          WHERE memory.run_id = ${runs.id}
-            AND memory.application_state <> 'retired'
-        ),
-        false
-      )`,
+      isGoverned: runGovernedSql(),
     })
     .from(runs)
-    .leftJoin(projects, eq(projects.id, runs.projectId))
-    .leftJoin(localPackages, eq(localPackages.id, runs.localPackageId))
     .where(eq(runs.id, runId));
 
   const row: RunLite | undefined = rows[0];
@@ -273,10 +281,8 @@ function canonicalRunEventStream(input: {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
-      let cursor = input.replayEvents
-        ? (input.replayCursor ?? -1n)
-        : await latestCanonicalRunSequence(input.run.id);
-      const governed = input.run.companyId !== null || input.run.isGoverned;
+      let cursor = input.replayEvents ? (input.replayCursor ?? -1n) : -1n;
+      let governed = input.run.companyId !== null || input.run.isGoverned;
       const trackContext = input.context && input.run.runKind !== "librarian";
       const isFlow = input.run.runKind === "flow";
       let eventsSent = 0;
@@ -313,6 +319,8 @@ function canonicalRunEventStream(input: {
               input.run.projectId,
               "viewer",
             );
+          } else {
+            await requireActiveUserById(input.userId);
           }
           await assertRunKnowledgeDisclosure(
             getDb(),
@@ -328,15 +336,17 @@ function canonicalRunEventStream(input: {
         );
       };
 
-      if (!input.replayEvents) {
-        controller.enqueue(
-          encoder.encode(
-            formatSyntheticSseEvent(JSON.stringify(streamReadyEvent())),
-          ),
-        );
-      }
-
       try {
+        if (!input.replayEvents) {
+          cursor = await latestCanonicalRunSequence(input.run.id);
+          if (signal.aborted) return;
+          controller.enqueue(
+            encoder.encode(
+              formatSyntheticSseEvent(JSON.stringify(streamReadyEvent())),
+            ),
+          );
+        }
+
         while (!signal.aborted) {
           const events = await readCanonicalRunEvents(
             input.run.id,
@@ -399,11 +409,38 @@ function canonicalRunEventStream(input: {
             );
           }
 
+          let checkedStatus = false;
+          let runStatus: {
+            status: string;
+            currentStepId: string | null;
+          } | null = null;
+
+          if (
+            terminalProjectionCursor !== null ||
+            Date.now() - lastStatusCheck >= STATUS_REFRESH_MS
+          ) {
+            lastStatusCheck = Date.now();
+            runStatus = await refreshRunStatus(input.run.id);
+            checkedStatus = true;
+            if (!runStatus) break;
+          }
+
+          const isTerminal =
+            runStatus !== null && TERMINAL_RUN_STATUS.has(runStatus.status);
           const hasOutgoing = events.length > 0 || contextChanged;
           let verifiedThisIteration = false;
 
+          if (!governed && hasOutgoing && (await isRunGoverned(input.run.id))) {
+            governed = true;
+            log.debug(
+              { runId: input.run.id },
+              "[FIX:vault-enroll] run promoted to governed mid-stream",
+            );
+          }
+
           if (
             (governed && hasOutgoing) ||
+            (isTerminal && hasOutgoing) ||
             Date.now() - lastAuthCheck >= AUTH_RECHECK_INTERVAL_MS
           ) {
             await verifyStreamAuth();
@@ -461,41 +498,32 @@ function canonicalRunEventStream(input: {
             lastEventAt = Date.now();
           }
 
-          if (
-            terminalProjectionCursor !== null ||
-            Date.now() - lastStatusCheck >= STATUS_REFRESH_MS
-          ) {
-            lastStatusCheck = Date.now();
-            const status = await refreshRunStatus(input.run.id);
-
-            if (!status) break;
-            if (TERMINAL_RUN_STATUS.has(status.status)) {
-              if (!trackContext) {
+          if (checkedStatus && isTerminal) {
+            if (!trackContext) {
+              if (!verifiedThisIteration) await verifyStreamAuth();
+              break;
+            }
+            terminalDeadline ??= Date.now() + 3_000;
+            if (
+              events.length < 500 &&
+              (await contextProjectionThrough(getDb(), input.run.id, cursor))
+            ) {
+              if (terminalProjectionCursor === cursor) {
                 if (!verifiedThisIteration) await verifyStreamAuth();
                 break;
               }
-              terminalDeadline ??= Date.now() + 3_000;
-              if (
-                events.length < 500 &&
-                (await contextProjectionThrough(getDb(), input.run.id, cursor))
-              ) {
-                if (terminalProjectionCursor === cursor) {
-                  if (!verifiedThisIteration) await verifyStreamAuth();
-                  break;
-                }
-                // Read once after observing the committed projection watermark.
-                terminalProjectionCursor = cursor;
-                forceFinalContextRead = true;
-                continue;
-              }
-              if (Date.now() >= terminalDeadline) {
-                log.warn(
-                  { runId: input.run.id },
-                  "context stream closed with pending projection",
-                );
-                if (!verifiedThisIteration) await verifyStreamAuth();
-                break;
-              }
+              // Read once after observing the committed projection watermark.
+              terminalProjectionCursor = cursor;
+              forceFinalContextRead = true;
+              continue;
+            }
+            if (Date.now() >= terminalDeadline) {
+              log.warn(
+                { runId: input.run.id },
+                "context stream closed with pending projection",
+              );
+              if (!verifiedThisIteration) await verifyStreamAuth();
+              break;
             }
           }
           if (Date.now() - lastEventAt > maxQuietMs) {

@@ -285,12 +285,16 @@ export function useAttentionStream(
       });
       source.addEventListener("attention.stream_timeout", (event) => {
         if (reviewId === undefined || sourceRef.current !== source) return;
-        const frame = JSON.parse((event as MessageEvent<string>).data) as {
-          reason: string;
-        };
+        try {
+          const frame = JSON.parse((event as MessageEvent<string>).data) as {
+            reason?: string;
+          };
 
-        if (frame.reason === "access_revoked")
-          setReviewResync((current) => current + 1);
+          if (frame.reason === "access_revoked")
+            setReviewResync((current) => current + 1);
+        } catch {
+          /* a malformed frame is skipped, never thrown at the reader */
+        }
       });
       source.onerror = () => {
         if (sourceRef.current !== source) return;

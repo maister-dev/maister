@@ -2189,6 +2189,20 @@ paths:
             Query-string fallback for `Last-Event-ID`, same canonical decimal
             form. An unusable value yields a snapshot rather than an error.
           schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        - name: decisions
+          in: query
+          required: false
+          description: >-
+            (ADR-171 D7) Most recent visible `decisions` count baseline.
+            Unparseable values are ignored.
+          schema: { type: integer, minimum: 0 }
+        - name: updates
+          in: query
+          required: false
+          description: >-
+            (ADR-171 D7) Most recent visible `updates` count baseline.
+            Unparseable values are ignored.
+          schema: { type: integer, minimum: 0 }
         - name: reviewProtocol
           in: query
           required: false
@@ -7975,7 +7989,6 @@ paths:
                         status: M
                         additions: 2
                         deletions: 1
-                        binary: false
                     perFile: []
         "401":
           $ref: "#/components/responses/Unauthenticated"
@@ -14240,24 +14253,36 @@ paths:
         For runs enrolled in native evidence capture, current source access is
         required in addition to the existing project/content grant. An unavailable
         source or incomplete capture returns a safe 409 PRECONDITION before content.
-        Source access is checked again before each emitted chunk/batch; revocation
-        terminates the stream and cancels upstream reads without retaining DB locks.
         Requires project membership at `viewer` or above
-        (`requireProjectRole(run.projectId, "viewer")`). The `projectId`
-        is derived from the run row, never from the query string. Company Runs instead
-        require current explicit `assignments:read`, a complete capture containing their
-        exact retained assignment input, and current inherited source access. Missing or
-        unauthorized company Runs and incomplete captures return concealed 404; unavailable
-        inherited sources return 409. Reader and source authority are checked before every
-        canonical batch; loss closes the stream before further events. Specialist/provider
-        execution eligibility is independent of historical read authority.
+        (`requireProjectRoleForUser(userId, run.projectId, "viewer")` — never
+        re-invoking NextAuth `auth()` inside the stream loop). The `projectId`
+        is derived from the run row, never from the query string. Projectless runs
+        re-verify active-user ownership on the stream loop cadence. Company Runs
+        instead require current explicit `assignments:read`, a complete capture
+        containing their exact retained assignment input, and current inherited
+        source access. Missing or unauthorized company Runs and incomplete
+        captures return concealed 404; unavailable inherited sources return 409.
+        Specialist/provider execution eligibility is independent of historical
+        read authority.
+
+        On governed/company/vault runs (including runs dynamically enrolled in a
+        vault mid-stream), reader and source authority are checked before every
+        non-empty canonical batch and on a bounded `2,500 ms` idle recheck; loss
+        closes the stream before further events without retaining DB locks.
+        Ordinary non-enrolled project runs re-verify `requireProjectRoleForUser`
+        and disclosure at most once every `2,500 ms` and before terminal batch
+        emission/close.
 
         Server-Sent Events bridge over manager-owned PostgreSQL event records.
-        An in-process wake is only a latency hint. The browser never reads a
-        supervisor path, a runtime event file, or live supervisor state.
+        Event queries project only scalar metadata booleans (`payloadIsNull` and,
+        only when `?context=1`, safe JSONB `contextUsageOnly`) without selecting
+        or transferring `execution_events.payload` JSONB to Node. An in-process
+        wake is only a latency hint. The browser never reads a supervisor path,
+        a runtime event file, or live supervisor state.
 
         Use the standard SSE `Last-Event-ID` header (or `?lastEventId=N`
-        query string fallback) to resume after disconnect. Terminal
+        query string fallback) to resume after disconnect, or `?replay=false` to
+        start at the current durable tail with `session.stream_ready`. Terminal
         states (`Done`, `Abandoned`, `Failed`, `Crashed`) close the
         stream cleanly after draining trailing events.
 
@@ -14266,7 +14291,8 @@ paths:
         also carry `contextUsageOnly: true`. These frames advance the durable
         cursor and let clients skip transcript and run-detail invalidations.
         Host payloads are excluded. `session.context_snapshot` carries safe
-        projected metadata without an SSE id. The recipient must still hold
+        projected metadata without an SSE id (coalesced at `500 ms` during bursts
+        plus settle and terminal watermark reads). The recipient must still hold
         the current run/source grant.
         See `async/web-runs.asyncapi.yaml`.
       operationId: streamRunEvents
@@ -14285,6 +14311,11 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 0 }
+        - name: replay
+          in: query
+          required: false
+          description: Set to `false` (or `0` / `live`) to begin at the current durable tail and emit `session.stream_ready` instead of replaying from sequence zero.
+          schema: { type: string, enum: ["false", "0", "live", "true"] }
         - name: context
           in: query
           required: false
@@ -20288,17 +20319,23 @@ paths:
     get:
       tags:
         - runs
-      summary: Designed — read-only child Run peek
+      summary: Implemented — read-only child Run peek
       description: |
-        Designed — one workbench tick-only SSE for the authorized anchor/current child and
+        Implemented — one workbench tick-only SSE for the authorized anchor/current child and
         subtree metadata. Advisory frames have no SSE id or replay cursor. Reconnect forces canonical
         reads. Child denial retains the readable parent channel. Exact frames live in
-        web-runs.asyncapi.yaml. Connection acquisition failure returns 503 before headers.
+        `web-runs.asyncapi.yaml`. Connection acquisition failure returns 503 before headers.
+        Unrelated `transcript`, `execution_events`, foreign-`rootRunId`, and unrelated top-level
+        root `runs` hints are filtered out in memory before any database query, while reparenting
+        transitions pass through. Relevant `summary` hints and governed/company runs re-verify
+        authorization immediately before emitting; ordinary non-governed `transcript`/`execution`
+        bursts coalesce auth rechecks to `2,500 ms`. Heartbeats are transport-only and perform
+        no database polling.
         For runs enrolled in native evidence capture, current source access is
         required in addition to the existing project/content grant. An unavailable
-        source or incomplete capture returns a safe 409 PRECONDITION before content.
-        Source access is checked again before each emitted chunk/batch; revocation
-        terminates the stream and cancels upstream reads without retaining DB locks.
+        source or incomplete capture returns a safe 409 PRECONDITION before content;
+        revocation terminates the affected channel and cancels upstream reads without
+        retaining DB locks.
       operationId: subscribeRunPeek
       security:
         - sessionCookie: []
@@ -34546,7 +34583,7 @@ components:
           type: string
           description: |
             **(Implemented)** Raw unified diff text. Omitted by default unless
-            `?raw=1` is supplied (or on `prepare-failed` fallback).
+            `?raw=1` is supplied.
         truncated:
           type: boolean
           description: |
@@ -34573,9 +34610,11 @@ components:
             renderer (`@git-diff-view/react`): the file's repo-relative `path`,
             resolved `fileLang`, and a server-built `bundle` (Shiki-highlighted
             `DiffFile.getBundle()` output) hydrated on the client with no
-            client-side highlighting. Present for flow and scratch runs (M35,
-            T3.3). The `bundle` shape is the library's serialization detail and
-            is not specified field by field here.
+            client-side highlighting. Files beyond `MAX_TOTAL_SYNTAX_LINES = 8_000`
+            (or the per-file syntax limit) carry zero-Shiki monochrome plaintext
+            bundles (`fileLang: "plaintext"`) that hydrate without client lowlight
+            fallback. Present for flow and scratch runs. The `bundle` shape is the
+            library's serialization detail and is not specified field by field here.
           items:
             type: object
             required: [path, fileLang, bundle]
@@ -34590,8 +34629,9 @@ components:
             (Implemented, ADR-066) `null` on the normal path; the string
             `prepare-failed` when highlighted-diff preparation threw and the
             response fell back to a name-status-only `files` summary with an
-            empty `perFile` (the raw `diff` is still returned). The client then
-            renders the raw diff instead of the rich view.
+            empty `perFile` (`diff` remains omitted unless `?raw=1` is supplied).
+            On `prepare-failed`, the client renders the `bodyUnavailable` fallback
+            state alongside the name-status `files` summary.
     DiffFileEntry:
       type: object
       required: [path, status]

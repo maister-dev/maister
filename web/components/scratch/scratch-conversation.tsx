@@ -65,15 +65,6 @@ const DETAIL_REFRESH_COALESCE_MS = 250;
 const shell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
 
-// Standalone DOM tests mount ScratchConversation outside Next's AppRouterContext.
-function useOptionalRouter(): ReturnType<typeof useRouter> | null {
-  try {
-    return useRouter();
-  } catch {
-    return null;
-  }
-}
-
 // Lifted so a compact/docked host (Flow Studio) can render the run status +
 // token-budget meter on its own collapsible panel header (visible even when the
 // conversation body is collapsed), instead of the in-body header below.
@@ -142,7 +133,7 @@ export function ScratchConversation({
 }): ReactElement {
   const t = useTranslations("scratch");
   const tRun = useTranslations("run");
-  const router = useOptionalRouter();
+  const router = useRouter();
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
@@ -197,10 +188,14 @@ export function ScratchConversation({
     requestKey: string;
     payload: NonNullable<ScratchDetail["pendingHitl"]>["storedResponse"];
   } | null>(null);
-  const [detailRevision, setDetailRevision] = useState(0);
-  const [commandCatalog, setCommandCatalog] = useState<
-    ProjectCapabilityCatalogEntry[]
-  >([]);
+  const [projectCatalogState, setProjectCatalogState] = useState<{
+    key: string;
+    capabilities: ProjectCapabilityCatalogEntry[];
+  }>({ key: "", capabilities: [] });
+  const [liveCommandsState, setLiveCommandsState] = useState<{
+    runId: string;
+    commands: RunningLiveCommand[];
+  }>({ runId: "", commands: [] });
   const { eventCount, context: streamedContext } = useRunPageStream(
     runId,
     true,
@@ -231,7 +226,6 @@ export function ScratchConversation({
 
           if (signal?.aborted || activeRunId.current !== runId) return;
           setDetail(nextDetail);
-          setDetailRevision((current) => current + 1);
         })
         .catch(() => {
           if (signal?.aborted) return;
@@ -278,65 +272,109 @@ export function ScratchConversation({
     detail?.run.capabilityAgent,
     detail?.run.runnerSnapshot?.capabilityAgent,
   ]);
-
-  // A run without a project offers no commands.
-  if (!detail?.run.projectSlug && commandCatalog.length > 0) {
-    setCommandCatalog([]);
-  }
+  const projectSlug = detail?.run.projectSlug ?? null;
+  const detailDialogStatus = detail?.scratch.dialogStatus ?? null;
+  const catalogKey = projectSlug ? `${projectSlug}:${composerAgent}` : "";
 
   useEffect(() => {
-    const projectSlug = detail?.run.projectSlug;
-
     if (!projectSlug) return;
 
     const encodedProjectSlug = encodeURIComponent(projectSlug);
     const controller = new AbortController();
 
-    async function loadCommandCatalog(): Promise<void> {
-      const [catalogResponse, commandsResponse] = await Promise.all([
-        fetch(
-          `/api/projects/${encodedProjectSlug}/capability-catalog?agent=${encodeURIComponent(composerAgent)}`,
-          { signal: controller.signal },
-        ),
-        fetch(`/api/scratch-runs/${runId}/commands`, {
-          signal: controller.signal,
-        }),
-      ]);
+    async function loadProjectCapabilities(): Promise<void> {
+      const catalogResponse = await fetch(
+        `/api/projects/${encodedProjectSlug}/capability-catalog?agent=${encodeURIComponent(composerAgent)}`,
+        { signal: controller.signal },
+      );
+
+      if (controller.signal.aborted) return;
       const catalogPayload = catalogResponse.ok
         ? ((await catalogResponse.json()) as {
             capabilities?: ProjectCapabilityCatalogEntry[];
           })
         : { capabilities: [] };
+
+      if (controller.signal.aborted) return;
+      setProjectCatalogState({
+        key: `${projectSlug}:${composerAgent}`,
+        capabilities: catalogPayload.capabilities ?? [],
+      });
+    }
+
+    void loadProjectCapabilities().catch(() => {
+      if (controller.signal.aborted) return;
+      setProjectCatalogState({
+        key: `${projectSlug}:${composerAgent}`,
+        capabilities: [],
+      });
+      setError(t("errorGeneric"));
+    });
+
+    return () => controller.abort();
+  }, [projectSlug, composerAgent]);
+
+  useEffect(() => {
+    if (!projectSlug) return;
+
+    const controller = new AbortController();
+
+    async function loadLiveCommands(): Promise<void> {
+      const commandsResponse = await fetch(
+        `/api/scratch-runs/${runId}/commands`,
+        {
+          signal: controller.signal,
+        },
+      );
+
+      if (controller.signal.aborted) return;
       const commandsPayload = commandsResponse.ok
         ? ((await commandsResponse.json()) as {
             commands?: RunningLiveCommand[];
           })
         : { commands: [] };
 
-      setCommandCatalog(
-        buildRunningCommandCatalog(
-          commandsPayload.commands ?? [],
-          catalogPayload.capabilities ?? [],
-          composerAgent,
-        ),
-      );
+      if (controller.signal.aborted) return;
+      setLiveCommandsState({
+        runId,
+        commands: commandsPayload.commands ?? [],
+      });
     }
 
-    void loadCommandCatalog().catch(() => {
+    void loadLiveCommands().catch(() => {
       if (controller.signal.aborted) return;
-      setCommandCatalog([]);
+      setLiveCommandsState({ runId, commands: [] });
       setError(t("errorGeneric"));
     });
 
     return () => controller.abort();
-  }, [composerAgent, detail?.run.projectSlug, detailRevision, runId]);
+  }, [projectSlug, runId, detailDialogStatus]);
+
+  const commandCatalog = useMemo(() => {
+    if (!projectSlug) return [];
+    const capabilities =
+      projectCatalogState.key === catalogKey
+        ? projectCatalogState.capabilities
+        : [];
+    const commands =
+      liveCommandsState.runId === runId ? liveCommandsState.commands : [];
+
+    return buildRunningCommandCatalog(commands, capabilities, composerAgent);
+  }, [
+    catalogKey,
+    composerAgent,
+    liveCommandsState,
+    projectCatalogState,
+    projectSlug,
+    runId,
+  ]);
 
   const refresherRef = useRef<CoalescedRefresher | null>(null);
 
   useEffect(() => {
     const refresher = createCoalescedRefresher({
       intervalMs: DETAIL_REFRESH_COALESCE_MS,
-      run: (signal) => loadDetail(signal),
+      run: (signal) => fetchDetail(signal),
     });
 
     refresherRef.current = refresher;
@@ -345,7 +383,7 @@ export function ScratchConversation({
       refresher.dispose();
       refresherRef.current = null;
     };
-  }, [loadDetail]);
+  }, [fetchDetail]);
 
   useEffect(() => {
     if (eventCount === 0 && transcriptRevision === null) return;
@@ -538,7 +576,7 @@ export function ScratchConversation({
         }
 
         await loadDetail();
-        router?.refresh();
+        router.refresh();
         onMessageSettled?.();
 
         return true;

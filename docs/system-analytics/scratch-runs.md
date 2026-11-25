@@ -916,6 +916,7 @@ history automatically.
 | Promote merge conflict | `409 CONFLICT`; run remains `Review` and the worktree stays available. |
 | Shared lifecycle drop from scratch detail | Preserve first, remove only a MAIster-owned worktree, set `removed_at`, and mark non-`Done` runs/dialog metadata `Abandoned`. |
 | Composer launch canceled mid-stream (Implemented — FR-F2) | A client disconnect aborts at the next stage boundary: pre-commit (during `materializing`) it GCs the worktree+branch; post-commit it marks the run `Crashed` (a tracked row, not an orphan). No orphan worktree/session remains. |
+| Recovering a `Crashed` scratch run under `<RunStreamProvider>` (`EDGE-PERF-05`, Implemented) | Opening a `Crashed` scratch run holds 0 `/api/runs/{runId}/stream` sockets; a successful `recover()` calls `router.refresh()` so `ScratchRunDetailLayout` re-renders with `Running` and re-activates `<RunStreamProvider>` without wiping error alerts or re-fetching the static capability catalog. |
 
 ## Acceptance Criteria
 
@@ -968,8 +969,8 @@ it does not poll, create a second stream wire contract, change
 `ScratchRunDetailLayout` owns the single `<RunStreamProvider>` subscription
 shared by `ScratchConversation` and `LiveRunInspector` (Implemented — at most one
 `/api/runs/{runId}/stream` socket per scratch tab). Tick-only subscriptions
-pause while `document.visibilityState === "hidden"` and issue one catch-up tick
-on `"visible"`; `ScratchConversation` uses leading-coalescing refresh throttling
+pause while `document.visibilityState === "hidden"` and catch up via one
+coalesced refresh on `"visible"`; `ScratchConversation` uses leading-coalescing refresh throttling
 (250 ms) instead of trailing debounces and calls `router.refresh()` after a
 successful `recover()` so a recovered `Crashed` run re-activates
 `<RunStreamProvider>` (Implemented). It cancels retry timers and closes the

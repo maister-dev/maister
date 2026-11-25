@@ -6,10 +6,12 @@ import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import Ajv from "ajv";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import { parse } from "yaml";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
+import { executionEvents } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
   notifyContinuationAttentionChanged,
@@ -548,4 +550,280 @@ it("PERF-04 EDGE-PERF-03: peek triggers omit to_jsonb, filter pending_gap at WHE
   } finally {
     await release();
   }
+});
+
+it("FIX-REPARENT: reparented grandchild to another root is NOT dropped by foreign_root_run and emits peek.changed", async () => {
+  const grandchild = await seedRun(child, projectId, root);
+  const otherRoot = await seedRun(null, projectId, null);
+  const response = await streamGet(
+    new NextRequest(
+      `http://localhost/api/runs/${root}/peek/stream?selected=${child}`,
+    ),
+    { params: Promise.resolve({ runId: root }) },
+  );
+
+  expect(response.status).toBe(200);
+  const reader = response.body!.getReader();
+
+  try {
+    expect(await frame(reader)).toEqual({
+      type: "peek.ready",
+      anchorRunId: root,
+      selectedRunId: child,
+      selectionState: "ready",
+    });
+
+    await database.pool.query(
+      "UPDATE runs SET parent_run_id=$1, root_run_id=$1 WHERE id=$2",
+      [otherRoot, grandchild],
+    );
+
+    // Barrier frame on child guarantees FIFO ordering if the reparent hint were dropped.
+    await database.pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content) VALUES($1,$2,1,'assistant','reparent barrier')",
+      [randomUUID(), child],
+    );
+
+    expect(await frame(reader)).toEqual({ type: "peek.changed" });
+    expect(await frame(reader)).toEqual({
+      type: "run.changed",
+      runId: child,
+      kind: "transcript",
+    });
+  } finally {
+    await reader.cancel();
+  }
+});
+
+it("FIX-PENDING-KEY: same-burst node_attempts + execution_events on a non-selected descendant does NOT lose peek.changed", async () => {
+  const grandchild = await seedRun(child, projectId, root);
+  const blockerRoot = await seedRun(null, projectId, null);
+  const response = await streamGet(
+    new NextRequest(
+      `http://localhost/api/runs/${root}/peek/stream?selected=${child}`,
+    ),
+    { params: Promise.resolve({ runId: root }) },
+  );
+
+  expect(response.status).toBe(200);
+  const reader = response.body!.getReader();
+
+  try {
+    expect(await frame(reader)).toEqual({
+      type: "peek.ready",
+      anchorRunId: root,
+      selectedRunId: child,
+      selectionState: "ready",
+    });
+
+    // Single transaction delivers all 3 NOTIFY payloads in one flush:
+    // 1. node_attempts on blockerRoot (rootRunId = null) suspends drain() on belongs().
+    // 2. node_attempts on grandchild queues in pending while drain() is busy.
+    // 3. execution_events on grandchild queues in pending right after it;
+    //    must NOT overwrite node_attempts due to missing hint.source in the pending key.
+    const client = await database.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status) VALUES($1,$2,'plan','ai_coding',1,'Running')",
+        [randomUUID(), blockerRoot],
+      );
+      await client.query(
+        "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status) VALUES($1,$2,'plan','ai_coding',1,'Running')",
+        [randomUUID(), grandchild],
+      );
+      await client.query(
+        "INSERT INTO execution_events(id,source,source_key,run_id,run_sequence,event_type,payload_schema,payload,occurred_at,received_at,ingest_disposition) VALUES($1,'manager',$1,$2,1,'session.update','maister.session.update.v1','{}',now(),now(),'accepted')",
+        [randomUUID(), grandchild],
+      );
+      await client.query("COMMIT");
+    } finally {
+      client.release();
+    }
+
+    // Barrier frame on child guarantees we detect a dropped peek.changed immediately.
+    await database.pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content) VALUES($1,$2,1,'assistant','burst barrier')",
+      [randomUUID(), child],
+    );
+
+    expect(await frame(reader)).toEqual({ type: "peek.changed" });
+    expect(await frame(reader)).toEqual({
+      type: "run.changed",
+      runId: child,
+      kind: "transcript",
+    });
+  } finally {
+    await reader.cancel();
+  }
+});
+
+it("FIX-GOVERNED-PEEK: governed run bypasses 2,500 ms auth coalesce on transcript hints and revokes immediately", async () => {
+  await database.pool.query(
+    `UPDATE runs
+        SET knowledge_access = '{"schemaVersion":1,"state":"complete","generation":1,"restrictions":[]}'::jsonb
+      WHERE id = $1`,
+    [root],
+  );
+  const response = await streamGet(
+    new NextRequest(
+      `http://localhost/api/runs/${root}/peek/stream?selected=${child}`,
+    ),
+    { params: Promise.resolve({ runId: root }) },
+  );
+
+  expect(response.status).toBe(200);
+  const reader = response.body!.getReader();
+
+  try {
+    expect(await frame(reader)).toEqual({
+      type: "peek.ready",
+      anchorRunId: root,
+      selectedRunId: child,
+      selectionState: "ready",
+    });
+
+    // Immediately revoke access (well inside 2,500 ms) and emit a transcript hint.
+    await database.pool.query("DELETE FROM project_members WHERE user_id=$1", [
+      userId,
+    ]);
+    await database.pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content) VALUES($1,$2,1,'assistant','after revoke')",
+      [randomUUID(), root],
+    );
+
+    expect(await frame(reader)).toEqual({
+      type: "peek.resync",
+      reason: "transport",
+    });
+    expect((await reader.read()).done).toBe(true);
+  } finally {
+    await reader.cancel();
+  }
+});
+
+it("FIX-SQL-JSONB: real Postgres handles malformed execution_events JSONB payloads with zero 22P02 errors", async () => {
+  const cases: Array<{
+    seq: number;
+    eventType: string;
+    payloadSql: string;
+    expected: boolean;
+  }> = [
+    {
+      seq: 1,
+      eventType: "session.line",
+      payloadSql: `'"yes"'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 2,
+      eventType: "session.line",
+      payloadSql: `'123'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 3,
+      eventType: "session.line",
+      payloadSql: `'[]'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 4,
+      eventType: "session.line",
+      payloadSql: `'null'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 5,
+      eventType: "session.line",
+      payloadSql: `'{"contextUsageOnly": "true"}'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 6,
+      eventType: "session.line",
+      payloadSql: `'{"contextUsageOnly": true}'::jsonb`,
+      expected: true,
+    },
+    {
+      seq: 7,
+      eventType: "session.update",
+      payloadSql: `'{"update": 123}'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 8,
+      eventType: "session.update",
+      payloadSql: `'{"update": {"sessionUpdate": "usage_update"}}'::jsonb`,
+      expected: true,
+    },
+    {
+      seq: 9,
+      eventType: "session.update",
+      payloadSql: `'{"contextType": "usage_update"}'::jsonb`,
+      expected: true,
+    },
+    {
+      seq: 10,
+      eventType: "session.update",
+      payloadSql: `'[]'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 11,
+      eventType: "session.update",
+      payloadSql: `'"yes"'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 12,
+      eventType: "session.update",
+      payloadSql: `'null'::jsonb`,
+      expected: false,
+    },
+  ];
+
+  for (const row of cases) {
+    await database.pool.query(
+      `INSERT INTO execution_events(id,source,source_key,run_id,run_sequence,event_type,payload_schema,payload,occurred_at,received_at,ingest_disposition)
+       VALUES($1,'manager',$1,$2,$3,$4,'maister.test.v1',${row.payloadSql},now(),now(),'accepted')`,
+      [randomUUID(), root, row.seq, row.eventType],
+    );
+  }
+
+  const projected = await database.db
+    .select({
+      runSequence: executionEvents.runSequence,
+      contextUsageOnly: sql<boolean>`COALESCE(CASE
+        WHEN ${executionEvents.eventType} = 'session.update' THEN
+          jsonb_typeof(${executionEvents.payload}) = 'object'
+          AND (
+            ${executionEvents.payload}->>'contextType' = 'usage_update'
+            OR (
+              jsonb_typeof(${executionEvents.payload}->'update') = 'object'
+              AND ${executionEvents.payload}->'update'->>'sessionUpdate' = 'usage_update'
+            )
+          )
+        WHEN ${executionEvents.eventType} = 'session.line' THEN
+          jsonb_typeof(${executionEvents.payload}) = 'object'
+          AND ${executionEvents.payload}->'contextUsageOnly' = 'true'::jsonb
+        ELSE false
+      END, false)`,
+    })
+    .from(executionEvents)
+    .where(
+      and(
+        eq(executionEvents.runId, root),
+        isNotNull(executionEvents.runSequence),
+      ),
+    )
+    .orderBy(asc(executionEvents.runSequence));
+
+  expect(projected).toEqual(
+    cases.map((row) => ({
+      runSequence: BigInt(row.seq),
+      contextUsageOnly: row.expected,
+    })),
+  );
 });

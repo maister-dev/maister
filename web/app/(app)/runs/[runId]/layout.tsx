@@ -165,6 +165,7 @@ import {
 import { getRunPackageProvenance } from "@/lib/local-packages/versions";
 import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
+  diffNameStatus,
   diffRange,
   resolveBaseCommit,
   resolveBaseRef,
@@ -272,31 +273,57 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
     }
   }
 
-  const headSha = await resolveRefSha(detail.worktreePath, detail.branch).catch(
-    () => null,
-  );
-  const cacheKey = headSha
-    ? `sha:${detail.worktreePath}:${diffBaseRef}:${headSha}`
-    : null;
+  const [baseSha, headSha] = await Promise.all([
+    detail.baseCommit
+      ? Promise.resolve(detail.baseCommit)
+      : resolveRefSha(detail.worktreePath, diffBaseRef).catch(() => null),
+    resolveRefSha(detail.worktreePath, detail.branch).catch(() => null),
+  ]);
+  const cacheKey =
+    baseSha && headSha
+      ? `sha:${detail.worktreePath}:${baseSha}:${headSha}`
+      : null;
   const cached = cacheKey ? getCachedPreparedDiff(cacheKey) : undefined;
   let diff: ReviewPanelDiff;
 
   if (cached) {
     diff = cached.prepared;
   } else {
-    const { text: rawDiff, truncated } = await diffRange({
-      worktreePath: detail.worktreePath,
-      baseRef: diffBaseRef,
-      branch: detail.branch,
-    });
+    const effectiveBase = baseSha ?? diffBaseRef;
+    const effectiveHead = headSha ?? detail.branch;
+    const [{ text: rawDiff, truncated }, nameStatus] = await Promise.all([
+      diffRange({
+        worktreePath: detail.worktreePath,
+        baseRef: effectiveBase,
+        branch: effectiveHead,
+      }),
+      baseSha && headSha
+        ? diffNameStatus({
+            worktreePath: detail.worktreePath,
+            baseRef: baseSha,
+            branch: headSha,
+          }).catch(() => null)
+        : Promise.resolve(null),
+    ]);
     const prepared = await prepareDiff(rawDiff, truncated);
 
     diff = prepared;
-    if (cacheKey) {
+    if (cacheKey && nameStatus) {
+      const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
+      const enrichedFiles = nameStatus.map((entry) => {
+        const counts = countsByPath.get(entry.path);
+
+        return {
+          path: entry.path,
+          status: entry.status,
+          additions: counts?.additions ?? 0,
+          deletions: counts?.deletions ?? 0,
+        };
+      });
       const preparedJson = JSON.stringify(prepared.perFile);
 
       setCachedPreparedDiff(cacheKey, {
-        files: prepared.files,
+        files: enrichedFiles,
         prepared,
         preparedJson,
         byteSize: Buffer.byteLength(preparedJson, "utf8"),

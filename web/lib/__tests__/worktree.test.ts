@@ -852,4 +852,55 @@ describe("single-spawn bounded git diff (PERF-09, EDGE-PERF-10)", () => {
     });
     expect(fullPatchDiffCalls()).toHaveLength(1);
   });
+
+  it("standardizes --no-color --no-ext-diff --end-of-options across diff readers even with color.diff=always and diff.external", async () => {
+    const baseCommit = await resolveBaseCommit({
+      projectRepoPath: repo,
+      baseRef: "main",
+    });
+
+    await git(repo, ["checkout", "-b", "std-flags"]);
+    await writeFile(join(repo, "flags.txt"), "hello world\n");
+    await git(repo, ["add", "flags.txt"]);
+    await git(repo, ["commit", "-m", "add flags.txt"]);
+    await writeFile(join(repo, "flags.txt"), "hello world updated\n");
+
+    await git(repo, ["config", "color.diff", "always"]);
+    await git(repo, ["config", "diff.external", "false"]);
+
+    recordedGitCalls.length = 0;
+    const wsDiff = await diffRunWorkspace({
+      projectRepoPath: repo,
+      baseCommit,
+      branch: "std-flags",
+    });
+    const rangeDiff = await diffRange({
+      worktreePath: repo,
+      baseRef: baseCommit,
+      branch: "std-flags",
+    });
+    const wtDiff = await diffWorkingTree(repo, "HEAD");
+
+    const calls = fullPatchDiffCalls();
+
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      const diffIdx = call.args.indexOf("diff");
+
+      expect(call.args.slice(diffIdx, diffIdx + 4)).toEqual([
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--end-of-options",
+      ]);
+    }
+
+    // No ANSI escape codes despite color.diff=always, and identical patch between
+    // diffRunWorkspace and diffRange (shared sha: cache coherence).
+    expect(wsDiff.text).not.toMatch(/\u001b\[/);
+    expect(rangeDiff.text).not.toMatch(/\u001b\[/);
+    expect(wtDiff.text).not.toMatch(/\u001b\[/);
+    expect(wsDiff.text).toBe(rangeDiff.text);
+    expect(wtDiff.text).toContain("+hello world updated");
+  });
 });

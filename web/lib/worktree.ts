@@ -727,7 +727,13 @@ export async function diffRunWorkspace(
   );
   const baseCommit = validate(gitCommitSchema, args.baseCommit, "baseCommit");
   const branch = validate(branchNameSchema, args.branch, "branch");
-  const diffArgs = ["diff", "--no-ext-diff", `${baseCommit}..${branch}`];
+  const diffArgs = [
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--end-of-options",
+    `${baseCommit}..${branch}`,
+  ];
   const label = "git diff";
 
   log.debug(
@@ -2378,7 +2384,13 @@ function prepareDiffRange(args: DiffRangeArgs) {
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
   const base = validate(gitRefSchema, args.baseRef, "baseRef");
   const br = validate(branchNameSchema, args.branch, "branch");
-  const diffArgs = ["diff", "--no-color", "--end-of-options", `${base}..${br}`];
+  const diffArgs = [
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--end-of-options",
+    `${base}..${br}`,
+  ];
 
   return { wt, base, br, diffArgs };
 }
@@ -2418,6 +2430,7 @@ export async function diffRangeBounded(
     diffArgs,
     maxBytes,
     `git diff ${base}..${br}`,
+    cLocaleGitEnv(),
   );
 }
 
@@ -2439,6 +2452,7 @@ async function streamGitTruncatedTo(
       const child = spawn("git", ["-C", repo, ...args], {
         signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
         env: env ?? process.env,
+        stdio: ["ignore", "pipe", "pipe"],
       });
 
       let bytes = 0;
@@ -2535,6 +2549,7 @@ export async function logRangeBounded(
     ["log", "--oneline", "--no-color", "--end-of-options", `${base}..${br}`],
     maxBytes,
     `git log ${base}..${br}`,
+    cLocaleGitEnv(),
   );
 }
 
@@ -2622,7 +2637,13 @@ export async function diffWorkingTree(
   log.debug({ worktreePath: wt, baseRef: base }, "diffWorkingTree");
 
   return await withIntentToAddTempIndex(wt, async (env) => {
-    const diffArgs = ["diff", "--no-color", "--end-of-options", base];
+    const diffArgs = [
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--end-of-options",
+      base,
+    ];
     const label = `git diff ${base}`;
     const { text, truncated } = await streamGitTruncatedTo(
       wt,

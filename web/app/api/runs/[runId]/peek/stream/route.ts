@@ -3,10 +3,14 @@ import "server-only";
 import type { PeekFrame } from "@/lib/runs/peek-stream-contract";
 import type { PeekHint } from "@/lib/runs/peek-wake";
 
+import { inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { requireActiveSession } from "@/lib/authz";
+import { getDb } from "@/lib/db/client";
+import { runs } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 import { parsePeekRunId, peekFailure, peekQuery } from "@/lib/runs/peek-http";
 import { authorizePeekRun, peekPath } from "@/lib/runs/peek-read-model";
 import { subscribePeekChanges } from "@/lib/runs/peek-wake";
@@ -47,7 +51,12 @@ function peekHintSkipReason(
   ) {
     return "unrelated_top_level_run";
   }
+  const reparented =
+    hint.previousParentRunId !== null &&
+    hint.previousParentRunId !== hint.parentRunId;
+
   if (
+    !reparented &&
     hint.rootRunId !== null &&
     hint.rootRunId !== anchorRoot &&
     hint.runId !== anchor &&
@@ -66,6 +75,28 @@ function isHintPotentiallyRelevant(
   scope: PeekHintScope,
 ): boolean {
   return peekHintSkipReason(hint, scope) === null;
+}
+
+async function hasGovernedPeekRun(runIds: readonly string[]): Promise<boolean> {
+  if (runIds.length === 0) return false;
+  const rows = await getDb()
+    .select({
+      isGoverned: sql<boolean>`COALESCE(
+        ${runs.companyId} IS NOT NULL
+        OR ${runs.knowledgeAccess} IS NOT NULL
+        OR ${runs.resultContract}->>'nativeContract' = ${FINDINGS_CONTRACT}
+        OR EXISTS (
+          SELECT 1 FROM agent_memory_injections memory
+          WHERE memory.run_id = ${runs.id}
+            AND memory.application_state <> 'retired'
+        ),
+        false
+      )`,
+    })
+    .from(runs)
+    .where(inArray(runs.id, [...runIds]));
+
+  return rows.some((row) => row.isGoverned === true);
 }
 
 async function belongs(
@@ -101,6 +132,9 @@ export async function GET(
       (await belongs(user.id, anchor, requested))
         ? requested
         : null;
+    let governedScope =
+      anchorAccess.run.companyId !== null ||
+      (await hasGovernedPeekRun(selected ? [anchor, selected] : [anchor]));
     let lastAuthCheckedAt = Date.now();
     let hintsProcessed = 0;
     let hintsSkippedPreDb = 0;
@@ -111,12 +145,6 @@ export async function GET(
     const pending = new Map<string, PeekHint>();
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     let release: (() => Promise<void>) | null = null;
-    const send = (frame: PeekFrame): void => {
-      if (!closed && controller)
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
-        );
-    };
     const cleanup = async (): Promise<void> => {
       if (closed) return;
       closed = true;
@@ -133,10 +161,27 @@ export async function GET(
       );
     };
     const finish = (): void => {
-      if (!closed) controller?.close();
+      if (!closed) {
+        try {
+          controller?.close();
+        } catch {
+          // Controller may already be closed or errored on client disconnect.
+        }
+      }
       void cleanup().catch((err: unknown) =>
         log.error({ err }, "peek stream cleanup failed"),
       );
+    };
+    const send = (frame: PeekFrame): void => {
+      if (!closed && controller) {
+        try {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
+          );
+        } catch {
+          finish();
+        }
+      }
     };
     const abort = (): void => finish();
     const recheckAccess = async (): Promise<void> => {
@@ -148,6 +193,11 @@ export async function GET(
           selected = null;
           send({ type: "peek.selection_unavailable" });
         }
+        governedScope =
+          anchorAccess.run.companyId !== null ||
+          (await hasGovernedPeekRun([anchor]));
+      } else if (!governedScope) {
+        governedScope = await hasGovernedPeekRun([anchor, selected]);
       }
       lastAuthCheckedAt = Date.now();
     };
@@ -178,6 +228,7 @@ export async function GET(
           }
           hintsProcessed += 1;
           if (
+            governedScope ||
             hint.topic === "summary" ||
             Date.now() - lastAuthCheckedAt >= AUTH_RECHECK_INTERVAL_MS
           ) {
@@ -238,7 +289,7 @@ export async function GET(
           send({ type: "peek.resync", reason: "transport" });
         }
         pending.set(
-          `${hint.topic}:${hint.runId}:${hint.previousParentRunId ?? ""}`,
+          `${hint.source}:${hint.topic}:${hint.runId}:${hint.previousParentRunId ?? ""}`,
           hint,
         );
         void drain();
@@ -250,7 +301,10 @@ export async function GET(
       },
     );
     if (request.signal.aborted || lost) {
-      await release();
+      const owned = release;
+
+      release = null;
+      if (owned) await owned();
 
       return new Response(null, { status: 503 });
     }
@@ -269,7 +323,12 @@ export async function GET(
             : "none",
         });
         heartbeat = setInterval(() => {
-          if (!closed) owned.enqueue(encoder.encode(": heartbeat\n\n"));
+          if (closed) return;
+          try {
+            owned.enqueue(encoder.encode(": heartbeat\n\n"));
+          } catch {
+            finish();
+          }
         }, 15000);
         void drain();
       },

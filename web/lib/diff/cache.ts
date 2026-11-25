@@ -1,7 +1,6 @@
 import "server-only";
 
 import type { DiffPrepResult } from "@/lib/diff/prepare";
-import type { DiffFileEntry } from "@/lib/worktree";
 
 import pino from "pino";
 
@@ -14,8 +13,15 @@ export const DIFF_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 
 const MAX_SINGLE_ENTRY_BYTES = DIFF_CACHE_MAX_BYTES / 2;
 
+export type CachedDiffFile = {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+};
+
 export type PreparedDiffCacheEntry = {
-  files: DiffFileEntry[];
+  files: CachedDiffFile[];
   prepared: DiffPrepResult;
   preparedJson: string;
   byteSize: number;
@@ -78,6 +84,13 @@ export function setCachedPreparedDiff(
 ): void {
   if (!Number.isFinite(entry.byteSize) || entry.byteSize < 0) return;
 
+  const existing = cache.get(key);
+
+  if (existing) {
+    totalBytes -= existing.byteSize;
+    cache.delete(key);
+  }
+
   if (entry.byteSize > MAX_SINGLE_ENTRY_BYTES) {
     log.debug(
       {
@@ -90,13 +103,6 @@ export function setCachedPreparedDiff(
     );
 
     return;
-  }
-
-  const existing = cache.get(key);
-
-  if (existing) {
-    totalBytes -= existing.byteSize;
-    cache.delete(key);
   }
 
   while (totalBytes + entry.byteSize > DIFF_CACHE_MAX_BYTES && cache.size > 0) {

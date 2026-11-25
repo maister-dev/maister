@@ -1,5 +1,6 @@
 "use client";
 
+import type { CoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import type { ReactElement } from "react";
 
 import { useEffect, useRef } from "react";
@@ -11,6 +12,7 @@ import {
 } from "@/components/feedback/run-stream-liveness";
 import { useWorkbenchStream } from "@/components/runs/run-workbench-stream-provider";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
+import { createCoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import { runViewKey, shouldRefreshRunView } from "@/lib/runs/live-refresh";
 
@@ -38,6 +40,7 @@ export function RunLiveRefresh({
 }): ReactElement | null {
   const router = useRouter();
   const workbench = useWorkbenchStream();
+  const hasWorkbench = Boolean(workbench);
   const live = isLiveRunStatus(runStatus);
   const { eventCount, liveness, reconnect } = useRunPageStream(runId, live);
   const seenRef = useRef<string | null>(
@@ -52,7 +55,7 @@ export function RunLiveRefresh({
   useEffect(() => {
     metadataRef.current = metadataVersion;
   }, [metadataVersion]);
-  const scheduleRef = useRef<(() => void) | null>(null);
+  const refresherRef = useRef<CoalescedRefresher | null>(null);
 
   // A completed server re-render delivers fresh props — adopt them as the new
   // baseline so the next transition (not this one) triggers the following
@@ -62,83 +65,66 @@ export function RunLiveRefresh({
   }, [runId, runStatus, currentStepId]);
 
   useEffect(() => {
-    if (!live && !workbench) return;
+    if (!live && !hasWorkbench) return;
 
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let inFlight = false;
-    let pending = false;
+    const refresher = createCoalescedRefresher({
+      intervalMs: REFRESH_COALESCE_MS,
+      run: async (signal) => {
+        try {
+          if (
+            metadataRef.current !== "legacy" &&
+            metadataRef.current !== seenMetadataRef.current
+          ) {
+            seenMetadataRef.current = metadataRef.current;
+            router.refresh();
 
-    function schedule(): void {
-      if (controller.signal.aborted) return;
-      pending = true;
-      if (timer !== null || inFlight) return;
+            return;
+          }
+          const res = await fetch(`/api/runs/${runId}/graph-status`, {
+            signal,
+          });
 
-      timer = setTimeout(() => void checkStatus(), REFRESH_COALESCE_MS);
-    }
+          if (!res.ok) return;
+          const snap = (await res.json()) as {
+            runStatus?: string | null;
+            currentStepId?: string | null;
+          };
 
-    async function checkStatus(): Promise<void> {
-      timer = null;
-      pending = false;
-      inFlight = true;
-      try {
-        if (
-          metadataRef.current !== "legacy" &&
-          metadataRef.current !== seenMetadataRef.current
-        ) {
-          seenMetadataRef.current = metadataRef.current;
-          router.refresh();
-
-          return;
+          if (signal.aborted) return;
+          if (
+            metadataRef.current !== seenMetadataRef.current ||
+            seenRef.current === null ||
+            shouldRefreshRunView(seenRef.current, snap)
+          ) {
+            seenRef.current = runViewKey(snap);
+            seenMetadataRef.current = metadataRef.current;
+            router.refresh();
+          }
+        } catch {
+          /* a transient status refetch failure retries on the next tick */
         }
-        const res = await fetch(`/api/runs/${runId}/graph-status`, {
-          signal: controller.signal,
-        });
+      },
+    });
 
-        if (!res.ok) return;
-        const snap = (await res.json()) as {
-          runStatus?: string | null;
-          currentStepId?: string | null;
-        };
-
-        if (controller.signal.aborted) return;
-        if (
-          metadataRef.current !== seenMetadataRef.current ||
-          seenRef.current === null ||
-          shouldRefreshRunView(seenRef.current, snap)
-        ) {
-          seenRef.current = runViewKey(snap);
-          seenMetadataRef.current = metadataRef.current;
-          router.refresh();
-        }
-      } catch {
-        /* a transient status refetch failure retries on the next tick */
-      } finally {
-        inFlight = false;
-        if (pending) schedule();
-      }
-    }
-
-    scheduleRef.current = schedule;
+    refresherRef.current = refresher;
 
     return () => {
-      controller.abort();
-      if (timer !== null) clearTimeout(timer);
-      scheduleRef.current = null;
+      refresher.dispose();
+      refresherRef.current = null;
     };
-  }, [live, runId, router, !!workbench]);
+  }, [live, runId, router, hasWorkbench]);
 
   useEffect(() => {
-    if (liveness === "live" && !workbench) seenRef.current = null;
-  }, [liveness, runId, !!workbench]);
+    if (liveness === "live" && !hasWorkbench) seenRef.current = null;
+  }, [liveness, runId, hasWorkbench]);
 
   useEffect(() => {
-    if ((live || workbench) && (eventCount > 0 || liveness === "live")) {
-      scheduleRef.current?.();
+    if ((live || hasWorkbench) && (eventCount > 0 || liveness === "live")) {
+      refresherRef.current?.trigger();
     }
-  }, [eventCount, live, liveness, runId, !!workbench]);
+  }, [eventCount, live, liveness, runId, hasWorkbench]);
 
-  if (!live && !workbench) return null;
+  if (!live && !hasWorkbench) return null;
 
   return (
     <RunStreamLiveness

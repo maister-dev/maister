@@ -9,8 +9,17 @@ import {
 } from "@git-diff-view/core";
 import pino from "pino";
 
+import {
+  extractHeaderBodyLines,
+  filterDiffByPath,
+  parseOldPath,
+  parsePath,
+  splitSections,
+} from "@/lib/diff/sections";
 import { shikiDiffHighlighter } from "@/lib/diff/shiki-adapter";
 import { langFromPath, preloadDiffLangs } from "@/lib/highlight/shiki";
+
+export { filterDiffByPath };
 
 const log = pino({
   name: "diff-prepare",
@@ -78,47 +87,6 @@ type ParsedSection = {
   syntaxLines: number;
 };
 
-// A unified diff is concatenated per-file sections, each starting with
-// "diff --git a/<old> b/<new>". Mirrors extractFileSection's split regex.
-function splitSections(rawDiff: string): string[] {
-  // Strip only leading whitespace (for the startsWith filter) and the
-  // trailing "\n" terminator(s) of git stdout — never a blanket trim(): the
-  // physical last data line may carry significant trailing bytes (spaces, or
-  // the "\r" of a CRLF file) that anchor byte-exactness depends on.
-  const trimmed = rawDiff.replace(/^\s+/, "").replace(/\n+$/, "");
-
-  if (trimmed.length === 0) return [];
-
-  return trimmed
-    .split(/\n(?=diff --git )/)
-    .filter((s) => s.startsWith("diff --git"));
-}
-
-function repoRelPath(p: string): string {
-  if (p.startsWith("a/") || p.startsWith("b/")) return p.slice(2);
-
-  return p;
-}
-
-function parsePath(headerLine: string): string {
-  // "diff --git a/<old> b/<new>" — take the new (b/) path, the last token.
-  const match = headerLine.match(/ b\/(.+)$/);
-
-  if (match) return match[1];
-
-  const tokens = headerLine.split(" ");
-
-  return repoRelPath(tokens[tokens.length - 1] ?? "");
-}
-
-function parseOldPath(headerLine: string): string | undefined {
-  const match = headerLine.match(/^diff --git a\/(.+) b\/(.+)$/);
-
-  if (match) return match[1];
-
-  return undefined;
-}
-
 function deriveStatus(section: string): string {
   if (/^new file mode /m.test(section)) return "A";
   if (/^deleted file mode /m.test(section)) return "D";
@@ -157,9 +125,11 @@ function countChanges(section: string): {
 }
 
 function parseSection(section: string): ParsedSection {
-  const headerLine = section.split("\n", 1)[0];
-  const path = parsePath(headerLine);
-  const oldPath = parseOldPath(headerLine);
+  const headerNl = section.indexOf("\n");
+  const headerLine = headerNl === -1 ? section : section.slice(0, headerNl);
+  const bodyLines = extractHeaderBodyLines(section);
+  const path = parsePath(headerLine, bodyLines);
+  const oldPath = parseOldPath(headerLine, bodyLines);
   const status = deriveStatus(section);
   const { additions, deletions, syntaxLines } = countChanges(section);
 
@@ -174,18 +144,6 @@ function summarizeSections(sections: ParsedSection[]): DiffFileSummary[] {
     additions: s.additions,
     deletions: s.deletions,
   }));
-}
-
-export function filterDiffByPath(
-  rawDiff: string,
-  includePath: (path: string, oldPath: string | undefined) => boolean,
-): string {
-  const sections = splitSections(rawDiff)
-    .map(parseSection)
-    .filter((section) => includePath(section.path, section.oldPath))
-    .map((section) => section.section);
-
-  return sections.length > 0 ? `${sections.join("\n")}\n` : "";
 }
 
 export function prepareDiffSummary(
@@ -322,8 +280,18 @@ export async function prepareDiff(
   let highlightedFiles = 0;
   let plaintextFallbackFiles = 0;
   const langsToPreload = new Set<string>();
+  const perFileSyntaxCap = shikiDiffHighlighter.maxLineToIgnoreSyntax;
 
   const sectionPlans = sections.map((section) => {
+    // A single oversized file (e.g. lockfile) exceeds Shiki's per-file cap and
+    // would skip highlighting anyway: downgrade only this file without charging
+    // the shared budget or starving subsequent small source files.
+    if (section.syntaxLines > perFileSyntaxCap) {
+      plaintextFallbackFiles += 1;
+
+      return { section, fileLang: "plaintext", usePlaintext: true };
+    }
+
     const detectedLang = langFromPath(section.path);
     const fitsBudget =
       !budgetExhausted &&

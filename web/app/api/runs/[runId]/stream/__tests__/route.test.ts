@@ -115,6 +115,12 @@ const requireActiveSessionMock = vi.fn(async () => ({
   accountStatus: "active",
   mustChangePassword: false,
 }));
+const requireActiveUserByIdMock = vi.fn(async () => ({
+  id: "user-1",
+  role: "member",
+  accountStatus: "active",
+  mustChangePassword: false,
+}));
 const requireProjectRoleMock = vi.fn(async () => ({
   user: { id: "user-1" },
   role: "viewer",
@@ -146,6 +152,8 @@ vi.mock("@/lib/db/client", () => ({
 vi.mock("@/lib/authz", () => ({
   requireActiveSession: (...args: unknown[]) =>
     requireActiveSessionMock(...(args as [])),
+  requireActiveUserById: (...args: unknown[]) =>
+    requireActiveUserByIdMock(...(args as [])),
   requireProjectRole: (...args: unknown[]) =>
     requireProjectRoleMock(...(args as [])),
   requireProjectRoleForUser: (...args: unknown[]) =>
@@ -307,6 +315,12 @@ beforeEach(() => {
   dbState.eventSelects = [];
 
   requireActiveSessionMock.mockResolvedValue({
+    id: "user-1",
+    role: "member",
+    accountStatus: "active",
+    mustChangePassword: false,
+  });
+  requireActiveUserByIdMock.mockResolvedValue({
     id: "user-1",
     role: "member",
     accountStatus: "active",
@@ -726,5 +740,179 @@ describe("GET /api/runs/[runId]/stream", () => {
     expect(dbState.eventSelects.length).toBeGreaterThanOrEqual(2);
     expect(dbState.eventSelects[0].whereParams).toContain(-1n);
     expect(dbState.eventSelects[1].whereParams).toContain(1n);
+  });
+
+  it("promotes mid-stream vault enrollment to governed and blocks post-revocation batches with 0 leaked frames", async () => {
+    const runId = "run-vault-enroll";
+
+    dbState.runRow = {
+      ...dbState.runRow!,
+      id: runId,
+      isGoverned: false,
+    };
+    dbState.eventBatches.push([makeEventRow(1n)]);
+
+    const res = await route.GET(
+      createRequest(`http://localhost/api/runs/${runId}/stream`),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    // First batch emitted before vault enrollment: only initial GET disclosure check ran.
+    const firstChunk = await reader.read();
+
+    expect(firstChunk.done).toBe(false);
+    expect(parseSseFrames(decoder.decode(firstChunk.value))).toHaveLength(1);
+    await waitForWakeWaiter(runId);
+    expect(assertRunKnowledgeDisclosureMock).toHaveBeenCalledTimes(1);
+
+    // Mid-stream vault enrollment occurs while stream is open (< 2,500 ms elapsed).
+    dbState.runRow = { ...dbState.runRow!, isGoverned: true };
+    dbState.eventBatches.push([makeEventRow(2n)]);
+    vi.advanceTimersByTime(50);
+    runEventWakeBus.wake(runId);
+
+    const secondChunk = await reader.read();
+
+    expect(secondChunk.done).toBe(false);
+    const secondFrames = parseSseFrames(decoder.decode(secondChunk.value));
+
+    expect(secondFrames).toHaveLength(1);
+    expect(secondFrames[0].id).toBe("2");
+    await waitForWakeWaiter(runId);
+    // Mid-stream promotion ran assertRunKnowledgeDisclosure BEFORE emitting seq 2.
+    expect(assertRunKnowledgeDisclosureMock).toHaveBeenCalledTimes(2);
+
+    // Revoke disclosure before seq 3 arrives -> stream closes with 0 leaked frames.
+    assertRunKnowledgeDisclosureMock.mockRejectedValueOnce(
+      new MaisterError("PRECONDITION", "Knowledge source unavailable", {
+        details: { reason: "knowledge_reference_unavailable" },
+      }),
+    );
+    dbState.eventBatches.push([makeEventRow(3n)]);
+    vi.advanceTimersByTime(50);
+    runEventWakeBus.wake(runId);
+
+    const revokedRead = await reader.read();
+
+    expect(revokedRead).toEqual({ done: true, value: undefined });
+    expect(assertRunKnowledgeDisclosureMock).toHaveBeenCalledTimes(3);
+    reader.releaseLock();
+  });
+
+  it("verifies auth before enqueueing final events on a terminal iteration of an ordinary project run", async () => {
+    const runId = "run-terminal-preauth";
+
+    dbState.runRow = {
+      ...dbState.runRow!,
+      id: runId,
+      isGoverned: false,
+      status: "Running",
+    };
+
+    const res = await route.GET(
+      createRequest(`http://localhost/api/runs/${runId}/stream`),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(res.status).toBe(200);
+    await waitForWakeWaiter(runId);
+
+    // Revoke project access while run transitions to Done with a final outgoing event,
+    // all within < 2,500 ms of connect so only the terminal auth check would catch it.
+    requireProjectRoleForUserMock.mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "Project role revoked"),
+    );
+    dbState.runRow = { ...dbState.runRow!, status: "Done" };
+    dbState.eventBatches.push([makeEventRow(1n)]);
+
+    vi.advanceTimersByTime(600);
+    runEventWakeBus.wake(runId);
+    await flushImmediate();
+
+    const frames = parseSseFrames(await res.text());
+
+    expect(frames).toHaveLength(0);
+    expect(requireProjectRoleForUserMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("checks requireActiveUserById in verifyStreamAuth for projectless runs and terminates when user becomes inactive", async () => {
+    const runId = "run-projectless-revoke";
+
+    dbState.runRow = {
+      id: runId,
+      runKind: "librarian",
+      status: "Running",
+      currentStepId: null,
+      projectId: null,
+      companyId: null,
+      createdByUserId: "user-1",
+      localPackageId: null,
+      isGoverned: false,
+    };
+    dbState.latestSequence = 0n;
+
+    const res = await route.GET(
+      createRequest(`http://localhost/api/runs/${runId}/stream?replay=false`),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const readyChunk = await reader.read();
+
+    expect(new TextDecoder().decode(readyChunk.value)).toContain(
+      "session.stream_ready",
+    );
+    await waitForWakeWaiter(runId);
+
+    // Periodic recheck while user is active -> calls requireActiveUserById("user-1").
+    for (let elapsed = 0; elapsed < 2_500; elapsed += 500) {
+      await vi.advanceTimersByTimeAsync(500);
+      await flushImmediate();
+    }
+    await waitForWakeWaiter(runId);
+    expect(requireActiveUserByIdMock).toHaveBeenCalledWith("user-1");
+
+    // Deactivate account -> next periodic recheck terminates stream cleanly.
+    requireActiveUserByIdMock.mockRejectedValueOnce(
+      new MaisterError("ACCOUNT_INACTIVE", "Account is not active"),
+    );
+    const nextRead = reader.read();
+
+    for (let elapsed = 0; elapsed < 2_500; elapsed += 500) {
+      await vi.advanceTimersByTimeAsync(500);
+      await flushImmediate();
+    }
+
+    await expect(nextRead).resolves.toEqual({ done: true, value: undefined });
+    reader.releaseLock();
+  });
+
+  it("releases runEventWakeBus waiter immediately on reader.cancel() without request abort", async () => {
+    const runId = "run-reader-cancel";
+
+    dbState.runRow = { ...dbState.runRow!, id: runId };
+    dbState.latestSequence = 0n;
+
+    const res = await route.GET(
+      createRequest(`http://localhost/api/runs/${runId}/stream?replay=false`),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+
+    await reader.read();
+    await waitForWakeWaiter(runId);
+    expect(runEventWakeBus.waiterCount(runId)).toBe(1);
+
+    await reader.cancel("client_closed");
+    await flushImmediate();
+
+    expect(runEventWakeBus.waiterCount(runId)).toBe(0);
   });
 });

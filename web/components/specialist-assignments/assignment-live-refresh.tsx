@@ -26,6 +26,13 @@ export function AssignmentLiveRefresh({
   const router = useRouter();
   const { eventCount, liveness } = useRunStream(runId, { retain: false });
   const [unavailable, setUnavailable] = useState(false);
+  const scope = `${assignmentId}:${runId ?? ""}`;
+  const [trackedScope, setTrackedScope] = useState(scope);
+
+  if (trackedScope !== scope) {
+    setTrackedScope(scope);
+    setUnavailable(false);
+  }
   const revisionRef = useRef(revision);
   const refresherRef = useRef<CoalescedRefresher | null>(null);
 
@@ -34,7 +41,7 @@ export function AssignmentLiveRefresh({
   }, [revision]);
 
   useEffect(() => {
-    if (!runId || liveness !== "live") return;
+    if (!runId) return;
 
     const refresher = createCoalescedRefresher({
       intervalMs: ASSIGNMENT_REFRESH_COALESCE_MS,
@@ -75,7 +82,7 @@ export function AssignmentLiveRefresh({
       refresher.dispose();
       refresherRef.current = null;
     };
-  }, [assignmentId, runId, router, liveness]);
+  }, [assignmentId, runId, router]);
 
   useEffect(() => {
     if (!runId || liveness !== "live") return;

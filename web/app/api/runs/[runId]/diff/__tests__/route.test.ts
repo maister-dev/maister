@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireProjectAction } from "@/lib/authz";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import {
   hitlRequests as hitlRequestsTable,
   nodeAttempts as nodeAttemptsTable,
@@ -18,6 +19,7 @@ import {
   diffRunWorkspace,
   diffWorkingTree,
   resolveBaseRef,
+  resolveRefSha,
 } from "@/lib/worktree";
 
 // M22 Phase 5 (T5.2, RED): the diff route now dispatches on `run.runKind`.
@@ -262,6 +264,12 @@ beforeEach(() => {
   vi.mocked(resolveBaseRef).mockResolvedValue(
     "resolvedbase0000000000000000000000000000",
   );
+  vi.mocked(resolveRefSha).mockClear();
+  vi.mocked(resolveRefSha).mockResolvedValue(
+    "refsha00000000000000000000000000000000000",
+  );
+  vi.mocked(assertRunKnowledgeDisclosure).mockClear();
+  vi.mocked(assertRunKnowledgeDisclosure).mockResolvedValue(undefined);
   vi.mocked(requireProjectAction).mockClear();
   vi.mocked(requireProjectAction).mockResolvedValue({
     user: {
@@ -483,7 +491,7 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
     expect(body.diff).toContain("diff --git");
   });
 
-  it("computes the flow diff over workspace.worktreePath, not parentRepoPath", async () => {
+  it("computes the flow diff over workspace.worktreePath using the resolved headSha, not parentRepoPath", async () => {
     const runId = seedFlowRun();
 
     await invokeGet(runId);
@@ -491,12 +499,12 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
     expect(diffRunWorkspace).toHaveBeenCalledWith({
       projectRepoPath: "/repos/demo/.maister/wt-1",
       baseCommit: "feedbeef",
-      branch: "maister/feature-x",
+      branch: "refsha00000000000000000000000000000000000",
     });
     expect(diffNameStatus).toHaveBeenCalledWith({
       worktreePath: "/repos/demo/.maister/wt-1",
       baseRef: "feedbeef",
-      branch: "maister/feature-x",
+      branch: "refsha00000000000000000000000000000000000",
     });
   });
 
@@ -528,7 +536,7 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
     expect(diffRunWorkspace).toHaveBeenCalledWith({
       projectRepoPath: "/repos/demo/.maister/wt-1",
       baseCommit: "resolvedbase0000000000000000000000000000",
-      branch: "maister/feature-x",
+      branch: "refsha00000000000000000000000000000000000",
     });
   });
 
@@ -621,5 +629,137 @@ describe("GET /api/runs/[runId]/diff — opt-in ?raw=1 & prepared LRU cache (PER
     expect(rawBody.perFile).toEqual(defaultBody.perFile);
     expect(diffNameStatus).toHaveBeenCalledTimes(1);
     expect(prepareDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles prepare-failed by omitting diff by default, including diff on ?raw=1, and never caching the failed prep", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(prepareDiff).mockRejectedValueOnce(new Error("shiki exploded"));
+
+    const failedDefaultRes = await invokeGet(runId);
+    const failedDefaultBody = (await failedDefaultRes.json()) as Record<
+      string,
+      unknown
+    >;
+
+    expect(failedDefaultRes.status).toBe(200);
+    expect(failedDefaultBody.renderUnavailableReason).toBe("prepare-failed");
+    expect("diff" in failedDefaultBody).toBe(false);
+    expect(failedDefaultBody.perFile).toEqual([]);
+
+    vi.mocked(prepareDiff).mockRejectedValueOnce(new Error("shiki exploded"));
+
+    const failedRawRes = await invokeGet(runId, "?raw=1");
+    const failedRawBody = (await failedRawRes.json()) as Record<
+      string,
+      unknown
+    >;
+
+    expect(failedRawRes.status).toBe(200);
+    expect(failedRawBody.renderUnavailableReason).toBe("prepare-failed");
+    expect(failedRawBody.diff).toContain("diff --git");
+    expect(failedRawBody.perFile).toEqual([]);
+
+    // Neither failed response was cached: next request runs prepareDiff and succeeds.
+    const recoveredRes = await invokeGet(runId);
+    const recoveredBody = (await recoveredRes.json()) as Record<
+      string,
+      unknown
+    >;
+
+    expect(recoveredRes.status).toBe(200);
+    expect(recoveredBody.renderUnavailableReason).toBeNull();
+    expect(prepareDiff).toHaveBeenCalledTimes(3);
+  });
+
+  it("enforces project authz and knowledge disclosure denial even on a warm cache hit", async () => {
+    const runId = seedFlowRun();
+
+    // Warm the cache.
+    const warmRes = await invokeGet(runId);
+
+    expect(warmRes.status).toBe(200);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    // Project authz denial on warm cache hit -> 403.
+    vi.mocked(requireProjectAction).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "revoked access"),
+    );
+    const deniedAuthRes = await invokeGet(runId);
+
+    expect(deniedAuthRes.status).toBe(403);
+
+    // Knowledge disclosure denial on warm cache hit -> 403.
+    vi.mocked(assertRunKnowledgeDisclosure).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "knowledge disclosure denied"),
+    );
+    const deniedDisclosureRes = await invokeGet(runId);
+
+    expect(deniedDisclosureRes.status).toBe(403);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces readScratchRun before loading scratch workspace rows so unauthorized callers get 403 instead of 409", async () => {
+    const runId = seedScratchRun({ removedAt: new Date() });
+
+    vi.mocked(requireProjectAction).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "not a project member"),
+    );
+
+    const res = await invokeGet(runId);
+
+    expect(res.status).toBe(403);
+    expect(diffWorkingTree).not.toHaveBeenCalled();
+  });
+
+  it("invalidates the SHA cache when headSha advances", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(resolveRefSha).mockResolvedValueOnce(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    const firstRes = await invokeGet(runId);
+
+    expect(firstRes.status).toBe(200);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    vi.mocked(resolveRefSha).mockResolvedValueOnce(
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    );
+    const secondRes = await invokeGet(runId);
+
+    expect(secondRes.status).toBe(200);
+    expect(diffRunWorkspace).toHaveBeenCalledTimes(2);
+    expect(diffNameStatus).toHaveBeenCalledTimes(2);
+    expect(prepareDiff).toHaveBeenCalledTimes(2);
+    expect(diffRunWorkspace).toHaveBeenLastCalledWith({
+      projectRepoPath: "/repos/demo/.maister/wt-1",
+      baseCommit: "feedbeef",
+      branch: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    });
+    expect(diffNameStatus).toHaveBeenLastCalledWith({
+      worktreePath: "/repos/demo/.maister/wt-1",
+      baseRef: "feedbeef",
+      branch: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    });
+  });
+
+  it("reuses review: and content: cache entries without re-running prepareDiff", async () => {
+    const runId = seedFlowRun();
+
+    const firstReview = await invokeGet(runId, "?scope=review");
+    const secondReview = await invokeGet(runId, "?scope=review");
+
+    expect(firstReview.status).toBe(200);
+    expect(secondReview.status).toBe(200);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    const firstUncommitted = await invokeGet(runId, "?scope=uncommitted");
+    const secondUncommitted = await invokeGet(runId, "?scope=uncommitted");
+
+    expect(firstUncommitted.status).toBe(200);
+    expect(secondUncommitted.status).toBe(200);
+    // Uncommitted scope uses content:<sha256>:<truncated> — hits once prepared.
+    expect(prepareDiff).toHaveBeenCalledTimes(2);
   });
 });

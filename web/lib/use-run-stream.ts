@@ -66,7 +66,7 @@ export function useRunStream(
   const sourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
   const lifecycleRef = useRef(initialRunStreamLifecycle);
-  const cursorRunRef = useRef<string | null>(null);
+  const cursorRunRef = useRef<string | null>(runId);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const needsVisibilityCatchUpRef = useRef(false);
   const [reconnectKey, setReconnectKey] = useState(0);
@@ -98,9 +98,15 @@ export function useRunStream(
       cursorRunRef.current = runId;
       lastEventIdRef.current = null;
       needsVisibilityCatchUpRef.current = false;
+      lifecycleRef.current = initialRunStreamLifecycle;
+
+      setError(null);
+      setLastEventId(null);
+      setEvents([]);
+      setEventCount(0);
+      setLiveness(runId ? "connecting" : "closed");
     }
     if (!runId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStatus("closed");
       lifecycleRef.current = advanceRunStreamLifecycle(
         lifecycleRef.current,
@@ -159,6 +165,7 @@ export function useRunStream(
 
       url.searchParams.set("context", "1");
       const es = new EventSource(url.toString());
+      let bumpedOnVisibilityOpen = false;
 
       sourceRef.current = es;
       es.onopen = () => {
@@ -172,6 +179,7 @@ export function useRunStream(
         setError(null);
         if (pauseWhenHidden && needsVisibilityCatchUpRef.current) {
           needsVisibilityCatchUpRef.current = false;
+          bumpedOnVisibilityOpen = true;
           setEventCount((c) => c + 1);
         }
       };
@@ -198,6 +206,14 @@ export function useRunStream(
             setLastEventId(cursor);
           }
           if (parsed.contextUsageOnly === true) return;
+          if (
+            parsed.type === "session.stream_ready" &&
+            bumpedOnVisibilityOpen
+          ) {
+            bumpedOnVisibilityOpen = false;
+
+            return;
+          }
           setEventCount((c) => c + 1);
           if (retain) setEvents((cur) => [...cur, parsed]);
         } catch {

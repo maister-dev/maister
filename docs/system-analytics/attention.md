@@ -142,10 +142,11 @@ sequenceDiagram
   (ADR-171 D7), so the stream scans the gap between rendering and subscribing
   itself. A page that is current is not refreshed at all, and a decision that
   became visible in that gap still ticks. Page navigation does not create
-  duplicate attention connections. Server-side `GET /api/attention/stream` and
-  `librarianStreamFrames` use abort-aware `node:timers/promises` sleeps and
-  remove abort listeners in `finally` (zero listener accumulation; `DEBUG` log on
-  abort exit, Implemented).
+  duplicate attention connections. Server-side `GET /api/attention/stream` uses
+  abort-aware `node:timers/promises` sleeps and removes its abort listener in
+  `finally` (`DEBUG` log on abort exit, Implemented; see
+  [`librarian-conversation.md`](librarian-conversation.md) for the matching
+  librarian stream cleanup).
 - **Invalidate after a form becomes actionable.** The scan includes the
   `run.needs_input` row in `webhook_events`, which commits with the run's parked
   status and is indexed by project and event time. HITL creation can emit its
@@ -163,8 +164,9 @@ sequenceDiagram
   cannot drift apart again (`IT-ATN-05`).
 - **The stream's frame is wider than any consumer.** `AttentionTickEvent`
   carries both counters and the moved `projectIds` because ADR-171 D3 fixes that
-  shape, but the client hook returns only `tick`, `changed`, `liveness` and
-  `reconnect`: the surfaces it serves are server-rendered, a tick becomes
+  shape, but the client hook returns only `tick`, `shellTick`, `changed`,
+  `liveness`, `reviewResync` and `reconnect`: the surfaces it serves are
+  server-rendered, a tick becomes
   `router.refresh()`, and re-exposing the counters client-side would be a second
   source for a number ADR-169 D8 says has exactly one.
 - **One cursor spelling, three readers.** The route that parses
@@ -317,6 +319,7 @@ clients that support this projection.
 - **EDGE-ATN-07:** A project VIEWER, whose `decisions` count is always zero, MUST still be told that `/work` moved. The counter poll cannot serve them — nothing they see moves a number — so the changed-project scan reads the UNION `ATTENTION_PLANE_EVENT_KINDS` plus `node_attempts` of in-flight runs; borrowing the `updates` taxonomy left their page stale while the connection reported Live.
 - **EDGE-ATN-06:** Revocation MUST reach a stream that is already open. Demoting a connected admin ends the see-every-project bypass on the next poll, and an account that stops being active closes the stream with `attention.stream_timeout` / `access_revoked` — neither is bounded by the quiet cap while events keep arriving.
 - **EDGE-ATN-08:** The first connection after a render MUST carry the render's cursor and its `decisions`/`updates` counts, and the stream MUST send no tick to a reader whose render is current. A count that moved, or a row the scan sees past the cursor, MUST still tick. A baseline that does not parse MUST be ignored rather than trusted (ADR-171 D7).
+- **EDGE-PERF-04:** Mounting `useAttentionStream` while `document.visibilityState === "hidden"` opens 0 sockets; hiding an active tab closes its `EventSource` and cancels reconnect timers without incrementing backoff while deferring `AttentionLiveRefresh` `router.refresh()`; returning to `"visible"` reconnects with the last ADR-171 D7 cursor and counters (`decisions`, `updates`, `reviews`, `reviewVersion`), triggers K13 `reviewResync` when a review is watched, and flushes any deferred refresh (Implemented).
 
 ## Linked artifacts
 

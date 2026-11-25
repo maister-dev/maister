@@ -1262,11 +1262,13 @@ Every Run exposes two metrics computed by the pure projection
   without transferring `execution_events.payload` JSONB to Node. In-loop
   authorization uses `requireProjectRoleForUser` (never re-invoking NextAuth
   `auth()`), enforces per-non-empty-batch disclosure/company checks + 2,500 ms
-  idle recheck on enrolled/company/vault runs, rechecks ordinary non-enrolled
-  project runs at most every 2,500 ms and before terminal close, and coalesces
-  context snapshot reads (`500 ms` + settle + terminal watermark) with parallel
-  attempt-id lookups (`api-runs-stream` emits `DEBUG` recheck/context timings
-  and includes `{ authChecks, contextReads }` in `INFO` disconnect logs).
+  idle recheck on enrolled/company/vault runs (including runs dynamically
+  enrolled in a vault mid-stream), rechecks ordinary non-enrolled project runs
+  and projectless active-user ownership at most every 2,500 ms and before
+  terminal batch emission/close, and coalesces context snapshot reads (`500 ms`
+  + settle + terminal watermark) with parallel attempt-id lookups
+  (`api-runs-stream` emits `DEBUG` recheck/context timings and includes
+  `{ authChecks, contextReads }` in `INFO` disconnect logs).
 - **(Designed, FR-A1…A3)** The supervisor MUST persist the **latest**
   `available_commands_update` snapshot per session (last-write-wins) and
   forward command names **verbatim** (no `$`/`/`/`mcp:` rewriting); the
@@ -1363,6 +1365,17 @@ Every Run exposes two metrics computed by the pure projection
 - **Abandon a `Running` run** — supervisor `DELETE /sessions/<id>` (sends
   SIGTERM → grace → SIGKILL), then transitions run to `Abandoned`,
   removes worktree on GC.
+- **`EDGE-PERF-01` (Malformed JSONB `contextUsageOnly` / non-object `update`)** —
+  non-boolean `contextUsageOnly` values (`"yes"`, `123`, `[]`, `null`) or
+  non-object `update` payloads in `execution_events.payload` evaluate to
+  `contextUsageOnly = false` in SQL without raising PostgreSQL `22P02`, and
+  `contextUsageOnly` is omitted from emitted canonical SSE frames (Implemented).
+- **`EDGE-PERF-02` (Mid-stream vault enrollment, user deactivation, and governed revocation)** —
+  a run dynamically enrolled in a vault mid-stream promotes to per-batch
+  disclosure verification; revoking a company/knowledge/vault grant or
+  deactivating a projectless run's owner closes an open `/api/runs/[runId]/stream`
+  before emitting the next batch (or within `2,500 ms` while idle) without
+  retaining DB locks (Implemented).
 
 ## Keep-alive + checkpoint + resume
 

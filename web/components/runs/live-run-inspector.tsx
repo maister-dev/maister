@@ -66,15 +66,29 @@ export function LiveRunInspector({
   ...rest
 }: LiveRunInspectorProps): ReactElement {
   const live = isLiveRunStatus(runStatus);
-  const [changeSummary, setChangeSummary] =
-    useState<RunInspectorChangeSummary | null>(initialChangeSummary);
-  const [stale, setStale] = useState(false);
-  const [cost, setCost] = useState<RunCostSummary | null>(
-    liveCost?.initial ?? null,
-  );
+  const summaryKey = `${rest.runId}:${changeScope}`;
+  const [liveSummaryOverride, setLiveSummaryOverride] = useState<{
+    key: string;
+    value: RunInspectorChangeSummary;
+  } | null>(null);
+  const [staleKey, setStaleKey] = useState<string | null>(null);
+  const [liveCostOverride, setLiveCostOverride] = useState<{
+    runId: string;
+    value: RunCostSummary;
+  } | null>(null);
   const [nowMs, setNowMs] = useState<number | null>(null);
   const { eventCount, context } = useRunPageStream(rest.runId, live);
   const changeSummaryRefresherRef = useRef<CoalescedRefresher | null>(null);
+
+  const changeSummary =
+    live && liveSummaryOverride?.key === summaryKey
+      ? liveSummaryOverride.value
+      : initialChangeSummary;
+  const stale = live && staleKey === summaryKey;
+  const cost =
+    live && liveCostOverride?.runId === rest.runId
+      ? liveCostOverride.value
+      : (liveCost?.initial ?? null);
 
   useEffect(() => {
     if (!live) return;
@@ -90,18 +104,18 @@ export function LiveRunInspector({
 
           if (signal.aborted) return;
           if (!res.ok) {
-            setStale(true);
+            setStaleKey(summaryKey);
 
             return;
           }
           const nextSummary = (await res.json()) as RunInspectorChangeSummary;
 
           if (signal.aborted) return;
-          setChangeSummary(nextSummary);
-          setStale(false);
+          setLiveSummaryOverride({ key: summaryKey, value: nextSummary });
+          setStaleKey(null);
         } catch {
           if (signal.aborted) return;
-          setStale(true);
+          setStaleKey(summaryKey);
         }
       },
     });
@@ -112,7 +126,7 @@ export function LiveRunInspector({
       refresher.dispose();
       changeSummaryRefresherRef.current = null;
     };
-  }, [live, changeScope, rest.runId]);
+  }, [live, changeScope, rest.runId, summaryKey]);
 
   useEffect(() => {
     if (!live || eventCount === 0) return;
@@ -141,7 +155,7 @@ export function LiveRunInspector({
           const nextCost = (await res.json()) as RunCostSummary;
 
           if (signal.aborted) return;
-          setCost(nextCost);
+          setLiveCostOverride({ runId: rest.runId, value: nextCost });
         } catch {
           // keep last good cost
         }
@@ -162,9 +176,17 @@ export function LiveRunInspector({
     costRefresherRef.current?.trigger();
   }, [eventCount, live, hasLiveCost]);
 
+  const wallClockStartedAtMs = liveWallClock?.startedAtMs;
+  const wallClockEndedAtMs = liveWallClock?.endedAtMs;
+
   // Tick elapsed wall-clock once a second while the run is live and unfinished.
   useEffect(() => {
-    if (!live || !liveWallClock || liveWallClock.endedAtMs !== null) return;
+    if (
+      !live ||
+      wallClockStartedAtMs === undefined ||
+      wallClockEndedAtMs !== null
+    )
+      return;
 
     const tick = (): void => setNowMs(Date.now());
     const first = setTimeout(tick, 0);
@@ -174,7 +196,7 @@ export function LiveRunInspector({
       clearTimeout(first);
       clearInterval(id);
     };
-  }, [live, liveWallClock]);
+  }, [live, wallClockStartedAtMs, wallClockEndedAtMs]);
 
   const liveFacts = useMemo<RunInspectorFact[]>(() => {
     const overrides = new Map<string, string>();

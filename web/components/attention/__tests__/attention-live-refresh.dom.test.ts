@@ -348,7 +348,7 @@ describe("app attention refresh", () => {
     expect(router.refresh).not.toHaveBeenCalled();
 
     // A frame buffered right as the tab turns hidden updates the cursor/counters
-    // while router.refresh() is suppressed until the tab returns to visible.
+    // while router.refresh() and review invalidation are suppressed until visible.
     setVisibilityState("hidden");
     act(() =>
       first.tick(["decisions", "reviews"], {
@@ -360,6 +360,7 @@ describe("app attention refresh", () => {
       }),
     );
     expect(router.refresh).not.toHaveBeenCalled();
+    expect(container.querySelector("output")?.textContent).toBe("1");
 
     // Dispatching visibilitychange closes the active EventSource cleanly.
     act(() => document.dispatchEvent(new Event("visibilitychange")));
@@ -368,9 +369,10 @@ describe("app attention refresh", () => {
     expect(AttentionEventSource.sources).toHaveLength(countAfterMount);
 
     // Returning to visible reconnects with the last cursor/counters, flushes the
-    // deferred router.refresh(), and triggers K13 reviewResync on open.
+    // deferred router.refresh() and review invalidation, and triggers K13 reviewResync on open.
     act(() => transitionVisibility("visible"));
     expect(router.refresh).toHaveBeenCalledOnce();
+    expect(container.querySelector("output")?.textContent).toBe("2");
     expect(AttentionEventSource.sources).toHaveLength(countAfterMount + 1);
 
     const resumed = AttentionEventSource.sources.at(-1)!;
@@ -459,5 +461,153 @@ describe("app attention refresh", () => {
     act(() => shared.tick(["work"]));
     expect(router.refresh).toHaveBeenCalledOnce();
     expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it("issues 0 mount refreshes for TaskLaunchIntentStatus under an already-live AttentionStreamProvider with tick > 0, refreshes once on a new tick, and stops once complete", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    setVisibilityState("visible");
+    root = createRoot(container);
+
+    const onRefresh = vi.fn(async () => {});
+    const queuedReceipt = {
+      schemaVersion: 1 as const,
+      intentId: "intent-1",
+      taskId: "task-1",
+      state: "queued" as const,
+      stateVersion: 1,
+      basis: "manual" as const,
+      acceptedAt: "2026-11-03T09:00:00.000Z",
+      taskRevision: 1,
+      inputRevision: 1,
+      settingsDigest: "a".repeat(64),
+      runId: null,
+      reason: null,
+      queueReason: "capacity" as const,
+      snapshot: {
+        kind: "flow" as const,
+        workspace: "worktree" as const,
+        flowId: "flow-1",
+        flowRevisionId: "rev-1",
+        agentId: null,
+        runnerIds: ["claude"],
+        baseCommit: "b".repeat(40),
+        targetBranch: "main",
+        promotionMode: "local_merge" as const,
+        autoPromote: false,
+      },
+    };
+    const since = {
+      cursor: "1789387100000",
+      decisions: 1,
+      updates: 2,
+    };
+
+    const renderWithStatus = (
+      showStatus: boolean,
+      receipt:
+        | typeof queuedReceipt
+        | (Omit<typeof queuedReceipt, "state"> & {
+            state: "settled";
+          }) = queuedReceipt,
+    ): void => {
+      act(() =>
+        root.render(
+          createElement(
+            AttentionReviewProvider,
+            null,
+            createElement(
+              AttentionStreamProvider,
+              { since },
+              createElement(AttentionLiveRefresh, { labels }),
+              showStatus
+                ? createElement(TaskLaunchIntentStatus, {
+                    receipt,
+                    busy: false,
+                    uncertain: false,
+                    errorReason: null,
+                    onRefresh,
+                    onRetryRequest: async () => {},
+                    onCancel: async () => {},
+                    onReplace: () => {},
+                    onNewLaunch: () => {},
+                  })
+                : null,
+            ),
+          ),
+        ),
+      );
+    };
+
+    renderWithStatus(false);
+    const shared = AttentionEventSource.sources[0];
+
+    act(() => shared.onopen?.());
+    act(() => shared.tick(["work"], { id: "1789387200001" }));
+
+    // Mount TaskLaunchIntentStatus after the shared stream is already live with tick > 0.
+    renderWithStatus(true);
+    expect(onRefresh).toHaveBeenCalledTimes(0);
+
+    // A new tick arriving after mount triggers exactly 1 refresh.
+    act(() => shared.tick(["work"], { id: "1789387200002" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // Once the receipt is complete, further ticks do not trigger automatic refreshes.
+    renderWithStatus(true, { ...queuedReceipt, state: "settled" });
+    act(() => shared.tick(["work"], { id: "1789387200003" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a single EventSource when AttentionStreamProvider re-renders with a fresh since object", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    setVisibilityState("visible");
+    root = createRoot(container);
+
+    act(() =>
+      root.render(
+        createElement(
+          AttentionReviewProvider,
+          null,
+          createElement(
+            AttentionStreamProvider,
+            {
+              since: {
+                cursor: "1789387100000",
+                decisions: 1,
+                updates: 2,
+              },
+            },
+            createElement(AttentionLiveRefresh, { labels }),
+          ),
+        ),
+      ),
+    );
+
+    expect(AttentionEventSource.sources).toHaveLength(1);
+
+    // Simulate AppLayout re-rendering after router.refresh() with a fresh `since` object.
+    act(() =>
+      root.render(
+        createElement(
+          AttentionReviewProvider,
+          null,
+          createElement(
+            AttentionStreamProvider,
+            {
+              since: {
+                cursor: "1789387199999",
+                decisions: 2,
+                updates: 3,
+              },
+            },
+            createElement(AttentionLiveRefresh, { labels }),
+          ),
+        ),
+      ),
+    );
+
+    expect(AttentionEventSource.sources).toHaveLength(1);
   });
 });

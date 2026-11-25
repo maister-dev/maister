@@ -404,6 +404,69 @@ describe("scratch live refresh and recovery (PERF-07, PERF-08, EDGE-PERF-05)", (
     expect(detailRefreshes.length).toBeLessThanOrEqual(5);
   });
 
+  it("keeps a user-visible error alert intact across incoming 20 Hz SSE ticks", async () => {
+    recoverRefusal = "Failed";
+    dialogStatus = "Crashed";
+    runStatus = "Crashed";
+    await render();
+    await act(async () => {});
+
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent === "recover")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {});
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      en.scratch.recoverRefused.Failed,
+    );
+
+    for (let tick = 0; tick < 10; tick += 1) {
+      stream.eventCount += 1;
+      await render();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    }
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      en.scratch.recoverRefused.Failed,
+    );
+  });
+
+  it("fetches project capability-catalog at most once during a 20 Hz SSE burst", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    await render();
+    await act(async () => {});
+
+    for (let tick = 0; tick < 20; tick += 1) {
+      stream.eventCount += 1;
+      await render();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    }
+
+    const detailRefreshes = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url === "/api/scratch-runs/run-1" &&
+        (init?.method === undefined || init.method === "GET"),
+    );
+    const catalogFetches = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/capability-catalog"),
+    );
+    const commandFetches = fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith("/commands"),
+    );
+
+    expect(detailRefreshes.length).toBeGreaterThanOrEqual(4);
+    expect(catalogFetches.length).toBeLessThanOrEqual(1);
+    expect(commandFetches.length).toBeLessThanOrEqual(1);
+  });
+
   it("calls router.refresh() after a successful recover() on a Crashed run", async () => {
     dialogStatus = "Crashed";
     runStatus = "Crashed";

@@ -54,10 +54,16 @@ export function AttentionLiveRefresh({
   }, []);
 
   useEffect(() => {
-    if (seenReviewResync.current === reviewResync) return;
+    if (
+      (typeof document !== "undefined" &&
+        document.visibilityState === "hidden") ||
+      seenReviewResync.current === reviewResync
+    ) {
+      return;
+    }
     seenReviewResync.current = reviewResync;
     invalidateReview?.();
-  }, [invalidateReview, reviewResync]);
+  }, [invalidateReview, reviewResync, visibilityRev]);
 
   useEffect(() => {
     if (

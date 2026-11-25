@@ -353,6 +353,12 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
 - **Summary absent or empty while open threads exist** → the composed value
   is the threads section alone (no leading blank line); zero threads + no
   summary → nothing is injected (pre-feature behavior).
+- **Unified-diff hunk parsing edge cases (`EDGE-PERF-09`, Implemented)** →
+  `parseDiffLineIndex` (`web/lib/diff/line-index.ts`) preserves CRLF `\r` and
+  significant trailing spaces on data lines, handles `\ No newline at end of
+  file` on old/new/both sides, decodes C-quoted paths (`web/lib/diff/sections.ts`),
+  ignores binary patches safely, and skips malformed hunk headers with a `WARN`
+  log while remaining byte-identical to `prepareDiff` line lookups.
 
 ## Flow Review Workspace source and claim (Implemented — ADR-138)
 
@@ -446,6 +452,8 @@ sequenceDiagram
   evidence), [`workbench.md`](workbench.md) (diff view).
 - Source (Implemented): `web/lib/review-comments/service.ts` (authz-free
   service), `web/lib/review-comments/anchor.ts` (extraction + placement),
+  `web/lib/diff/sections.ts` (shared unified-diff section splitting & path decoding),
+  `web/lib/diff/line-index.ts` (Shiki-free hunk line indexer),
   `web/lib/review-comments/serialize.ts` (compose),
   `web/lib/review-comments/order.ts` (frozen thread ordering),
   `web/lib/review-comments/dto.ts` (wire DTO projection + code→HTTP map),

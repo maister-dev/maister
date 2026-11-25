@@ -2,6 +2,12 @@ import "server-only";
 
 import pino from "pino";
 
+import {
+  extractHeaderBodyLines,
+  parsePath,
+  splitSections,
+} from "@/lib/diff/sections";
+
 const log = pino({
   name: "diff-line-index",
   level: process.env.LOG_LEVEL ?? "info",
@@ -25,49 +31,6 @@ type HunkStart = {
   oldStart: number;
   newStart: number;
 };
-
-// Mirrors `splitSections` in `web/lib/diff/prepare.ts`: strip only leading
-// whitespace and trailing "\n" terminator(s) — never a blanket trim(), so
-// significant trailing spaces or a CRLF line's "\r" stay intact.
-function splitSections(rawDiff: string): string[] {
-  const leadingTrimmed = rawDiff.replace(/^\s+/, "");
-  let end = leadingTrimmed.length;
-
-  while (end > 0 && leadingTrimmed.charCodeAt(end - 1) === 10) {
-    end -= 1;
-  }
-
-  const trimmed =
-    end === leadingTrimmed.length
-      ? leadingTrimmed
-      : leadingTrimmed.slice(0, end);
-
-  if (trimmed.length === 0) return [];
-
-  return trimmed
-    .split(/\n(?=diff --git )/)
-    .filter((section) => section.startsWith("diff --git"));
-}
-
-function repoRelPath(rawPath: string): string {
-  if (rawPath.startsWith("a/") || rawPath.startsWith("b/")) {
-    return rawPath.slice(2);
-  }
-
-  return rawPath;
-}
-
-// Mirrors `parsePath` in `web/lib/diff/prepare.ts` so anchor file-path keys
-// match what `prepareDiff` emits for the rendered diff view.
-function parsePath(headerLine: string): string {
-  const match = headerLine.match(/ b\/(.+)$/);
-
-  if (match) return match[1];
-
-  const tokens = headerLine.split(" ");
-
-  return repoRelPath(tokens[tokens.length - 1] ?? "");
-}
 
 function parseHunkHeader(line: string): HunkStart | null {
   const match = HUNK_HEADER_RE.exec(line);
@@ -95,7 +58,7 @@ function indexSectionLines(section: string, path: string): FileLineIndex {
   let newLine = 0;
   let pos = headerNl + 1;
 
-  while (pos <= section.length) {
+  while (pos < section.length) {
     const nl = section.indexOf("\n", pos);
     const lineEnd = nl === -1 ? section.length : nl;
     const line = section.slice(pos, lineEnd);
@@ -172,7 +135,8 @@ export function parseDiffLineIndex(
   for (const section of sections) {
     const headerNl = section.indexOf("\n");
     const headerLine = headerNl === -1 ? section : section.slice(0, headerNl);
-    const path = parsePath(headerLine);
+    const bodyLines = extractHeaderBodyLines(section);
+    const path = parsePath(headerLine, bodyLines);
 
     if (files.has(path)) continue;
 

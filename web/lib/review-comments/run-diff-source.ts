@@ -15,7 +15,7 @@ import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { projects, runs, workspaces } from "@/lib/db/schema";
 import { parseDiffLineIndex } from "@/lib/diff/line-index";
-import { filterDiffByPath } from "@/lib/diff/prepare";
+import { filterDiffByPath } from "@/lib/diff/sections";
 import { MaisterError } from "@/lib/errors";
 import { computePlacement } from "@/lib/review-comments/anchor";
 import { listThreads } from "@/lib/review-comments/service";
