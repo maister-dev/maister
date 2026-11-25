@@ -30,11 +30,6 @@
 // `ReviewActionAlert`) with a stubbed global fetch — the container glue stays
 // a thin composition of exactly these helpers.
 
-import type {
-  ReviewCommentDto,
-  ReviewThread,
-} from "@/components/workbench/diff-view";
-
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -45,6 +40,11 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+import {
+  DiffView,
+  type ReviewCommentDto,
+  type ReviewThread,
+} from "@/components/workbench/diff-view";
 import RunDiff, {
   buildDiffViewReview,
   ChangedFilesList,
@@ -58,6 +58,7 @@ import RunDiff, {
   type RunDiffLabels,
   type RunDiffReviewContext,
 } from "@/components/workbench/run-diff";
+import { MAX_TOTAL_SYNTAX_LINES, prepareDiff } from "@/lib/diff/prepare";
 
 // The changed-files entry gains `additions`/`deletions` for the per-file `+`/`−`
 // badges (server-computed in prepareDiff; ADR-066 T2.3/T2.5).
@@ -692,5 +693,58 @@ describe("ReviewActionAlert — review error surface", () => {
 
     expect(html).toContain('role="alert"');
     expect(html).toContain("review.error: review gate is not open");
+  });
+});
+
+function buildAddedTsDiffSection(path: string, lineCount: number): string {
+  const lines = Array.from(
+    { length: lineCount },
+    (_, index) => `+export const line_${index + 1} = ${index + 1};`,
+  );
+
+  return [
+    `diff --git a/${path} b/${path}`,
+    "new file mode 100644",
+    "index 0000000..1111111",
+    "--- /dev/null",
+    `+++ b/${path}`,
+    `@@ -0,0 +1,${lineCount} @@`,
+    ...lines,
+  ].join("\n");
+}
+
+describe("DiffView — syntax-budget downgraded plaintext hydration (EDGE-PERF-07)", () => {
+  it("renders a MAX_TOTAL_SYNTAX_LINES-downgraded plaintext file bundle cleanly without errors", async () => {
+    const rawDiff = [
+      buildAddedTsDiffSection("src/leading.ts", 10),
+      buildAddedTsDiffSection("src/overflow.ts", MAX_TOTAL_SYNTAX_LINES),
+      buildAddedTsDiffSection("src/trailing.ts", 5),
+    ].join("\n");
+
+    const prepared = await prepareDiff(rawDiff);
+    const trailingSummary = prepared.files.find(
+      (file) => file.path === "src/trailing.ts",
+    );
+    const trailingPrepared = prepared.perFile.find(
+      (file) => file.path === "src/trailing.ts",
+    );
+
+    expect(trailingSummary).toBeDefined();
+    expect(trailingPrepared).toBeDefined();
+    expect(trailingPrepared?.fileLang).toBe("plaintext");
+
+    const html = renderToStaticMarkup(
+      createElement(DiffView, {
+        files: [trailingSummary!],
+        perFile: [trailingPrepared!],
+        labels: RUN_DIFF_LABELS,
+      }),
+    );
+
+    expect(html).toContain('data-testid="diff-view-rich"');
+    expect(html).toContain("src/trailing.ts");
+    expect(html).toContain("export const line_1 = 1;");
+    expect(html).not.toContain('data-testid="diff-view-empty"');
+    expect(html).not.toContain('data-testid="diff-view-body-unavailable"');
   });
 });

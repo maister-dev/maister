@@ -10,6 +10,8 @@ import {
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
+import { clearPreparedDiffCache } from "@/lib/diff/cache";
+import { prepareDiff } from "@/lib/diff/prepare";
 import { MaisterError } from "@/lib/errors";
 import {
   diffNameStatus,
@@ -114,6 +116,15 @@ vi.mock("@/lib/authz", () => ({
   })),
 }));
 
+vi.mock("@/lib/diff/prepare", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/diff/prepare")>();
+
+  return {
+    ...actual,
+    prepareDiff: vi.fn(actual.prepareDiff),
+  };
+});
+
 vi.mock("@/lib/worktree", () => ({
   diffRunWorkspace: vi.fn(async () => ({
     text: "diff --git a/file.txt b/file.txt\n",
@@ -210,10 +221,10 @@ function seedFlowRun(
   return runId;
 }
 
-async function invokeGet(runId: string) {
+async function invokeGet(runId: string, query = "") {
   const { GET } = await import("../route");
   const req = new NextRequest(
-    new Request(`http://localhost/api/runs/${runId}/diff`, {
+    new Request(`http://localhost/api/runs/${runId}/diff${query}`, {
       method: "GET",
     }),
   );
@@ -222,6 +233,7 @@ async function invokeGet(runId: string) {
 }
 
 beforeEach(() => {
+  clearPreparedDiffCache();
   dbState.tables = {
     runs: [],
     scratch_runs: [],
@@ -230,6 +242,7 @@ beforeEach(() => {
     hitl_requests: [],
     node_attempts: [],
   };
+  vi.mocked(prepareDiff).mockClear();
   vi.mocked(diffRunWorkspace).mockClear();
   vi.mocked(diffRunWorkspace).mockResolvedValue({
     text: "diff --git a/file.txt b/file.txt\n",
@@ -265,7 +278,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
   it("returns the server-derived scratch branch diff", async () => {
     const runId = seedScratchRun({ targetBranch: "release" });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as {
       diff?: string;
       sourceBranch?: string;
@@ -298,7 +311,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
   it("includes a prepared files/perFile summary in scratch diff responses", async () => {
     const runId = seedScratchRun();
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as {
       files?: {
         path: string;
@@ -319,7 +332,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
     ]);
     expect(Array.isArray(body.perFile)).toBe(true);
     expect(body.scope).toBe("run");
-    // The raw diff string is preserved for backward compatibility.
+    // Opt-in ?raw=1 returns the raw diff string alongside prepared files/perFile.
     expect(body.diff).toContain("diff --git");
   });
 
@@ -332,7 +345,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
       nameStatus: [],
     });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as {
       files?: unknown[];
       perFile?: unknown[];
@@ -354,7 +367,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
       nameStatus: [{ path: "file.txt", status: "M" }],
     });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as { truncated?: boolean; diff?: string };
 
     expect(res.status).toBe(200);
@@ -371,7 +384,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
       nameStatus: [],
     });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as { diff?: string };
 
     expect(res.status).toBe(200);
@@ -407,7 +420,7 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
   it("returns 200 with diff + files + sourceBranch + baseCommit for a flow run", async () => {
     const runId = seedFlowRun();
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as {
       runId?: string;
       baseCommit?: string;
@@ -460,7 +473,7 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
       truncated: true,
     });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as { truncated?: boolean; diff?: string };
 
     expect(res.status).toBe(200);
@@ -549,5 +562,64 @@ describe("GET /api/runs/[runId]/diff — missing run (M22)", () => {
     expect(res.status).toBe(404);
     expect(requireProjectAction).not.toHaveBeenCalled();
     expect(diffRunWorkspace).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/runs/[runId]/diff — opt-in ?raw=1 & prepared LRU cache (PERF-13, PERF-14)", () => {
+  it("omits raw diff by default while returning prepared files and perFile", async () => {
+    const runId = seedFlowRun();
+
+    const res = await invokeGet(runId);
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect("diff" in body).toBe(false);
+    expect(body.files).toEqual([
+      { path: "file.txt", status: "M", additions: 0, deletions: 0 },
+    ]);
+    expect(Array.isArray(body.perFile)).toBe(true);
+  });
+
+  it("hits the SHA LRU cache on a second default request without re-reading git or re-running prepareDiff", async () => {
+    const runId = seedFlowRun();
+
+    const firstRes = await invokeGet(runId);
+    const firstBody = (await firstRes.json()) as Record<string, unknown>;
+    const secondRes = await invokeGet(runId);
+    const secondBody = (await secondRes.json()) as Record<string, unknown>;
+
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect("diff" in firstBody).toBe(false);
+    expect("diff" in secondBody).toBe(false);
+    expect(secondBody.files).toEqual(firstBody.files);
+    expect(secondBody.perFile).toEqual(firstBody.perFile);
+    expect(diffRunWorkspace).toHaveBeenCalledTimes(1);
+    expect(diffNameStatus).toHaveBeenCalledTimes(1);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns raw diff on follow-up ?raw=1 while reusing the cached prepared bundle (EDGE-PERF-08)", async () => {
+    const runId = seedFlowRun();
+
+    const defaultRes = await invokeGet(runId);
+    const defaultBody = (await defaultRes.json()) as Record<string, unknown>;
+
+    expect(defaultRes.status).toBe(200);
+    expect("diff" in defaultBody).toBe(false);
+
+    const rawRes = await invokeGet(runId, "?raw=1");
+    const rawBody = (await rawRes.json()) as {
+      diff?: string;
+      files?: unknown[];
+      perFile?: unknown[];
+    };
+
+    expect(rawRes.status).toBe(200);
+    expect(rawBody.diff).toContain("diff --git");
+    expect(rawBody.files).toEqual(defaultBody.files);
+    expect(rawBody.perFile).toEqual(defaultBody.perFile);
+    expect(diffNameStatus).toHaveBeenCalledTimes(1);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
   });
 });

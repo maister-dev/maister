@@ -130,6 +130,7 @@ import {
   isRunKnowledgeUnavailable,
 } from "@/lib/brain/knowledge-run-disclosure";
 import { RunSourceUnavailable } from "@/components/runs/run-source-unavailable";
+import { getCachedPreparedDiff, setCachedPreparedDiff } from "@/lib/diff/cache";
 import { prepareDiff } from "@/lib/diff/prepare";
 import { reposRoot, worktreesRoot } from "@/lib/instance-config";
 import {
@@ -167,6 +168,7 @@ import {
   diffRange,
   resolveBaseCommit,
   resolveBaseRef,
+  resolveRefSha,
   statusPorcelain,
 } from "@/lib/worktree";
 import { RunSyncAttempt } from "@/components/runs/run-sync-attempt";
@@ -270,12 +272,37 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
     }
   }
 
-  const { text: rawDiff, truncated } = await diffRange({
-    worktreePath: detail.worktreePath,
-    baseRef: diffBaseRef,
-    branch: detail.branch,
-  });
-  const diff = await prepareDiff(rawDiff, truncated);
+  const headSha = await resolveRefSha(detail.worktreePath, detail.branch).catch(
+    () => null,
+  );
+  const cacheKey = headSha
+    ? `sha:${detail.worktreePath}:${diffBaseRef}:${headSha}`
+    : null;
+  const cached = cacheKey ? getCachedPreparedDiff(cacheKey) : undefined;
+  let diff: ReviewPanelDiff;
+
+  if (cached) {
+    diff = cached.prepared;
+  } else {
+    const { text: rawDiff, truncated } = await diffRange({
+      worktreePath: detail.worktreePath,
+      baseRef: diffBaseRef,
+      branch: detail.branch,
+    });
+    const prepared = await prepareDiff(rawDiff, truncated);
+
+    diff = prepared;
+    if (cacheKey) {
+      const preparedJson = JSON.stringify(prepared.perFile);
+
+      setCachedPreparedDiff(cacheKey, {
+        files: prepared.files,
+        prepared,
+        preparedJson,
+        byteSize: Buffer.byteLength(preparedJson, "utf8"),
+      });
+    }
+  }
 
   // The live target HEAD this surface is reviewed against — carried into the
   // promote payload as the optimistic-concurrency drift token (§3.7). Drift is

@@ -187,9 +187,19 @@ function seedTables(
   tables.scratch_runs = [];
 }
 
-async function getDiff(runId: string, scope?: string): Promise<Response> {
+async function getDiff(
+  runId: string,
+  scope?: string,
+  opts?: { raw?: boolean },
+): Promise<Response> {
   const { GET } = await import("@/app/api/runs/[runId]/diff/route");
-  const url = `http://x/api/runs/${runId}/diff${scope ? `?scope=${scope}` : ""}`;
+  const params = new URLSearchParams();
+
+  if (scope) params.set("scope", scope);
+  if (opts?.raw) params.set("raw", "1");
+
+  const query = params.toString();
+  const url = `http://x/api/runs/${runId}/diff${query ? `?${query}` : ""}`;
 
   return GET(new Request(url), {
     params: Promise.resolve({ runId }),
@@ -207,26 +217,44 @@ afterAll(async () => {
 });
 
 describe("GET /api/runs/{runId}/diff?scope= (ADR-082)", () => {
-  it("default scope=run diffs baseCommit..branch and reports the availability map", async () => {
+  it("default scope=run omits raw diff, warms the SHA cache, and serves raw diff with ?raw=1", async () => {
     const runId = "run-scope-default";
     const fx = await buildFixture(runId);
 
     seedTables(fx, runId);
 
-    const res = await getDiff(runId);
+    const defaultRes = await getDiff(runId);
 
-    expect(res.status).toBe(200);
+    expect(defaultRes.status).toBe(200);
 
-    const body = (await res.json()) as Record<string, any>;
+    const defaultBody = (await defaultRes.json()) as Record<string, any>;
 
-    expect(body.scope).toBe("run");
-    expect(body.baseCommit).toBe(fx.baseSha);
-    expect(body.diff).toContain("a1.txt");
-    expect(body.diff).toContain("a2.txt");
-    expect(body.scopes.run.available).toBe(true);
-    expect(body.scopes["since-last-review"].available).toBe(true);
-    expect(body.scopes["last-node"].available).toBe(true);
-    expect(body.scopes.uncommitted.available).toBe(true);
+    expect(defaultBody.scope).toBe("run");
+    expect(defaultBody.baseCommit).toBe(fx.baseSha);
+    expect("diff" in defaultBody).toBe(false);
+    expect(
+      defaultBody.files.map((file: { path: string }) => file.path),
+    ).toEqual(expect.arrayContaining(["a1.txt", "a2.txt"]));
+    expect(Array.isArray(defaultBody.perFile)).toBe(true);
+    expect(defaultBody.scopes.run.available).toBe(true);
+    expect(defaultBody.scopes["since-last-review"].available).toBe(true);
+    expect(defaultBody.scopes["last-node"].available).toBe(true);
+    expect(defaultBody.scopes.uncommitted.available).toBe(true);
+
+    const { getCachedPreparedDiff } = await import("@/lib/diff/cache");
+
+    expect(
+      getCachedPreparedDiff(`sha:${fx.worktree}:${fx.baseSha}:${fx.headSha}`),
+    ).toBeDefined();
+
+    const rawRes = await getDiff(runId, undefined, { raw: true });
+
+    expect(rawRes.status).toBe(200);
+
+    const rawBody = (await rawRes.json()) as Record<string, any>;
+
+    expect(rawBody.diff).toContain("a1.txt");
+    expect(rawBody.diff).toContain("a2.txt");
   });
 
   it("rejects an unknown scope with 400 CONFIG (allow-list)", async () => {
@@ -247,7 +275,7 @@ describe("GET /api/runs/{runId}/diff?scope= (ADR-082)", () => {
 
     seedTables(fx, runId);
 
-    const res = await getDiff(runId, "since-last-review");
+    const res = await getDiff(runId, "since-last-review", { raw: true });
 
     expect(res.status).toBe(200);
 
@@ -283,7 +311,7 @@ describe("GET /api/runs/{runId}/diff?scope= (ADR-082)", () => {
 
     seedTables(fx, runId);
 
-    const res = await getDiff(runId, "last-node");
+    const res = await getDiff(runId, "last-node", { raw: true });
 
     expect(res.status).toBe(200);
 
@@ -320,7 +348,7 @@ describe("GET /api/runs/{runId}/diff?scope= (ADR-082)", () => {
     await writeFile(join(fx.worktree, "a2.txt"), "attempt-2 modified\n");
     await writeFile(join(fx.worktree, "new-untracked.txt"), "fresh\n");
 
-    const res = await getDiff(runId, "uncommitted");
+    const res = await getDiff(runId, "uncommitted", { raw: true });
 
     expect(res.status).toBe(200);
 
@@ -346,7 +374,7 @@ describe("GET /api/runs/{runId}/diff?scope= (ADR-082)", () => {
     await writeFile(join(fx.worktree, "a2.txt"), "attempt-2 unstaged\n");
     await writeFile(join(fx.worktree, "untracked-review.txt"), "untracked\n");
 
-    const res = await getDiff(runId, "review");
+    const res = await getDiff(runId, "review", { raw: true });
 
     expect(res.status).toBe(200);
 

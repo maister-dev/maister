@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
@@ -8,6 +10,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import * as schemaModule from "@/lib/db/schema";
+import { getCachedPreparedDiff, setCachedPreparedDiff } from "@/lib/diff/cache";
 import {
   filterDiffByPath,
   prepareDiff,
@@ -131,6 +134,129 @@ type ScopeAvailability = Record<
 type PreparedDiffResult =
   | { prepared: DiffPrepResult; renderUnavailableReason: null }
   | { prepared: DiffPrepResult; renderUnavailableReason: "prepare-failed" };
+
+type EnrichedDiffFile = {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+};
+
+function enrichDiffFiles(
+  nameStatus: DiffFileEntry[],
+  prepared: DiffPrepResult,
+): EnrichedDiffFile[] {
+  const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
+
+  return nameStatus.map((entry) => {
+    const counts = countsByPath.get(entry.path);
+
+    return {
+      path: entry.path,
+      status: entry.status,
+      additions: counts?.additions ?? 0,
+      deletions: counts?.deletions ?? 0,
+    };
+  });
+}
+
+function contentCacheKey(diff: string, truncated: boolean): string {
+  const digest = createHash("sha256").update(diff).digest("hex");
+
+  return `content:${digest}:${truncated}`;
+}
+
+// Splice pre-serialized `perFile` JSON directly into the envelope so cache hits
+// never re-stringify the syntax bundles (PERF-14).
+function assembleDiffHttpJson(
+  envelopeWithoutPerFile: Record<string, unknown>,
+  perFileJson: string,
+  rawDiff?: string,
+): string {
+  const payload =
+    rawDiff !== undefined
+      ? { ...envelopeWithoutPerFile, diff: rawDiff }
+      : envelopeWithoutPerFile;
+  const serializedEnvelope = JSON.stringify(payload);
+
+  if (serializedEnvelope === "{}") {
+    return `{"perFile":${perFileJson}}`;
+  }
+
+  return `${serializedEnvelope.slice(0, -1)},"perFile":${perFileJson}}`;
+}
+
+function readCommitRangeDiff(input: {
+  scope: "run" | "since-last-review" | "last-node";
+  worktreePath: string;
+  base: string;
+  branch: string;
+}): Promise<{ text: string; truncated: boolean }> {
+  return input.scope === "run"
+    ? diffRunWorkspace({
+        projectRepoPath: input.worktreePath,
+        baseCommit: input.base,
+        branch: input.branch,
+      })
+    : diffRange({
+        worktreePath: input.worktreePath,
+        baseRef: input.base,
+        branch: input.branch,
+      });
+}
+
+async function resolveCachedOrPrepare(input: {
+  cacheKey: string;
+  runId: string;
+  scope: DiffScope;
+  diff: string;
+  truncated: boolean;
+  nameStatus: DiffFileEntry[];
+}): Promise<{
+  files: EnrichedDiffFile[];
+  prepared: DiffPrepResult;
+  preparedJson: string;
+  renderUnavailableReason: "prepare-failed" | null;
+  cacheHit: boolean;
+}> {
+  const cached = getCachedPreparedDiff(input.cacheKey);
+
+  if (cached) {
+    return {
+      files: enrichDiffFiles(input.nameStatus, cached.prepared),
+      prepared: cached.prepared,
+      preparedJson: cached.preparedJson,
+      renderUnavailableReason: null,
+      cacheHit: true,
+    };
+  }
+
+  const { prepared, renderUnavailableReason } = await prepareDiffForResponse({
+    runId: input.runId,
+    scope: input.scope,
+    diff: input.diff,
+    truncated: input.truncated,
+  });
+  const files = enrichDiffFiles(input.nameStatus, prepared);
+  const preparedJson = JSON.stringify(prepared.perFile);
+
+  if (renderUnavailableReason === null) {
+    setCachedPreparedDiff(input.cacheKey, {
+      files,
+      prepared,
+      preparedJson,
+      byteSize: Buffer.byteLength(preparedJson, "utf8"),
+    });
+  }
+
+  return {
+    files,
+    prepared,
+    preparedJson,
+    renderUnavailableReason,
+    cacheHit: false,
+  };
+}
 
 async function prepareDiffForResponse(input: {
   runId: string;
@@ -322,6 +448,7 @@ export async function GET(
   req: Request,
   { params }: RouteParams,
 ): Promise<NextResponse> {
+  const startedAt = performance.now();
   const { runId } = await params;
 
   try {
@@ -329,6 +456,7 @@ export async function GET(
     const recipient = { kind: "user" as const, userId: user.id };
 
     const scope = parseScope(req);
+    const includeRaw = new URL(req.url).searchParams.get("raw") === "1";
 
     const db = getDb() as unknown as Db;
     const run = await loadRun(db, runId);
@@ -360,38 +488,58 @@ export async function GET(
         truncated,
         nameStatus,
       } = await diffWorkingTree(workspace.worktreePath, scratch.baseCommit);
-      // M35 (T3.3): scratch diffs ride the prepared `files`/`perFile` shape the
-      // shared <RunDiff> consumes, while keeping the raw `diff` string for
-      // backward compatibility. Scratch has a single `run` scope (base ->
-      // working tree) — the flow multi-scope base resolution does not apply.
-      const { prepared, renderUnavailableReason } =
-        await prepareDiffForResponse({ runId, scope: "run", diff, truncated });
-      const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
-      const files = nameStatus.map((entry) => {
-        const counts = countsByPath.get(entry.path);
-
-        return {
-          path: entry.path,
-          status: entry.status,
-          additions: counts?.additions ?? 0,
-          deletions: counts?.deletions ?? 0,
-        };
+      const {
+        files,
+        prepared,
+        preparedJson,
+        renderUnavailableReason,
+        cacheHit,
+      } = await resolveCachedOrPrepare({
+        cacheKey: contentCacheKey(diff, truncated),
+        runId,
+        scope: "run",
+        diff,
+        truncated,
+        nameStatus,
       });
 
       await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
-      return NextResponse.json({
-        runId,
-        scope: "run",
-        scopes: { run: { available: true } },
-        baseCommit: scratch.baseCommit,
-        sourceBranch: workspace.branch,
-        targetBranch,
-        diff,
-        truncated: prepared.truncated,
-        files,
-        perFile: prepared.perFile,
-        renderUnavailableReason,
+      const bodyJson = assembleDiffHttpJson(
+        {
+          runId,
+          scope: "run",
+          scopes: { run: { available: true } },
+          baseCommit: scratch.baseCommit,
+          sourceBranch: workspace.branch,
+          targetBranch,
+          truncated: prepared.truncated,
+          files,
+          renderUnavailableReason,
+        },
+        preparedJson,
+        includeRaw ? diff : undefined,
+      );
+      const responseBytes = Buffer.byteLength(bodyJson, "utf8");
+
+      log.debug(
+        {
+          runId,
+          scope: "run",
+          base: scratch.baseCommit,
+          headSha: null,
+          cacheHit,
+          includeRaw,
+          fileCount: files.length,
+          responseBytes,
+          durationMs: Math.round(performance.now() - startedAt),
+        },
+        "[diff-scope] resolved",
+      );
+
+      return new NextResponse(bodyJson, {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
       });
     }
 
@@ -439,10 +587,14 @@ export async function GET(
     }
 
     let base: string;
-    let diff: string;
-    let truncated: boolean;
-    let nameStatus: DiffFileEntry[];
+    let headSha: string | null = null;
     let reviewSourceFingerprint: string | null = null;
+    let files: EnrichedDiffFile[];
+    let prepared: DiffPrepResult;
+    let preparedJson: string;
+    let renderUnavailableReason: "prepare-failed" | null;
+    let cacheHit = false;
+    let rawDiff: string | undefined;
 
     if (scope === "review") {
       base =
@@ -457,19 +609,44 @@ export async function GET(
         baseCommit: base,
       });
 
-      diff = source.diff;
-      truncated = source.truncated;
-      nameStatus = source.nameStatus;
       reviewSourceFingerprint = source.fingerprint;
+      const resolved = await resolveCachedOrPrepare({
+        cacheKey: `review:${source.fingerprint}`,
+        runId,
+        scope,
+        diff: source.diff,
+        truncated: source.truncated,
+        nameStatus: source.nameStatus,
+      });
+
+      files = resolved.files;
+      prepared = resolved.prepared;
+      preparedJson = resolved.preparedJson;
+      renderUnavailableReason = resolved.renderUnavailableReason;
+      cacheHit = resolved.cacheHit;
+      rawDiff = includeRaw ? source.diff : undefined;
     } else if (scope === "uncommitted") {
       base = await headCommit({ worktreePath: workspace.worktreePath });
       const wtDiff = await diffWorkingTree(workspace.worktreePath);
-
-      diff = filterDiffByPath(wtDiff.text, (path, oldPath) =>
+      const diff = filterDiffByPath(wtDiff.text, (path, oldPath) =>
         isReviewableChangeEntry({ path, oldPath }),
       );
-      truncated = wtDiff.truncated;
-      nameStatus = filterReviewableChangeEntries(wtDiff.nameStatus);
+      const nameStatus = filterReviewableChangeEntries(wtDiff.nameStatus);
+      const resolved = await resolveCachedOrPrepare({
+        cacheKey: contentCacheKey(diff, wtDiff.truncated),
+        runId,
+        scope,
+        diff,
+        truncated: wtDiff.truncated,
+        nameStatus,
+      });
+
+      files = resolved.files;
+      prepared = resolved.prepared;
+      preparedJson = resolved.preparedJson;
+      renderUnavailableReason = resolved.renderUnavailableReason;
+      cacheHit = resolved.cacheHit;
+      rawDiff = includeRaw ? diff : undefined;
     } else {
       if (scope === "since-last-review") {
         base = priorReviewTipSha as string;
@@ -485,73 +662,108 @@ export async function GET(
           }));
       }
 
-      const ranged =
-        scope === "run"
-          ? await diffRunWorkspace({
-              projectRepoPath: workspace.worktreePath,
-              baseCommit: base,
-              branch: workspace.branch,
-            })
-          : await diffRange({
-              worktreePath: workspace.worktreePath,
-              baseRef: base,
-              branch: workspace.branch,
-            });
+      headSha = await resolveRefSha(
+        workspace.worktreePath,
+        workspace.branch,
+      ).catch(() => null);
+      const cacheKey = headSha
+        ? `sha:${workspace.worktreePath}:${base}:${headSha}`
+        : null;
+      const cached = cacheKey ? getCachedPreparedDiff(cacheKey) : undefined;
 
-      diff = ranged.text;
-      truncated = ranged.truncated;
-      nameStatus = await diffNameStatus({
-        worktreePath: workspace.worktreePath,
-        baseRef: base,
-        branch: workspace.branch,
-      });
+      if (cached) {
+        cacheHit = true;
+        prepared = cached.prepared;
+        preparedJson = cached.preparedJson;
+        files = enrichDiffFiles(cached.files, cached.prepared);
+        renderUnavailableReason = null;
+
+        if (includeRaw) {
+          const ranged = await readCommitRangeDiff({
+            scope,
+            worktreePath: workspace.worktreePath,
+            base,
+            branch: workspace.branch,
+          });
+
+          rawDiff = ranged.text;
+        }
+      } else {
+        const ranged = await readCommitRangeDiff({
+          scope,
+          worktreePath: workspace.worktreePath,
+          base,
+          branch: workspace.branch,
+        });
+        const nameStatus = await diffNameStatus({
+          worktreePath: workspace.worktreePath,
+          baseRef: base,
+          branch: workspace.branch,
+        });
+        const prep = await prepareDiffForResponse({
+          runId,
+          scope,
+          diff: ranged.text,
+          truncated: ranged.truncated,
+        });
+
+        prepared = prep.prepared;
+        renderUnavailableReason = prep.renderUnavailableReason;
+        files = enrichDiffFiles(nameStatus, prepared);
+        preparedJson = JSON.stringify(prepared.perFile);
+        rawDiff = includeRaw ? ranged.text : undefined;
+
+        if (cacheKey && renderUnavailableReason === null) {
+          setCachedPreparedDiff(cacheKey, {
+            files,
+            prepared,
+            preparedJson,
+            byteSize: Buffer.byteLength(preparedJson, "utf8"),
+          });
+        }
+      }
     }
 
-    const { prepared, renderUnavailableReason } = await prepareDiffForResponse({
-      runId,
-      scope,
-      diff,
-      truncated,
-    });
-    const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
-    const files = nameStatus.map((entry) => {
-      const counts = countsByPath.get(entry.path);
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
-      return {
-        path: entry.path,
-        status: entry.status,
-        additions: counts?.additions ?? 0,
-        deletions: counts?.deletions ?? 0,
-      };
-    });
+    const bodyJson = assembleDiffHttpJson(
+      {
+        runId,
+        scope,
+        scopes,
+        baseCommit: base,
+        sourceBranch: workspace.branch,
+        targetBranch:
+          workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch,
+        reviewSourceFingerprint,
+        truncated: prepared.truncated,
+        files,
+        renderUnavailableReason,
+      },
+      preparedJson,
+      rawDiff,
+    );
+    const responseBytes = Buffer.byteLength(bodyJson, "utf8");
 
     log.debug(
       {
         runId,
         scope,
         base,
+        headSha,
+        cacheHit,
+        includeRaw,
         fileCount: files.length,
+        responseBytes,
+        durationMs: Math.round(performance.now() - startedAt),
         reviewSourceFingerprint,
       },
       "[diff-scope] resolved",
     );
 
-    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
-
-    return NextResponse.json({
-      runId,
-      scope,
-      scopes,
-      baseCommit: base,
-      sourceBranch: workspace.branch,
-      targetBranch:
-        workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch,
-      reviewSourceFingerprint,
-      diff,
-      truncated: prepared.truncated,
-      files,
-      perFile: prepared.perFile,
-      renderUnavailableReason,
+    return new NextResponse(bodyJson, {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
     return errorResponse(err, runId);
