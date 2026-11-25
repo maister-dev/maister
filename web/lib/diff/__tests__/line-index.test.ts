@@ -1,9 +1,9 @@
-// Track 1E (PERF-11, EDGE-PERF-09): parity and edge-case tests for the pure
-// unified-diff line-index parser (`web/lib/diff/line-index.ts`).
+// Parity and edge-case tests for the pure unified-diff line-index parser
+// (`web/lib/diff/line-index.ts`).
 //
 // Verifies byte-for-byte parity against real `prepareDiff` (`@git-diff-view/core`)
-// with `anchor.ts`'s exact trailing-LF normalization so review-comment anchoring
-// can decouple from Shiki WASM without drifting from what the diff view renders.
+// with trailing-LF normalization so review-comment anchoring can decouple from
+// Shiki WASM without drifting from what the diff view renders.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -20,7 +20,8 @@ import {
 
 const withFinalNewline = (lines: string[]): string => `${lines.join("\n")}\n`;
 
-// Mirrors `stripTrailingNewline` in `web/lib/review-comments/anchor.ts`.
+// `@git-diff-view/core` retains each data line's trailing LF; strip only that
+// single LF so line content matches `parseDiffLineIndex` byte-for-byte.
 function stripTrailingLf(text: string): string {
   return text.endsWith("\n") ? text.slice(0, -1) : text;
 }

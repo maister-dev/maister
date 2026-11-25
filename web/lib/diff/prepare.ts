@@ -278,7 +278,8 @@ export async function prepareDiff(
   let syntaxLinesUsed = 0;
   let budgetExhausted = false;
   let highlightedFiles = 0;
-  let plaintextFallbackFiles = 0;
+  let perFileCapFallbackFiles = 0;
+  let budgetFallbackFiles = 0;
   const langsToPreload = new Set<string>();
   const perFileSyntaxCap = shikiDiffHighlighter.maxLineToIgnoreSyntax;
 
@@ -287,7 +288,7 @@ export async function prepareDiff(
     // would skip highlighting anyway: downgrade only this file without charging
     // the shared budget or starving subsequent small source files.
     if (section.syntaxLines > perFileSyntaxCap) {
-      plaintextFallbackFiles += 1;
+      perFileCapFallbackFiles += 1;
 
       return { section, fileLang: "plaintext", usePlaintext: true };
     }
@@ -306,7 +307,7 @@ export async function prepareDiff(
     }
 
     budgetExhausted = true;
-    plaintextFallbackFiles += 1;
+    budgetFallbackFiles += 1;
 
     return { section, fileLang: "plaintext", usePlaintext: true };
   });
@@ -366,6 +367,7 @@ export async function prepareDiff(
   const durationMs = Math.round(performance.now() - startedAt);
   const totalAdditions = files.reduce((n, f) => n + f.additions, 0);
   const totalDeletions = files.reduce((n, f) => n + f.deletions, 0);
+  const plaintextFallbackFiles = perFileCapFallbackFiles + budgetFallbackFiles;
 
   log.debug(
     {
@@ -380,16 +382,31 @@ export async function prepareDiff(
     "prepareDiff",
   );
 
-  if (plaintextFallbackFiles > 0) {
+  if (budgetFallbackFiles > 0) {
     log.info(
       {
         fileCount: files.length,
         highlightedFiles,
         plaintextFallbackFiles,
+        budgetFallbackFiles,
+        perFileCapFallbackFiles,
         maxTotalSyntaxLines: MAX_TOTAL_SYNTAX_LINES,
+        perFileSyntaxCap,
         durationMs,
       },
       "prepareDiff syntax budget exceeded — trailing files downgraded to plaintext",
+    );
+  } else if (perFileCapFallbackFiles > 0) {
+    log.info(
+      {
+        fileCount: files.length,
+        highlightedFiles,
+        plaintextFallbackFiles,
+        perFileCapFallbackFiles,
+        perFileSyntaxCap,
+        durationMs,
+      },
+      "prepareDiff per-file syntax limit exceeded — oversized files downgraded to plaintext",
     );
   }
 

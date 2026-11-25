@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { reconnectDelayMs } from "@/lib/run-stream-controller";
 import { peekFrameSchema } from "@/lib/runs/peek-stream-contract";
+import { subscribeDocumentVisibility } from "@/lib/sse-visibility";
 
 type WorkbenchState = {
   selection: string | null;
@@ -60,8 +61,6 @@ export function useRunWorkbenchStream(
     );
 
     active.current = es;
-    // The effect replaces an externally owned EventSource connection.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState((current) => ({
       ...current,
       selection: selected,
@@ -165,26 +164,25 @@ export function useRunWorkbenchStream(
       }
     };
     es.onerror = () => fail("peek_transport");
-    const visibility = (): void => {
-      if (document.visibilityState === "hidden") {
+    const unsubscribeVisibility = subscribeDocumentVisibility({
+      syncInitialHidden: true,
+      onHide: () => {
         es.close();
         if (active.current === es) active.current = null;
         if (timer) {
           clearTimeout(timer);
           timer = null;
         }
-      } else {
+      },
+      onShow: () => {
         attempts.current = 0;
         setConnection((value) => value + 1);
-      }
-    };
-
-    document.addEventListener("visibilitychange", visibility);
-    if (document.visibilityState === "hidden") visibility();
+      },
+    });
 
     return () => {
       disposed = true;
-      document.removeEventListener("visibilitychange", visibility);
+      unsubscribeVisibility();
       if (timer) clearTimeout(timer);
       es.close();
       if (active.current === es) active.current = null;

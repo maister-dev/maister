@@ -6,24 +6,23 @@ import type {
   RunInspectorProps,
 } from "@/components/runs/run-inspector";
 import type { RunCostSummary } from "@/lib/queries/run";
-import type { CoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import type { CostSummaryFactLabels } from "@/lib/runs/cost-summary-facts";
 import type { ReactElement } from "react";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { RunInspector } from "@/components/runs/run-inspector";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
-import { createCoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
-  CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
+  CHANGE_SUMMARY_REFRESH_COALESCE_MS,
   changeSummaryRefreshUrl,
   costSummaryRefreshUrl,
   formatRunDuration,
   isLiveRunStatus,
 } from "@/lib/runs/live-inspector";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 
 // Live token-cost poll config: the cost facts (token totals) carried in `facts`
 // are replaced by label as canonical usage events arrive during the run.
@@ -78,7 +77,6 @@ export function LiveRunInspector({
   } | null>(null);
   const [nowMs, setNowMs] = useState<number | null>(null);
   const { eventCount, context } = useRunPageStream(rest.runId, live);
-  const changeSummaryRefresherRef = useRef<CoalescedRefresher | null>(null);
 
   const changeSummary =
     live && liveSummaryOverride?.key === summaryKey
@@ -90,91 +88,69 @@ export function LiveRunInspector({
       ? liveCostOverride.value
       : (liveCost?.initial ?? null);
 
-  useEffect(() => {
-    if (!live) return;
+  const triggerChangeSummaryRefresh = useCoalescedRefresh(
+    async (signal) => {
+      try {
+        const res = await fetch(
+          changeSummaryRefreshUrl(rest.runId, changeScope),
+          { signal },
+        );
 
-    const refresher = createCoalescedRefresher({
-      intervalMs: CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
-      run: async (signal) => {
-        try {
-          const res = await fetch(
-            changeSummaryRefreshUrl(rest.runId, changeScope),
-            { signal },
-          );
-
-          if (signal.aborted) return;
-          if (!res.ok) {
-            setStaleKey(summaryKey);
-
-            return;
-          }
-          const nextSummary = (await res.json()) as RunInspectorChangeSummary;
-
-          if (signal.aborted) return;
-          setLiveSummaryOverride({ key: summaryKey, value: nextSummary });
-          setStaleKey(null);
-        } catch {
-          if (signal.aborted) return;
+        if (signal.aborted) return;
+        if (!res.ok) {
           setStaleKey(summaryKey);
+
+          return;
         }
-      },
-    });
+        const nextSummary = (await res.json()) as RunInspectorChangeSummary;
 
-    changeSummaryRefresherRef.current = refresher;
-
-    return () => {
-      refresher.dispose();
-      changeSummaryRefresherRef.current = null;
-    };
-  }, [live, changeScope, rest.runId, summaryKey]);
+        if (signal.aborted) return;
+        setLiveSummaryOverride({ key: summaryKey, value: nextSummary });
+        setStaleKey(null);
+      } catch {
+        if (signal.aborted) return;
+        setStaleKey(summaryKey);
+      }
+    },
+    CHANGE_SUMMARY_REFRESH_COALESCE_MS,
+    live ? summaryKey : null,
+  );
 
   useEffect(() => {
     if (!live || eventCount === 0) return;
 
-    changeSummaryRefresherRef.current?.trigger();
-  }, [eventCount, live]);
+    triggerChangeSummaryRefresh();
+  }, [eventCount, live, triggerChangeSummaryRefresh]);
 
   // Re-poll cost on the same SSE tick (separate coalesced refresher): canonical
   // usage is appended per event during the turn. A failed poll keeps the last
   // good snapshot (no stale badge — cost is advisory).
   const hasLiveCost = Boolean(liveCost);
-  const costRefresherRef = useRef<CoalescedRefresher | null>(null);
+  const triggerCostRefresh = useCoalescedRefresh(
+    async (signal) => {
+      try {
+        const res = await fetch(costSummaryRefreshUrl(rest.runId), {
+          signal,
+        });
 
-  useEffect(() => {
-    if (!live || !hasLiveCost) return;
+        if (signal.aborted || !res.ok) return;
+        const nextCost = (await res.json()) as RunCostSummary;
 
-    const refresher = createCoalescedRefresher({
-      intervalMs: CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
-      run: async (signal) => {
-        try {
-          const res = await fetch(costSummaryRefreshUrl(rest.runId), {
-            signal,
-          });
-
-          if (signal.aborted || !res.ok) return;
-          const nextCost = (await res.json()) as RunCostSummary;
-
-          if (signal.aborted) return;
-          setLiveCostOverride({ runId: rest.runId, value: nextCost });
-        } catch {
-          // keep last good cost
-        }
-      },
-    });
-
-    costRefresherRef.current = refresher;
-
-    return () => {
-      refresher.dispose();
-      costRefresherRef.current = null;
-    };
-  }, [live, hasLiveCost, rest.runId]);
+        if (signal.aborted) return;
+        setLiveCostOverride({ runId: rest.runId, value: nextCost });
+      } catch {
+        // keep last good cost
+      }
+    },
+    CHANGE_SUMMARY_REFRESH_COALESCE_MS,
+    live && hasLiveCost ? rest.runId : null,
+  );
 
   useEffect(() => {
     if (!live || !hasLiveCost || eventCount === 0) return;
 
-    costRefresherRef.current?.trigger();
-  }, [eventCount, live, hasLiveCost]);
+    triggerCostRefresh();
+  }, [eventCount, live, hasLiveCost, triggerCostRefresh]);
 
   const wallClockStartedAtMs = liveWallClock?.startedAtMs;
   const wallClockEndedAtMs = liveWallClock?.endedAtMs;

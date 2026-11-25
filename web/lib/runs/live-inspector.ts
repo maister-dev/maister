@@ -14,9 +14,9 @@ export function isLiveRunStatus(status: string): boolean {
   return !TERMINAL_RUN_STATUSES.has(status);
 }
 
-// Debounce window for collapsing a burst of SSE ticks into one change-summary
+// Coalesce interval for collapsing a burst of SSE ticks into one change-summary
 // re-fetch.
-export const CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS = 400;
+export const CHANGE_SUMMARY_REFRESH_COALESCE_MS = 400;
 
 export function changeSummaryRefreshUrl(runId: string, scope: string): string {
   return `/api/runs/${encodeURIComponent(runId)}/change-summary?scope=${encodeURIComponent(scope)}`;

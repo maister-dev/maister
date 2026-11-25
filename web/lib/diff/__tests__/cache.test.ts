@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  buildPreparedDiffCacheEntry,
   clearPreparedDiffCache,
   DIFF_CACHE_MAX_BYTES,
+  enrichCachedDiffFiles,
   getCachedPreparedDiff,
   getPreparedDiffCacheStats,
   setCachedPreparedDiff,
   type PreparedDiffCacheEntry,
 } from "@/lib/diff/cache";
+import { prepareDiff } from "@/lib/diff/prepare";
 
 const MIB = 1024 * 1024;
 
@@ -177,5 +180,57 @@ describe("prepared diff byte-bounded LRU cache", () => {
       totalBytes: 30 * MIB,
       maxBytes: DIFF_CACHE_MAX_BYTES,
     });
+  });
+
+  it("enriches name-status entries and builds cross-producer compatible cache entries", async () => {
+    const rawDiff = [
+      "diff --git a/src/greet.ts b/src/greet.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/greet.ts",
+      "+++ b/src/greet.ts",
+      "@@ -1,2 +1,3 @@",
+      "-export const msg = 'hi';",
+      "+export const msg = 'привет';",
+      "+export const extra = 1;",
+      " export const keep = true;",
+      "diff --git a/src/added.ts b/src/added.ts",
+      "new file mode 100644",
+      "index 0000000..3333333",
+      "--- /dev/null",
+      "+++ b/src/added.ts",
+      "@@ -0,0 +1,1 @@",
+      "+export const added = true;",
+    ].join("\n");
+    const nameStatus = [
+      { path: "src/greet.ts", status: "M" },
+      { path: "src/added.ts", status: "A" },
+      { path: "assets/logo.png", status: "A" },
+    ];
+    const prepared = await prepareDiff(rawDiff, false);
+
+    expect(enrichCachedDiffFiles(nameStatus, prepared)).toEqual([
+      { path: "src/greet.ts", status: "M", additions: 2, deletions: 1 },
+      { path: "src/added.ts", status: "A", additions: 1, deletions: 0 },
+      { path: "assets/logo.png", status: "A", additions: 0, deletions: 0 },
+    ]);
+
+    const entry = buildPreparedDiffCacheEntry({ nameStatus, prepared });
+
+    expect(entry.files).toEqual([
+      { path: "src/greet.ts", status: "M", additions: 2, deletions: 1 },
+      { path: "src/added.ts", status: "A", additions: 1, deletions: 0 },
+      { path: "assets/logo.png", status: "A", additions: 0, deletions: 0 },
+    ]);
+    expect(entry.prepared).toBe(prepared);
+    expect(entry.preparedJson).toBe(JSON.stringify(prepared.perFile));
+    expect(entry.byteSize).toBe(Buffer.byteLength(entry.preparedJson, "utf8"));
+    expect(entry.byteSize).toBeGreaterThan(entry.preparedJson.length);
+
+    setCachedPreparedDiff("sha:/repo:base:head", entry);
+
+    const hit = getCachedPreparedDiff("sha:/repo:base:head");
+
+    expect(hit).toBe(entry);
+    expect(JSON.parse(hit!.preparedJson)).toEqual(prepared.perFile);
   });
 });

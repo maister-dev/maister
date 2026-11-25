@@ -1264,7 +1264,8 @@ Every Run exposes two metrics computed by the pure projection
   `auth()`), enforces per-non-empty-batch disclosure/company checks + 2,500 ms
   idle recheck on enrolled/company/vault runs (including runs dynamically
   enrolled in a vault mid-stream), rechecks ordinary non-enrolled project runs
-  and projectless active-user ownership at most every 2,500 ms and before
+  and projectless active-user account status at least once every 2,500 ms
+  (re-verifying no later than 2,500 ms after the previous check) and before
   terminal batch emission/close, and coalesces context snapshot reads (`500 ms`
   + settle + terminal watermark) with parallel attempt-id lookups
   (`api-runs-stream` emits `DEBUG` recheck/context timings and includes
@@ -1528,10 +1529,13 @@ promotion policy.
 - The browser stream client may show `connecting`, `live`, `reconnecting`, or
   `disconnected`. An unexpected close retries with a bounded delay and the
   existing `lastEventId`; terminal runs and unmounted/replaced screens cancel
-  timers and close their EventSource. **(Implemented)** Tick-only `useRunStream`
-  (`retain: false`) closes its `EventSource` and cancels reconnect timers while
-  `document.visibilityState === "hidden"` without incrementing error backoff,
-  reconnecting on `"visible"` with one catch-up tick; streaming UI consumers
+  timers and close their EventSource. **(Implemented)** Only tick-only
+  `useRunStream` (`retain: false`) streams pause when
+  `document.visibilityState === "hidden"` — closing their `EventSource` and
+  cancelling reconnect timers without incrementing error backoff, and
+  reconnecting on `"visible"` with one catch-up tick; retained transcript
+  streams (`retain: true`) keep their socket open so in-memory event arrays do
+  not drop frames across background tab switches. Streaming UI consumers
   (`LiveRunInspector`, `ScratchConversation`, `AssignmentLiveRefresh`) use
   leading-coalescing refresh throttling (`lib/runs/coalesced-refresh.ts`)
   instead of trailing `clearTimeout` debounces. The run shell owns the shared

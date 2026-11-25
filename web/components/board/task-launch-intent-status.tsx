@@ -38,7 +38,7 @@ export function TaskLaunchIntentStatus({
 }): ReactElement {
   const t = useTranslations("launch");
   const locale = useLocale();
-  const { tick, liveness, reconnect } = useSharedAttentionStream();
+  const { tick, liveness, reconnect, isShared } = useSharedAttentionStream();
   const canChange =
     receipt &&
     !uncertain &&
@@ -189,16 +189,18 @@ export function TaskLaunchIntentStatus({
       {errorReason && errorReason !== "launch_response_unknown" ? (
         <p role="alert">{t(taskLaunchReasonKey(errorReason))}</p>
       ) : null}
-      <RunStreamLiveness
-        labels={{
-          live: t("admission.live"),
-          disconnected: t("admission.disconnected"),
-          reconnecting: t("admission.reconnecting"),
-          reconnect: t("admission.reconnect"),
-        }}
-        liveness={liveness}
-        onReconnect={reconnect}
-      />
+      {!isShared || liveness !== "live" ? (
+        <RunStreamLiveness
+          labels={{
+            live: t("admission.live"),
+            disconnected: t("admission.disconnected"),
+            reconnecting: t("admission.reconnecting"),
+            reconnect: t("admission.reconnect"),
+          }}
+          liveness={liveness}
+          onReconnect={reconnect}
+        />
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {uncertain ? (
           <Button

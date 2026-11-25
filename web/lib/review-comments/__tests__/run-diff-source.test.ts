@@ -18,7 +18,7 @@
 //
 // The diff fixture goes through the REAL `parseDiffLineIndex` parse path (house
 // rule from anchor.test.ts / the route tests: mock the git source, never the
-// parser) and asserts zero calls to `prepareDiff` (PERF-11).
+// parser) and asserts zero calls to `prepareDiff`.
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ReviewComment } from "@/lib/review-comments/service";
@@ -308,7 +308,7 @@ describe("computeReviewDiff", () => {
 });
 
 // ---------------------------------------------------------------------------
-// placementOf — total mapping over (DiffLineIndex | DiffPrepResult | null, root)
+// placementOf — total mapping over (DiffLineIndex | null, root)
 // ---------------------------------------------------------------------------
 
 describe("placementOf", () => {

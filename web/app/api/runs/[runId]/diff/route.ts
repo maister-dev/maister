@@ -10,7 +10,13 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import * as schemaModule from "@/lib/db/schema";
-import { getCachedPreparedDiff, setCachedPreparedDiff } from "@/lib/diff/cache";
+import {
+  buildPreparedDiffCacheEntry,
+  type CachedDiffFile,
+  type DiffNameStatusEntry,
+  getCachedPreparedDiff,
+  setCachedPreparedDiff,
+} from "@/lib/diff/cache";
 import {
   filterDiffByPath,
   prepareDiff,
@@ -29,7 +35,6 @@ import {
 } from "@/lib/runs/diff-scopes";
 import { readReviewSource } from "@/lib/runs/review-source";
 import {
-  type DiffFileEntry,
   diffNameStatus,
   diffRange,
   diffRunWorkspace,
@@ -135,31 +140,6 @@ type PreparedDiffResult =
   | { prepared: DiffPrepResult; renderUnavailableReason: null }
   | { prepared: DiffPrepResult; renderUnavailableReason: "prepare-failed" };
 
-type EnrichedDiffFile = {
-  path: string;
-  status: string;
-  additions: number;
-  deletions: number;
-};
-
-function enrichDiffFiles(
-  nameStatus: DiffFileEntry[],
-  prepared: DiffPrepResult,
-): EnrichedDiffFile[] {
-  const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
-
-  return nameStatus.map((entry) => {
-    const counts = countsByPath.get(entry.path);
-
-    return {
-      path: entry.path,
-      status: entry.status,
-      additions: counts?.additions ?? 0,
-      deletions: counts?.deletions ?? 0,
-    };
-  });
-}
-
 function contentCacheKey(diff: string, truncated: boolean): string {
   const digest = createHash("sha256").update(diff).digest("hex");
 
@@ -167,7 +147,7 @@ function contentCacheKey(diff: string, truncated: boolean): string {
 }
 
 // Splice pre-serialized `perFile` JSON directly into the envelope so cache hits
-// never re-stringify the syntax bundles (PERF-14).
+// never re-stringify the syntax bundles.
 function assembleDiffHttpJson(
   envelopeWithoutPerFile: Record<string, unknown>,
   perFileJson: string,
@@ -211,9 +191,9 @@ async function resolveCachedOrPrepare(input: {
   scope: DiffScope;
   diff: string;
   truncated: boolean;
-  nameStatus: DiffFileEntry[];
+  nameStatus: readonly DiffNameStatusEntry[];
 }): Promise<{
-  files: EnrichedDiffFile[];
+  files: CachedDiffFile[];
   prepared: DiffPrepResult;
   preparedJson: string;
   renderUnavailableReason: "prepare-failed" | null;
@@ -237,22 +217,19 @@ async function resolveCachedOrPrepare(input: {
     diff: input.diff,
     truncated: input.truncated,
   });
-  const files = enrichDiffFiles(input.nameStatus, prepared);
-  const preparedJson = JSON.stringify(prepared.perFile);
+  const entry = buildPreparedDiffCacheEntry({
+    nameStatus: input.nameStatus,
+    prepared,
+  });
 
   if (renderUnavailableReason === null) {
-    setCachedPreparedDiff(input.cacheKey, {
-      files,
-      prepared,
-      preparedJson,
-      byteSize: Buffer.byteLength(preparedJson, "utf8"),
-    });
+    setCachedPreparedDiff(input.cacheKey, entry);
   }
 
   return {
-    files,
-    prepared,
-    preparedJson,
+    files: entry.files,
+    prepared: entry.prepared,
+    preparedJson: entry.preparedJson,
     renderUnavailableReason,
     cacheHit: false,
   };
@@ -589,7 +566,7 @@ export async function GET(
     let base: string;
     let headSha: string | null = null;
     let reviewSourceFingerprint: string | null = null;
-    let files: EnrichedDiffFile[];
+    let files: CachedDiffFile[];
     let prepared: DiffPrepResult;
     let preparedJson: string;
     let renderUnavailableReason: "prepare-failed" | null;
@@ -708,19 +685,19 @@ export async function GET(
           truncated: ranged.truncated,
         });
 
-        prepared = prep.prepared;
+        const entry = buildPreparedDiffCacheEntry({
+          nameStatus,
+          prepared: prep.prepared,
+        });
+
+        prepared = entry.prepared;
         renderUnavailableReason = prep.renderUnavailableReason;
-        files = enrichDiffFiles(nameStatus, prepared);
-        preparedJson = JSON.stringify(prepared.perFile);
+        files = entry.files;
+        preparedJson = entry.preparedJson;
         rawDiff = includeRaw ? ranged.text : undefined;
 
         if (cacheKey && renderUnavailableReason === null) {
-          setCachedPreparedDiff(cacheKey, {
-            files,
-            prepared,
-            preparedJson,
-            byteSize: Buffer.byteLength(preparedJson, "utf8"),
-          });
+          setCachedPreparedDiff(cacheKey, entry);
         }
       }
     }

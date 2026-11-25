@@ -130,7 +130,11 @@ import {
   isRunKnowledgeUnavailable,
 } from "@/lib/brain/knowledge-run-disclosure";
 import { RunSourceUnavailable } from "@/components/runs/run-source-unavailable";
-import { getCachedPreparedDiff, setCachedPreparedDiff } from "@/lib/diff/cache";
+import {
+  buildPreparedDiffCacheEntry,
+  getCachedPreparedDiff,
+  setCachedPreparedDiff,
+} from "@/lib/diff/cache";
 import { prepareDiff } from "@/lib/diff/prepare";
 import { reposRoot, worktreesRoot } from "@/lib/instance-config";
 import {
@@ -309,25 +313,10 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
 
     diff = prepared;
     if (cacheKey && nameStatus) {
-      const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
-      const enrichedFiles = nameStatus.map((entry) => {
-        const counts = countsByPath.get(entry.path);
-
-        return {
-          path: entry.path,
-          status: entry.status,
-          additions: counts?.additions ?? 0,
-          deletions: counts?.deletions ?? 0,
-        };
-      });
-      const preparedJson = JSON.stringify(prepared.perFile);
-
-      setCachedPreparedDiff(cacheKey, {
-        files: enrichedFiles,
-        prepared,
-        preparedJson,
-        byteSize: Buffer.byteLength(preparedJson, "utf8"),
-      });
+      setCachedPreparedDiff(
+        cacheKey,
+        buildPreparedDiffCacheEntry({ nameStatus, prepared }),
+      );
     }
   }
 

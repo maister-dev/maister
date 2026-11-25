@@ -7956,7 +7956,10 @@ paths:
             **(Implemented)** Opt-in flag to include the raw unified `diff` string
             in the JSON response. When omitted, `diff` is omitted from the
             response while `files` and `perFile` are served (using the shared
-            byte-bounded LRU prepared-diff cache when immutable refs match).
+            `32 MiB` LRU prepared-diff cache — bounded by the UTF-8 byte length
+            of cached `preparedJson` strings, with a `16 MiB` single-entry cap
+            and parsed `prepared` objects retained alongside for SSR hits — when
+            immutable refs match).
             When `raw=1`, raw `diff` is read from git while cached `files` and
             pre-serialized `perFile` are still reused.
       responses:
@@ -14257,7 +14260,7 @@ paths:
         (`requireProjectRoleForUser(userId, run.projectId, "viewer")` — never
         re-invoking NextAuth `auth()` inside the stream loop). The `projectId`
         is derived from the run row, never from the query string. Projectless runs
-        re-verify active-user ownership on the stream loop cadence. Company Runs
+        re-verify active-user account status on the stream loop cadence. Company Runs
         instead require current explicit `assignments:read`, a complete capture
         containing their exact retained assignment input, and current inherited
         source access. Missing or unauthorized company Runs and incomplete
@@ -14270,7 +14273,8 @@ paths:
         non-empty canonical batch and on a bounded `2,500 ms` idle recheck; loss
         closes the stream before further events without retaining DB locks.
         Ordinary non-enrolled project runs re-verify `requireProjectRoleForUser`
-        and disclosure at most once every `2,500 ms` and before terminal batch
+        and disclosure at least once every `2,500 ms` (re-verifying no later than
+        `2,500 ms` after the previous check) and before terminal batch
         emission/close.
 
         Server-Sent Events bridge over manager-owned PostgreSQL event records.
@@ -14314,8 +14318,8 @@ paths:
         - name: replay
           in: query
           required: false
-          description: Set to `false` (or `0` / `live`) to begin at the current durable tail and emit `session.stream_ready` instead of replaying from sequence zero.
-          schema: { type: string, enum: ["false", "0", "live", "true"] }
+          description: Set to `"false"`, `"0"`, or `"live"` to start at the current durable tail and emit `session.stream_ready`; any other value (or omission) replays from sequence zero without returning 4xx.
+          schema: { type: string }
         - name: context
           in: query
           required: false
@@ -34610,9 +34614,14 @@ components:
             renderer (`@git-diff-view/react`): the file's repo-relative `path`,
             resolved `fileLang`, and a server-built `bundle` (Shiki-highlighted
             `DiffFile.getBundle()` output) hydrated on the client with no
-            client-side highlighting. Files beyond `MAX_TOTAL_SYNTAX_LINES = 8_000`
-            (or the per-file syntax limit) carry zero-Shiki monochrome plaintext
-            bundles (`fileLang: "plaintext"`) that hydrate without client lowlight
+            client-side highlighting. Any single file exceeding
+            `maxLineToIgnoreSyntax` (`2,000` changed/syntax lines) is downgraded
+            individually to a zero-Shiki monochrome plaintext bundle
+            (`fileLang: "plaintext"`) without charging the shared cumulative
+            budget or starving subsequent smaller files. Remaining files share
+            `MAX_TOTAL_SYNTAX_LINES = 8_000`; once exceeded, trailing files carry
+            zero-Shiki monochrome plaintext bundles (`fileLang: "plaintext"`)
+            that hydrate in `@git-diff-view/react` with zero client lowlight
             fallback. Present for flow and scratch runs. The `bundle` shape is the
             library's serialization detail and is not specified field by field here.
           items:

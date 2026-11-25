@@ -968,9 +968,11 @@ it does not poll, create a second stream wire contract, change
 
 `ScratchRunDetailLayout` owns the single `<RunStreamProvider>` subscription
 shared by `ScratchConversation` and `LiveRunInspector` (Implemented — at most one
-`/api/runs/{runId}/stream` socket per scratch tab). Tick-only subscriptions
-pause while `document.visibilityState === "hidden"` and catch up via one
-coalesced refresh on `"visible"`; `ScratchConversation` uses leading-coalescing refresh throttling
+`/api/runs/{runId}/stream` socket per scratch tab). Only tick-only
+(`retain: false`) run streams pause when `document.visibilityState === "hidden"`
+and catch up via one coalesced refresh on `"visible"` (retained transcript
+streams keep their socket open so in-memory event arrays do not drop frames
+across background tab switches); `ScratchConversation` uses leading-coalescing refresh throttling
 (250 ms) instead of trailing debounces and calls `router.refresh()` after a
 successful `recover()` so a recovered `Crashed` run re-activates
 `<RunStreamProvider>` (Implemented). It cancels retry timers and closes the

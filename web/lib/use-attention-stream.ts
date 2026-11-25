@@ -19,6 +19,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { isSseCursor } from "@/lib/sse/frame";
 import {
+  isDocumentHidden,
+  subscribeDocumentVisibility,
+} from "@/lib/sse-visibility";
+import {
   advanceRunStreamLifecycle,
   initialRunStreamLifecycle,
   reconnectDelayMs,
@@ -190,12 +194,6 @@ export function useAttentionStream(
 
     let disposed = false;
 
-    function isDocumentHidden(): boolean {
-      return (
-        typeof document !== "undefined" && document.visibilityState === "hidden"
-      );
-    }
-
     function clearReconnectTimer(): void {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
@@ -334,29 +332,25 @@ export function useAttentionStream(
       };
     }
 
-    function onVisibilityChange(): void {
-      if (disposed) return;
-      if (isDocumentHidden()) {
+    connect();
+    const unsubscribeVisibility = subscribeDocumentVisibility({
+      onHide: () => {
+        if (disposed) return;
         clearReconnectTimer();
         closeSource();
         // Reset retry backoff so returning to visible reconnects immediately.
         lifecycleRef.current = initialRunStreamLifecycle;
-      } else if (sourceRef.current === null) {
+      },
+      onShow: () => {
+        if (disposed || sourceRef.current !== null) return;
         lifecycleRef.current = initialRunStreamLifecycle;
         connect();
-      }
-    }
-
-    connect();
-    if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", onVisibilityChange);
-    }
+      },
+    });
 
     return () => {
       disposed = true;
-      if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", onVisibilityChange);
-      }
+      unsubscribeVisibility();
       clearReconnectTimer();
       closeSource();
     };

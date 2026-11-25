@@ -12,9 +12,17 @@ import {
   type UseAttentionStreamResult,
 } from "@/lib/use-attention-stream";
 
-const AttentionStreamContext = createContext<UseAttentionStreamResult | null>(
-  null,
-);
+export interface UseSharedAttentionStreamResult extends UseAttentionStreamResult {
+  /**
+   * `true` when consuming `AttentionStreamContext` from the `(app)` shell's
+   * `AttentionStreamProvider`; `false` when falling back to a standalone
+   * `useAttentionStream` socket outside the provider.
+   */
+  isShared: boolean;
+}
+
+const AttentionStreamContext =
+  createContext<UseSharedAttentionStreamResult | null>(null);
 
 /**
  * Owns the single `/api/attention/stream` connection for the authenticated
@@ -30,7 +38,7 @@ export function AttentionStreamProvider({
 }): ReactElement {
   const watch = useAttentionReviewWatch();
   const stream = useAttentionStream(since, watch?.selection);
-  const value = useMemo<UseAttentionStreamResult>(
+  const value = useMemo<UseSharedAttentionStreamResult>(
     () => ({
       tick: stream.tick,
       shellTick: stream.shellTick,
@@ -38,6 +46,7 @@ export function AttentionStreamProvider({
       liveness: stream.liveness,
       reviewResync: stream.reviewResync,
       reconnect: stream.reconnect,
+      isShared: true,
     }),
     [
       stream.tick,
@@ -58,13 +67,17 @@ export function AttentionStreamProvider({
 
 /**
  * Reads the shared shell attention stream when mounted inside
- * `AttentionStreamProvider`, or falls back to a local `useAttentionStream`
- * instance for standalone component renders/tests.
+ * `AttentionStreamProvider`, or falls back to a standalone `useAttentionStream`
+ * socket when rendered outside the provider.
+ *
+ * The standalone fallback exists solely for isolated component tests and
+ * standalone renders; all authenticated `(app)` shell surfaces must stay
+ * mounted inside `AttentionStreamProvider` so each tab shares one EventSource.
  */
 export function useSharedAttentionStream(
   fallbackSince?: AttentionStreamSince,
   fallbackReview?: ReviewSelector | null,
-): UseAttentionStreamResult {
+): UseSharedAttentionStreamResult {
   const shared = useContext(AttentionStreamContext);
   const local = useAttentionStream(
     fallbackSince,
@@ -72,5 +85,5 @@ export function useSharedAttentionStream(
     shared === null,
   );
 
-  return shared ?? local;
+  return shared ?? { ...local, isShared: false };
 }

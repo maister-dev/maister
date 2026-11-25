@@ -314,7 +314,7 @@ describe("app attention refresh", () => {
     expect(params.get("reviewVersion")).toBe("queue-v1");
   });
 
-  it("EDGE-PERF-04 pauses on hidden without backoff, suppresses refresh while hidden, and resumes with last cursor, K13 reviewResync, and deferred refresh", () => {
+  it("pauses on hidden without backoff, suppresses refresh while hidden, and resumes with last cursor, K13 reviewResync, and deferred refresh", () => {
     act(() => root.unmount());
     AttentionEventSource.sources = [];
     setVisibilityState("visible");
@@ -414,7 +414,7 @@ describe("app attention refresh", () => {
     expect(AttentionEventSource.sources).toHaveLength(countAfterMount + 3);
   });
 
-  it("PERF-07 shares one /api/attention/stream EventSource across AttentionLiveRefresh and TaskLaunchIntentStatus under AttentionStreamProvider", () => {
+  it("shares one /api/attention/stream EventSource across AttentionLiveRefresh and TaskLaunchIntentStatus under AttentionStreamProvider", () => {
     act(() => root.unmount());
     AttentionEventSource.sources = [];
     setVisibilityState("visible");
@@ -461,6 +461,40 @@ describe("app attention refresh", () => {
     act(() => shared.tick(["work"]));
     expect(router.refresh).toHaveBeenCalledOnce();
     expect(onRefresh).toHaveBeenCalled();
+
+    // While live under AttentionStreamProvider, TaskLaunchIntentStatus does not
+    // duplicate StatusBar's "Live" pill.
+    const statusRegion = container.querySelector(
+      '[data-testid="task-launch-intent-status"]',
+    );
+
+    expect(
+      container.querySelectorAll('[data-testid="run-stream-liveness"]'),
+    ).toHaveLength(1);
+    expect(
+      statusRegion?.querySelector('[data-testid="run-stream-liveness"]'),
+    ).toBeNull();
+
+    // When the shared stream degrades to disconnected, TaskLaunchIntentStatus
+    // surfaces inline disconnected status and a direct Reconnect action.
+    act(() => AttentionEventSource.sources.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(500));
+    act(() => AttentionEventSource.sources.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => AttentionEventSource.sources.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(2000));
+    act(() => AttentionEventSource.sources.at(-1)?.onerror?.());
+
+    const inlineLiveness = statusRegion?.querySelector(
+      '[data-testid="run-stream-liveness"]',
+    );
+
+    expect(inlineLiveness?.textContent).toBe("launch.admission.disconnected");
+    const reconnectButton = [
+      ...(statusRegion?.querySelectorAll("button") ?? []),
+    ].find((button) => button.textContent === "launch.admission.reconnect");
+
+    expect(reconnectButton).toBeDefined();
   });
 
   it("issues 0 mount refreshes for TaskLaunchIntentStatus under an already-live AttentionStreamProvider with tick > 0, refreshes once on a new tick, and stops once complete", () => {

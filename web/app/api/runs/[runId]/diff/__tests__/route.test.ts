@@ -11,7 +11,11 @@ import {
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
-import { clearPreparedDiffCache } from "@/lib/diff/cache";
+import {
+  buildPreparedDiffCacheEntry,
+  clearPreparedDiffCache,
+  setCachedPreparedDiff,
+} from "@/lib/diff/cache";
 import { prepareDiff } from "@/lib/diff/prepare";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -573,7 +577,7 @@ describe("GET /api/runs/[runId]/diff — missing run (M22)", () => {
   });
 });
 
-describe("GET /api/runs/[runId]/diff — opt-in ?raw=1 & prepared LRU cache (PERF-13, PERF-14)", () => {
+describe("GET /api/runs/[runId]/diff — opt-in ?raw=1 & prepared LRU cache", () => {
   it("omits raw diff by default while returning prepared files and perFile", async () => {
     const runId = seedFlowRun();
 
@@ -607,7 +611,7 @@ describe("GET /api/runs/[runId]/diff — opt-in ?raw=1 & prepared LRU cache (PER
     expect(prepareDiff).toHaveBeenCalledTimes(1);
   });
 
-  it("returns raw diff on follow-up ?raw=1 while reusing the cached prepared bundle (EDGE-PERF-08)", async () => {
+  it("returns raw diff on follow-up ?raw=1 while reusing the cached prepared bundle", async () => {
     const runId = seedFlowRun();
 
     const defaultRes = await invokeGet(runId);
@@ -761,5 +765,56 @@ describe("GET /api/runs/[runId]/diff — opt-in ?raw=1 & prepared LRU cache (PER
     expect(secondUncommitted.status).toBe(200);
     // Uncommitted scope uses content:<sha256>:<truncated> — hits once prepared.
     expect(prepareDiff).toHaveBeenCalledTimes(2);
+  });
+
+  it("serves a sha: cache entry produced via buildPreparedDiffCacheEntry verbatim with zero prepareDiff calls", async () => {
+    const runId = seedFlowRun();
+    const rawDiff = [
+      "diff --git a/src/app.ts b/src/app.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/app.ts",
+      "+++ b/src/app.ts",
+      "@@ -1,2 +1,3 @@",
+      "-export const a = 1;",
+      "+export const a = 2;",
+      "+export const b = 3;",
+      " export const keep = true;",
+      "diff --git a/src/new.ts b/src/new.ts",
+      "new file mode 100644",
+      "index 0000000..3333333",
+      "--- /dev/null",
+      "+++ b/src/new.ts",
+      "@@ -0,0 +1,1 @@",
+      "+export const created = true;",
+    ].join("\n");
+    const nameStatus = [
+      { path: "src/app.ts", status: "M" },
+      { path: "src/new.ts", status: "A" },
+    ];
+    const prepared = await prepareDiff(rawDiff, false);
+    const entry = buildPreparedDiffCacheEntry({ nameStatus, prepared });
+    const shaKey =
+      "sha:/repos/demo/.maister/wt-1:feedbeef:refsha00000000000000000000000000000000000";
+
+    setCachedPreparedDiff(shaKey, entry);
+    vi.mocked(prepareDiff).mockClear();
+
+    const res = await invokeGet(runId);
+    const body = (await res.json()) as {
+      files?: unknown[];
+      perFile?: unknown[];
+      truncated?: boolean;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.files).toEqual([
+      { path: "src/app.ts", status: "M", additions: 2, deletions: 1 },
+      { path: "src/new.ts", status: "A", additions: 1, deletions: 0 },
+    ]);
+    expect(body.perFile).toEqual(prepared.perFile);
+    expect(body.truncated).toBe(false);
+    expect(prepareDiff).not.toHaveBeenCalled();
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+    expect(diffNameStatus).not.toHaveBeenCalled();
   });
 });

@@ -713,11 +713,19 @@ function buildAddedTsDiffSection(path: string, lineCount: number): string {
   ].join("\n");
 }
 
-describe("DiffView — syntax-budget downgraded plaintext hydration (EDGE-PERF-07)", () => {
+describe("DiffView — syntax-budget downgraded plaintext hydration", () => {
   it("renders a MAX_TOTAL_SYNTAX_LINES-downgraded plaintext file bundle cleanly without errors", async () => {
+    const perFileBudgetLines = 2_000;
+
+    expect(4 * perFileBudgetLines).toBe(MAX_TOTAL_SYNTAX_LINES);
+
     const rawDiff = [
-      buildAddedTsDiffSection("src/leading.ts", 10),
-      buildAddedTsDiffSection("src/overflow.ts", MAX_TOTAL_SYNTAX_LINES),
+      ...Array.from({ length: 4 }, (_, index) =>
+        buildAddedTsDiffSection(
+          `src/budget-${index + 1}.ts`,
+          perFileBudgetLines,
+        ),
+      ),
       buildAddedTsDiffSection("src/trailing.ts", 5),
     ].join("\n");
 

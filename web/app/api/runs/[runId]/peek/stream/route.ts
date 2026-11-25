@@ -7,10 +7,10 @@ import { inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { requireActiveSession } from "@/lib/authz";
+import { runDisclosureGovernedSql } from "@/lib/brain/knowledge-run-disclosure";
 import { getDb } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 import { parsePeekRunId, peekFailure, peekQuery } from "@/lib/runs/peek-http";
 import { authorizePeekRun, peekPath } from "@/lib/runs/peek-read-model";
 import { subscribePeekChanges } from "@/lib/runs/peek-wake";
@@ -81,17 +81,7 @@ async function hasGovernedPeekRun(runIds: readonly string[]): Promise<boolean> {
   if (runIds.length === 0) return false;
   const rows = await getDb()
     .select({
-      isGoverned: sql<boolean>`COALESCE(
-        ${runs.companyId} IS NOT NULL
-        OR ${runs.knowledgeAccess} IS NOT NULL
-        OR ${runs.resultContract}->>'nativeContract' = ${FINDINGS_CONTRACT}
-        OR EXISTS (
-          SELECT 1 FROM agent_memory_injections memory
-          WHERE memory.run_id = ${runs.id}
-            AND memory.application_state <> 'retired'
-        ),
-        false
-      )`,
+      isGoverned: sql<boolean>`COALESCE(${runs.companyId} IS NOT NULL OR ${runDisclosureGovernedSql({ id: runs.id, knowledgeAccess: runs.knowledgeAccess, resultContract: runs.resultContract })}, false)`,
     })
     .from(runs)
     .where(inArray(runs.id, [...runIds]));

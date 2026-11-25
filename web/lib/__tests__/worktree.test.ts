@@ -694,7 +694,7 @@ function fullPatchDiffCalls(): RecordedGitCall[] {
   );
 }
 
-describe("single-spawn bounded git diff (PERF-09, EDGE-PERF-10)", () => {
+describe("single-spawn bounded git diff", () => {
   it("invokes git diff exactly once per reader and returns truncated: true past 4 MiB", async () => {
     const baseCommit = await resolveBaseCommit({
       projectRepoPath: repo,

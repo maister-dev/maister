@@ -167,12 +167,18 @@ vi.mock("@/lib/agents/company-run-read-access", () => ({
     assertCompanyRunReadAccessMock(...(args as [])),
 }));
 
-vi.mock("@/lib/brain/knowledge-run-disclosure", () => ({
-  assertRunKnowledgeDisclosure: (...args: unknown[]) =>
-    assertRunKnowledgeDisclosureMock(...(args as [])),
-  isRunKnowledgeUnavailable: (error: unknown) =>
-    error instanceof MaisterError && error.code === "PRECONDITION",
-}));
+vi.mock("@/lib/brain/knowledge-run-disclosure", async (importActual) => {
+  const actual =
+    await importActual<typeof import("@/lib/brain/knowledge-run-disclosure")>();
+
+  return {
+    ...actual,
+    assertRunKnowledgeDisclosure: (...args: unknown[]) =>
+      assertRunKnowledgeDisclosureMock(...(args as [])),
+    isRunKnowledgeUnavailable: (error: unknown) =>
+      error instanceof MaisterError && error.code === "PRECONDITION",
+  };
+});
 
 vi.mock("@/lib/scratch-runs/service", () => ({
   assertLocalPackageAssistantActor: (...args: unknown[]) =>

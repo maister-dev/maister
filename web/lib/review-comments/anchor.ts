@@ -1,14 +1,12 @@
 // Pure anchor extraction + placement matching for review comments (ADR-072,
-// docs/system-analytics/review-comments.md). Operates primarily on the pure
-// unified-diff line index (`DiffLineIndex` from `parseDiffLineIndex`, zero
-// Shiki WASM) and also accepts `DiffPrepResult` for backward compatibility,
+// docs/system-analytics/review-comments.md). Operates on the pure unified-diff
+// line index (`DiffLineIndex` from `parseDiffLineIndex`, zero Shiki WASM),
 // keying every lookup by the per-side 1-based file line number — the exact
 // (lineNumber, SplitSide) the diff widget emits.
 
 import type { DiffLineIndex } from "@/lib/diff/line-index";
-import type { DiffPrepResult, PreparedFile } from "@/lib/diff/prepare";
 
-export type AnchorDiffSource = DiffLineIndex | DiffPrepResult;
+export type AnchorDiffSource = DiffLineIndex;
 
 export type AnchorSide = "old" | "new";
 
@@ -29,52 +27,26 @@ export type AnchorExtraction =
 
 export type Placement = "inline" | "outdated";
 
-type BundleDiffLine = PreparedFile["bundle"]["oldFileDiffLines"][string];
-
 type LineLookup =
   | { found: true; content: string }
   | { found: false; reason: "file_absent" | "line_absent" };
-
-// The @git-diff-view/core parser keeps each data line's trailing LF (absent
-// only at the physical end of the diff text); `line_content` is the line as
-// displayed — strip exactly that one LF, preserving every other byte (CR,
-// trailing spaces).
-function stripTrailingNewline(text: string): string {
-  return text.endsWith("\n") ? text.slice(0, -1) : text;
-}
 
 function lookupLine(
   source: AnchorDiffSource,
   position: AnchorPosition,
 ): LineLookup {
-  if (!("perFile" in source)) {
-    const file = source.files.get(position.filePath);
-
-    if (!file) return { found: false, reason: "file_absent" };
-
-    const bySide = position.side === "old" ? file.oldLines : file.newLines;
-    const content = bySide.get(position.line);
-
-    if (content === undefined) {
-      return { found: false, reason: "line_absent" };
-    }
-
-    return { found: true, content };
-  }
-
-  const file = source.perFile.find((f) => f.path === position.filePath);
+  const file = source.files.get(position.filePath);
 
   if (!file) return { found: false, reason: "file_absent" };
 
-  const bySide =
-    position.side === "old"
-      ? file.bundle.oldFileDiffLines
-      : file.bundle.newFileDiffLines;
-  const item: BundleDiffLine | undefined = bySide[position.line];
+  const bySide = position.side === "old" ? file.oldLines : file.newLines;
+  const content = bySide.get(position.line);
 
-  if (!item) return { found: false, reason: "line_absent" };
+  if (content === undefined) {
+    return { found: false, reason: "line_absent" };
+  }
 
-  return { found: true, content: stripTrailingNewline(item.text) };
+  return { found: true, content };
 }
 
 export function extractAnchorContent(

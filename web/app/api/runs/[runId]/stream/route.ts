@@ -19,8 +19,8 @@ import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access
 import {
   assertRunKnowledgeDisclosure,
   isRunKnowledgeUnavailable,
+  runDisclosureGovernedSql,
 } from "@/lib/brain/knowledge-run-disclosure";
-import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 import {
   contextProjectionThrough,
   readContextSnapshot,
@@ -62,23 +62,16 @@ type RunLite = {
   isGoverned: boolean;
 };
 
-function runGovernedSql() {
-  return sql<boolean>`COALESCE(
-    ${runs.knowledgeAccess} IS NOT NULL
-    OR ${runs.resultContract}->>'nativeContract' = ${FINDINGS_CONTRACT}
-    OR EXISTS (
-      SELECT 1 FROM agent_memory_injections memory
-      WHERE memory.run_id = ${runs.id}
-        AND memory.application_state <> 'retired'
-    ),
-    false
-  )`;
-}
-
 async function isRunGoverned(runId: string): Promise<boolean> {
   const db = getDb() as unknown as Db;
   const rows = await db
-    .select({ isGoverned: runGovernedSql() })
+    .select({
+      isGoverned: runDisclosureGovernedSql({
+        id: runs.id,
+        knowledgeAccess: runs.knowledgeAccess,
+        resultContract: runs.resultContract,
+      }),
+    })
     .from(runs)
     .where(eq(runs.id, runId));
 
@@ -97,7 +90,11 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
       companyId: runs.companyId,
       createdByUserId: runs.createdByUserId,
       localPackageId: runs.localPackageId,
-      isGoverned: runGovernedSql(),
+      isGoverned: runDisclosureGovernedSql({
+        id: runs.id,
+        knowledgeAccess: runs.knowledgeAccess,
+        resultContract: runs.resultContract,
+      }),
     })
     .from(runs)
     .where(eq(runs.id, runId));

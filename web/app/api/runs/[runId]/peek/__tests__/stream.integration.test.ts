@@ -351,7 +351,7 @@ it("IT-PKD-09: request abort and database shutdown terminate owned streams and a
   await fresh.cancel();
 });
 
-it("PERF-05 EDGE-PERF-03: unrelated transcript, execution_events, top-level root and foreign-root hints emit 0 frames and 0 DB auth/ancestry calls", async () => {
+it("unrelated transcript, execution_events, top-level root and foreign-root hints emit 0 frames and 0 DB auth/ancestry calls", async () => {
   const otherRoot = await seedRun(null, projectId, null);
   const otherChild = await seedRun(otherRoot, projectId, otherRoot);
   const response = await streamGet(
@@ -415,7 +415,7 @@ it("PERF-05 EDGE-PERF-03: unrelated transcript, execution_events, top-level root
   }
 });
 
-it("PERF-04 EDGE-PERF-03: peek triggers omit to_jsonb, filter pending_gap at WHEN and preserve execution_events/run_messages semantics", async () => {
+it("peek triggers omit to_jsonb, filter pending_gap at WHEN and preserve execution_events/run_messages semantics", async () => {
   const procRows = (
     await database.pool.query<{ proname: string; def: string }>(
       `SELECT p.proname, pg_get_functiondef(p.oid) AS def

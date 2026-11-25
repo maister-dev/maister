@@ -131,7 +131,7 @@ function createMockDb(tables: Map<unknown, unknown[]>) {
   };
 }
 
-describe("getInboxCardContext diff summary (PERF-10)", () => {
+describe("getInboxCardContext diff summary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockProjectRunTranscript.mockResolvedValue(undefined);

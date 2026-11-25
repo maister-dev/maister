@@ -8,7 +8,7 @@ export interface CoalescedRefresher {
   dispose: () => void;
 }
 
-// Leading-coalescing scheduler for SSE-driven refreshes (PERF-08): once a
+// Leading-coalescing scheduler for SSE-driven refreshes: once a
 // tick arrives, run executes after `intervalMs` even under continuous bursts,
 // keeps any in-flight signal un-aborted on new ticks, and collapses triggers
 // received while in-flight into a single follow-up run after settlement.

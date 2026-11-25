@@ -3,7 +3,7 @@
 import type { ReactElement } from "react";
 
 import { PlayIcon, PlusIcon } from "@heroicons/react/24/outline";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -20,6 +20,7 @@ import { StandardizationPanel } from "@/components/evaluations/standardization-p
 import { useStudyStream } from "@/components/evaluations/use-study-stream";
 import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import { RUN_STATUS_KEYS } from "@/lib/runs/run-status-tone";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 
 export interface ParticipantView {
   id: string;
@@ -62,6 +63,8 @@ type Props = {
   canConclude: boolean;
   canStandardize: boolean;
 };
+
+const STUDY_REFRESH_COALESCE_MS = 400;
 
 const TERMINAL = new Set(["completed", "partial", "failed", "cancelled"]);
 const ACTIVE = new Set([
@@ -164,27 +167,17 @@ export function StudyLab({
   const [selectedRuns, setSelectedRuns] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = (): void => startTransition(() => router.refresh());
 
-  // Live SSE: the durable event log drives a debounced RSC refresh so the
+  // Live SSE: the durable event log drives a coalesced RSC refresh so the
   // scoreboard reflects each transition. No persisted state is mutated here
   // (read model only, D17); reconnect resumes via `?lastEventId=`.
   const hasActive = executions.some((e) => ACTIVE.has(e.status));
-  const scheduleRefresh = useCallback((): void => {
-    if (refreshTimer.current) clearTimeout(refreshTimer.current);
-    refreshTimer.current = setTimeout(
-      () => startTransition(() => router.refresh()),
-      400,
-    );
-  }, [router]);
-
-  useEffect(
-    () => () => {
-      if (refreshTimer.current) clearTimeout(refreshTimer.current);
-    },
-    [],
+  const scheduleRefresh = useCoalescedRefresh(
+    () => startTransition(() => router.refresh()),
+    STUDY_REFRESH_COALESCE_MS,
+    study.id,
   );
 
   const { liveness, reconnect } = useStudyStream({

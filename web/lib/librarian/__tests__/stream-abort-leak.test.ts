@@ -94,7 +94,7 @@ function createFakeDb(options: {
   return { db, getIterations: () => iterations };
 }
 
-describe("PERF-01: librarianStreamFrames AbortSignal listener lifecycle", () => {
+describe("librarianStreamFrames AbortSignal listener lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

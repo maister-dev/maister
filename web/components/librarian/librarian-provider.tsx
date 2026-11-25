@@ -12,6 +12,11 @@ import {
   useState,
 } from "react";
 
+import {
+  isDocumentHidden,
+  subscribeDocumentVisibility,
+} from "@/lib/sse-visibility";
+
 export type LibrarianIndicatorState =
   "none" | "running" | "unread" | "action_required";
 
@@ -162,16 +167,14 @@ export function LibrarianProvider({
       source = null;
     }
 
-    function onVisibility(): void {
-      if (document.visibilityState === "visible") connect();
-      else disconnect();
-    }
-
-    if (document.visibilityState !== "hidden") connect();
-    document.addEventListener("visibilitychange", onVisibility);
+    if (!isDocumentHidden()) connect();
+    const unsubscribeVisibility = subscribeDocumentVisibility({
+      onHide: disconnect,
+      onShow: connect,
+    });
 
     return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
+      unsubscribeVisibility();
       disconnect();
     };
   }, [peekSuspensions]);

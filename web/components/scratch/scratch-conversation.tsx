@@ -9,7 +9,6 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { RunningLiveCommand } from "@/lib/capabilities/running-catalog";
 import type { ReactElement } from "react";
-import type { CoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import type { HitlErrorMessage } from "@/lib/ui-error-message";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -52,7 +51,7 @@ import {
   latestContextSnapshot,
   type ContextSnapshot,
 } from "@/lib/runs/context-snapshot";
-import { createCoalescedRefresher } from "@/lib/runs/coalesced-refresh";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 import { isStaleViewErrorCode } from "@/lib/ui-error-message";
 import {
   canReplayHitlAnswer,
@@ -369,27 +368,17 @@ export function ScratchConversation({
     runId,
   ]);
 
-  const refresherRef = useRef<CoalescedRefresher | null>(null);
-
-  useEffect(() => {
-    const refresher = createCoalescedRefresher({
-      intervalMs: DETAIL_REFRESH_COALESCE_MS,
-      run: (signal) => fetchDetail(signal),
-    });
-
-    refresherRef.current = refresher;
-
-    return () => {
-      refresher.dispose();
-      refresherRef.current = null;
-    };
-  }, [fetchDetail]);
+  const triggerDetailRefresh = useCoalescedRefresh(
+    (signal) => fetchDetail(signal),
+    DETAIL_REFRESH_COALESCE_MS,
+    runId,
+  );
 
   useEffect(() => {
     if (eventCount === 0 && transcriptRevision === null) return;
 
-    refresherRef.current?.trigger();
-  }, [eventCount, transcriptRevision]);
+    triggerDetailRefresh();
+  }, [eventCount, transcriptRevision, triggerDetailRefresh]);
 
   const attachmentsByMessage = useMemo(() => {
     const result = new Map<string, ScratchDetail["attachments"]>();

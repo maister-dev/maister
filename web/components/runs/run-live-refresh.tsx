@@ -1,6 +1,5 @@
 "use client";
 
-import type { CoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import type { ReactElement } from "react";
 
 import { useEffect, useRef } from "react";
@@ -12,9 +11,9 @@ import {
 } from "@/components/feedback/run-stream-liveness";
 import { useWorkbenchStream } from "@/components/runs/run-workbench-stream-provider";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
-import { createCoalescedRefresher } from "@/lib/runs/coalesced-refresh";
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import { runViewKey, shouldRefreshRunView } from "@/lib/runs/live-refresh";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 
 // Coalesce chunks without waiting for an active stream to become quiet.
 const REFRESH_COALESCE_MS = 800;
@@ -55,7 +54,6 @@ export function RunLiveRefresh({
   useEffect(() => {
     metadataRef.current = metadataVersion;
   }, [metadataVersion]);
-  const refresherRef = useRef<CoalescedRefresher | null>(null);
 
   // A completed server re-render delivers fresh props — adopt them as the new
   // baseline so the next transition (not this one) triggers the following
@@ -64,55 +62,47 @@ export function RunLiveRefresh({
     seenRef.current = runViewKey({ runStatus, currentStepId });
   }, [runId, runStatus, currentStepId]);
 
-  useEffect(() => {
-    if (!live && !hasWorkbench) return;
+  const triggerRefresh = useCoalescedRefresh(
+    async (signal) => {
+      try {
+        if (
+          metadataRef.current !== "legacy" &&
+          metadataRef.current !== seenMetadataRef.current
+        ) {
+          seenMetadataRef.current = metadataRef.current;
+          router.refresh();
 
-    const refresher = createCoalescedRefresher({
-      intervalMs: REFRESH_COALESCE_MS,
-      run: async (signal) => {
-        try {
-          if (
-            metadataRef.current !== "legacy" &&
-            metadataRef.current !== seenMetadataRef.current
-          ) {
-            seenMetadataRef.current = metadataRef.current;
-            router.refresh();
-
-            return;
-          }
-          const res = await fetch(`/api/runs/${runId}/graph-status`, {
-            signal,
-          });
-
-          if (!res.ok) return;
-          const snap = (await res.json()) as {
-            runStatus?: string | null;
-            currentStepId?: string | null;
-          };
-
-          if (signal.aborted) return;
-          if (
-            metadataRef.current !== seenMetadataRef.current ||
-            seenRef.current === null ||
-            shouldRefreshRunView(seenRef.current, snap)
-          ) {
-            seenRef.current = runViewKey(snap);
-            seenMetadataRef.current = metadataRef.current;
-            router.refresh();
-          }
-        } catch {
-          /* a transient status refetch failure retries on the next tick */
+          return;
         }
-      },
-    });
+        const res = await fetch(`/api/runs/${runId}/graph-status`, {
+          signal,
+        });
 
-    refresherRef.current = refresher;
+        if (!res.ok) return;
+        const snap = (await res.json()) as {
+          runStatus?: string | null;
+          currentStepId?: string | null;
+        };
 
-    return () => {
-      refresher.dispose();
-      refresherRef.current = null;
-    };
-  }, [live, runId, router, hasWorkbench]);
+        if (signal.aborted) return;
+        if (
+          metadataRef.current !== seenMetadataRef.current ||
+          seenRef.current === null ||
+          shouldRefreshRunView(seenRef.current, snap)
+        ) {
+          seenRef.current = runViewKey(snap);
+          seenMetadataRef.current = metadataRef.current;
+          router.refresh();
+        }
+      } catch {
+        /* a transient status refetch failure retries on the next tick */
+      }
+    },
+    REFRESH_COALESCE_MS,
+    live || hasWorkbench
+      ? `${runId}:${live ? 1 : 0}:${hasWorkbench ? 1 : 0}`
+      : null,
+  );
 
   useEffect(() => {
     if (liveness === "live" && !hasWorkbench) seenRef.current = null;
@@ -120,9 +110,9 @@ export function RunLiveRefresh({
 
   useEffect(() => {
     if ((live || hasWorkbench) && (eventCount > 0 || liveness === "live")) {
-      refresherRef.current?.trigger();
+      triggerRefresh();
     }
-  }, [eventCount, live, liveness, runId, hasWorkbench]);
+  }, [eventCount, live, liveness, runId, hasWorkbench, triggerRefresh]);
 
   if (!live && !hasWorkbench) return null;
 

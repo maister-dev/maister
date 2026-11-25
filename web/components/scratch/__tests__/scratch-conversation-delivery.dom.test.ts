@@ -377,7 +377,7 @@ describe("scratch delivery feedback (ADR-182)", () => {
   });
 });
 
-describe("scratch live refresh and recovery (PERF-07, PERF-08, EDGE-PERF-05)", () => {
+describe("scratch live refresh and recovery", () => {
   it("refreshes periodically under continuous 20 Hz eventCount ticks instead of starving", async () => {
     await render();
     await act(async () => {});

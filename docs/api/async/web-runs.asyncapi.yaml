@@ -58,7 +58,8 @@ channels:
         event-batch read is followed by a current source check before enqueue
         plus a bounded 2,500 ms idle recheck; revocation closes the stream.
         Ordinary non-enrolled project runs re-verify `requireProjectRoleForUser`
-        and disclosure at most once every 2,500 ms and before terminal batch
+        and disclosure at least once every 2,500 ms (re-verifying no later than
+        2,500 ms after the previous check) and before terminal batch
         emission/close without re-invoking NextAuth `auth()` inside the stream
         loop (Implemented).
         Event reads project only scalar metadata booleans (`payloadIsNull` and,

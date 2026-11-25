@@ -3,7 +3,7 @@
 import type { UseRunStreamResult } from "@/lib/use-run-stream";
 import type { Root } from "react-dom/client";
 
-import { act, createElement } from "react";
+import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -44,10 +44,34 @@ function transitionVisibility(state: DocumentVisibilityState): void {
 
 let latest: UseRunStreamResult | null = null;
 
-function Harness({ runId, retain }: { runId: string | null; retain: boolean }) {
-  latest = useRunStream(runId, { retain });
+function Harness({
+  runId,
+  retain,
+  onSnapshot,
+}: {
+  runId: string | null;
+  retain: boolean;
+  onSnapshot: (value: UseRunStreamResult) => void;
+}) {
+  const value = useRunStream(runId, { retain });
 
-  return createElement("output", null, String(latest.eventCount));
+  useEffect(() => {
+    onSnapshot(value);
+  });
+
+  return createElement("output", null, String(value.eventCount));
+}
+
+function renderHarness(runId: string | null, retain: boolean): void {
+  root.render(
+    createElement(Harness, {
+      runId,
+      retain,
+      onSnapshot: (value) => {
+        latest = value;
+      },
+    }),
+  );
 }
 
 let root: Root;
@@ -77,9 +101,7 @@ afterEach(() => {
 
 describe("useRunStream visibility pause/resume", () => {
   it("pauses tick-only streams while hidden without backoff and resumes with lastEventId plus one catch-up tick", () => {
-    act(() =>
-      root.render(createElement(Harness, { runId: "run-1", retain: false })),
-    );
+    act(() => renderHarness("run-1", false));
     expect(MockRunEventSource.instances).toHaveLength(1);
     const first = MockRunEventSource.instances[0];
 
@@ -139,9 +161,7 @@ describe("useRunStream visibility pause/resume", () => {
   });
 
   it("leaves retain: true replay streams unaffected by visibility changes", () => {
-    act(() =>
-      root.render(createElement(Harness, { runId: "run-2", retain: true })),
-    );
+    act(() => renderHarness("run-2", true));
     expect(MockRunEventSource.instances).toHaveLength(1);
     const source = MockRunEventSource.instances[0];
 
@@ -161,11 +181,7 @@ describe("useRunStream visibility pause/resume", () => {
 
   it("opens zero EventSources when mounted while hidden and connects on visible", () => {
     setVisibilityState("hidden");
-    act(() =>
-      root.render(
-        createElement(Harness, { runId: "run-hidden", retain: false }),
-      ),
-    );
+    act(() => renderHarness("run-hidden", false));
     expect(MockRunEventSource.instances).toHaveLength(0);
 
     act(() => transitionVisibility("visible"));
@@ -176,9 +192,7 @@ describe("useRunStream visibility pause/resume", () => {
   });
 
   it("resets liveness, retry budget, error, cursor, and events cleanly when switching runId from A to B", () => {
-    act(() =>
-      root.render(createElement(Harness, { runId: "run-1", retain: true })),
-    );
+    act(() => renderHarness("run-1", true));
     const first = MockRunEventSource.instances[0];
 
     act(() => first.onopen?.());
@@ -201,9 +215,7 @@ describe("useRunStream visibility pause/resume", () => {
     const countBeforeSwitch = MockRunEventSource.instances.length;
 
     // Switching to run-2 must reset state and grant a full automatic retry budget.
-    act(() =>
-      root.render(createElement(Harness, { runId: "run-2", retain: true })),
-    );
+    act(() => renderHarness("run-2", true));
     expect(MockRunEventSource.instances).toHaveLength(countBeforeSwitch + 1);
     expect(latest?.liveness).toBe("connecting");
     expect(latest?.error).toBeNull();

@@ -461,7 +461,7 @@ function assertSanitizedPlainTree(value: unknown, path = "root"): void {
   }
 }
 
-describe("prepareDiff — syntax budget, yield safety & single-pass sanitizer (PERF-12)", () => {
+describe("prepareDiff — syntax budget, yield safety & single-pass sanitizer", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });

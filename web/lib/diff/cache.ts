@@ -9,9 +9,17 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// `DIFF_CACHE_MAX_BYTES` (32 MiB) and `MAX_SINGLE_ENTRY_BYTES` (16 MiB) bound
+// the UTF-8 byte length of cached `preparedJson` strings; the corresponding
+// parsed `prepared` objects are retained alongside for SSR hits.
 export const DIFF_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 
 const MAX_SINGLE_ENTRY_BYTES = DIFF_CACHE_MAX_BYTES / 2;
+
+export type DiffNameStatusEntry = {
+  path: string;
+  status: string;
+};
 
 export type CachedDiffFile = {
   path: string;
@@ -26,6 +34,39 @@ export type PreparedDiffCacheEntry = {
   preparedJson: string;
   byteSize: number;
 };
+
+export function enrichCachedDiffFiles(
+  nameStatus: readonly DiffNameStatusEntry[],
+  prepared: DiffPrepResult,
+): CachedDiffFile[] {
+  const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
+
+  return nameStatus.map((entry) => {
+    const counts = countsByPath.get(entry.path);
+
+    return {
+      path: entry.path,
+      status: entry.status,
+      additions: counts?.additions ?? 0,
+      deletions: counts?.deletions ?? 0,
+    };
+  });
+}
+
+export function buildPreparedDiffCacheEntry(input: {
+  nameStatus: readonly DiffNameStatusEntry[];
+  prepared: DiffPrepResult;
+}): PreparedDiffCacheEntry {
+  const files = enrichCachedDiffFiles(input.nameStatus, input.prepared);
+  const preparedJson = JSON.stringify(input.prepared.perFile);
+
+  return {
+    files,
+    prepared: input.prepared,
+    preparedJson,
+    byteSize: Buffer.byteLength(preparedJson, "utf8"),
+  };
+}
 
 export type PreparedDiffCacheStats = {
   entries: number;
