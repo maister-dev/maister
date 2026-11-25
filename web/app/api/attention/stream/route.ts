@@ -19,6 +19,8 @@ import type { ReviewSelector } from "@/lib/queries/knowledge-memory-reviews";
  * counters as of now". The client refetches; it never accumulates frames.
  */
 
+import { setTimeout as delay } from "node:timers/promises";
+
 import { type NextRequest } from "next/server";
 import { sql } from "drizzle-orm";
 import pino from "pino";
@@ -188,10 +190,6 @@ async function selectedReviewVersion(
       return null;
     throw error;
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -390,7 +388,7 @@ export async function GET(req: NextRequest): Promise<Response> {
         }
       };
 
-      req.signal.addEventListener("abort", close);
+      req.signal.addEventListener("abort", close, { once: true });
 
       const counters = async (): Promise<AttentionCounters> => {
         // `computeDecisionsQueue`, NOT the React-cached `getDecisionsQueue`: a
@@ -611,7 +609,11 @@ export async function GET(req: NextRequest): Promise<Response> {
             break;
           }
 
-          await delay(POLL_INTERVAL_MS);
+          if (!req.signal.aborted && !closed) {
+            await delay(POLL_INTERVAL_MS, undefined, {
+              signal: req.signal,
+            }).catch(() => {});
+          }
         }
       } catch (err) {
         log.warn(
@@ -622,11 +624,24 @@ export async function GET(req: NextRequest): Promise<Response> {
           "attention stream loop error",
         );
       } finally {
+        req.signal.removeEventListener("abort", close);
         close();
+        const durationMs = Date.now() - startedAt;
+
+        if (req.signal.aborted) {
+          log.debug(
+            {
+              userId: user.id,
+              aborted: true,
+              durationMs,
+            },
+            "attention stream aborted",
+          );
+        }
         log.info(
           {
             userId: user.id,
-            durationMs: Date.now() - startedAt,
+            durationMs,
             watermarkMs,
           },
           "attention stream disconnect",

@@ -16,6 +16,57 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 const encoder = new TextEncoder();
+const AUTH_RECHECK_INTERVAL_MS = 2_500;
+
+type PeekHintScope = {
+  anchor: string;
+  selected: string | null;
+  anchorRoot: string;
+};
+
+function peekHintSkipReason(
+  hint: PeekHint,
+  { anchor, selected, anchorRoot }: PeekHintScope,
+): string | null {
+  if (hint.topic === "transcript") {
+    return hint.runId === anchor || hint.runId === selected
+      ? null
+      : "unrelated_transcript";
+  }
+  if (hint.source === "execution_events") {
+    return hint.runId === anchor || hint.runId === selected
+      ? null
+      : "unrelated_execution_event";
+  }
+  if (
+    hint.source === "runs" &&
+    hint.runId !== anchor &&
+    hint.runId !== selected &&
+    hint.parentRunId === null &&
+    hint.previousParentRunId === null
+  ) {
+    return "unrelated_top_level_run";
+  }
+  if (
+    hint.rootRunId !== null &&
+    hint.rootRunId !== anchorRoot &&
+    hint.runId !== anchor &&
+    hint.runId !== selected &&
+    hint.parentRunId !== anchor &&
+    hint.previousParentRunId !== anchor
+  ) {
+    return "foreign_root_run";
+  }
+
+  return null;
+}
+
+function isHintPotentiallyRelevant(
+  hint: PeekHint,
+  scope: PeekHintScope,
+): boolean {
+  return peekHintSkipReason(hint, scope) === null;
+}
 
 async function belongs(
   userId: string,
@@ -43,12 +94,16 @@ export async function GET(
     const requested =
       query.selected === undefined ? null : parsePeekRunId(query.selected);
     const anchorAccess = await authorizePeekRun(user.id, anchor);
+    const anchorRoot = anchorAccess.run.rootRunId ?? anchor;
     let selected =
       requested &&
       requested !== anchor &&
       (await belongs(user.id, anchor, requested))
         ? requested
         : null;
+    let lastAuthCheckedAt = Date.now();
+    let hintsProcessed = 0;
+    let hintsSkippedPreDb = 0;
     let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
     let closed = false;
     let working = false;
@@ -72,7 +127,10 @@ export async function GET(
 
       release = null;
       if (owned) await owned();
-      log.info({ anchorRunId: anchor }, "peek stream disconnected");
+      log.info(
+        { anchorRunId: anchor, hintsProcessed, hintsSkippedPreDb },
+        "peek stream disconnected",
+      );
     };
     const finish = (): void => {
       if (!closed) controller?.close();
@@ -81,6 +139,18 @@ export async function GET(
       );
     };
     const abort = (): void => finish();
+    const recheckAccess = async (): Promise<void> => {
+      // A valid selected path already authorizes the anchor. Recheck the
+      // anchor separately when there is no current authorized selection.
+      if (!selected || !(await belongs(user.id, anchor, selected))) {
+        await authorizePeekRun(user.id, anchor);
+        if (selected) {
+          selected = null;
+          send({ type: "peek.selection_unavailable" });
+        }
+      }
+      lastAuthCheckedAt = Date.now();
+    };
     const drain = async (): Promise<void> => {
       if (working || !controller || closed) return;
       working = true;
@@ -89,26 +159,45 @@ export async function GET(
           const [key, hint] = pending.entries().next().value!;
 
           pending.delete(key);
-          // A valid selected path already authorizes the anchor. Recheck the
-          // anchor separately when there is no current authorized selection.
-          if (!selected || !(await belongs(user.id, anchor, selected))) {
-            await authorizePeekRun(user.id, anchor);
-            if (selected) {
-              selected = null;
-              send({ type: "peek.selection_unavailable" });
+          const scope: PeekHintScope = { anchor, selected, anchorRoot };
+
+          if (!isHintPotentiallyRelevant(hint, scope)) {
+            hintsSkippedPreDb += 1;
+            if (log.isLevelEnabled("debug")) {
+              log.debug(
+                {
+                  anchorRunId: anchor,
+                  source: hint.source,
+                  topic: hint.topic,
+                  reason: peekHintSkipReason(hint, scope),
+                },
+                "peek stream skipped unrelated hint pre-DB",
+              );
             }
+            continue;
+          }
+          hintsProcessed += 1;
+          if (
+            hint.topic === "summary" ||
+            Date.now() - lastAuthCheckedAt >= AUTH_RECHECK_INTERVAL_MS
+          ) {
+            await recheckAccess();
           }
           // Messages affect only the conversation that owns them. Neither the
           // hierarchy nor titles, status, workspace or results depend on them.
           if (hint.topic === "transcript") {
             if (hint.runId === anchor || hint.runId === selected)
-              send({ type: "run.changed", runId: hint.runId, kind: hint.topic });
+              send({
+                type: "run.changed",
+                runId: hint.runId,
+                kind: hint.topic,
+              });
             continue;
           }
           const shared =
             hint.source === "workspaces" &&
             hint.rootRunId !== null &&
-            hint.rootRunId === (anchorAccess.run.rootRunId ?? anchor);
+            hint.rootRunId === anchorRoot;
           const related =
             shared ||
             hint.runId === anchor ||

@@ -3,6 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { LibrarianSettings } from "./settings";
 
+import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 
 import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
@@ -114,18 +115,9 @@ export async function* librarianStreamFrames(input: {
   const sleep =
     input.sleep ??
     ((ms: number, signal: AbortSignal) =>
-      new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, ms);
-
-        signal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timer);
-            resolve();
-          },
-          { once: true },
-        );
-      }));
+      signal.aborted
+        ? Promise.resolve()
+        : delay(ms, undefined, { signal }).catch(() => {}));
   let cursor = input.cursor;
   let lastTurnKey: string | null = null;
   let lastIndicator: string | null = null;
@@ -133,8 +125,9 @@ export async function* librarianStreamFrames(input: {
   let lastSettings: LibrarianSettings | null = null;
   let lastWork: Awaited<ReturnType<typeof workWitness>> | null = null;
   let hasConfirmation = false;
-  let lastFrameAt = Date.now();
-  let lastHeartbeatAt = Date.now();
+  const startedAt = Date.now();
+  let lastFrameAt = startedAt;
+  let lastHeartbeatAt = startedAt;
 
   log.debug(
     { ownerId: input.ownerId, lastEventId: cursor?.toString() ?? null },
@@ -309,6 +302,16 @@ export async function* librarianStreamFrames(input: {
       );
     }
   } finally {
+    if (input.signal.aborted) {
+      log.debug(
+        {
+          ownerId: input.ownerId,
+          aborted: true,
+          durationMs: Date.now() - startedAt,
+        },
+        "librarian stream aborted",
+      );
+    }
     log.debug(
       { ownerId: input.ownerId, lastEventId: cursor?.toString() ?? null },
       "librarian stream close",

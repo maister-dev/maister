@@ -2612,6 +2612,13 @@
       "when": 1795618433824,
       "tag": "0376_execution_event_consumer_horizon",
       "breakpoints": true
+    },
+    {
+      "idx": 377,
+      "version": "7",
+      "when": 1795618433825,
+      "tag": "0377_optimize_peek_hint_triggers",
+      "breakpoints": true
     }
   ]
 }

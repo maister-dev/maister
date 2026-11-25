@@ -4,16 +4,14 @@ import type { ExecutionEvent } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
 import type { ContextSnapshot } from "@/lib/runs/context-snapshot";
 
-import { and, asc, desc, eq, gt, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
-
-import { acpContextUpdateType } from "../../../../../../runtime/acp-context";
 
 import {
   httpStatusForAuthz,
   requireActiveSession,
-  requireProjectRole,
+  requireProjectRoleForUser,
 } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
@@ -21,6 +19,7 @@ import {
   assertRunKnowledgeDisclosure,
   isRunKnowledgeUnavailable,
 } from "@/lib/brain/knowledge-run-disclosure";
+import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 import {
   contextProjectionThrough,
   readContextSnapshot,
@@ -50,6 +49,8 @@ const TERMINAL_RUN_STATUS = new Set(["Done", "Abandoned", "Failed", "Crashed"]);
 
 const STATUS_REFRESH_MS = 500;
 const CANONICAL_WAKE_TIMEOUT_MS = 1_000;
+const AUTH_RECHECK_INTERVAL_MS = 2_500;
+const CONTEXT_SNAPSHOT_COALESCE_MS = 500;
 
 type RouteParams = { params: Promise<{ runId: string }> };
 
@@ -62,6 +63,7 @@ type RunLite = {
   companyId: string | null;
   createdByUserId: string | null;
   localPackageId: string | null;
+  isGoverned: boolean;
 };
 
 async function loadRunLite(runId: string): Promise<RunLite | null> {
@@ -76,6 +78,16 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
       companyId: runs.companyId,
       createdByUserId: runs.createdByUserId,
       localPackageId: runs.localPackageId,
+      isGoverned: sql<boolean>`COALESCE(
+        ${runs.knowledgeAccess} IS NOT NULL
+        OR ${runs.resultContract}->>'nativeContract' = ${FINDINGS_CONTRACT}
+        OR EXISTS (
+          SELECT 1 FROM agent_memory_injections memory
+          WHERE memory.run_id = ${runs.id}
+            AND memory.application_state <> 'retired'
+        ),
+        false
+      )`,
     })
     .from(runs)
     .leftJoin(projects, eq(projects.id, runs.projectId))
@@ -95,6 +107,7 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
     companyId: row.companyId,
     createdByUserId: row.createdByUserId,
     localPackageId: row.localPackageId,
+    isGoverned: row.isGoverned === true,
   };
 }
 
@@ -160,29 +173,49 @@ async function latestCanonicalRunSequence(runId: string): Promise<bigint> {
 
 type CanonicalRunEvent = Pick<
   ExecutionEvent,
-  | "id"
-  | "runSequence"
-  | "eventType"
-  | "payload"
-  | "occurredAt"
-  | "hostSessionId"
->;
+  "id" | "runSequence" | "eventType" | "occurredAt" | "hostSessionId"
+> & {
+  payloadIsNull: boolean;
+  contextUsageOnly?: boolean;
+};
 
 async function readCanonicalRunEvents(
   runId: string,
   afterSequence: bigint,
+  context: boolean,
 ): Promise<CanonicalRunEvent[]> {
   const db = getDb() as unknown as Db;
+  const baseColumns = {
+    id: executionEvents.id,
+    runSequence: executionEvents.runSequence,
+    eventType: executionEvents.eventType,
+    occurredAt: executionEvents.occurredAt,
+    hostSessionId: executionEvents.hostSessionId,
+    payloadIsNull: sql<boolean>`${executionEvents.payload} IS NULL`,
+  };
+  const columns = context
+    ? {
+        ...baseColumns,
+        contextUsageOnly: sql<boolean>`COALESCE(CASE
+          WHEN ${executionEvents.eventType} = 'session.update' THEN
+            jsonb_typeof(${executionEvents.payload}) = 'object'
+            AND (
+              ${executionEvents.payload}->>'contextType' = 'usage_update'
+              OR (
+                jsonb_typeof(${executionEvents.payload}->'update') = 'object'
+                AND ${executionEvents.payload}->'update'->>'sessionUpdate' = 'usage_update'
+              )
+            )
+          WHEN ${executionEvents.eventType} = 'session.line' THEN
+            jsonb_typeof(${executionEvents.payload}) = 'object'
+            AND ${executionEvents.payload}->'contextUsageOnly' = 'true'::jsonb
+          ELSE false
+        END, false)`,
+      }
+    : baseColumns;
 
   return db
-    .select({
-      id: executionEvents.id,
-      runSequence: executionEvents.runSequence,
-      eventType: executionEvents.eventType,
-      payload: executionEvents.payload,
-      occurredAt: executionEvents.occurredAt,
-      hostSessionId: executionEvents.hostSessionId,
-    })
+    .select(columns)
     .from(executionEvents)
     .where(
       and(
@@ -195,18 +228,11 @@ async function readCanonicalRunEvents(
     .limit(500);
 }
 
-function canonicalBrowserEvent(
+function buildCanonicalBrowserEvent(
   event: CanonicalRunEvent,
   context: boolean,
 ): Record<string, unknown> {
-  const { payload } = event;
-  const contextUsageOnly =
-    context &&
-    ((event.eventType === "session.update" &&
-      (payload?.contextType === "usage_update" ||
-        acpContextUpdateType(payload?.update) === "usage_update")) ||
-      (event.eventType === "session.line" &&
-        payload?.contextUsageOnly === true));
+  const contextUsageOnly = context && event.contextUsageOnly === true;
 
   return {
     type: event.eventType,
@@ -217,8 +243,20 @@ function canonicalBrowserEvent(
         ? event.occurredAt.toISOString()
         : String(event.occurredAt),
     hostSessionId: event.hostSessionId ?? null,
-    ...(contextUsageOnly ? { contextUsageOnly } : {}),
+    ...(contextUsageOnly ? { contextUsageOnly: true } : {}),
   };
+}
+
+function serializeContextState(
+  snapshot: ContextSnapshot | null,
+): string | null {
+  if (!snapshot) return null;
+
+  // A newer observation is useful for selection, but alone changes no state.
+  return JSON.stringify({
+    ...snapshot,
+    bindingObservedAt: undefined,
+  });
 }
 
 function canonicalRunEventStream(input: {
@@ -238,8 +276,17 @@ function canonicalRunEventStream(input: {
       let cursor = input.replayEvents
         ? (input.replayCursor ?? -1n)
         : await latestCanonicalRunSequence(input.run.id);
+      const governed = input.run.companyId !== null || input.run.isGoverned;
+      const trackContext = input.context && input.run.runKind !== "librarian";
+      const isFlow = input.run.runKind === "flow";
       let eventsSent = 0;
+      let authChecks = 0;
+      let contextReads = 0;
       let lastStatusCheck = Date.now();
+      let lastAuthCheck = input.startedAt;
+      let lastContextReadAt: number | null = null;
+      let pendingContextSettle = false;
+      let forceFinalContextRead = false;
       const maxQuietMs = keepaliveMs();
       let lastEventAt = Date.now();
       let lastContext = "";
@@ -253,25 +300,32 @@ function canonicalRunEventStream(input: {
           // The client may have aborted while a database read completed.
         }
       };
-      const enqueueContext = (
-        snapshot: ContextSnapshot | null,
-        previousState: string,
-      ): string => {
-        if (!snapshot) return previousState;
-        // A newer observation is useful for selection, but alone changes no state.
-        const state = JSON.stringify({
-          ...snapshot,
-          bindingObservedAt: undefined,
-        });
+      const verifyStreamAuth = async (): Promise<void> => {
+        const now = Date.now();
+        const elapsedMs = now - lastAuthCheck;
 
-        if (state !== previousState) {
-          controller.enqueue(
-            encoder.encode(formatSyntheticSseEvent(JSON.stringify(snapshot))),
+        if (input.run.companyId) {
+          await assertCompanyRunReadAccess(getDb(), input.userId, input.run.id);
+        } else {
+          if (input.run.projectId) {
+            await requireProjectRoleForUser(
+              input.userId,
+              input.run.projectId,
+              "viewer",
+            );
+          }
+          await assertRunKnowledgeDisclosure(
+            getDb(),
+            { kind: "user", userId: input.userId },
+            input.run.id,
           );
-          lastEventAt = Date.now();
         }
-
-        return state;
+        lastAuthCheck = now;
+        authChecks += 1;
+        log.debug(
+          { runId: input.run.id, governed, elapsedMs },
+          "stream auth recheck",
+        );
       };
 
       if (!input.replayEvents) {
@@ -284,40 +338,103 @@ function canonicalRunEventStream(input: {
 
       try {
         while (!signal.aborted) {
-          const events = await readCanonicalRunEvents(input.run.id, cursor);
-          const context =
-            input.context && input.run.runKind !== "librarian"
-              ? await readContextSnapshot(getDb(), input.run.id)
-              : null;
-          const attemptId =
-            context && input.run.runKind === "flow"
-              ? await readCurrentAttemptId(getDb(), input.run.id)
-              : null;
-          const attemptContext = attemptId
-            ? await readContextSnapshot(getDb(), input.run.id, attemptId)
-            : null;
+          const events = await readCanonicalRunEvents(
+            input.run.id,
+            cursor,
+            input.context,
+          );
+          let context: ContextSnapshot | null = null;
+          let attemptContext: ContextSnapshot | null = null;
 
-          if (input.run.companyId) {
-            await assertCompanyRunReadAccess(
-              getDb(),
-              input.userId,
-              input.run.id,
-            );
-          } else {
-            if (context && input.run.projectId)
-              await requireProjectRole(input.run.projectId, "viewer");
-            await assertRunKnowledgeDisclosure(
-              getDb(),
-              { kind: "user", userId: input.userId },
-              input.run.id,
+          if (trackContext) {
+            const nowBeforeContext = Date.now();
+            const shouldReadContext =
+              forceFinalContextRead ||
+              lastContextReadAt === null ||
+              nowBeforeContext - lastContextReadAt >=
+                CONTEXT_SNAPSHOT_COALESCE_MS ||
+              (events.length === 0 && pendingContextSettle);
+
+            if (shouldReadContext) {
+              const db = getDb();
+              const [nextContext, attemptId] = await Promise.all([
+                readContextSnapshot(db, input.run.id),
+                isFlow
+                  ? readCurrentAttemptId(db, input.run.id)
+                  : Promise.resolve(null),
+              ]);
+
+              context = nextContext;
+              attemptContext = attemptId
+                ? await readContextSnapshot(db, input.run.id, attemptId)
+                : null;
+              lastContextReadAt = Date.now();
+              contextReads += 1;
+              forceFinalContextRead = false;
+              pendingContextSettle = events.length > 0;
+            } else {
+              if (events.length > 0) pendingContextSettle = true;
+              log.debug(
+                { runId: input.run.id, coalesced: true, changed: false },
+                "context snapshot coalesced",
+              );
+            }
+          }
+
+          const nextContextState = serializeContextState(context);
+          const nextAttemptContextState = serializeContextState(attemptContext);
+          const contextChanged =
+            (nextContextState !== null && nextContextState !== lastContext) ||
+            (nextAttemptContextState !== null &&
+              nextAttemptContextState !== lastAttemptContext);
+
+          if (trackContext && context !== null) {
+            log.debug(
+              {
+                runId: input.run.id,
+                coalesced: false,
+                changed: contextChanged,
+              },
+              "context snapshot read",
             );
           }
+
+          const hasOutgoing = events.length > 0 || contextChanged;
+          let verifiedThisIteration = false;
+
+          if (
+            (governed && hasOutgoing) ||
+            Date.now() - lastAuthCheck >= AUTH_RECHECK_INTERVAL_MS
+          ) {
+            await verifyStreamAuth();
+            verifiedThisIteration = true;
+          }
           if (signal.aborted) break;
-          lastContext = enqueueContext(context, lastContext);
-          lastAttemptContext = enqueueContext(
-            attemptContext,
-            lastAttemptContext,
-          );
+
+          if (
+            context &&
+            nextContextState !== null &&
+            nextContextState !== lastContext
+          ) {
+            controller.enqueue(
+              encoder.encode(formatSyntheticSseEvent(JSON.stringify(context))),
+            );
+            lastContext = nextContextState;
+            lastEventAt = Date.now();
+          }
+          if (
+            attemptContext &&
+            nextAttemptContextState !== null &&
+            nextAttemptContextState !== lastAttemptContext
+          ) {
+            controller.enqueue(
+              encoder.encode(
+                formatSyntheticSseEvent(JSON.stringify(attemptContext)),
+              ),
+            );
+            lastAttemptContext = nextAttemptContextState;
+            lastEventAt = Date.now();
+          }
 
           for (const event of events) {
             const sequence = event.runSequence;
@@ -328,13 +445,15 @@ function canonicalRunEventStream(input: {
               );
             }
             cursor = sequence;
-            if (input.run.runKind === "librarian" && event.payload === null)
+            if (input.run.runKind === "librarian" && event.payloadIsNull)
               continue;
             controller.enqueue(
               encoder.encode(
                 formatSseEvent(
                   sequence.toString(),
-                  JSON.stringify(canonicalBrowserEvent(event, input.context)),
+                  JSON.stringify(
+                    buildCanonicalBrowserEvent(event, input.context),
+                  ),
                 ),
               ),
             );
@@ -342,21 +461,31 @@ function canonicalRunEventStream(input: {
             lastEventAt = Date.now();
           }
 
-          if (Date.now() - lastStatusCheck >= STATUS_REFRESH_MS) {
+          if (
+            terminalProjectionCursor !== null ||
+            Date.now() - lastStatusCheck >= STATUS_REFRESH_MS
+          ) {
             lastStatusCheck = Date.now();
             const status = await refreshRunStatus(input.run.id);
 
             if (!status) break;
             if (TERMINAL_RUN_STATUS.has(status.status)) {
-              if (!context) break;
+              if (!trackContext) {
+                if (!verifiedThisIteration) await verifyStreamAuth();
+                break;
+              }
               terminalDeadline ??= Date.now() + 3_000;
               if (
                 events.length < 500 &&
                 (await contextProjectionThrough(getDb(), input.run.id, cursor))
               ) {
-                if (terminalProjectionCursor === cursor) break;
+                if (terminalProjectionCursor === cursor) {
+                  if (!verifiedThisIteration) await verifyStreamAuth();
+                  break;
+                }
                 // Read once after observing the committed projection watermark.
                 terminalProjectionCursor = cursor;
+                forceFinalContextRead = true;
                 continue;
               }
               if (Date.now() >= terminalDeadline) {
@@ -364,6 +493,7 @@ function canonicalRunEventStream(input: {
                   { runId: input.run.id },
                   "context stream closed with pending projection",
                 );
+                if (!verifiedThisIteration) await verifyStreamAuth();
                 break;
               }
             }
@@ -385,11 +515,16 @@ function canonicalRunEventStream(input: {
           // A local wake only reduces latency. The next iteration always
           // replays from the durable sequence, including after a missed wake
           // from another web process or a manager restart.
-          await runEventWakeBus.wait(
-            input.run.id,
-            CANONICAL_WAKE_TIMEOUT_MS,
-            signal,
+          const remainingAuthMs = Math.max(
+            1,
+            AUTH_RECHECK_INTERVAL_MS - (Date.now() - lastAuthCheck),
           );
+          const wakeTimeoutMs = Math.min(
+            CANONICAL_WAKE_TIMEOUT_MS,
+            remainingAuthMs,
+          );
+
+          await runEventWakeBus.wait(input.run.id, wakeTimeoutMs, signal);
         }
       } catch (error) {
         log.warn(
@@ -408,6 +543,8 @@ function canonicalRunEventStream(input: {
           {
             runId: input.run.id,
             eventsSent,
+            authChecks,
+            contextReads,
             durationMs: Date.now() - input.startedAt,
             source: "canonical_events",
           },
@@ -471,7 +608,7 @@ export async function GET(
     if (run.companyId) {
       await assertCompanyRunReadAccess(getDb(), sessionUser.id, runId);
     } else if (run.projectId) {
-      await requireProjectRole(run.projectId, "viewer");
+      await requireProjectRoleForUser(sessionUser.id, run.projectId, "viewer");
     } else {
       await assertLocalPackageAssistantActor(run, sessionUser.id, {
         requireLock: false,
