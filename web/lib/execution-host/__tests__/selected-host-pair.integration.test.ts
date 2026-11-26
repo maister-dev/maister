@@ -226,6 +226,12 @@ it("C-13/C-14 isolate transport and retain a slot through partition, restart and
     expect(await getCommand(db, workload.id)).toMatchObject({ state: "accepted" });
     await expect(db.transaction((tx) => mintAssignment(tx, { runId, hostId: peer.id, reason: "launch" })))
       .rejects.toMatchObject({ details: { reason: "execution_host_quiescence_pending" } });
+    vi.stubEnv("MAISTER_ADDITIONAL_EXECUTION_HOSTS", undefined);
+    await expect(db.transaction(async (tx) => {
+      await mintAssignment(tx, { runId, hostId: peer.id, reason: "launch" });
+      tx.rollback();
+    })).rejects.toMatchObject({ details: { reason: "execution_host_quiescence_pending" } });
+    configurePeer(true);
     partitioned = false;
     await expect(probePeer()).resolves.toMatchObject({ status: "registered" });
     await vi.waitFor(async () => {

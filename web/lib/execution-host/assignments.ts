@@ -135,13 +135,13 @@ export async function mintAssignment(
   }
 
   const active = await getActiveAssignment(tx, input.runId);
-  await assertCapacityOwnerQuiescent(tx, input.runId);
   // D3/D7: the adopted handle is copied forward from the run's NEWEST prior
   // generation on the same host — released included (a resume follows a
   // checkpoint that released it), so a re-entry never re-adopts. A stale
   // handle is harmless: the host answers `unknown_workspace` and the client
   // re-adopts once.
   const previous = await getLatestAssignment(tx, input.runId);
+  if (previous) await assertCapacityOwnerQuiescent(tx, input.runId);
   const inherited =
     previous && previous.executionHostId === input.hostId
       ? {

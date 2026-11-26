@@ -975,6 +975,10 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   The populated 0388 migration preserved assignment history and reserved the
   running owner without claiming the pending Run. The split-user candidate
   below also stopped an accepted workload and proved retirement of its group.
+  Withdrawing B's descriptor while its slot was outstanding initially allowed
+  a new epoch on the same host. The fence now reads retained obligations
+  independently of current configuration. The expanded real-supervisor,
+  registrar and populated migration suites passed 25 integrations.
 
 - [ ] **T14 · Pilot / G2 (after T12–13).** Qualify the two-host matrix below and reconcile actual wire/schema versions, admin guide, metrics, test topology, deployment and error taxonomy. Validate migration/journal against latest master and reject rollback to a singleton writer while a second host owns work. Document shutdown/drain and coordinated restore. Release the pilot only for configurations matching its evidence. **Checkpoint 4:** two-host placement and recovery.
 

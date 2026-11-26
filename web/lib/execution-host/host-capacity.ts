@@ -52,8 +52,15 @@ function retainedExecutionRisk(assignmentId: typeof executionAssignments.id) {
 }
 
 /** Hold the original slot until its retained execution evidence is settled. */
-export async function assertCapacityOwnerQuiescent(tx: Pick<Db, "select">, runId: string): Promise<void> {
-  if (!usesHostCapacityReservations()) return;
+export async function assertCapacityOwnerQuiescent(tx: Pick<Db, "select" | "execute">, runId: string): Promise<void> {
+  // A withdrawn descriptor still owns its unresolved commands. Older
+  // databases reached before capacity was enabled have no reservations.
+  if (!usesHostCapacityReservations()) {
+    const { rows } = await tx.execute<{ present: boolean }>(sql`
+      SELECT to_regclass('public.execution_host_slot_reservations') IS NOT NULL AS present
+    `);
+    if (!rows[0]?.present) return;
+  }
   const [unsettled] = await tx.select({ id: executionAssignments.id })
     .from(executionAssignments)
     .innerJoin(executionHostSlotReservations, eq(executionHostSlotReservations.assignmentId, executionAssignments.id))
