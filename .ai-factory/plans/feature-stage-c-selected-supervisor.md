@@ -669,7 +669,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   The local A/B supervisor lane passed 148 tests in ten suites on `8b9ac8932`
   (Darwin arm64, Node 24.15.0), with one suite worker.
 
-- [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
+- [x] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
   Retained publication now runs through SQLite 22 and PostgreSQL 0380. The
   real Git fixture interrupts terminal persistence after the remote ref moves
@@ -773,7 +773,12 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Reviewed rebase promotion also passed with `autoFinalize`: RED refused
   the addressed strategy and GREEN returned the resolver result and moved
   Review to Done after the supervisor confirmed the original target lease.
-  An autonomous Flow conflict handoff still needs an addressed witness.
+  An autonomous Flow conflict now runs on the original supervisor. RED
+  found no sync attempt for a valid provider wait. GREEN used one ACP turn
+  across competing sweeps, left the public branch intact, and admitted the
+  original wait at the next Flow epoch on the same workspace. A moved
+  publication kept the Run in Review and admitted no resolver. Both legacy
+  conflict scenarios passed on the same source.
 
   Addressed retention GC now follows the same preservation and release
   receipts. RED found the legacy path probe on a pathless workspace. GREEN

@@ -539,7 +539,12 @@ The reviewed `ai_rebase_merge` strategy retains the approved source and
 target through resolver dispatch. With `autoFinalize`, the manager rechecks
 publication authority and calls the addressed promotion boundary with the
 verified checkout and original target SHA. Flow conflict continuations still
-require integration with their autonomous authority and wait receipts.
+use the current autonomous grant and the exact provider wait, publication and
+original supervisor binding. The wait UUID also identifies the addressed sync
+attempt. The resolver runs once on the retained worktree without pushing.
+After verification, the original wait queues a new Flow epoch on that same
+supervisor. A changed publication or revoked grant holds the Run in Review
+for operator action.
 
 Qualification requires a conflict on a real Git remote, one fresh ACP
 resolver, a crash before a prepared reply or before ACP create, and a restart

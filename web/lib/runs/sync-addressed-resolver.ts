@@ -42,6 +42,7 @@ import { getAssignmentById } from "@/lib/execution-host/assignments";
 import { insertCommand } from "@/lib/execution-host/commands";
 import { reserveRunHostCapacity } from "@/lib/execution-host/host-capacity";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
+import { readAddressedWorkspacePublicationTarget } from "@/lib/execution-host/workspace-preparation";
 import {
   RetainedWorkspaceSyncSchema,
   WorkspaceSyncResultSchema,
@@ -61,6 +62,7 @@ import { assertTaskLaunchUserAuthority } from "@/lib/tasks/launch-authority";
 
 import { readAddressedReviewFingerprint } from "./review-source";
 import { RELEASED_LIFECYCLE_CLAIM } from "./lifecycle-claim";
+import { authorizeFlowConflictHandoff } from "./flow-pr-conflict";
 import {
   markSyncFromReview,
   markSyncReviewFromNeedsInput,
@@ -116,7 +118,10 @@ async function lockContext(
     !run?.projectId ||
     !workspace ||
     !attempt ||
-    !attempt.actorId ||
+    (attempt.actorType === "user"
+      ? !attempt.actorId
+      : attempt.actorType !== "system" ||
+        payload.resolverIntent?.flowConflictWaitId !== attempt.id) ||
     attempt.workspaceId !== workspace.id ||
     workspace.ownershipKind !== "host_owned" ||
     workspace.removedAt ||
@@ -130,6 +135,43 @@ async function lockContext(
     throw changed();
 
   return { run, workspace, attempt };
+}
+
+async function authorizeResolver(
+  db: Db,
+  run: Run,
+  attempt: RunSyncAttemptRow,
+  probe: ExecutionCommand,
+): Promise<void> {
+  if (attempt.actorType === "user" && attempt.actorId && run.projectId) {
+    await assertTaskLaunchUserAuthority(db, run.projectId, attempt.actorId, [
+      "promoteRun",
+    ]);
+    return;
+  }
+  const waitId = RetainedWorkspaceSyncSchema.parse(probe.payload).resolverIntent
+    ?.flowConflictWaitId;
+  const owned = waitId
+    ? await authorizeFlowConflictHandoff(db, run.id, waitId, new Date())
+    : null;
+  if (!owned || owned.original.executionHostId !== probe.executionHostId)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "The Flow conflict wait no longer authorizes this resolver",
+    );
+  const { priorTarget } = await readAddressedWorkspacePublicationTarget(
+    db,
+    owned.workspace,
+    {
+      remoteId: owned.projectId,
+      targetRef: owned.publication.headRef,
+    },
+  );
+  if (priorTarget !== owned.publication.sourceHead)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "The Flow conflict publication changed after its observed wait",
+    );
 }
 
 async function reserveResolverStep(
@@ -211,13 +253,10 @@ async function reservePreparation(
     if (
       run.status !== "Review" ||
       attempt.phase !== "starting" ||
-      !run.projectId ||
-      !attempt.actorId
+      !run.projectId
     )
       throw changed();
-    await assertTaskLaunchUserAuthority(tx, run.projectId, attempt.actorId, [
-      "promoteRun",
-    ]);
+    await authorizeResolver(tx, run, attempt, probe);
     const [owner] = await tx
       .select({ capabilities: executionHosts.capabilities })
       .from(executionHosts)
@@ -243,15 +282,12 @@ async function admitResolver(db: Db, probe: ExecutionCommand): Promise<void> {
     if (attempt.mode === "agent") return;
     if (
       !run.projectId ||
-      !attempt.actorId ||
       attempt.phase !== "starting" ||
       run.status !== "Review" ||
       !payload.resolverIntent
     )
       throw changed();
-    await assertTaskLaunchUserAuthority(tx, run.projectId, attempt.actorId, [
-      "promoteRun",
-    ]);
+    await authorizeResolver(tx, run, attempt, probe);
     const pool = poolForRunKind(run.runKind);
     if (
       (await countLiveRuns(tx, pool)) >= (await effectivePoolCap(tx, pool)).cap
@@ -396,18 +432,11 @@ async function reserveSettlement(
         action,
     );
     if (existing) return existing;
-    if (action === "verify") {
-      if (
-        attempt.phase !== "verifying" ||
-        attempt.errorCode ||
-        !run.projectId ||
-        !attempt.actorId
-      )
-        throw changed();
-      await assertTaskLaunchUserAuthority(tx, run.projectId, attempt.actorId, [
-        "promoteRun",
-      ]);
-    }
+    if (
+      action === "verify" &&
+      (attempt.phase !== "verifying" || attempt.errorCode)
+    )
+      throw changed();
     if (run.status === "Running") {
       if (!(await markSyncReviewFromRunning(run.id, { db: tx })).ok)
         throw changed();
@@ -417,6 +446,7 @@ async function reserveSettlement(
       )
         throw changed();
     } else if (run.status !== "Review") throw changed();
+    if (action === "verify") await authorizeResolver(tx, run, attempt, probe);
 
     await tx
       .update(workspaces)

@@ -79,7 +79,8 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
       },
     }),
     ...(payload.resolver === undefined ? {} : { resolver: pickScalars(asObject(payload.resolver), ["commandId", "action"]) }),
-    ...(payload.resolverIntent === undefined ? {} : { resolverIntent: { runnerId: pickScalars(asObject(payload.resolverIntent), ["runnerId"]).runnerId ?? null } }),
+    ...(payload.resolverIntent === undefined ? {} : { resolverIntent: { ...pickScalars(asObject(payload.resolverIntent), ["flowConflictWaitId"]),
+      runnerId: pickScalars(asObject(payload.resolverIntent), ["runnerId"]).runnerId ?? null } }),
   }),
   "workspace.publish": (payload) => {
     const expected = asObject(payload.expected);

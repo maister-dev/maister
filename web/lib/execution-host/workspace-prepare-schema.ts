@@ -76,7 +76,10 @@ export const RetainedWorkspaceSyncSchema = RetainedWorkspacePublishFields.omit({
   onConflict: z.enum(["report", "prepareResolver"]).optional(),
   publish: WorkspacePublishPayloadSchema.shape.expected.omit({ head: true, remoteId: true }).optional(),
   resolver: z.object({ commandId: z.string().uuid(), action: z.enum(["verify", "abort"]) }).strict().optional(),
-  resolverIntent: z.object({ runnerId: z.string().min(1).max(255).nullable() }).strict().optional(),
+  resolverIntent: z.object({
+    runnerId: z.string().min(1).max(255).nullable(),
+    flowConflictWaitId: z.string().uuid().optional(),
+  }).strict().optional(),
   resolverProbeId: z.string().uuid().optional(),
 });
 const WorkspaceSyncPublicationSchema = RetainedWorkspaceSyncSchema.shape.publish.unwrap().extend({

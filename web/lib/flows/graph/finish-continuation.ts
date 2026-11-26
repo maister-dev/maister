@@ -15,6 +15,14 @@ export function flowConflictSyncAttemptId(waitId: string): string {
   return `flow-pr-conflict:${waitId}`;
 }
 
+export function isFlowConflictSyncAttempt(
+  waitId: string,
+  attempt: { id: string; actorType: string | null } | undefined,
+): boolean {
+  return attempt?.actorType === "system" &&
+    (attempt.id === waitId || attempt.id === flowConflictSyncAttemptId(waitId));
+}
+
 export type FlowPrConflictHandoff = Readonly<{
   waitId: string;
   publicationId: string;

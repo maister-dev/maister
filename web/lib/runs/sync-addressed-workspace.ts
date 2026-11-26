@@ -22,6 +22,7 @@ import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { getAssignmentById } from "@/lib/execution-host/assignments";
 import { insertCommand } from "@/lib/execution-host/commands";
 import { RetainedWorkspaceSyncSchema, WorkspaceSyncResultSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { authorizeFlowConflictHandoff, recordFlowConflictClaim } from "@/lib/runs/flow-pr-conflict";
 import { startAddressedSyncResolver } from "@/lib/runs/sync-addressed-resolver";
 import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
 import {
@@ -43,7 +44,9 @@ export async function syncAddressedWorkspace(input: {
   mainBranch: string | null;
 }): Promise<SyncRunOutcome> {
   const { db, operation, expectedStatus, strategy, target } = input;
-  const { runId, actor } = operation;
+  const { runId, actor, flowConflictWaitId } = operation;
+  const human = actor.type === "user" ? actor.id : null;
+  const flowConflict = actor.type === "system" && actor.id === null ? flowConflictWaitId : undefined;
   const wantsResolver = operation.agent ?? expectedStatus === "Review";
   if (operation.agent === true && expectedStatus !== "Review")
     throw new MaisterError(
@@ -52,14 +55,14 @@ export async function syncAddressedWorkspace(input: {
       { details: { reason: "agent_requires_review" } },
     );
   if (
-    actor.type !== "user" ||
-    !actor.id ||
+    (!human && !flowConflict) ||
+    (flowConflict && (strategy !== "merge" || operation.push !== false || !wantsResolver)) ||
     (operation.autoFinalize && !operation.approvedPromotion) ||
     (target.kind === "published" && target.remote !== "origin")
   )
     throw new MaisterError(
       "PRECONDITION",
-      "Selected supervisor sync requires a human checkout update on the approved source",
+      "Selected supervisor sync requires authority over the approved source",
       {
         details: { reason: "workspace_protocol_unsupported" },
       },
@@ -99,7 +102,7 @@ export async function syncAddressedWorkspace(input: {
         "The retained workspace changed before sync",
       );
     if (run.status === "HumanWorking")
-      await requireReworkClaimOwner(runId, actor.id, tx);
+      await requireReworkClaimOwner(runId, human, tx);
     const hostId = workspace.executionHostId;
     const handle = workspace.executionWorkspaceId;
     const generation = workspace.workspaceGeneration;
@@ -114,6 +117,14 @@ export async function syncAddressedWorkspace(input: {
         "CONFLICT",
         "Sync requires the original workspace owner to have stopped",
       );
+
+    const flowAuthorization = flowConflict
+      ? await authorizeFlowConflictHandoff(tx, runId, flowConflict, operation.now?.() ?? new Date())
+      : null;
+    if (flowConflict && (!flowAuthorization || flowAuthorization.original.id !== assignment.id ||
+      flowAuthorization.publication.baseRef !== targetRef ||
+      flowAuthorization.publication.remoteName !== "origin"))
+      throw new MaisterError("PRECONDITION", "Flow conflict sync authorization changed");
 
     if (workspace.lifecycleOperationState === "claiming") {
       const [pending] =
@@ -149,7 +160,8 @@ export async function syncAddressedWorkspace(input: {
       const originalIntent = pending && RetainedWorkspaceSyncSchema.parse(pending.command.payload).resolverIntent;
       if (pending && pending.actorId === actor.id &&
         Boolean(originalIntent) === wantsResolver &&
-        (!originalIntent || originalIntent.runnerId === (operation.runnerId ?? null)) &&
+        (!originalIntent || (originalIntent.runnerId === (operation.runnerId ?? null) &&
+          originalIntent.flowConflictWaitId === flowConflict)) &&
         (operation.push === undefined || Boolean(pending.command.payload.publish) === operation.push))
         return pending.command;
       throw new MaisterError(
@@ -170,6 +182,14 @@ export async function syncAddressedWorkspace(input: {
         "Sync requires a clean owned workspace",
         { details: { reason: "dirty_worktree" } },
       );
+    if (flowAuthorization) {
+      const publication = flowAuthorization.publication;
+      const { priorTarget: publishedHead } = await readAddressedWorkspacePublicationTarget(
+        tx, workspace, { remoteId: run.projectId, targetRef: publication.headRef },
+      );
+      if (publishedHead !== publication.sourceHead || head !== publication.sourceHead)
+        throw new MaisterError("CONFLICT", "The Flow publication changed before conflict resolution");
+    }
     const { priorTarget } = await readAddressedWorkspacePublicationTarget(
       tx,
       workspace,
@@ -213,7 +233,12 @@ export async function syncAddressedWorkspace(input: {
       .select({ attempt: max(runSyncAttempts.attempt) })
       .from(runSyncAttempts)
       .where(eq(runSyncAttempts.runId, runId));
-    const claimId = randomUUID();
+    // The wait already supplies an immutable UUID scoped to this Run.
+    const claimId = flowConflict ?? randomUUID();
+    if (flowConflict && (await tx.select({ id: runSyncAttempts.id }).from(runSyncAttempts)
+      .where(eq(runSyncAttempts.id, claimId))).length)
+      throw new MaisterError("CONFLICT", "Flow conflict sync was already claimed",
+        { details: { reason: "flow_sync_already_claimed" } });
     const now = operation.now?.() ?? new Date();
     await tx.insert(runSyncAttempts).values({
       id: claimId,
@@ -222,8 +247,8 @@ export async function syncAddressedWorkspace(input: {
       attempt: (latest?.attempt ?? 0) + 1,
       strategy,
       mode: "mechanical",
-      actorType: "user",
-      actorId: actor.id,
+      actorType: actor.type,
+      actorId: human,
       autoFinalize: operation.autoFinalize ?? false,
       targetRef: target.label,
       targetSha: priorTarget,
@@ -231,6 +256,7 @@ export async function syncAddressedWorkspace(input: {
       createdAt: now,
       updatedAt: now,
     });
+    if (flowAuthorization) await recordFlowConflictClaim(tx, flowAuthorization, claimId);
     await tx
       .update(workspaces)
       .set({
@@ -260,7 +286,10 @@ export async function syncAddressedWorkspace(input: {
         strategy,
         expected: { head, remoteId: run.projectId, targetRef, priorTarget },
         onConflict: "report",
-        ...(wantsResolver ? { resolverIntent: { runnerId: operation.runnerId ?? null } } : {}),
+        ...(wantsResolver ? { resolverIntent: {
+          runnerId: operation.runnerId ?? null,
+          ...(flowConflict ? { flowConflictWaitId: flowConflict } : {}),
+        } } : {}),
         ...(publish ? { publish } : {}),
       },
     });

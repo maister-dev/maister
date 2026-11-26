@@ -860,21 +860,22 @@ export async function syncRunTarget(
         "PRECONDITION",
         "Flow conflict sync has no current authority",
       );
-    const host = await localHost({
-      db,
-      transport: input.executionHosts?.transport,
-    });
-
-    if (host.id !== flowConflict.original.executionHostId)
-      throw new MaisterError(
-        "EXECUTOR_UNAVAILABLE",
-        "Flow conflict sync host is unavailable",
-      );
   }
 
   // 1. Load + eligibility + dirty-tree refusal (all BEFORE any claim).
   const run = await loadRun(db, runId);
   const workspace = await loadWorkspace(db, runId);
+  if (flowConflict) {
+    const hostId = workspace.ownershipKind === "host_owned"
+      ? workspace.executionHostId
+      : (await localHost({ db, transport: input.executionHosts?.transport })).id;
+
+    if (hostId !== flowConflict.original.executionHostId)
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "Flow conflict sync host is unavailable",
+      );
+  }
   // Launched-lineage predicate: a launched evaluation participant in Review must
   // not rebase/force-push mid-study — it would rewrite the tip later evidence
   // captures read.

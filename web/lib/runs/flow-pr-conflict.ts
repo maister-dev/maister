@@ -26,7 +26,7 @@ import {
   RUN_SYNC_TERMINAL_PHASES,
 } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { flowConflictSyncAttemptId } from "@/lib/flows/graph/finish-continuation";
+import { flowConflictSyncAttemptId, isFlowConflictSyncAttempt } from "@/lib/flows/graph/finish-continuation";
 import { autonomousCompletionFromSnapshot } from "@/lib/runs/execution-policy";
 import { countLiveRuns, effectivePoolCap } from "@/lib/scheduler";
 
@@ -222,9 +222,8 @@ async function finishHandoff(
     if (
       !owned ||
       !sync ||
-      sync.id !== flowConflictSyncAttemptId(waitId) ||
+      !isFlowConflictSyncAttempt(waitId, sync) ||
       sync.phase !== "succeeded" ||
-      sync.actorType !== "system" ||
       !sync.headShaAfter ||
       sync.headShaAfter === owned.publication.sourceHead
     )
@@ -365,7 +364,10 @@ export async function runFlowPrConflictSweep(input: {
     const [existing] = await db
       .select({ phase: runSyncAttempts.phase })
       .from(runSyncAttempts)
-      .where(eq(runSyncAttempts.id, flowConflictSyncAttemptId(waitId)));
+      .where(and(
+        eq(runSyncAttempts.runId, runId),
+        or(eq(runSyncAttempts.id, flowConflictSyncAttemptId(waitId)), eq(runSyncAttempts.id, waitId)),
+      ));
 
     if (existing) {
       if (

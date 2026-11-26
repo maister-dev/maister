@@ -37,8 +37,12 @@ import {
   hitlRequests,
   nodeAttempts,
   platformAcpRunners,
+  platformRuntimeSettings,
   projects,
   runs,
+  runPublications,
+  runPublicationObservations,
+  runWaits,
   runSyncAttempts,
   runSessions,
   workspaces,
@@ -791,6 +795,136 @@ it.each(["route", "recover before prompt", "invalid resolution", "auto-finalize"
   expect(commands.filter(({ kind }) => kind === "session.prompt")).toEqual([
     expect.objectContaining({ executionHostId: host.id, state: "succeeded" }),
   ]);
+}, 60_000);
+
+it.each(["current", "diverged publication"] as const)(
+  "C-10 resumes the original Flow wait only for current authority (%s)",
+  async (publication) => {
+  const { db, host, initial, runId, repository, readWorkspace, supervisor: owner } =
+    await prepareWorkspaceFixture({ fixture: "mock-acp-resolve-retained-merge.mjs" });
+  const workspace = await readWorkspace();
+  const { projectId, executionWorkspaceId: handle } = workspace;
+  if (!projectId || !handle) throw new Error("The Flow conflict fixture has no checkout");
+  const checkout = privateCheckoutPath(owner, handle);
+  await writeFile(join(checkout, "README.md"), "Flow change\n");
+  await git(checkout, "add", "--", "README.md");
+  await git(checkout, "commit", "-m", "Flow result");
+  const source = await git(checkout, "rev-parse", "HEAD");
+  const branch = "flow-conflict";
+  await git(checkout, "push", "origin", `HEAD:refs/heads/${branch}`);
+  await writeFile(join(repository, "README.md"), "upstream change\n");
+  await git(repository, "add", "--", "README.md");
+  await git(repository, "commit", "-m", "advance protected base");
+  const target = await git(repository, "rev-parse", "HEAD");
+
+  const id = randomUUID();
+  const waitId = randomUUID();
+  const attemptId = randomUUID();
+  const factId = randomUUID();
+  const prUrl = localPullRequestUrl;
+  const now = new Date();
+  const deadline = new Date(now.getTime() + 120_000);
+  const bounds = {
+    enabled: true as const, riskMax: "low" as const, confidenceMin: 0.9,
+    changedFilesMax: 10, changedLinesMax: 300, approvedCiSources: ["github-actions"],
+  };
+  const runnerId = "addressed-flow-resolver";
+  await db.insert(platformAcpRunners).values(testPlatformRunnerRow(runnerId, "codex"));
+  await db.transaction(async (tx) => {
+    const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
+    if (!run.flowRevisionId) throw new Error("The conflict fixture requires a frozen Flow");
+    await tx.update(projects).set({
+      syncRunnerId: runnerId, autonomousCompletion: bounds, autonomousCompletionRevision: 1,
+    }).where(eq(projects.id, projectId));
+    await tx.insert(platformRuntimeSettings).values({
+      id: "singleton", defaultRunnerId: runnerId,
+      autonomousCompletionEnabled: true, autonomousCompletionRevision: 1,
+    }).onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { autonomousCompletionEnabled: true, autonomousCompletionRevision: 1 },
+    });
+    await tx.update(runs).set({
+      status: "Review", currentStepId: "validate",
+      deliveryPolicySnapshot: { strategy: "pull_request", push: "never", trigger: "manual", targetBranch: "main" },
+      executionPolicy: { preset: "supervised", overrides: { autonomousCompletion: "evidence_gated" } },
+      autonomousCompletionGrant: {
+        flowRevisionId: run.flowRevisionId, projectRevision: 1, platformRevision: 1, bounds,
+        declaration: { ci: "ci", gates: [{ node: "validate", gate: "tests" }], review: { node: "validate", gate: "review" } },
+      },
+    }).where(eq(runs.id, runId));
+    await tx.update(workspaces).set({
+      publishedBranch: branch, publishedRemote: "origin", publishedAt: now,
+      targetBranch: "main", prState: "open", prNumber: 1, prUrl,
+    }).where(eq(workspaces.id, workspace.id));
+    await tx.insert(nodeAttempts).values({
+      id: attemptId, runId, nodeId: "review", nodeType: "wait", status: "Succeeded",
+      finishContinuation: {
+        version: 1, targetNodeId: "validate", injectedVars: {}, sessionPolicy: null, autoRetry: true,
+        prConflict: { waitId, publicationId: id, assignmentId: initial.id, expiresAt: deadline.toISOString() },
+      },
+    });
+    await tx.insert(runPublications).values({
+      id, projectId, runId, nodeAttemptId: attemptId, workspaceId: workspace.id, operationKey: "publish",
+      flowRevision: run.flowRevision, assignmentId: initial.id, phase: "observed",
+      prMode: "ready", prNumber: 1, prUrl, remoteName: "origin", repoIdentity: "fixture/repository",
+      headRef: `refs/heads/${branch}`, baseRef: "refs/heads/main", sourceHead: source, observedHead: source, observedAt: now,
+    });
+    await tx.insert(runWaits).values({
+      id: waitId, projectId, runId, flowRevision: run.flowRevision, ownerKind: "flow",
+      occurrenceKey: "fixture:conflict", nodeAttemptId: attemptId, conditionKind: "pr",
+      condition: { schemaVersion: 1, kind: "pr", outcomes: ["conflict"], parameters: {} },
+      publicationId: id, bindingHeadSha: source, state: "resolved", version: 1,
+      openedAt: now, nextDueAt: deadline, deadlineAt: deadline, absoluteCapAt: deadline,
+      result: { schemaVersion: 1, outcome: "conflict", source: "provider", sourceId: factId, resolvedAt: now.toISOString() },
+      resultDigest: "a".repeat(64), resolvedAt: now, queuedAt: now,
+      resumeState: "applied", resumeAssignmentId: initial.id,
+    });
+    await tx.insert(runPublicationObservations).values({
+      id: factId, publicationId: id, projectId, runId, kind: "pr",
+      sourceRevision: "provider:conflict", headSha: source, observedAt: now,
+      fact: { schemaVersion: 1, waitId, baseRef: "refs/heads/main" },
+    });
+    await releaseAssignmentForRun(tx, runId, "waiting_condition");
+  });
+
+  startCanonicalProjectionWorker();
+  const { authorizeFlowConflictHandoff, runFlowPrConflictSweep } =
+    await import("@/lib/runs/flow-pr-conflict");
+  expect(await authorizeFlowConflictHandoff(db, runId, waitId, now)).toBeTruthy();
+  const sweep = () => runFlowPrConflictSweep({ db });
+  if (publication === "diverged publication") {
+    await git(repository, "update-ref", `refs/heads/${branch}`, target, source);
+    await sweep();
+    expect(await git(checkout, "rev-parse", "HEAD")).toBe(source);
+    expect(await git(repository, "rev-parse", `refs/heads/${branch}`)).toBe(target);
+    expect(await db.select().from(runSyncAttempts).where(eq(runSyncAttempts.runId, runId))).toHaveLength(0);
+    const [held] = await db.select().from(runs).where(eq(runs.id, runId));
+    expect(held).toMatchObject({ status: "Review", currentStepId: null });
+    return;
+  }
+  await Promise.all([sweep(), sweep()]);
+  const readSync = () => db.select().from(runSyncAttempts).where(eq(runSyncAttempts.runId, runId));
+  expect(await readSync()).toHaveLength(1);
+  await expect.poll(readSync, { timeout: 20_000 }).toMatchObject([
+    { phase: "succeeded", actorType: "system", mode: "agent", pushed: false },
+  ]);
+  await sweep();
+  await sweep();
+
+  const head = await git(checkout, "rev-parse", "HEAD");
+  expect(await git(checkout, "rev-list", "--parents", "-n", "1", "HEAD")).toBe(`${head} ${source} ${target}`);
+  expect(await git(repository, "rev-parse", `refs/heads/${branch}`)).toBe(source);
+  const [wait] = await db.select().from(runWaits).where(eq(runWaits.id, waitId));
+  expect(wait).toMatchObject({ resumeState: "queued", result: { sourceId: factId } });
+  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  expect(run).toMatchObject({ status: "Pending", currentStepId: "validate" });
+  expect((await listCommandsForRun(db, runId)).filter(({ kind }) => kind === "session.prompt"))
+    .toEqual([expect.objectContaining({ executionHostId: host.id, state: "succeeded" })]);
+  const { promoteNextPending } = await import("@/lib/scheduler");
+  expect((await promoteNextPending({ db, runFlow: () => undefined })).promotedRunId).toBe(runId);
+  expect(await getLatestAssignment(db, runId)).toMatchObject({
+    epoch: initial.epoch + 2, executionHostId: host.id, executionWorkspaceId: handle,
+  });
 }, 60_000);
 
 it("C-10 publishes and finalizes a host-owned Run through the normal promotion route", async () => {
