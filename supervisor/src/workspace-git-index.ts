@@ -1,6 +1,6 @@
 import type { WorkspaceRow } from "./host-state";
 
-import { copyFile, mkdtemp, realpath, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, realpath, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,6 +37,9 @@ export async function withPreparedGitIndex<T>(
   const indexFile = join(directory, "index");
   try {
     await copyFile(index, indexFile);
+    // A new copy can hide a same-mtime edit behind cached stat entries.
+    // Age only the copy so Git rehashes racy entries. Git reserves zero.
+    await utimes(indexFile, 1, 1);
 
     return await use(indexFile);
   } finally {

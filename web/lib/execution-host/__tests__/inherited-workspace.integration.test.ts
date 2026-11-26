@@ -9,6 +9,7 @@ import {
   readFile,
   rm,
   stat,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1230,7 +1231,7 @@ it("C-10 projects a publication from the historical owner and holds removal unti
 }, 60_000);
 
 it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new epoch", async () => {
-  const { db, host, initial, runId, readWorkspace, patchOf, settle } =
+  const { db, host, initial, runId, readWorkspace, patchOf, settle, supervisor: owner } =
     await prepareWorkspaceFixture();
   await db.update(runs).set({ status: "Running" }).where(eq(runs.id, runId));
   const checkpoint = await reserveWorkspaceGitOperation(db, {
@@ -1241,6 +1242,13 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
   });
   await settle(checkpoint.id);
   const workspace = await readWorkspace();
+  const handle = workspace.executionWorkspaceId;
+  if (!handle) throw new Error("The checkpoint fixture has no checkout");
+  const checkout = privateCheckoutPath(owner, handle);
+  const readme = join(checkout, "README.md");
+  await git(checkout, "config", "core.trustctime", "false");
+  await git(checkout, "config", "core.checkStat", "minimal");
+  const before = await stat(readme);
   await expect(
     db.transaction((tx) =>
       mintPlacement(tx, {
@@ -1272,6 +1280,9 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
   expect(await getCommand(db, edit.id)).toMatchObject({
     result: { processOutcome: "exited", exitCode: 0, quiescence: "proved" },
   });
+  // An editor may preserve the mtime. This edit also keeps the exact byte count.
+  await utimes(readme, before.atime, before.mtime);
+  expect(await readFile(readme, "utf8")).toBe("after handoff\n");
   expect(await patchOf(workspace)).toContain("+after handoff");
   const restore = await reserveWorkspaceGitOperation(db, {
     runId,
