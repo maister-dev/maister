@@ -362,7 +362,7 @@ export function reservedRegularUsage(
 // and at most one mutually exclusive guardrail event. Prompt completion and
 // declared output availability use the producer wallet when pressured.
 export const FRAME_EVENT_ROWS = 4;
-export const MAX_FRAME_SLICE_EVENT_ROWS = 34;
+export const MAX_FRAME_SLICE_EVENT_ROWS = 64;
 export const FRAME_EVENT_BYTES = FRAME_EVENT_ROWS * 1_048_576;
 
 export function reserveFrameCapacity(

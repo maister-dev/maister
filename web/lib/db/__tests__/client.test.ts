@@ -86,5 +86,15 @@ describe("db client factory", () => {
       connectionTimeoutMillis: 10_000,
       idleTimeoutMillis: 30_000,
     });
+
+    for (const invalid of ["", "0", "-5", "abc"]) {
+      process.env.MAISTER_DB_POOL_MAX = invalid;
+      const fallbackDb = buildClient();
+      const fallbackOptions = (
+        fallbackDb.$client as unknown as { options: { max?: number } }
+      ).options;
+
+      expect(fallbackOptions.max).toBe(25);
+    }
   });
 });

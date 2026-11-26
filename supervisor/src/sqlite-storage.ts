@@ -83,7 +83,7 @@ export type SqliteStorage = {
     reservedBytes: number,
     operation: (snapshot: PhysicalStorageSnapshot) => T,
   ) => T | null;
-  write: <T>(operation: () => T) => T;
+  write: <T>(operation: () => T, estimatedBytes?: number) => T;
   writeTemporary: <T>(operation: () => T) => T;
   reportFailure: (error: unknown) => void;
   subscribeFailure: (listener: () => void) => () => void;
@@ -381,11 +381,18 @@ export function createSqliteStorage(input: {
       // executes synchronously before any other reservation can spend it.
       return writeTemporary(() => operation(measured));
     },
-    write<T>(operation: () => T): T {
+    write<T>(operation: () => T, estimatedBytes?: number): T {
+      const delta =
+        estimatedBytes !== undefined &&
+        Number.isFinite(estimatedBytes) &&
+        estimatedBytes > 0
+          ? Math.ceil(estimatedBytes)
+          : AMORTIZE_ESTIMATED_OP_BYTES;
+
       return writeTemporary(() => {
         if (
           !fits(
-            measure(SQLITE_WRITE_HEADROOM_BYTES),
+            measure(SQLITE_WRITE_HEADROOM_BYTES, delta),
             SQLITE_WRITE_HEADROOM_BYTES,
           )
         ) {

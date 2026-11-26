@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -1113,5 +1113,69 @@ describe("projectRunTranscript", () => {
       .where(eq(fullSchema.runMessages.runId, runId));
 
     expect(committed).toHaveLength(0);
+  });
+
+  it("REQ-P4-05: rethrows transaction-wide lock timeout (55P03) from projectBatch without falling back to sequential replay", async () => {
+    const { runId, slug, implAttemptId } = await seed();
+    const lines = Array.from({ length: 10 }, (_, i) =>
+      textLine(implAttemptId, i + 1, `lock-${i} `),
+    );
+
+    await writeEvents(slug, runId, lines);
+    // Seed the run_transcript_states row so a second connection can hold a row lock on it.
+    await projectExecutionEvents({
+      db: db as unknown as Parameters<typeof projectExecutionEvents>[0]["db"],
+      runId,
+      projector: canonicalTranscriptProjector,
+    });
+    const moreLines = Array.from({ length: 20 }, (_, i) =>
+      textLine(implAttemptId, 11 + i, `blocked-${i} `),
+    );
+
+    await writeEvents(slug, runId, moreLines);
+    const events = await db
+      .select()
+      .from(fullSchema.executionEvents)
+      .where(eq(fullSchema.executionEvents.runId, runId))
+      .orderBy(asc(fullSchema.executionEvents.runSequence));
+    const batchEvents = events.slice(10);
+
+    expect(batchEvents).toHaveLength(20);
+
+    const blocker = await testDatabase.pool.connect();
+
+    await blocker.query("BEGIN");
+    await blocker.query(
+      "SELECT 1 FROM run_transcript_states WHERE run_id = $1 FOR UPDATE",
+      [runId],
+    );
+
+    let progressCalls = 0;
+
+    try {
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.execute(sql`SET LOCAL lock_timeout = '100ms'`);
+
+          return canonicalTranscriptProjector.projectBatch!(
+            tx as unknown as Parameters<
+              NonNullable<typeof canonicalTranscriptProjector.projectBatch>
+            >[0],
+            batchEvents,
+            () => {
+              progressCalls += 1;
+            },
+            performance.now() + 5_000,
+          );
+        }),
+      ).rejects.toThrow();
+
+      // Must rethrow 55P03 immediately rather than entering the 20-event
+      // sequential fallback loop (which would invoke onProgress for each event).
+      expect(progressCalls).toBe(0);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
   });
 });

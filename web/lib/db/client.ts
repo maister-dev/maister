@@ -19,7 +19,10 @@ export function maskUrl(url: string): string {
 
 export function buildClient(): ReturnType<typeof drizzle<typeof schema>> {
   const url = resolvePostgresDbUrl();
-  const max = Number(process.env.MAISTER_DB_POOL_MAX ?? 25);
+  const rawMax = process.env.MAISTER_DB_POOL_MAX;
+  const parsedMax =
+    rawMax !== undefined && rawMax.trim() !== "" ? Number(rawMax) : Number.NaN;
+  const max = Number.isInteger(parsedMax) && parsedMax > 0 ? parsedMax : 25;
   const connectionTimeoutMillis = 10_000;
   const idleTimeoutMillis = 30_000;
 

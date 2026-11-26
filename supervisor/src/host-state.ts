@@ -34,6 +34,7 @@ import {
   outboxRefusesNewWork,
   OUTBOX_BUDGET_SCHEMA,
   ACTIVE_FRAME_SCHEMA,
+  FRAME_EVENT_ROWS,
   refreshOutboxBudget,
   retainedAtThreshold,
   RUNTIME_EVENT_PRESSURE_EPISODE_COLUMNS,
@@ -1330,6 +1331,47 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     }
   };
 
+  const estimatePayloadBytes = (value: unknown, depth = 0): number => {
+    if (depth > 16 || value === null || value === undefined) return 8;
+    if (typeof value === "string") return value.length * 2 + 2;
+    if (typeof value === "number" || typeof value === "boolean") return 16;
+    if (Array.isArray(value)) {
+      let total = 2;
+
+      for (let i = 0; i < value.length && i < 256; i += 1) {
+        total += estimatePayloadBytes(value[i], depth + 1) + 1;
+      }
+
+      return total;
+    }
+    if (typeof value === "object") {
+      let total = 2;
+      let count = 0;
+
+      for (const [k, v] of Object.entries(value)) {
+        if (count >= 256) break;
+        count += 1;
+        total += k.length + 4 + estimatePayloadBytes(v, depth + 1);
+      }
+
+      return total;
+    }
+
+    return 16;
+  };
+
+  const estimateRuntimeEventBytes = (
+    inputs: readonly AppendRuntimeEventInput[],
+  ): number => {
+    let total = 0;
+
+    for (const item of inputs) {
+      total += 512 + estimatePayloadBytes(item.draft.payload);
+    }
+
+    return total;
+  };
+
   const appendRuntimeEvents = (
     inputs: readonly AppendRuntimeEventInput[],
   ): HostRuntimeEventRow[] =>
@@ -1369,7 +1411,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         if (db.isTransaction) db.exec("ROLLBACK");
         throw error;
       }
-    });
+    }, estimateRuntimeEventBytes(inputs));
 
   const insertRuntimeObjectRow = (row: HostRuntimeObjectRow): void => {
     db.prepare(
@@ -2790,7 +2832,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         budget.reservedRegularRows;
       const availableRows = Math.min(remainingHard, remainingSoft);
 
-      return Math.max(1, Math.floor((availableRows - 2) / 2));
+      return Math.max(1, Math.floor(availableRows / FRAME_EVENT_ROWS));
     },
     runtimeEventHealthSnapshot() {
       const streamId = ensureRuntimeEventStream(db, now).stream_id;

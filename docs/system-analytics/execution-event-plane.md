@@ -67,7 +67,8 @@ update as one bounded, synchronous WAL/FULL transaction. (Implemented) Multiple
 consecutive complete ordinary text-update frames arriving in a single `<= 64 KiB`
 stdout read chunk (up to 16 frames / 32 events) may batch into one synchronous
 WAL/FULL SQLite transaction funded by one slice TEMP frame reservation
-(`frameCount * 2 + 2` rows) and one decoder permit, flushing immediately before
+(`frameCount * 4` rows, up to 64, dynamically bounded to available outbox
+headroom) and one decoder permit, flushing immediately before
 any non-text frame, tool call, permission, usage, error or slice release. Every
 pair retains raw-before-update order and becomes observable only after the
 shared commit. Any row failure rolls back all rows in the transaction, sequence

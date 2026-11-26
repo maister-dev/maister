@@ -3,7 +3,7 @@ import type { HostState } from "./host-state";
 import type { ProducerFiles } from "./producer-files";
 import type { SessionRecord } from "./types";
 
-import { MAX_FRAME_SLICE_EVENT_ROWS } from "./outbox-budget";
+import { FRAME_EVENT_ROWS, MAX_FRAME_SLICE_EVENT_ROWS } from "./outbox-budget";
 
 export type LogWriteAdmission = { kind: "capture" } | { kind: "drain" };
 
@@ -142,7 +142,7 @@ export function producerPressure(
     beforeFrame(frameBytes, frameCount = 1) {
       const rowCount =
         frameCount > 1
-          ? Math.min(MAX_FRAME_SLICE_EVENT_ROWS, frameCount * 2 + 2)
+          ? Math.min(MAX_FRAME_SLICE_EVENT_ROWS, frameCount * FRAME_EVENT_ROWS)
           : undefined;
 
       return waitForCapacity<FrameAdmission>(

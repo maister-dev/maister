@@ -851,6 +851,13 @@ describe("AT-02 physical runtime storage", () => {
       storage.snapshot();
       expect(statfsSpy.mock.calls.length).toBe(1);
 
+      // A single write whose estimated byte delta exceeds 512 KiB must measure fresh
+      statfsSpy.mockClear();
+      storage.write(() => {
+        db.prepare("INSERT INTO samples VALUES (?)").run(99);
+      }, 600 * 1024);
+      expect(statfsSpy.mock.calls.length).toBe(1);
+
       // Near threshold (within 8 MiB of stateMaxBytes): measures fresh every write
       const tightLimits = {
         ...DEFAULT_RUNTIME_LIMITS,

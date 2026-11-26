@@ -486,6 +486,7 @@ it("REQ-D5-03 + REQ-D5-04 + REQ-D5-05: renders >=12 governed cards on a max=2 po
 
   const pendingEligibleIds: string[] = [];
   const pendingStaleIds: string[] = [];
+  const pendingExpiredIds: string[] = [];
   const acceptedVaultIds: string[] = [];
   const acceptedKnowledgeIds: string[] = [];
 
@@ -537,6 +538,24 @@ it("REQ-D5-03 + REQ-D5-04 + REQ-D5-05: renders >=12 governed cards on a max=2 po
       [cardId],
     );
     pendingStaleIds.push(cardId);
+  }
+
+  {
+    const res = await submit({
+      action: "brain_proposal",
+      projectSlug: project.slug,
+      kind: "state",
+      draft: { title: "Expired brain fact", content: "Expired content" },
+    });
+
+    expect(res.status).toBe(201);
+    const { cardId } = (await res.json()) as { cardId: string };
+
+    await pool.query(
+      `UPDATE librarian_cards SET expires_at = now() - interval '1 hour' WHERE id=$1`,
+      [cardId],
+    );
+    pendingExpiredIds.push(cardId);
   }
 
   for (let i = 0; i < 2; i += 1) {
@@ -609,12 +628,22 @@ it("REQ-D5-03 + REQ-D5-04 + REQ-D5-05: renders >=12 governed cards on a max=2 po
       smallDb,
     );
 
-    // 10 pending governed cards (8 eligible + 2 stale) must be prepared once
-    // in readEligibleConfirmationIds and NOT re-prepared inside getLinkedWork.
-    expect(prepareKnowledgeCardCalls).toBe(10);
+    // 10 active pending governed cards (8 eligible + 2 stale) are prepared once
+    // in readEligibleConfirmations; the 1 expired pending card is evaluated
+    // once inside getLinkedWork's shared transaction (11 total, never 20+).
+    expect(prepareKnowledgeCardCalls).toBe(11);
     expect(conversationView.pendingCards.map((c) => c.id).sort()).toEqual(
       [...pendingEligibleIds].sort(),
     );
+    for (const expiredId of pendingExpiredIds) {
+      expect(
+        conversationView.cards.find((c) => c.id === expiredId),
+      ).toMatchObject({
+        status: "expired",
+        available: true,
+        effectPreview: expect.any(String),
+      });
+    }
     for (const staleId of pendingStaleIds) {
       expect(
         conversationView.cards.find((c) => c.id === staleId)?.available,
@@ -648,7 +677,12 @@ it("REQ-D5-03 + REQ-D5-04 + REQ-D5-05: renders >=12 governed cards on a max=2 po
       singleDb as unknown as Parameters<typeof getLinkedWork>[1],
     );
 
-    expect(directLinked.cards).toHaveLength(14);
+    expect(directLinked.cards).toHaveLength(15);
+    for (const expiredId of pendingExpiredIds) {
+      expect(directLinked.cards.find((c) => c.id === expiredId)).toEqual(
+        conversationView.cards.find((c) => c.id === expiredId),
+      );
+    }
     for (const vaultCardId of acceptedVaultIds) {
       expect(
         directLinked.cards.find((c) => c.id === vaultCardId),

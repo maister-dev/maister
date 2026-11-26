@@ -167,7 +167,10 @@ async function governedEffectLink(
 export async function getLinkedWork(
   ownerId: string,
   db: Db = getDb(),
-  options?: { eligiblePendingCardIds?: ReadonlySet<string> },
+  options?: {
+    eligiblePendingCardIds?: ReadonlySet<string>;
+    evaluatedPendingCardIds?: ReadonlySet<string>;
+  },
 ): Promise<LibrarianLinkedWork> {
   const [owner] = await db
     .select({ role: users.role })
@@ -320,12 +323,16 @@ export async function getLinkedWork(
   });
   const effectAvailableByCardId = new Map<string, boolean>();
   const effectLinkByCardId = new Map<string, LibrarianCardView["effectLink"]>();
+  const canReuseEligibility = (cardId: string, status: string): boolean =>
+    status === "pending" &&
+    Boolean(options?.eligiblePendingCardIds) &&
+    (options?.evaluatedPendingCardIds
+      ? options.evaluatedPendingCardIds.has(cardId)
+      : true);
   const needsTxEvaluation = preparedRows.some(
     ({ card, effectContext, effects }) => {
       if (!effects || !effectContext.success) return false;
-      if (card.status === "pending" && options?.eligiblePendingCardIds) {
-        return false;
-      }
+      if (canReuseEligibility(card.id, card.status)) return false;
 
       return true;
     },
@@ -340,9 +347,9 @@ export async function getLinkedWork(
         const projectId = card.target.projectId;
         let effectAvailable: boolean;
 
-        if (card.status === "pending" && options?.eligiblePendingCardIds) {
+        if (canReuseEligibility(card.id, card.status)) {
           effectAvailable =
-            options.eligiblePendingCardIds.has(card.id) &&
+            options!.eligiblePendingCardIds!.has(card.id) &&
             (projectId ? visibleById.has(projectId) : true);
         } else {
           effectAvailable = await withCardSavepoint(

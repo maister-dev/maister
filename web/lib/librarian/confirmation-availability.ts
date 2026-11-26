@@ -226,19 +226,26 @@ export async function withCardSavepoint<T>(
   }
 }
 
+export type EligibleConfirmationsResult = {
+  eligibleIds: string[];
+  evaluatedGovernedPendingIds: ReadonlySet<string>;
+};
+
 /** Uses the same scoped observation as the history page and its attention count. */
-export async function readEligibleConfirmationIds(
+export async function readEligibleConfirmations(
   db: Db,
   owner: ConfirmationOwner,
   access?: Access,
-): Promise<string[]> {
+): Promise<EligibleConfirmationsResult> {
   const candidates = (await pendingCandidates(db, owner.id)).flatMap((card) => {
     const proposal = librarianCardProposalSchema.safeParse(card.payload);
 
     return proposal.success ? [{ card, proposal: proposal.data }] : [];
   });
 
-  if (!candidates.length) return [];
+  if (!candidates.length) {
+    return { eligibleIds: [], evaluatedGovernedPendingIds: new Set() };
+  }
   const digests = [
     ...new Set(
       candidates.flatMap(({ proposal }) =>
@@ -265,6 +272,7 @@ export async function readEligibleConfirmationIds(
   const forgotten = new Set(tombstones.map(({ digest }) => digest));
 
   const eligible: string[] = [];
+  const evaluatedGovernedPendingIds = new Set<string>();
   const governedCandidates: Array<{
     card: Candidate;
     proposal: Extract<
@@ -285,6 +293,7 @@ export async function readEligibleConfirmationIds(
         owner.resetState !== "none"
       )
         continue;
+      evaluatedGovernedPendingIds.add(card.id);
       governedCandidates.push({ card, proposal, context: context.data });
       continue;
     }
@@ -322,5 +331,16 @@ export async function readEligibleConfirmationIds(
     });
   }
 
-  return eligible;
+  return { eligibleIds: eligible, evaluatedGovernedPendingIds };
+}
+
+/** Uses the same scoped observation as the history page and its attention count. */
+export async function readEligibleConfirmationIds(
+  db: Db,
+  owner: ConfirmationOwner,
+  access?: Access,
+): Promise<string[]> {
+  const { eligibleIds } = await readEligibleConfirmations(db, owner, access);
+
+  return eligibleIds;
 }

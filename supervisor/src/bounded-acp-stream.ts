@@ -462,11 +462,14 @@ export function captureAcpFrames(input: {
               }
               const release = await acquireDecoder();
               const multiFrame = frameEnds.length > 1;
+              let sliceOpen = false;
               let frame: Buffer | null = null;
 
               try {
-                if (multiFrame)
+                if (multiFrame) {
                   output.emit("frameSliceStart", frameEnds.length);
+                  sliceOpen = true;
+                }
                 let frameStart = offset;
 
                 for (const frameEnd of frameEnds) {
@@ -479,7 +482,10 @@ export function captureAcpFrames(input: {
                   firstLogByteOffset += part.byteLength;
                   frameStart = frameEnd;
                 }
-                if (multiFrame) output.emit("frameSliceEnd");
+                if (sliceOpen) {
+                  sliceOpen = false;
+                  output.emit("frameSliceEnd");
+                }
                 if (multiFrame && log.isLevelEnabled("debug")) {
                   log.debug(
                     {
@@ -491,6 +497,15 @@ export function captureAcpFrames(input: {
                   );
                 }
               } finally {
+                if (sliceOpen) {
+                  sliceOpen = false;
+                  try {
+                    output.emit("frameSliceEnd");
+                  } catch {
+                    // Preserve the original frame error while still releasing
+                    // decoder and frame reservations below.
+                  }
+                }
                 frame = null;
                 release();
                 admission?.release();

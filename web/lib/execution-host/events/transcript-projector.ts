@@ -18,6 +18,7 @@ import {
 } from "../../../../runtime/acp-context";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
+import { isProjectionTransactionUnavailable } from "./projection-transaction";
 import { ExecutionEventProjectionError } from "./projector";
 import { lockTranscriptState, transcriptStateId } from "./run-message-store";
 import {
@@ -43,6 +44,7 @@ import {
   encodeUsagePayload,
   interpretSessionUpdate,
 } from "@/lib/run-transcript/transcript";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
 
 const logger = pino({
@@ -169,6 +171,138 @@ async function interruptTranscriptCompactions(
 // 22P05 unsupported_character_value, 22P02 invalid_text_representation,
 // 22021 character_not_in_repertoire. None can succeed on a retry.
 const UNSTORABLE_SQLSTATES = new Set(["22P05", "22P02", "22021"]);
+
+// Transaction-wide cancellation, timeout, contention, or aborted-tx states
+// must never be swallowed into a 100-event sequential replay.
+const NON_REPLAYABLE_BATCH_SQLSTATES = new Set([
+  "57014", // query_canceled / statement_timeout
+  "55P03", // lock_not_available / lock_timeout
+  "40P01", // deadlock_detected
+  "40001", // serialization_failure
+  "25P02", // in_failed_sql_transaction
+]);
+
+function isNonReplayableBatchError(error: unknown): boolean {
+  if (isProjectionTransactionUnavailable(error)) return true;
+  if (error instanceof MaisterError && error.code === "EXECUTOR_UNAVAILABLE")
+    return true;
+  const code = pgErrorOf(error)?.code;
+
+  return (
+    typeof code === "string" &&
+    (NON_REPLAYABLE_BATCH_SQLSTATES.has(code) ||
+      code.startsWith("08") ||
+      code.startsWith("57"))
+  );
+}
+
+type CompactionContextUpdate = Extract<
+  NonNullable<ReturnType<typeof readAcpContextUpdate>>,
+  { kind: "compaction" | "summary_chunk" }
+>;
+
+async function applyCompactionUpdate(input: {
+  tx: Db;
+  runId: string;
+  nodeAttemptId: string | null;
+  event: ExecutionEvent;
+  update: CompactionContextUpdate;
+  onInsert: (content: string, key: string) => Promise<void>;
+  onExistingUpdate?: () => void;
+}): Promise<boolean> {
+  const { tx, runId, nodeAttemptId, event, update, onInsert } = input;
+  const eventId = event.runSequence!.toString();
+  const key =
+    compactionSessionPrefix(event) +
+    createHash("sha256").update(update.id).digest("hex");
+  const [existing] = await tx
+    .select({
+      id: runMessages.id,
+      nodeAttemptId: runMessages.nodeAttemptId,
+      content: runMessages.content,
+      lastEventId: runMessages.supervisorEventId,
+    })
+    .from(runMessages)
+    .where(
+      and(eq(runMessages.runId, runId), eq(runMessages.projectionToolKey, key)),
+    )
+    .limit(1);
+
+  if (
+    existing?.lastEventId &&
+    BigInt(existing.lastEventId) >= event.runSequence!
+  )
+    return false;
+  const stored: unknown = existing
+    ? decodeJsonbSafe(JSON.parse(existing.content))
+    : null;
+  const previous = parseCompactionMarker(stored);
+  const summaryAtLimit =
+    stored !== null &&
+    typeof stored === "object" &&
+    "summaryTruncated" in stored &&
+    stored.summaryTruncated === true;
+
+  if (
+    update.kind === "summary_chunk" &&
+    (previous?.status !== "in_progress" || summaryAtLimit)
+  )
+    return false;
+  if (
+    previous &&
+    previous.status !== "in_progress" &&
+    update.kind === "compaction" &&
+    previous.status !== update.status
+  )
+    return false;
+  const summary =
+    update.kind === "summary_chunk"
+      ? (previous?.summary ?? "") + update.text
+      : update.summary;
+  const marker: CompactionMarker & { summaryTruncated?: true } = {
+    ...previous,
+    v: 1,
+    kind: "compaction",
+    status: update.kind === "compaction" ? update.status : "in_progress",
+    ...(summary !== undefined
+      ? {
+          summary: clipCompactionText(summary, MAX_COMPACTION_SUMMARY_LENGTH),
+        }
+      : {}),
+    ...(update.kind === "compaction" && update.error !== undefined
+      ? { error: update.error }
+      : {}),
+    ...((
+      summary === undefined
+        ? summaryAtLimit
+        : summary.length >= MAX_COMPACTION_SUMMARY_LENGTH
+    )
+      ? { summaryTruncated: true }
+      : {}),
+  };
+  const content = JSON.stringify(encodeJsonbSafe(marker));
+
+  if (existing) {
+    input.onExistingUpdate?.();
+    await tx
+      .update(runMessages)
+      .set({
+        content,
+        supervisorEventId: eventId,
+      })
+      .where(eq(runMessages.id, existing.id));
+  } else {
+    await onInsert(content, key);
+  }
+  await advanceCompactionTranscriptRevision(
+    tx,
+    runId,
+    existing ? existing.nodeAttemptId : nodeAttemptId,
+    event.runSequence!,
+  );
+
+  return true;
+}
 
 // A scratch turn boundary: the point after which no open text or thought row
 // may be continued, and the usage row starts again.
@@ -368,101 +502,20 @@ export async function projectTranscriptEvent(
   switch (update.kind) {
     case "compaction":
     case "summary_chunk": {
-      const key =
-        compactionSessionPrefix(event) +
-        createHash("sha256").update(update.id).digest("hex");
-      const [existing] = await tx
-        .select({
-          id: runMessages.id,
-          nodeAttemptId: runMessages.nodeAttemptId,
-          content: runMessages.content,
-          lastEventId: runMessages.supervisorEventId,
-        })
-        .from(runMessages)
-        .where(
-          and(
-            eq(runMessages.runId, event.runId),
-            eq(runMessages.projectionToolKey, key),
-          ),
-        )
-        .limit(1);
-
-      if (
-        existing?.lastEventId &&
-        BigInt(existing.lastEventId) >= event.runSequence
-      )
-        return false;
-      const stored: unknown = existing
-        ? decodeJsonbSafe(JSON.parse(existing.content))
-        : null;
-      const previous = parseCompactionMarker(stored);
-      const summaryAtLimit =
-        stored !== null &&
-        typeof stored === "object" &&
-        "summaryTruncated" in stored &&
-        stored.summaryTruncated === true;
-
-      if (
-        update.kind === "summary_chunk" &&
-        (previous?.status !== "in_progress" || summaryAtLimit)
-      )
-        return false;
-      if (
-        previous &&
-        previous.status !== "in_progress" &&
-        update.kind === "compaction" &&
-        previous.status !== update.status
-      )
-        return false;
-      const summary =
-        update.kind === "summary_chunk"
-          ? (previous?.summary ?? "") + update.text
-          : update.summary;
-      const marker: CompactionMarker & { summaryTruncated?: true } = {
-        ...previous,
-        v: 1,
-        kind: "compaction",
-        status: update.kind === "compaction" ? update.status : "in_progress",
-        ...(summary !== undefined
-          ? {
-              summary: clipCompactionText(
-                summary,
-                MAX_COMPACTION_SUMMARY_LENGTH,
-              ),
-            }
-          : {}),
-        ...(update.kind === "compaction" && update.error !== undefined
-          ? { error: update.error }
-          : {}),
-        ...((
-          summary === undefined
-            ? summaryAtLimit
-            : summary.length >= MAX_COMPACTION_SUMMARY_LENGTH
-        )
-          ? { summaryTruncated: true }
-          : {}),
-      };
-      const content = JSON.stringify(encodeJsonbSafe(marker));
-
-      if (existing) {
-        await tx
-          .update(runMessages)
-          .set({
-            content,
-            supervisorEventId: eventId,
-          })
-          .where(eq(runMessages.id, existing.id));
-      } else {
-        openTextSequence = null;
-        openThoughtSequence = null;
-        await insert("system", content, key);
-      }
-      await advanceCompactionTranscriptRevision(
+      const applied = await applyCompactionUpdate({
         tx,
-        event.runId,
-        existing ? existing.nodeAttemptId : nodeAttemptId,
-        event.runSequence,
-      );
+        runId: event.runId,
+        nodeAttemptId,
+        event,
+        update,
+        onInsert: async (content, key) => {
+          openTextSequence = null;
+          openThoughtSequence = null;
+          await insert("system", content, key);
+        },
+      });
+
+      if (!applied) return false;
       break;
     }
     case "text":
@@ -567,10 +620,6 @@ type ToolCallUpdate = Extract<InterpretedSessionUpdate, { kind: "tool_call" }>;
 type ToolUpdatePatch = Extract<
   InterpretedSessionUpdate,
   { kind: "tool_update" }
->;
-type CompactionContextUpdate = Extract<
-  NonNullable<ReturnType<typeof readAcpContextUpdate>>,
-  { kind: "compaction" | "summary_chunk" }
 >;
 
 type PlannedTranscriptOp =
@@ -976,103 +1025,29 @@ async function applyPlannedTranscriptOps(
       case "compaction": {
         const scope = await getScope(op.nodeAttemptId);
         const eventId = op.event.runSequence!.toString();
-        const key =
-          compactionSessionPrefix(op.event) +
-          createHash("sha256").update(op.update.id).digest("hex");
-        const [existing] = await tx
-          .select({
-            id: runMessages.id,
-            nodeAttemptId: runMessages.nodeAttemptId,
-            content: runMessages.content,
-            lastEventId: runMessages.supervisorEventId,
-          })
-          .from(runMessages)
-          .where(
-            and(
-              eq(runMessages.runId, runId),
-              eq(runMessages.projectionToolKey, key),
-            ),
-          )
-          .limit(1);
 
-        if (
-          existing?.lastEventId &&
-          BigInt(existing.lastEventId) >= op.event.runSequence!
-        )
-          continue;
-        const stored: unknown = existing
-          ? decodeJsonbSafe(JSON.parse(existing.content))
-          : null;
-        const previous = parseCompactionMarker(stored);
-        const summaryAtLimit =
-          stored !== null &&
-          typeof stored === "object" &&
-          "summaryTruncated" in stored &&
-          stored.summaryTruncated === true;
-
-        if (
-          op.update.kind === "summary_chunk" &&
-          (previous?.status !== "in_progress" || summaryAtLimit)
-        )
-          continue;
-        if (
-          previous &&
-          previous.status !== "in_progress" &&
-          op.update.kind === "compaction" &&
-          previous.status !== op.update.status
-        )
-          continue;
-        const summary =
-          op.update.kind === "summary_chunk"
-            ? (previous?.summary ?? "") + op.update.text
-            : op.update.summary;
-        const marker: CompactionMarker & { summaryTruncated?: true } = {
-          ...previous,
-          v: 1,
-          kind: "compaction",
-          status:
-            op.update.kind === "compaction" ? op.update.status : "in_progress",
-          ...(summary !== undefined
-            ? {
-                summary: clipCompactionText(
-                  summary,
-                  MAX_COMPACTION_SUMMARY_LENGTH,
-                ),
-              }
-            : {}),
-          ...(op.update.kind === "compaction" && op.update.error !== undefined
-            ? { error: op.update.error }
-            : {}),
-          ...((
-            summary === undefined
-              ? summaryAtLimit
-              : summary.length >= MAX_COMPACTION_SUMMARY_LENGTH
-          )
-            ? { summaryTruncated: true }
-            : {}),
-        };
-        const content = JSON.stringify(encodeJsonbSafe(marker));
-
-        if (existing) {
-          sqlWrites += 1;
-          await tx
-            .update(runMessages)
-            .set({
-              content,
-              supervisorEventId: eventId,
-            })
-            .where(eq(runMessages.id, existing.id));
-        } else {
-          scope.openTextSequence = null;
-          scope.openThoughtSequence = null;
-          await insertMessage(scope, "system", content, eventId, eventId, key);
-        }
-        await advanceCompactionTranscriptRevision(
+        await applyCompactionUpdate({
           tx,
           runId,
-          existing ? existing.nodeAttemptId : op.nodeAttemptId,
-          op.event.runSequence!,
-        );
+          nodeAttemptId: op.nodeAttemptId,
+          event: op.event,
+          update: op.update,
+          onExistingUpdate: () => {
+            sqlWrites += 1;
+          },
+          onInsert: async (content, key) => {
+            scope.openTextSequence = null;
+            scope.openThoughtSequence = null;
+            await insertMessage(
+              scope,
+              "system",
+              content,
+              eventId,
+              eventId,
+              key,
+            );
+          },
+        });
         break;
       }
       case "text": {
@@ -1356,8 +1331,13 @@ async function projectTranscriptBatch(
 
     return events.length;
   } catch (error) {
-    if (error instanceof MaisterError && error.code === "EXECUTOR_UNAVAILABLE")
+    if (isNonReplayableBatchError(error)) {
+      logger.debug(
+        { runId, pgCode: pgErrorOf(error)?.code ?? null },
+        "transcript-projection-batch-rethrow-non-replayable",
+      );
       throw error;
+    }
 
     // Savepoint rolled back cleanly. Replay sequentially to isolate and
     // attribute the exact failing or poisonous event in order.

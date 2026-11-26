@@ -1562,4 +1562,161 @@ describe("Stage B durable host event outbox", () => {
       rmSync(stateDir, { recursive: true, force: true });
     }
   });
+
+  it("funds a 12-frame non-text chunk slice with up to 4 events/frame and flushes prior text frames on mid-slice UTF-8 failure", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "maister-nontext-slice-"));
+    const state = openHostState({ stateDir });
+    const logger = pino({ level: "silent" });
+    const publisher = new RuntimeEventPublisher(state, logger);
+    const receipt = createReceipt();
+    const sessionId = receipt.hostSessionId!;
+    const source = new PassThrough();
+    const stdin = new PassThrough();
+    const failures: unknown[] = [];
+    let resolveDrained: () => void = () => {};
+    const drained = new Promise<void>((resolve) => {
+      resolveDrained = resolve;
+    });
+
+    try {
+      state.reserveProducerReceipt(receipt, 0);
+      const record = {
+        sessionId,
+        runId: receipt.runId,
+        sessionName: "main",
+        assignmentId: receipt.assignmentId!,
+        assignmentEpoch: receipt.epoch,
+        createdByCommandId: receipt.commandId,
+        terminalPublished: false,
+      } as unknown as SessionRecord;
+      const pressure = producerPressure(
+        state,
+        record,
+        undefined,
+        undefined,
+        logger,
+      );
+      const tap = captureAcpFrames({
+        source,
+        directory: stateDir,
+        log: createWriteStream(join(stateDir, "stdout.log")),
+        beforeFrame: pressure.beforeFrame,
+        maxSliceFrames: pressure.maxSliceFrames,
+        beforeWrite: pressure.beforeWrite,
+        shouldDrain: pressure.shouldDrain,
+        onFailure: (error) => failures.push(error),
+        onDrained: resolveDrained,
+      });
+      let monotonic = 0;
+      const stream = boundedAcpStream({
+        source: tap,
+        stdin,
+        client: {
+          async requestPermission() {
+            return { outcome: { outcome: "cancelled" } };
+          },
+          async sessionUpdate(params) {
+            // Emit 3 events per non-text frame (line + update + usage) = 36 rows > 34
+            publisher.publishSessionEvent(record, {
+              type: "session.update",
+              sessionId,
+              monotonicId: ++monotonic,
+              update: params.update,
+            });
+            publisher.publishSessionEvent(record, {
+              type: "session.update",
+              sessionId,
+              monotonicId: ++monotonic,
+              update: params.update,
+            });
+          },
+        },
+        onLine(line) {
+          publisher.publishSessionEvent(record, {
+            type: "session.line",
+            sessionId,
+            monotonicId: ++monotonic,
+            line,
+          });
+        },
+        onTextFrameBatch(frames) {
+          const pairs: SessionTextFrameEvents[] = frames.map(
+            ({ line, params }) => [
+              {
+                type: "session.line",
+                sessionId,
+                monotonicId: ++monotonic,
+                line,
+              },
+              {
+                type: "session.update",
+                sessionId,
+                monotonicId: ++monotonic,
+                update: params.update,
+              },
+            ],
+          );
+
+          publisher.publishTextFrames(record, pairs);
+        },
+        onFailure: (error) => failures.push(error),
+      });
+      const reader = stream.readable.getReader();
+      const nonTextFrames = Array.from({ length: 12 }, (_, i) =>
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-nontext",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: `tc-${i}`,
+              title: `Tool ${i}`,
+              kind: "read",
+              status: "pending",
+            },
+          },
+        }),
+      );
+      const validTextFrames = Array.from({ length: 3 }, (_, i) =>
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-nontext",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: `before-bad-${i}` },
+            },
+          },
+        }),
+      );
+
+      // Chunk 1: 12 non-text frames emitting 3 rows each (36 rows total in one slice)
+      source.write(`${nonTextFrames.join("\n")}\n`);
+      // Chunk 2: 3 valid text frames followed by invalid UTF-8 in the same slice
+      source.end(
+        Buffer.concat([
+          Buffer.from(`${validTextFrames.join("\n")}\n`, "utf8"),
+          Buffer.from([0x7b, 0xff, 0xfe, 0x7d, 0x0a]),
+        ]),
+      );
+
+      await expect(reader.read()).rejects.toMatchObject({
+        code: "ACP_PROTOCOL",
+      });
+      await drained;
+      reader.releaseLock();
+
+      // 12 non-text * 3 rows = 36 rows + 3 flushed text frames * 2 rows = 6 rows -> 42 total
+      expect(state.runtimeEventOutboxStats().retainedCount).toBe(42);
+      expect(failures.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      source.destroy();
+      stdin.destroy();
+      await drained;
+      state.close();
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });
