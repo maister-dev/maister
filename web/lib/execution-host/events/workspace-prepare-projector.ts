@@ -251,6 +251,13 @@ async function applyRetainedWorkspaceReceipt(
       receipt.result.priorTarget !== request.payload.expected.priorTarget ||
       receipt.result.observedTarget !== request.payload.expected.priorTarget)
       throw inconsistent();
+    const { publish } = request.payload;
+    const { behind, head, publication } = receipt.result;
+    if ((Boolean(publish) && behind > 0) !== Boolean(publication) ||
+      (publication && (publication.targetRef !== publish?.targetRef ||
+        publication.priorTarget !== publish.priorTarget ||
+        publication.observedTarget !== head)))
+      throw inconsistent();
   } else if (receipt.operationId === "stageCPreserve") {
     if (receipt.result.generation !== target.generation || receipt.result.dispositionId !== command.id)
       throw inconsistent();
@@ -272,16 +279,24 @@ async function settleAddressedSyncAttempt(
   receipt: Extract<WorkspaceSyncReceipt, { phase: "rejected" | "completed" }>,
 ): Promise<void> {
   const { claimId } = receipt.owner;
+  const publication = receipt.phase === "completed" ? receipt.result.publication : undefined;
   const [attempt] = await tx
     .update(runSyncAttempts)
     .set(receipt.phase === "completed"
-      ? { phase: "succeeded", headShaAfter: receipt.result.head, updatedAt: new Date() }
+      ? { phase: "succeeded", headShaAfter: receipt.result.head, pushed: !!publication, updatedAt: new Date() }
       : { phase: "failed", errorCode: receipt.refusal.code, errorMessage: receipt.refusal.message, updatedAt: new Date() })
     .where(and(eq(runSyncAttempts.id, claimId), eq(runSyncAttempts.workspaceId, workspaceId), eq(runSyncAttempts.phase, "starting")))
     .returning({ id: runSyncAttempts.id });
   const [released] = await tx
     .update(workspaces)
-    .set(RELEASED_LIFECYCLE_CLAIM)
+    .set({
+      ...RELEASED_LIFECYCLE_CLAIM,
+      ...(publication ? {
+        publishedRemote: "origin",
+        publishedBranch: publication.targetRef.slice("refs/heads/".length),
+        publishedAt: new Date(),
+      } : {}),
+    })
     .where(and(eq(workspaces.id, workspaceId), eq(workspaces.lifecycleOperationName, "sync"),
       eq(workspaces.lifecycleOperationState, "claiming"), eq(workspaces.lifecycleOperationAttemptId, claimId)))
     .returning({ id: workspaces.id });

@@ -58,7 +58,21 @@ export const RetainedWorkspaceSyncSchema = RetainedWorkspacePublishFields.omit({
   publication: true,
   integration: true,
   pullRequest: true,
-}).extend({ strategy: z.enum(["fastForward", "merge", "rebase"]) });
+}).extend({
+  strategy: z.enum(["fastForward", "merge", "rebase"]),
+  publish: WorkspacePublishPayloadSchema.shape.expected.omit({ head: true, remoteId: true }).optional(),
+});
+const WorkspaceSyncPublicationSchema = RetainedWorkspaceSyncSchema.shape.publish.unwrap().extend({
+  observedTarget: gitObject,
+});
+export const WorkspaceSyncResultSchema = z.object({
+  generation,
+  head: gitObject,
+  priorTarget: gitObject,
+  observedTarget: gitObject,
+  behind: z.int().nonnegative(),
+  publication: WorkspaceSyncPublicationSchema.optional(),
+}).strict();
 export const WorkspacePreservePayloadSchema = z.object({
   generation, disposition: z.literal("archive"), quiescenceId: opaqueId,
 }).strict();
@@ -395,7 +409,7 @@ export const WorkspaceCommandReceiptSchema = z.union([
   commandResultReceipt(
     "stageCSync",
     workspaceTarget,
-    z.strictObject({ generation, head: gitObject, priorTarget: gitObject, observedTarget: gitObject, behind: z.int().nonnegative() }),
+    WorkspaceSyncResultSchema,
     workspaceOperationOwner,
   ),
   commandResultReceipt(

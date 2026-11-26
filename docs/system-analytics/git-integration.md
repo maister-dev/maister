@@ -477,6 +477,15 @@ requires the original base. An unconfirmed outcome holds the workspace
 fence for reconciliation. Web records the publication and the PR together
 under the original promotion claim.
 
+Updating a retained workspace can publish the resulting commit to the Run's
+dedicated branch. The existing publication enables this by default and the
+operator can decline it. Web records the exact publication lease separately
+from the sync target. Before moving the remote ref, the host proves the
+previous public commit is part of the original source and persists the
+candidate. It confirms the public ref before changing the checkout. Replay
+uses that same candidate and readback. An unverified remote outcome retains
+the claim. Web applies the new HEAD and publication evidence together.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential

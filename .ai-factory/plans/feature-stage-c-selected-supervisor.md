@@ -728,6 +728,16 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   docs and ERD. Resolver-assisted sync and parked PR finalization remain
   open.
 
+  Retained sync can also publish under a second exact lease for the Run's
+  dedicated branch. RED the Web update silently skipped the existing
+  publication and the host refused a typed lease. GREEN refused a stale
+  sync base and a stale publication lease with no checkout or public ref
+  change. Restart after the original effect reused the candidate and
+  verified one public reflog update. The normal Web sync route applied the
+  publication and the checkout result together, while an opted-out conflict
+  kept both intact. Six host C-10 cases and the Web sync integration passed
+  with both typechecks and contract validation.
+
   Addressed retention GC now follows the same preservation and release
   receipts. RED found the legacy path probe on a pathless workspace. GREEN
   skipped a future deadline and kept the local reconciler out of the

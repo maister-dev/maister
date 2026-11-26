@@ -395,7 +395,7 @@ paths:
       tags: [execution-host]
       operationId: stageCSync
       summary: Sync a retained workspace to its approved Git target
-      description: The original supervisor compares the source HEAD and exact remote tip, prepares a candidate away from the live checkout, and verifies the applied result under the retained workspace fence.
+      description: The original supervisor compares the source HEAD and exact remote tip, prepares a candidate away from the live checkout, and verifies the applied result under the retained workspace fence. An optional lease publishes the candidate to the dedicated branch on the same approved remote. Sync replay verifies the original publication before applying the candidate locally.
       x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCSyncRequest
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }

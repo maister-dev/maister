@@ -7,9 +7,7 @@ import type { SyncRef } from "./sync-ref";
 import { randomUUID } from "node:crypto";
 
 import { and, eq, max, sql } from "drizzle-orm";
-import { z } from "zod";
 
-import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
 import { isWorkspaceSourceRef } from "../../../runtime/workspace-prepare";
 import {
   executionCommands,
@@ -18,9 +16,12 @@ import {
   workspaces,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { assertNativeProjectPublication } from "@/lib/brain/knowledge-project-publication";
+import { publishedTarget } from "@/lib/workbench-git/publication";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { getAssignmentById } from "@/lib/execution-host/assignments";
 import { insertCommand } from "@/lib/execution-host/commands";
+import { WorkspaceSyncResultSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
 import {
   readAddressedWorkspacePublicationTarget,
@@ -31,11 +32,6 @@ import {
   settleRetainedWorkspaceCommand,
 } from "@/lib/execution-host/workspace-retained-operation";
 
-const syncReceipt = z.object({
-  head: z.string().regex(GIT_OBJECT_ID),
-  behind: z.int().nonnegative(),
-});
-
 /** Sync a parked owned checkout through its durable manager claim and original supervisor. */
 export async function syncAddressedWorkspace(input: {
   db: Db;
@@ -43,6 +39,7 @@ export async function syncAddressedWorkspace(input: {
   expectedStatus: string;
   strategy: SyncStrategy;
   target: SyncRef;
+  mainBranch: string | null;
 }): Promise<SyncRunOutcome> {
   const { db, operation, expectedStatus, strategy, target } = input;
   const { runId, actor } = operation;
@@ -50,7 +47,6 @@ export async function syncAddressedWorkspace(input: {
     actor.type !== "user" ||
     !actor.id ||
     operation.agent === true ||
-    operation.push === true ||
     operation.autoFinalize ||
     (target.kind === "published" && target.remote !== "origin")
   )
@@ -142,7 +138,9 @@ export async function syncAddressedWorkspace(input: {
                 ),
               )
           : [];
-      if (pending && pending.actorId === actor.id) return pending.command;
+      if (pending && pending.actorId === actor.id &&
+        (operation.push === undefined || Boolean(pending.command.payload.publish) === operation.push))
+        return pending.command;
       throw new MaisterError(
         "CONFLICT",
         "Another operation owns the retained workspace",
@@ -175,6 +173,25 @@ export async function syncAddressedWorkspace(input: {
         "The approved sync target does not exist",
         { details: { reason: "source_ref_unapproved" } },
       );
+    let publish: { targetRef: string; priorTarget: string | null } | undefined;
+    if (operation.push ?? (workspace.publishedBranch !== null || workspace.prUrl !== null)) {
+      await assertNativeProjectPublication(() => tx, { ...run, projectId: run.projectId });
+      const destination = publishedTarget(workspace);
+      const destinationRef = `refs/heads/${destination.remoteBranch}`;
+      if (destination.remote !== "origin" || !isWorkspaceSourceRef(destinationRef) ||
+        [input.mainBranch, workspace.baseBranch, workspace.targetBranch].includes(destination.remoteBranch))
+        throw new MaisterError(
+          "PRECONDITION",
+          "Sync publication requires a dedicated branch on the approved remote",
+          { details: { reason: "source_ref_unapproved" } },
+        );
+      const destinationTip = destinationRef === targetRef
+        ? priorTarget
+        : (await readAddressedWorkspacePublicationTarget(tx, workspace, {
+            remoteId: run.projectId, targetRef: destinationRef,
+          })).priorTarget;
+      publish = { targetRef: destinationRef, priorTarget: destinationTip };
+    }
     const [latest] = await tx
       .select({ attempt: max(runSyncAttempts.attempt) })
       .from(runSyncAttempts)
@@ -224,6 +241,7 @@ export async function syncAddressedWorkspace(input: {
         fence: await nextRetainedWorkspaceFence(tx, hostId, handle),
         strategy,
         expected: { head, remoteId: run.projectId, targetRef, priorTarget },
+        ...(publish ? { publish } : {}),
       },
     });
   });
@@ -239,7 +257,7 @@ export async function syncAddressedWorkspace(input: {
       { details: refusal?.details },
     );
   }
-  const result = syncReceipt.safeParse(settled.result);
+  const result = WorkspaceSyncResultSchema.strip().safeParse(settled.result);
   if (!result.success || typeof command.payload.claimId !== "string")
     throw new MaisterError(
       "ACP_PROTOCOL",
@@ -250,7 +268,7 @@ export async function syncAddressedWorkspace(input: {
     attemptId: command.payload.claimId,
     outcome: result.data.behind ? "synced" : "noop",
     behind: result.data.behind,
-    pushed: false,
+    pushed: result.data.publication !== undefined,
     conflictedFiles: [],
   };
 }

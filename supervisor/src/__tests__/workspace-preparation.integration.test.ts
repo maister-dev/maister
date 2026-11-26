@@ -1484,6 +1484,7 @@ it("C-10 syncs an exact retained target and verifies one checkout update after a
   git(repo, "add", "--", "input.txt");
   git(repo, "commit", "-m", "base");
   const head = git(repo, "rev-parse", "HEAD");
+  git(repo, "branch", "feature", head);
   vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repo }));
   const host = await bootHost({ runtimeRoot: root });
   hosts.push(host);
@@ -1500,8 +1501,13 @@ it("C-10 syncs an exact retained target and verifies one checkout update after a
   const command = {
     workspaceProtocol: 1,
     command: { id: randomUUID(), kind: "workspace.sync", issuedAt: new Date().toISOString() },
-    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle, workspaceGeneration: generation, claimId: randomUUID(), fence: 2 },
-    payload: { generation, expected: { head, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget: target }, strategy: "fastForward" },
+    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle, workspaceGeneration: generation, claimId: randomUUID(), fence: 3 },
+    payload: {
+      generation,
+      expected: { head, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget: target },
+      strategy: "fastForward",
+      publish: { targetRef: "refs/heads/feature", priorTarget: head },
+    },
   };
   const stale = {
     ...command,
@@ -1514,6 +1520,17 @@ it("C-10 syncs an exact retained target and verifies one checkout update after a
   expect(await waitForWorkspaceReceipt(host, stale.command.id)).toMatchObject({
     phase: "rejected", refusal: { details: { reason: "target_ref_changed" } },
   });
+  const stalePublication = {
+    ...command,
+    command: { ...command.command, id: randomUUID() },
+    owner: { ...command.owner, claimId: randomUUID(), fence: 2 },
+    payload: { ...command.payload, publish: { ...command.payload.publish, priorTarget: null } },
+  };
+  expect((await addressedRequest(host, route, stalePublication)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(host, stalePublication.command.id)).toMatchObject({
+    phase: "rejected", refusal: { details: { reason: "target_ref_changed" } },
+  });
+  expect(git(repo, "rev-parse", "refs/heads/feature")).toBe(head);
   expect(git(checkout.realPath, "rev-parse", "HEAD")).toBe(head);
   vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
     throw new Error("fixture interrupted after the Git sync and before the terminal SQLite commit");
@@ -1527,10 +1544,14 @@ it("C-10 syncs an exact retained target and verifies one checkout update after a
   expect((await addressedRequest(restarted, route, command)).status).toBe(202);
   expect(await waitForWorkspaceReceipt(restarted, command.command.id)).toMatchObject({
     operationId: "stageCSync", phase: "completed", owner: command.owner,
-    result: { generation, head: target, priorTarget: target, observedTarget: target, behind: 1 },
+    result: {
+      generation, head: target, priorTarget: target, observedTarget: target, behind: 1,
+      publication: { targetRef: "refs/heads/feature", priorTarget: head, observedTarget: target },
+    },
   });
   expect(await readFile(join(checkout.realPath, "input.txt"), "utf8")).toBe("upstream advanced\n");
   expect(git(checkout.realPath, "reflog", "show", "--format=%H", "HEAD").split("\n").slice(0, 2)).toEqual([target, head]);
+  expect(git(repo, "reflog", "show", "--format=%H", "refs/heads/feature")).toBe(`${target}\n${head}`);
 }, 30_000);
 
 it("C-10 preserves dirty tracked and untracked files before releasing a retained address", async () => {

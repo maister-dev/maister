@@ -227,6 +227,7 @@ export type WorkspaceSyncRequest = Readonly<{
     generation: number;
     expected: CheckoutExpectation;
     strategy: "fastForward" | "merge" | "rebase";
+    publish?: Readonly<{ targetRef: string; priorTarget: string | null }>;
   }>;
 }>;
 
@@ -236,6 +237,11 @@ export type WorkspaceSyncResult = Readonly<{
   priorTarget: string;
   observedTarget: string;
   behind: number;
+  publication?: Readonly<{
+    targetRef: string;
+    priorTarget: string | null;
+    observedTarget: string;
+  }>;
 }>;
 
 export type WorkspacePublishRequest = Readonly<{

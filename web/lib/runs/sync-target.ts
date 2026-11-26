@@ -899,6 +899,7 @@ export async function syncRunTarget(
       expectedStatus: run.status,
       strategy: input.strategy ?? project?.syncStrategyDefault ?? "rebase",
       target: resolveSyncRef(input.onto ?? "target", runId, workspace, project),
+      mainBranch: project?.mainBranch ?? null,
     });
   }
 

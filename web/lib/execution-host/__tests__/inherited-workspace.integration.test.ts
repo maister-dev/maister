@@ -527,6 +527,8 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
   await git(checkout, "add", "--", "retained.txt");
   await git(checkout, "commit", "-m", "retained work");
   const local = await git(checkout, "rev-parse", "HEAD");
+  const publicBranch = "test-shared-sync-branch";
+  await git(checkout, "push", "origin", `HEAD:refs/heads/${publicBranch}`);
   const upstream = join(dirname(repository), "upstream");
   await git(repository, "config", "receive.denyCurrentBranch", "updateInstead");
   await git(dirname(repository), "clone", repository, upstream);
@@ -537,6 +539,9 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
   const target = await git(upstream, "rev-parse", "HEAD");
   expect(target).not.toBe(base);
   await db.transaction(async (tx) => {
+    await tx.update(workspaces).set({
+      publishedBranch: publicBranch, publishedRemote: "origin", publishedAt: new Date(),
+    }).where(eq(workspaces.runId, runId));
     await tx
       .update(runs)
       .set({ status: "Review", reviewEnteredAt: new Date() })
@@ -557,24 +562,25 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
     ]),
   });
   const { POST } = await import("@/app/api/runs/[runId]/sync/route");
-  const send = (strategy: "merge" | "rebase") =>
+  const send = (strategy: "merge" | "rebase", push?: boolean) =>
     POST(
       new NextRequest(`http://localhost/api/runs/${runId}/sync`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ strategy, agent: false, push: false }),
+        body: JSON.stringify({ strategy, agent: false, push }),
       }),
       { params: Promise.resolve({ runId }) },
     );
   const response = await send("merge");
   const result = await response.json();
   expect(response.status, JSON.stringify(result)).toBe(200);
-  expect(result).toMatchObject({ outcome: "synced", behind: 1, pushed: false });
+  expect(result).toMatchObject({ outcome: "synced", behind: 1, pushed: true });
   const observed = await git(checkout, "rev-parse", "HEAD");
   expect(await git(checkout, "rev-list", "--parents", "-n", "1", "HEAD")).toBe(
     `${observed} ${local} ${target}`,
   );
   expect(await git(repository, "rev-parse", "main")).toBe(target);
+  expect(await git(repository, "rev-parse", `refs/heads/${publicBranch}`)).toBe(observed);
   expect(await readWorkspace()).toMatchObject({
     worktreePath: null,
     lifecycleOperationState: "none",
@@ -587,6 +593,7 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
   expect(attempt).toMatchObject({
     phase: "succeeded",
     strategy: "merge",
+    pushed: true,
     headShaBefore: local,
     headShaAfter: observed,
     targetSha: target,
@@ -599,7 +606,7 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
   await git(upstream, "add", "--", "retained.txt");
   await git(upstream, "commit", "-m", "add conflicting upstream file");
   await git(upstream, "push", "origin", "HEAD:refs/heads/main");
-  const refusal = await send("rebase");
+  const refusal = await send("rebase", false);
   const refusedBody = await refusal.json();
   expect(refusal.status, JSON.stringify(refusedBody)).toBe(409);
   expect(refusedBody).toMatchObject({
@@ -609,6 +616,7 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
   expect(await git(checkout, "rev-parse", "HEAD")).toBe(observed);
   expect(await git(checkout, "status", "--porcelain")).toBe("");
   expect(await git(checkout, "show", "HEAD:retained.txt")).toBe("local commit");
+  expect(await git(repository, "rev-parse", `refs/heads/${publicBranch}`)).toBe(observed);
   expect(await readWorkspace()).toMatchObject({
     lifecycleOperationState: "none",
     lifecycleOperationAttemptId: null,
