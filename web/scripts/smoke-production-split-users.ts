@@ -54,6 +54,9 @@ const docker = async (
     })
   ).stdout.trim();
 const network = "maister-s53-" + randomUUID().slice(0, 8);
+// Each disposable container gets its own writable filesystem and enough room
+// for the supervisor's SQLite reserve and the Next.js build.
+const fixtureMount = "/s53:rw,exec,size=2147483648,mode=0755";
 const db = await startMainAndBrainPostgresTestDb({
   databaseName: "s53_split_uid",
 });
@@ -86,6 +89,8 @@ try {
     "create",
     "--network",
     network,
+    "--tmpfs",
+    fixtureMount,
     "-p",
     "127.0.0.1::3000",
     "--user",
@@ -366,6 +371,8 @@ printf 'reviewed change\\n' > abandoned-attempt.txt`)}},transitions:{success:"re
       "create",
       "--network",
       network,
+      "--tmpfs",
+      fixtureMount,
       "--network-alias",
       "s53-host-b",
       "--user",
@@ -1550,7 +1557,7 @@ ${adapterScript}EOF
       container,
       "sh",
       "-c",
-      "tail -n 18 /s53/web/boot.log /s53/host/boot.log",
+      'for log in /s53/web/boot.log /s53/host/boot.log; do if [ -f "$log" ]; then tail -n 18 "$log"; fi; done',
     ]).catch(() => "");
     console.error(tail);
   }

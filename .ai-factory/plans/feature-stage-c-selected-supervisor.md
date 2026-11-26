@@ -715,8 +715,18 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   GREEN produced the expected merge parents and rebase parent, refused a
   stale reviewed target, and replayed one remote ref update after restart
   without changing the original checkout. Five C-10 cases passed on each
-  side, with both typechecks and the contract validator. Resolver-assisted
-  sync and addressed PR delivery remain open.
+  side, with both typechecks and the contract validator.
+
+  Addressed PR delivery (`d918abcdd`) publishes the approved source and
+  opens or reuses the provider PR under the retained claim. The Web RED
+  refused the mode. The host RED lost evidence of the first PR after the
+  base advanced during an interrupted receipt. GREEN refused an early
+  stale base without a push, then proved one branch update and one PR
+  across replay and restart. The Web service persisted the verified PR and
+  source ref together. Six C-10 cases passed on each side using real
+  Git and a local provider CLI fixture, with both typechecks, contracts,
+  docs and ERD. Resolver-assisted sync and parked PR finalization remain
+  open.
 
   Addressed retention GC now follows the same preservation and release
   receipts. RED found the legacy path probe on a pathless workspace. GREEN
@@ -732,7 +742,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   test now contains an addressed workspace row and verifies that valid local
   roots remain discoverable. RED failed on the null path, GREEN passed all
   four GC tests.
-- [ ] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
+- [x] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
 
   The admin host list now identifies the durable registration bound to the
   selected supervisor key. A missing key match has its own EN/RU status and
@@ -813,18 +823,21 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   input store contained the exact packaged skill bytes. The launch suite
   also rejects a conflicting explicit shared-root override and a revoked
   project grant. Verified on Darwin arm64 and Node 24.15.0.
-  G1 still owns Chrome focus and EN/RU presentation evidence. Operational
-  workspace-integrity dispatch requires its existing local preparation
-  contract.
+  Operational workspace-integrity dispatch requires its existing local
+  preparation contract.
 
   Production Chrome reproduced the board removing the launch dialog as
   the task moved out of Backlog. The dialog now belongs to the board and
   keeps its active attention-stream subscription while cards change
   columns. The interaction test replaces the launching card, applies the
   actual placement through an attention tick, and checks keyboard focus
-  on closing. All 35 launch interaction cases passed. The updated G1
-  harness observes selected and actual placement in EN and RU and checks
-  the original checkout bytes after retention GC.
+  on closing. All 35 launch interaction cases passed. Production Chrome
+  158.0.8127.38 on Linux arm64 with Node 24.22.2 and image `ecc969b9e`
+  (`sha256:1808999795335ec446d7baa07f09055c8e9ef46f584228c712f9efbdd41a09ef`)
+  observed keyboard host selection, picker focus and the requested host
+  while the Run was queued. The same dialog received the owning host and
+  assignment epoch over the attention stream in EN and RU. The two pinned
+  Next.js runs reached Review on the chosen host.
 
 - [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.
 
@@ -886,6 +899,22 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   The deployment and supervisor samples now describe the verified private
   root, repository approval and stable-key pin. The PostgreSQL-only
   production Compose configuration and full documentation validator pass.
+
+  **C-12 combined browser witness.** On `ecc969b9e`, the split-user
+  production image denied Web access to the repo and supervisor runtime.
+  Chrome repeated the two real Next.js builds with HITL on the original
+  supervisor at different upstream SHAs. The original patch survived the
+  second checkout. Reviewed publication, manual archive, retention GC,
+  Stop with process-group retirement and checkpoint-backed fresh rework
+  passed in the same journey. The fixture initially stopped at boot when
+  Docker's writable filesystem could not fund the SQLite reserve. Two
+  separate disposable runtime mounts restored the required storage budget.
+  The second supervisor was healthy and accepted no Run in this fixture.
+  From a clean archive of that same source revision, the four Web
+  preparation/recovery integrations and two supervisor C-06 integrations
+  passed on Darwin arm64 and Node 24.15.0. The Web fixture dropped the
+  accepted reply, refused the first projection and reconciled the original
+  Git workspace and workload result through the same host.
 
 ### C5–C7 — separately shippable two-host pilot
 
