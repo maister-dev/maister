@@ -31,6 +31,11 @@ Disposable PostgreSQL containers default to a 512 MiB `tmpfs` for their data
 directory. The installed Company Brain package qualification selects an
 anonymous Docker data volume for its real recursive session transcripts and
 execution events. Container teardown removes that volume.
+For a local production fault suite with a full Docker volume filesystem,
+`MAISTER_TEST_PRODUCTION_DB_STORAGE=tmpfs` places PostgreSQL's disposable data
+directory in the existing 512 MiB tmpfs. PostgreSQL remains up while the test
+kills Web or supervisor processes. Record this storage choice in the result.
+CI and tests of volume-backed capacity continue to use the Docker volume.
 Each container starts a fresh PostgreSQL 16/pgvector server, uses the existing
 allocation ownership and reaper lifecycle, and retains `fsync`,
 `full_page_writes` and `synchronous_commit` enabled. The helper promises data

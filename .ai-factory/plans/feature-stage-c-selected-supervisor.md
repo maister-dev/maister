@@ -999,6 +999,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Review. The G2 release gate still requires the final T09/G1 revision and
   matching durability coverage.
 
+  The same image also passed the independent G1 browser invocation. On the
+  later source checkpoint, the A/B supervisor lane passed all 148 tests.
+  The Darwin process-death lane initially stopped before testing because
+  the local Docker filesystem could not start its PostgreSQL volume. A
+  test-only tmpfs setting completed all seven cases, including D1 and D3,
+  with one suite worker and independent PostgreSQL clones.
+
 ### Proposed commit checkpoints
 
 | Tasks | Reviewable commit intent | Release decision |
