@@ -142,10 +142,13 @@ and the ledger is what makes it answerable later.
 Reachable without any misconfiguration: `execution_events.run_id` cascades on
 delete, so deleting a run with events in flight lands in the same place.
 
-An addressed workspace operation whose retained command cannot prove its owner
-is quarantined as `workspace_event_owner_unverified`. It holds that sequence
-until the original host and command ownership can be reconciled. A failed
-database read during ownership lookup remains a service failure.
+For an otherwise valid addressed workspace terminal envelope, ingest verifies
+the host and stream and checks the owning command. If it cannot match the
+immutable owner, it records `workspace_owner_unverified` in
+`execution_event_skips` with the command ID and wire digest. The contiguous
+cursor can advance. The envelope acquires no Run, projection, or command result.
+Replays must match the original position and digest. A failed ownership lookup
+due to a database error still retries without acknowledging that envelope.
 
 ## An event PostgreSQL cannot store
 

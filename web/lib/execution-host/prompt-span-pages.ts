@@ -47,9 +47,9 @@ export type SkippedSpanRow = Readonly<{
   skipped: true;
   eventId: string;
   hostSequence: bigint;
-  runId: string;
+  runId: string | null;
   eventType: string;
-  reason: "unknown_run" | "payload_unstorable";
+  reason: typeof executionEventSkips.$inferSelect.reason;
 }>;
 
 export type SpanRow = ExecutionEvent | SkippedSpanRow;

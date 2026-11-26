@@ -5459,10 +5459,12 @@ export const executionEventSkips = pgTable(
       .references(() => executionHosts.id, { onDelete: "cascade" }),
     hostSequence: bigint("host_sequence", { mode: "bigint" }).notNull(),
     eventId: text("event_id").notNull(),
-    runId: text("run_id").notNull(),
+    runId: text("run_id"),
+    workspaceCommandId: text("workspace_command_id"),
+    envelopeSha256: text("envelope_sha256"),
     eventType: text("event_type").notNull(),
     reason: text("reason", {
-      enum: ["unknown_run", "payload_unstorable"],
+      enum: ["unknown_run", "payload_unstorable", "workspace_owner_unverified"],
     }).notNull(),
     occurredAt: timestamp("occurred_at", {
       withTimezone: true,
@@ -5473,6 +5475,13 @@ export const executionEventSkips = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    ownerShape: check("execution_event_skips_owner_shape_check", sql`(
+      (${t.reason} = 'workspace_owner_unverified' AND ${t.runId} IS NULL
+        AND ${t.workspaceCommandId} IS NOT NULL AND ${t.envelopeSha256} ~ '^[a-f0-9]{64}$'
+        AND ${t.envelopeSha256} IS NOT NULL)
+      OR (${t.reason} <> 'workspace_owner_unverified' AND ${t.runId} IS NOT NULL
+        AND ${t.workspaceCommandId} IS NULL AND ${t.envelopeSha256} IS NULL)
+    )`),
     uniqStreamSequence: unique(
       "execution_event_skips_stream_sequence_unique",
     ).on(t.eventStreamId, t.hostSequence),

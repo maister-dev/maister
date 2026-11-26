@@ -18,7 +18,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { ZodError } from "zod";
-import { isWorkspaceTerminalPayload, type WorkspaceOperationOwner, type WorkspaceTerminalPayload } from "../../../../runtime/workspace-prepare";
+import { isWorkspaceTerminalPayload, workspaceEvidenceDigest, type WorkspaceOperationOwner, type WorkspaceTerminalEnvelope, type WorkspaceTerminalPayload } from "../../../../runtime/workspace-prepare";
 
 import { markHostReadiness } from "../hosts";
 import { hasNativeOutputCommand } from "../runtime-object-intent";
@@ -52,7 +52,8 @@ export type RuntimeEventIngestDisposition =
   | "pending_gap"
   | "accepted"
   | "stale_epoch"
-  | "skipped_unknown_run";
+  | "skipped_unknown_run"
+  | "skipped_unverified_owner";
 
 export type RuntimeEventIngestResult = {
   disposition: RuntimeEventIngestDisposition;
@@ -173,17 +174,21 @@ async function retainedWorkspaceProvenance(
   return command;
 }
 
-export async function normalizeRuntimeEnvelope(db: Db, executionHostId: string, raw: unknown): Promise<RuntimeEventEnvelope> {
+type UnverifiedWorkspaceEnvelope = WorkspaceTerminalEnvelope & Readonly<{
+  runId: null;
+  assignmentId: null;
+  assignmentEpoch: null;
+  hostSessionId: null;
+}>;
+type IngestEnvelope = RuntimeEventEnvelope | UnverifiedWorkspaceEnvelope;
+
+async function classifyRuntimeEnvelope(db: Db, executionHostId: string, raw: unknown): Promise<IngestEnvelope> {
   const parsed = encodeJsonbSafe(RuntimeEventWireEnvelopeSchema.parse(raw));
   if (parsed.envelopeVersion === 1) return parsed;
   const { payload } = parsed;
   if (payload.owner.kind === "workspaceOperation") {
     const command = await retainedWorkspaceProvenance(db, executionHostId, payload.commandId, payload.owner, payload.operationId);
-    if (!command) throw new MaisterError(
-      "ACP_PROTOCOL",
-      "Workspace operation event has no matching retained owner",
-      { details: { reason: "workspace_event_owner_unverified" } },
-    );
+    if (!command) return { ...parsed, runId: null, assignmentId: null, assignmentEpoch: null, hostSessionId: null };
 
     return { ...parsed, ...command, hostSessionId: null };
   }
@@ -197,6 +202,23 @@ export async function normalizeRuntimeEnvelope(db: Db, executionHostId: string, 
   };
 }
 
+export async function normalizeRuntimeEnvelope(db: Db, executionHostId: string, raw: unknown): Promise<RuntimeEventEnvelope> {
+  const envelope = await classifyRuntimeEnvelope(db, executionHostId, raw);
+  if (envelope.runId === null)
+    throw new MaisterError("ACP_PROTOCOL", "Workspace operation event has no matching retained owner", {
+      details: { reason: "workspace_event_owner_unverified" },
+    });
+
+  return envelope;
+}
+
+function workspaceWireDigest(envelope: IngestEnvelope): string | null {
+  if (envelope.envelopeVersion !== 2) return null;
+  const { runId: _runId, assignmentId: _assignmentId, assignmentEpoch: _epoch, hostSessionId: _session, ...wire } = envelope;
+
+  return workspaceEvidenceDigest(wire);
+}
+
 function invariantError(
   message: string,
   details: Record<string, unknown>,
@@ -206,7 +228,7 @@ function invariantError(
 
 async function lockOrCreateStream(
   tx: Db,
-  input: { executionHostId: string; envelope: RuntimeEventEnvelope; now: Date },
+  input: { executionHostId: string; envelope: Pick<IngestEnvelope, "hostKey" | "streamId" | "hostBootId">; now: Date },
 ): Promise<LockedStream> {
   // The host key is immutable, so this is deliberately not FOR UPDATE.
   // Command inserts take FK key-share locks on run/assignment/host rows; an
@@ -578,8 +600,8 @@ function pageWindow(streamRowId: string, expected: bigint) {
   };
 }
 
-type PreparedEnvelope = {
-  envelope: RuntimeEventEnvelope;
+type PreparedEnvelope<T extends IngestEnvelope = IngestEnvelope> = {
+  envelope: T;
   sequence: bigint;
   payloadSha256: string;
   payloadBytes: number;
@@ -598,7 +620,7 @@ type WalkResult = {
 
 type BatchEntry = {
   result: RuntimeEventIngestResult;
-  envelope: RuntimeEventEnvelope;
+  envelope: IngestEnvelope;
   quarantined: boolean;
 };
 
@@ -636,7 +658,7 @@ export type RuntimeEventBatchResult = {
   claimRenewed: boolean | null;
 };
 
-function prepareEnvelope(envelope: RuntimeEventEnvelope): PreparedEnvelope {
+function prepareEnvelope(envelope: IngestEnvelope): PreparedEnvelope {
   return {
     envelope,
     sequence: decimalSequence(envelope.sequence),
@@ -1110,15 +1132,15 @@ async function ingestPreparedBatch(input: {
         stream.claimOwner === input.claim.owner
       : null;
     const eventIds = [...new Set(items.map((item) => item.envelope.eventId))];
-    const skippedIds = new Set(
+    const skipped = new Map(
       (
         await tx
-          .select({ eventId: executionEventSkips.eventId })
+          .select()
           .from(executionEventSkips)
           .where(inArray(executionEventSkips.eventId, eventIds))
-      ).map((row) => row.eventId),
+      ).map((row) => [row.eventId, row]),
     );
-    const storedIds = eventIds.filter((eventId) => !skippedIds.has(eventId));
+    const storedIds = eventIds.filter((eventId) => !skipped.has(eventId));
     const stored = new Map(
       (storedIds.length === 0
         ? []
@@ -1166,7 +1188,15 @@ async function ingestPreparedBatch(input: {
         continue;
       }
       firstOccurrence.set(envelope.eventId, item);
-      if (skippedIds.has(envelope.eventId)) {
+      const skippedEvent = skipped.get(envelope.eventId);
+      if (skippedEvent) {
+        if (skippedEvent.eventStreamId !== stream.id ||
+          skippedEvent.hostSequence !== item.sequence ||
+          (skippedEvent.reason === "workspace_owner_unverified" &&
+            skippedEvent.envelopeSha256 !== workspaceWireDigest(envelope)))
+          throw invariantError("Skipped event identity changed on replay", {
+            reason: "event_identity_conflict", eventId: envelope.eventId,
+          });
         kinds.push("duplicate");
         continue;
       }
@@ -1214,18 +1244,20 @@ async function ingestPreparedBatch(input: {
       fresh.push(item);
     }
     if (fresh.length > 0) {
+      const positions = fresh.map((item) => item.sequence);
       const reused = await tx
         .select({ hostSequence: executionEvents.hostSequence })
         .from(executionEvents)
         .where(
           and(
             eq(executionEvents.eventStreamId, stream.id),
-            inArray(
-              executionEvents.hostSequence,
-              fresh.map((item) => item.sequence),
-            ),
+            inArray(executionEvents.hostSequence, positions),
           ),
         )
+        .unionAll(tx.select({ hostSequence: executionEventSkips.hostSequence })
+          .from(executionEventSkips)
+          .where(and(eq(executionEventSkips.eventStreamId, stream.id),
+            inArray(executionEventSkips.hostSequence, positions))))
         .limit(1);
 
       if (reused[0]) {
@@ -1242,7 +1274,7 @@ async function ingestPreparedBatch(input: {
     const lockedRuns = new Set<string>();
     const knownRuns = new Set<string>();
     const unknown: PreparedEnvelope[] = [];
-    const storable: PreparedEnvelope[] = [];
+    const storable: PreparedEnvelope<RuntimeEventEnvelope>[] = [];
 
     if (fresh.length > 0) {
       // The first pending page's runs are locked with the batch's own: a row
@@ -1256,14 +1288,18 @@ async function ingestPreparedBatch(input: {
       for (const runId of await lockRuns(
         tx,
         [
-          ...fresh.map((item) => item.envelope.runId),
+          ...fresh.flatMap(({ envelope }) => envelope.runId === null ? [] : [envelope.runId]),
           ...pendingRuns.map((row) => row.runId),
         ],
         lockedRuns,
       ))
         knownRuns.add(runId);
-      for (const item of fresh)
-        (knownRuns.has(item.envelope.runId) ? storable : unknown).push(item);
+      for (const item of fresh) {
+        const { envelope } = item;
+        if (envelope.runId !== null && knownRuns.has(envelope.runId))
+          storable.push({ ...item, envelope });
+        else unknown.push(item);
+      }
     }
     if (unknown.length > 0) {
       // Such an event can never become ingestable: execution_events.run_id is
@@ -1283,7 +1319,11 @@ async function ingestPreparedBatch(input: {
             eventId: item.envelope.eventId,
             runId: item.envelope.runId,
             eventType: item.envelope.eventType,
-            reason: "unknown_run" as const,
+            ...(item.envelope.runId === null ? {
+              reason: "workspace_owner_unverified" as const,
+              workspaceCommandId: item.envelope.payload.commandId,
+              envelopeSha256: workspaceWireDigest(item.envelope),
+            } : { reason: "unknown_run" as const }),
             occurredAt: new Date(item.envelope.occurredAt),
           })),
         )
@@ -1308,7 +1348,7 @@ async function ingestPreparedBatch(input: {
             )
       ).map((row) => [row.id, row]),
     );
-    const boundAssignment = (item: PreparedEnvelope) => {
+    const boundAssignment = (item: PreparedEnvelope<RuntimeEventEnvelope>) => {
       const assignment = assignments.get(item.envelope.assignmentId);
 
       return assignment &&
@@ -1436,8 +1476,12 @@ async function ingestPreparedBatch(input: {
 
       if (kinds[index] === "duplicate") disposition = "duplicate";
       else if (unknownIds.has(envelope.eventId))
-        disposition = "skipped_unknown_run";
+        disposition = envelope.runId === null ? "skipped_unverified_owner" : "skipped_unknown_run";
       else {
+        if (envelope.runId === null)
+          throw invariantError("An ownerless event was not recorded in the skip ledger", {
+            reason: "event_batch_insert_mismatch", eventId: envelope.eventId,
+          });
         const walked = walk?.dispositions.get(envelope.eventId);
 
         if (walked) disposition = walked;
@@ -1446,7 +1490,7 @@ async function ingestPreparedBatch(input: {
           // Below the watermark yet not walked: only a position the skip
           // ledger already covered. Reported as the per-event path always
           // reported it.
-          const assignment = boundAssignment(item);
+          const assignment = boundAssignment({ ...item, envelope });
 
           disposition =
             assignment &&
@@ -1620,10 +1664,12 @@ async function ingestWithRecovery(input: {
     // and rethrowing would park the contiguity walk on it forever — the exact
     // shape that stopped the platform for 15 h on 2026-09-16. Drop it into the
     // skip ledger, on the same terms as an event for an unknown run.
+    const { envelope } = input.items[0]!;
+    if (envelope.runId === null) throw error;
     return quarantineUnstorableEvent({
       db: input.db,
       executionHostId: input.executionHostId,
-      envelope: input.items[0]!.envelope,
+      envelope,
       sqlState,
       now: input.now,
       logger: input.logger,
@@ -1652,7 +1698,7 @@ export async function ingestRuntimeEventBatch(input: {
   const items: PreparedEnvelope[] = [];
 
   for (const [index, raw] of input.envelopes.entries()) {
-    let envelope: RuntimeEventEnvelope;
+    let envelope: IngestEnvelope;
 
     try {
       // `execution_events.payload` is jsonb, which cannot hold U+0000 or a
@@ -1660,7 +1706,7 @@ export async function ingestRuntimeEventBatch(input: {
       // duplicate probe and the insert all read it — keeps every derived value
       // describing the same stored bytes. Readers restore the original through
       // decodeJsonbSafe.
-      envelope = await normalizeRuntimeEnvelope(input.db, input.executionHostId, raw);
+      envelope = await classifyRuntimeEnvelope(input.db, input.executionHostId, raw);
     } catch (error) {
       // The frames before it arrived intact: commit them first.
       if (index > 0)
@@ -1668,23 +1714,19 @@ export async function ingestRuntimeEventBatch(input: {
           ...input,
           envelopes: input.envelopes.slice(0, index),
         });
-      const ownerUnverified = error instanceof MaisterError &&
-        error.details?.reason === "workspace_event_owner_unverified";
-      if (!(error instanceof ZodError) && !ownerUnverified) throw error;
-      const reason = ownerUnverified ? "workspace_event_owner_unverified" : "event_schema_invalid";
+      if (!(error instanceof ZodError)) throw error;
       await recordIngestFailure(input.db, {
         executionHostId: input.executionHostId,
         envelope: raw,
         error,
         now,
-        reason,
       });
       throw new MaisterError(
         "ACP_PROTOCOL",
-        ownerUnverified ? "runtime event retained owner is unverified" : "runtime event envelope is invalid",
+        "runtime event envelope is invalid",
         {
           cause: error,
-          details: { reason },
+          details: { reason: "event_schema_invalid" },
         },
       );
     }
@@ -1721,10 +1763,10 @@ export async function ingestRuntimeEventBatch(input: {
     if (result.disposition === "accepted") counts.accepted += 1;
     else if (result.disposition === "duplicate") counts.duplicates += 1;
     else if (result.disposition === "stale_epoch") counts.staleEpochs += 1;
-    else if (result.disposition === "skipped_unknown_run") counts.skipped += 1;
+    else if (result.disposition === "skipped_unknown_run" || result.disposition === "skipped_unverified_owner") counts.skipped += 1;
     else counts.pendingGaps += 1;
     if (entry.quarantined) continue;
-    if (result.disposition === "skipped_unknown_run") {
+    if (result.disposition === "skipped_unknown_run" || result.disposition === "skipped_unverified_owner") {
       input.logger?.warn(
         {
           hostId: input.executionHostId,
@@ -1733,9 +1775,10 @@ export async function ingestRuntimeEventBatch(input: {
           sequence: result.sequence,
           runId: entry.envelope.runId,
           eventType: entry.envelope.eventType,
+          disposition: result.disposition,
           contiguousThrough: result.contiguousThrough,
         },
-        "runtime-event-skipped-unknown-run",
+        "runtime-event-skipped-unverified-provenance",
       );
     }
     // Per event only where it is diagnostic: an accepted event is the

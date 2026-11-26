@@ -2773,6 +2773,13 @@
       "when": 1795692242294,
       "tag": "0399_stage_c_retained_sync_resolver",
       "breakpoints": true
+    },
+    {
+      "idx": 400,
+      "version": "7",
+      "when": 1795709830757,
+      "tag": "0400_stage_c_quarantine_unverified_workspace_events",
+      "breakpoints": true
     }
   ]
 }

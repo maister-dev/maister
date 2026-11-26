@@ -1801,13 +1801,16 @@ table execution_event_skips {
   execution_host_id text [not null]
   host_sequence bigint [not null]
   event_id text [not null]
-  run_id text [not null]
+  run_id text
+  workspace_command_id text
+  envelope_sha256 text
   event_type text [not null]
   reason text [not null]
   occurred_at "timestamp with time zone" [not null]
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
     (event_stream_id, host_sequence) [name: 'execution_event_skips_stream_sequence_unique', unique]
     event_id [name: 'execution_event_skips_event_unique', unique]
     (event_stream_id, host_sequence) [name: 'execution_event_skips_stream_scan_idx']
