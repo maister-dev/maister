@@ -466,6 +466,17 @@ commit. A conflict preserves that checkout and leaves the Run in Review.
 The retained receipt stores both the reviewed source SHA and the verified
 target SHA, which may differ.
 
+Manual PR delivery binds the reviewed source HEAD to a dedicated public
+branch and binds the PR base to the reviewed canonical commit. The owning
+supervisor checks provider readiness before pushing, then confirms both
+branches immediately before creating the PR. It verifies the provider URL
+and number against the approved repository. If receipt persistence is
+interrupted, it can reuse the exact source and an existing matching PR
+even if the base has since advanced. If no PR exists, opening a new one
+requires the original base. An unconfirmed outcome holds the workspace
+fence for reconciliation. Web records the publication and the PR together
+under the original promotion claim.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential

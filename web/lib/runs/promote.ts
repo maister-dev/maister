@@ -24,7 +24,10 @@ import {
   nextRetainedWorkspaceFence,
   settleRetainedWorkspaceCommand,
 } from "@/lib/execution-host/workspace-retained-operation";
-import { WorkspacePublishPayloadSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import {
+  RetainedWorkspacePublishSchema,
+  WorkspacePublishedPullRequestSchema,
+} from "@/lib/execution-host/workspace-prepare-schema";
 import { readAddressedReviewFingerprint } from "@/lib/runs/review-source";
 import { isWorkspaceSourceRef } from "../../../runtime/workspace-prepare";
 import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
@@ -1144,6 +1147,20 @@ async function promoteWorkspaceRun(
     );
   }
 
+  if (claim.addressedCommand && claim.resolvedMode === "pull_request") {
+    const delivery = await publishAddressedDelivery(db, claim, claim.addressedCommand);
+    if (!delivery.pullRequest || !delivery.publication)
+      throw new MaisterError("ACP_PROTOCOL", "The addressed PR has no verified delivery");
+
+    return finalizePullRequest({
+      runId, ctx, db, claim,
+      pr: delivery.pullRequest,
+      sourceHead: delivery.commit,
+      attribution: input.attribution ?? null,
+      addressedPublication: delivery.publication,
+    });
+  }
+
   if (claim.resolvedMode === "pull_request") {
     if (claim.autonomous) {
       const merged = claim.autonomous.mergedPr;
@@ -1825,6 +1842,7 @@ type WorkspaceDelivery = {
   commit: string;
   diffStat: Awaited<ReturnType<typeof deliveryHistoryStats>> | null;
   publication?: PublishedTarget;
+  pullRequest?: { url: string; number: number };
 };
 
 async function reserveAddressedPromotion(
@@ -1869,19 +1887,21 @@ async function reserveAddressedPromotion(
   const project = await loadProject(tx, run.projectId);
   const policy = resolvePromotionPolicy({ input, run, workspace, project });
   const branchDelivery = policy.strategy === "publish_branch";
+  const pullRequest = policy.strategy === "pull_request";
+  const publishesSource = branchDelivery || pullRequest;
   const integration = policy.strategy === "merge"
     ? "merge"
     : policy.strategy === "rebase_merge" ? "rebase" : undefined;
   if (
     (branchDelivery
       ? run.deliveryPolicySnapshot?.strategy !== "publish_branch"
-      : !integration || policy.push !== "on_success") ||
+      : (!integration && !pullRequest) || policy.push !== "on_success") ||
     !isHumanPromotion(ctx) ||
     isUnattendedPromotion(input)
   )
     throw new MaisterError(
       "PRECONDITION",
-      "Choose manual branch delivery or a manual integration that publishes the approved target",
+      "Choose a manual delivery that publishes to the approved remote",
       {
         details: { reason: "workspace_protocol_unsupported" },
       },
@@ -1903,7 +1923,7 @@ async function reserveAddressedPromotion(
       "Open Review and confirm the current source before publishing",
       { details: { reason: "review_source_required" } },
     );
-  if (integration && !input.reviewedTargetCommit)
+  if (!branchDelivery && !input.reviewedTargetCommit)
     throw new MaisterError("PRECONDITION", "Confirm the target commit from Review", {
       details: { reason: "reviewed_target_required" },
     });
@@ -1941,7 +1961,7 @@ async function reserveAddressedPromotion(
       previous.payload.claimId !== workspace.promotionAttemptId ||
       !workspace.promotionAttemptId ||
       workspace.promotionOwnerUserId !== ctx.sessionUser.id ||
-      !previousPayloadMatches(previous.payload, reviewed, integration, input) ||
+      !previousPayloadMatches(previous.payload, reviewed, integration, pullRequest, input) ||
       workspace.targetBranch !== policy.targetBranch ||
       (branchDelivery && !workspace.branchDelivery?.target)
     )
@@ -1973,20 +1993,20 @@ async function reserveAddressedPromotion(
     );
   const attemptId = randomUUID();
   const pinned = branchDelivery ? workspace.branchDelivery?.target : null;
-  const remote = branchDelivery ? (pinned?.remote ?? workspace.publishedRemote ?? "origin") : "origin";
+  const remote = publishesSource ? (pinned?.remote ?? workspace.publishedRemote ?? "origin") : "origin";
   if (remote !== "origin")
     throw new MaisterError(
       "PRECONDITION",
       "The selected supervisor requires the project's approved publication remote",
     );
-  const remoteBranch = branchDelivery
+  const remoteBranch = publishesSource
     ? (pinned?.remoteBranch ??
       await publicBranchForPromotion(tx, { ...base, attemptId }, project, remote))
     : policy.targetBranch;
   const targetRef = `refs/heads/${remoteBranch}`;
   if (
     !isWorkspaceSourceRef(targetRef) ||
-    (branchDelivery && [project?.mainBranch, workspace.baseBranch, policy.targetBranch].includes(
+    (publishesSource && [project?.mainBranch, workspace.baseBranch, policy.targetBranch].includes(
       remoteBranch,
     ))
   )
@@ -2032,10 +2052,23 @@ async function reserveAddressedPromotion(
     workspace,
     { remoteId: run.projectId, targetRef },
   );
-  if (integration && (!priorTarget || (!input.allowTargetDrift && priorTarget !== input.reviewedTargetCommit)))
+  const baseRef = `refs/heads/${policy.targetBranch}`;
+  const canonicalTarget = pullRequest
+    ? (await readAddressedWorkspacePublicationTarget(
+        tx, workspace, { remoteId: run.projectId, targetRef: baseRef },
+      )).priorTarget
+    : priorTarget;
+  if (!branchDelivery && (!canonicalTarget || (!input.allowTargetDrift && canonicalTarget !== input.reviewedTargetCommit)))
     throw new MaisterError("PRECONDITION", "The target branch advanced after Review", {
       details: { reason: "target_drift" },
     });
+  const pr = pullRequest && canonicalTarget ? {
+    baseRef,
+    baseCommit: canonicalTarget,
+    title: prTitle({ ...base, attemptId }),
+    body: prBody({ ...base, attemptId }, await closingReferenceForRun(tx, run, project)),
+    draft: false,
+  } : undefined;
   const target = { remote, remoteBranch };
   await tx
     .update(schemaModule.workspaces)
@@ -2063,9 +2096,10 @@ async function reserveAddressedPromotion(
       claimId: attemptId,
       generation,
       fence,
-      publication: "promote",
+      publication: pr ? "openPullRequest" : "promote",
       expected: { head, remoteId: run.projectId, targetRef, priorTarget },
       ...(integration ? { integration } : {}),
+      ...(pr ? { pullRequest: pr } : {}),
     },
   });
 
@@ -2081,12 +2115,17 @@ function previousPayloadMatches(
   payload: Record<string, unknown>,
   reviewed: ReviewedPromotionSource,
   integration: "merge" | "rebase" | undefined,
+  pullRequest: boolean,
   input: PromoteRunInput,
 ): boolean {
-  const expected = WorkspacePublishPayloadSchema.shape.expected.safeParse(payload.expected);
-  return expected.success && expected.data.head === reviewed.head &&
-    payload.integration === integration &&
-    (!integration || input.allowTargetDrift === true || expected.data.priorTarget === input.reviewedTargetCommit);
+  const parsed = RetainedWorkspacePublishSchema.safeParse(payload);
+  if (!parsed.success) return false;
+  const { expected, publication, integration: observedIntegration, pullRequest: pr } = parsed.data;
+  return expected.head === reviewed.head &&
+    publication === (pullRequest ? "openPullRequest" : "promote") &&
+    observedIntegration === integration &&
+    ((!integration && !pullRequest) || input.allowTargetDrift === true ||
+      (pr?.baseCommit ?? expected.priorTarget) === input.reviewedTargetCommit);
 }
 
 async function publishAddressedDelivery(
@@ -2097,21 +2136,21 @@ async function publishAddressedDelivery(
   const target: PublishedTarget | undefined =
     claim.workspace.branchDelivery?.target;
   const command = await getCommand(db, commandId);
-  const request = WorkspacePublishPayloadSchema.safeParse(
-    command && {
-      generation: command.payload.generation,
-      expected: command.payload.expected,
-      publication: command.payload.publication,
-      integration: command.payload.integration,
-    },
-  );
+  const request = RetainedWorkspacePublishSchema.safeParse(command?.payload);
   if (
     !command ||
     command.runId !== claim.run.id ||
     command.kind !== "workspace.publish" ||
     command.payload.claimId !== claim.attemptId ||
     !request.success ||
-    request.data.expected.targetRef !== `refs/heads/${request.data.integration ? claim.resolvedTarget : target?.remoteBranch}`
+    (request.data.publication === "openPullRequest") !== (claim.resolvedMode === "pull_request") ||
+    (request.data.pullRequest
+      ? request.data.pullRequest.baseRef !== `refs/heads/${claim.resolvedTarget}`
+      : request.data.expected.targetRef !== `refs/heads/${request.data.integration ? claim.resolvedTarget : target?.remoteBranch}`) ||
+    request.data.expected.remoteId !== claim.run.projectId ||
+    request.data.generation !== claim.workspace.workspaceGeneration ||
+    command.executionHostId !== claim.workspace.executionHostId ||
+    command.targetSessionId !== claim.workspace.executionWorkspaceId
   )
     throw new MaisterError(
       "ACP_PROTOCOL",
@@ -2124,6 +2163,17 @@ async function publishAddressedDelivery(
       ? git.observedTarget : null;
     if (typeof observed !== "string" || !GIT_OBJECT_ID.test(observed))
       throw new MaisterError("ACP_PROTOCOL", "The retained publication receipt has no verified target");
+    if (request.data.publication === "openPullRequest") {
+      const pr = WorkspacePublishedPullRequestSchema.safeParse(applied.result?.pullRequest);
+      if (!pr.success || observed !== request.data.expected.head)
+        throw new MaisterError("ACP_PROTOCOL", "The retained publication receipt has no verified PR");
+      return {
+        commit: observed,
+        diffStat: null,
+        publication: { remote: "origin", remoteBranch: request.data.expected.targetRef.slice("refs/heads/".length) },
+        pullRequest: pr.data,
+      };
+    }
     return {
       commit: observed,
       diffStat: claim.run.diffStat ?? null,
@@ -2135,7 +2185,7 @@ async function publishAddressedDelivery(
     db,
     claim.workspace.id,
     claim.attemptId,
-    request.data.integration ? undefined : {
+    claim.resolvedMode !== "publish_branch" ? undefined : {
       target: target ?? null,
       error: "The supervisor refused Git publication",
     },
@@ -2601,6 +2651,7 @@ async function finalizePullRequest(args: {
   sourceHead: string;
   attribution: PromotionAttribution | null;
   autonomousObservation?: WorkspacePublicationSnapshot | null;
+  addressedPublication?: PublishedTarget;
 }): Promise<PromoteRunResult> {
   const { runId, ctx, db, claim, pr, sourceHead, attribution } = args;
   const promotionLane =
@@ -2608,6 +2659,32 @@ async function finalizePullRequest(args: {
 
   const result = await db.transaction(async (tx: Db) => {
     const ws = await loadPromotionWorkspaceForUpdate(tx, claim.run);
+
+    if (args.addressedPublication) {
+      const current = await loadRunForUpdate(tx, runId);
+      if (
+        ws.executionHostId !== claim.workspace.executionHostId ||
+        ws.executionWorkspaceId !== claim.workspace.executionWorkspaceId ||
+        ws.workspaceGeneration !== claim.workspace.workspaceGeneration ||
+        current.executionAssignmentId !== claim.run.executionAssignmentId ||
+        ws.promotionAttemptId !== claim.attemptId ||
+        ws.removedAt !== null
+      )
+        throw new MaisterError("CONFLICT", "The retained PR ownership changed");
+      if (ws.promotionState === "done" && current.status === "Done" &&
+        ws.prUrl === pr.url && ws.prNumber === pr.number)
+        return { replayed: true as const };
+      if (current.status !== "Review")
+        throw new MaisterError("CONFLICT", "The Run left Review during PR publication");
+      await recordPublished({
+        database: tx,
+        workspaceId: ws.id,
+        remote: args.addressedPublication.remote,
+        branch: args.addressedPublication.remoteBranch,
+        at: new Date(),
+        fence: { kind: "promotion", attemptId: claim.attemptId },
+      });
+    }
 
     if (
       ws.promotionState !== "claiming" ||
@@ -2798,6 +2875,7 @@ async function finalizePullRequest(args: {
         scheduledRemovalAt,
         prUrl: pr.url,
         prNumber: pr.number,
+        ...(args.addressedPublication ? { prState: "open" as const } : {}),
         // ADR-126 T11: the "auto" glyph datum (null for human/scratch callers).
         promotionLane,
       })
@@ -2912,6 +2990,14 @@ async function finalizePullRequest(args: {
       "shared-tree PR finalize aborted — a sibling changed during dispatch",
     );
   }
+  if ("replayed" in result)
+    return {
+      ok: true,
+      mode: claim.responseMode,
+      deliveryPolicy: claim.policy,
+      pullRequestUrl: pr.url,
+      prNumber: pr.number,
+    };
 
   // PR artifact AFTER the finalize commit — same decoupling as the diff artifact.
   await recordPrArtifact({

@@ -23,6 +23,10 @@ import {
   WORKSPACE_GIT_CHECKPOINT_PREFIX,
   WORKSPACE_WORKLOAD_FILE,
 } from "../../../../runtime/workspace-prepare";
+import {
+  installLocalPullRequestProvider,
+  localPullRequestUrl,
+} from "../../../../supervisor/test/fixtures/local-pr-provider";
 
 import { closeDb } from "@/lib/db/client";
 import {
@@ -108,7 +112,7 @@ afterEach(async () => {
     if (result.status === "rejected") throw result.reason;
 });
 
-async function prepareWorkspaceFixture() {
+async function prepareWorkspaceFixture(options?: { usePullRequestProvider: true }) {
   const validation = `printf 'validation continued%s' "{{ review_comments ?? '' }}"`;
   root = await mkdtemp(join(tmpdir(), "stage-c-inherited-workspace-"));
   const repository = await initRepo(join(root, "approved-source"));
@@ -116,6 +120,9 @@ async function prepareWorkspaceFixture() {
   await git(repository, "add", "--", "README.md");
   await git(repository, "commit", "-m", "tracked starting state");
   const base = (await git(repository, "rev-parse", "HEAD")).trim();
+  const provider = options?.usePullRequestProvider
+    ? await installLocalPullRequestProvider(root, repository)
+    : null;
   database = await startMainPostgresTestDb({
     databaseName: "eh_inherited_workspace",
   });
@@ -186,8 +193,9 @@ async function prepareWorkspaceFixture() {
     fixtureAdapters: ["codex"],
     env: {
       MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({
-        [projectId]: repository,
+        [projectId]: provider?.source ?? repository,
       }),
+      ...(provider ? { PATH: provider.path } : {}),
     },
   });
   const health = (await (await fetch(supervisor.url + "/health")).json()) as {
@@ -834,6 +842,60 @@ it("C-10 integrates the reviewed source to the exact canonical target and replay
   expect(await (await submit(target)).json()).toEqual(receipt);
   expect(await git(repository, "reflog", "show", "--format=%H", "refs/heads/main"))
     .toBe(`${observed}\n${before}`);
+}, 60_000);
+
+it("C-10 opens an addressed PR through Review and replays the persisted delivery", async () => {
+  const { db, repository, runId, readWorkspace, supervisor: owningHost } =
+    await prepareWorkspaceFixture({ usePullRequestProvider: true });
+  const { executionWorkspaceId: handle } = await readWorkspace();
+  if (!handle || !root) throw new Error("The PR fixture has no checkout");
+  const checkout = privateCheckoutPath(owningHost, handle);
+  const base = await git(repository, "rev-parse", "refs/heads/main");
+  await writeFile(join(checkout, "README.md"), "reviewed PR source\n");
+  await git(checkout, "commit", "-am", "reviewed PR source");
+  const head = await git(checkout, "rev-parse", "HEAD");
+  await db.transaction(async (tx) => {
+    await tx.update(runs).set({
+      status: "Review",
+      reviewEnteredAt: new Date(),
+      deliveryPolicySnapshot: {
+        strategy: "pull_request", push: "on_success", trigger: "manual", targetBranch: "main",
+      },
+    }).where(eq(runs.id, runId));
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+  });
+  startCanonicalProjectionWorker();
+  const { readAddressedReviewSource } = await import("@/lib/runs/review-source");
+  const review = await readAddressedReviewSource({
+    db, workspace: await readWorkspace(), signal: AbortSignal.timeout(15_000),
+  });
+  const { POST } = await import("@/app/api/runs/[runId]/promote/route");
+  const submit = (reviewedTargetCommit: string) => POST(
+    new NextRequest(`http://localhost/api/runs/${runId}/promote`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        reviewedSource: { head, fingerprint: review.fingerprint },
+        reviewedTargetCommit,
+      }),
+    }),
+    { params: Promise.resolve({ runId }) },
+  );
+  const stale = await submit(head);
+  expect(await stale.json()).toMatchObject({ details: { reason: "target_drift" } });
+  await expect(stat(join(root, "pr-created"))).rejects.toMatchObject({ code: "ENOENT" });
+  const response = await submit(base);
+  const receipt = await response.json();
+  if (response.status !== 200)
+    throw new Error(`Addressed PR failed with ${JSON.stringify(receipt)}\n${await owningHost.logTail()}`);
+  expect(receipt).toMatchObject({ mode: "pull_request", pullRequestUrl: localPullRequestUrl, prNumber: 7 });
+  const published = await readWorkspace();
+  expect(published).toMatchObject({ promotionState: "done", prUrl: localPullRequestUrl, prNumber: 7 });
+  expect(published.publishedBranch).toEqual(expect.any(String));
+  expect(await git(repository, "rev-parse", `refs/heads/${published.publishedBranch}`)).toBe(head);
+  expect(await git(repository, "rev-parse", "refs/heads/main")).toBe(base);
+  expect(await (await submit(base)).json()).toEqual(receipt);
+  expect(await readFile(join(root, "pr-created"), "utf8")).toBe("created\n");
 }, 60_000);
 
 it("C-10 retention GC preserves an overdue addressed worktree on its owning host", async () => {

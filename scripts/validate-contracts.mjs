@@ -626,6 +626,7 @@ const STAGE_C_REFUSALS = {
   command_digest_mismatch: [409, "CONFLICT"],
   retained_disposition_required: [409, "PRECONDITION"],
   target_ref_changed: [409, "CONFLICT"],
+  publication_provider_unavailable: [409, "PRECONDITION"],
   head_changed: [409, "CONFLICT"],
   workspace_writer_active: [409, "PRECONDITION"],
   selection_changed: [409, "CONFLICT"],
@@ -659,7 +660,7 @@ export function validateStageCWorkspaceExamples(
     throw new Error("Stage C examples must cover each operation exactly once");
   }
   const ajv = new Ajv({ strict: false, allErrors: true });
-  addFormats(ajv, ["date-time", "uuid"]);
+  addFormats(ajv, ["date-time", "uri", "uuid"]);
   ajv.addSchema(profile);
   const validate = (name, value, valid, context) => {
     const check = ajv.getSchema(`${profile.$id}#/definitions/${name}`);

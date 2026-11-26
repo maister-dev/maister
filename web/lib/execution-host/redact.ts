@@ -82,6 +82,9 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
         ...pickScalars(expected, ["head", "remoteId", "targetRef", "priorTarget"]),
         ...(expected.priorTarget === null ? { priorTarget: null } : {}),
       },
+      ...(payload.publication === "openPullRequest"
+        ? { pullRequest: pickScalars(asObject(payload.pullRequest), ["baseRef", "baseCommit", "title", "body", "draft"]) }
+        : {}),
     };
   },
   "workspace.adopt": (p) => ({

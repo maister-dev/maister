@@ -639,6 +639,16 @@ definitions:
       integration:
         description: For promotion to an existing approved target, compute and retain the candidate on the host before updating the target under its exact prior SHA.
         enum: [ merge, rebase ]
+      pullRequest:
+        type: object
+        additionalProperties: false
+        required: [baseRef, baseCommit, title, body, draft]
+        properties:
+          baseRef: { $ref: "#/definitions/GitRef" }
+          baseCommit: { $ref: "#/definitions/GitObjectId" }
+          title: { type: string, minLength: 1, maxLength: 256 }
+          body: { type: string, maxLength: 32768 }
+          draft: { type: boolean }
     allOf:
       - if: { required: [integration] }
         then:
@@ -647,6 +657,12 @@ definitions:
             expected:
               properties:
                 priorTarget: { $ref: "#/definitions/GitObjectId" }
+      - if: { properties: { publication: { const: openPullRequest } } }
+        then:
+          required: [pullRequest]
+          properties: { integration: false }
+        else:
+          properties: { pullRequest: false }
   PreservePayload:
     type: object
     additionalProperties: false
@@ -857,6 +873,7 @@ definitions:
             command_digest_mismatch,
             retained_disposition_required,
             target_ref_changed,
+            publication_provider_unavailable,
             sync_conflict,
             non_fast_forward,
             head_changed,
@@ -1166,12 +1183,19 @@ definitions:
   OpenedPullRequest:
     type: object
     additionalProperties: false
-    required: [ publication, git, pullRequestId ]
+    required: [ publication, git, pullRequest ]
     properties:
       publication:
         enum: [ openPullRequest ]
       git: { $ref: "#/definitions/GitResult" }
-      pullRequestId: { $ref: "#/definitions/OpaqueId" }
+      pullRequest:
+        type: object
+        additionalProperties: false
+        required: [url, number, reused]
+        properties:
+          url: { type: string, format: uri, pattern: "^https://", maxLength: 2048 }
+          number: { type: integer, minimum: 1, maximum: 9007199254740991 }
+          reused: { type: boolean }
   PublicationResult:
     oneOf:
       - { $ref: "#/definitions/PublishedRef" }

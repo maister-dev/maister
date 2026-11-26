@@ -245,8 +245,15 @@ export type WorkspacePublishRequest = Readonly<{
   payload: Readonly<{
     generation: number;
     expected: CheckoutExpectation;
-    publication: "push" | "promote";
+    publication: "push" | "promote" | "openPullRequest";
     integration?: "merge" | "rebase";
+    pullRequest?: Readonly<{
+      baseRef: string;
+      baseCommit: string;
+      title: string;
+      body: string;
+      draft: boolean;
+    }>;
   }>;
 }>;
 
@@ -258,6 +265,7 @@ export type WorkspacePublishResult = Readonly<{
     priorTarget: string | null;
     observedTarget: string;
   }>;
+  pullRequest?: Readonly<{ url: string; number: number; reused: boolean }>;
 }>;
 export type WorkspacePublicationTarget = Readonly<{
   generation: number;

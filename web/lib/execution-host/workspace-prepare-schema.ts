@@ -19,6 +19,18 @@ const handle = z.string().regex(/^ws_[a-f0-9]{32}$/);
 const opaqueId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
 const generation = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const gitObject = z.string().regex(GIT_OBJECT_ID);
+const pullRequestPayload = z.strictObject({
+  baseRef: z.string().refine(isWorkspaceSourceRef),
+  baseCommit: gitObject,
+  title: z.string().min(1).max(256),
+  body: z.string().max(32_768),
+  draft: z.boolean(),
+});
+export const WorkspacePublishedPullRequestSchema = z.strictObject({
+  url: z.url({ protocol: /^https$/ }).max(2048),
+  number: z.int().positive(),
+  reused: z.boolean(),
+});
 export const WorkspacePublishPayloadSchema = z.object({
   generation,
   expected: z.object({
@@ -27,18 +39,25 @@ export const WorkspacePublishPayloadSchema = z.object({
     targetRef: z.string().refine(isWorkspaceSourceRef),
     priorTarget: gitObject.nullable(),
   }).strict(),
-  publication: z.enum(["push", "promote"]),
+  publication: z.enum(["push", "promote", "openPullRequest"]),
   integration: z.enum(["merge", "rebase"]).optional(),
+  pullRequest: pullRequestPayload.optional(),
 }).strict();
 export const WorkspacePublicationTargetSchema = WorkspacePublishPayloadSchema.shape.expected
   .omit({ head: true }).extend({ generation });
-export const RetainedWorkspacePublishSchema = WorkspacePublishPayloadSchema.extend({
+const RetainedWorkspacePublishFields = WorkspacePublishPayloadSchema.extend({
   claimId: z.string().uuid(),
   fence: generation,
 });
-export const RetainedWorkspaceSyncSchema = RetainedWorkspacePublishSchema.omit({
+export const RetainedWorkspacePublishSchema = RetainedWorkspacePublishFields.refine(
+  ({ publication, expected, integration, pullRequest }) => publication === "openPullRequest"
+    ? !!pullRequest && !integration && pullRequest.baseRef !== expected.targetRef
+    : !pullRequest && (!integration || (publication === "promote" && expected.priorTarget !== null)),
+);
+export const RetainedWorkspaceSyncSchema = RetainedWorkspacePublishFields.omit({
   publication: true,
   integration: true,
+  pullRequest: true,
 }).extend({ strategy: z.enum(["fastForward", "merge", "rebase"]) });
 export const WorkspacePreservePayloadSchema = z.object({
   generation, disposition: z.literal("archive"), quiescenceId: opaqueId,
@@ -383,9 +402,11 @@ export const WorkspaceCommandReceiptSchema = z.union([
     "stageCPublish",
     workspaceTarget,
     z.object({
-      publication: z.enum(["push", "promote"]),
+      publication: z.enum(["push", "promote", "openPullRequest"]),
       git: z.object({ generation, head: gitObject, priorTarget: gitObject.nullable(), observedTarget: gitObject }).strict(),
-    }).strict(),
+      pullRequest: WorkspacePublishedPullRequestSchema.optional(),
+    }).strict().refine(({ publication, pullRequest }) =>
+      (publication === "openPullRequest") === !!pullRequest),
     workspaceOperationOwner,
   ),
   commandResultReceipt(

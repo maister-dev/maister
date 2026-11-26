@@ -735,6 +735,7 @@ export const REASON_TOKENS = [
   "workspace_checkpoint_unknown",
   "workspace_writer_active",
   "target_ref_changed",
+  "publication_provider_unavailable",
   "sync_conflict",
   "non_fast_forward",
   "head_changed",

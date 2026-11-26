@@ -62,7 +62,7 @@ import { inspectWorkspace, loadPreparedWorkspace } from "./workspace-status";
 import { readWorkspaceReviewFingerprint, sealWorkspaceDiff } from "./workspace-diff";
 import { sealWorkspaceLog } from "./workspace-log";
 import { checkpointOwnedWorkspace, restoreOwnedWorkspace, WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
-import { publishOwnedWorkspace, readOwnedPublicationTarget } from "./workspace-publish";
+import { openRetainedWorkspacePullRequest, publishOwnedWorkspace, readOwnedPublicationTarget } from "./workspace-publish";
 import { syncOwnedWorkspace } from "./workspace-sync";
 import { preserveOwnedWorkspace, releaseArchivedWorkspace } from "./workspace-archive";
 import {
@@ -227,10 +227,19 @@ const publishSchema = workloadSchema.extend({
       targetRef: z.string().refine(isWorkspaceSourceRef),
       priorTarget: z.string().regex(GIT_OBJECT_ID).nullable(),
     }).strict(),
-    publication: z.enum(["push", "promote"]),
+    publication: z.enum(["push", "promote", "openPullRequest"]),
     integration: z.enum(["merge", "rebase"]).optional(),
-  }).strict().refine(({ integration, publication, expected }) =>
-    !integration || (publication === "promote" && expected.priorTarget !== null),
+    pullRequest: z.object({
+      baseRef: z.string().refine(isWorkspaceSourceRef),
+      baseCommit: z.string().regex(GIT_OBJECT_ID),
+      title: z.string().min(1).max(256),
+      body: z.string().max(32_768),
+      draft: z.boolean(),
+    }).strict().optional(),
+  }).strict().refine(({ integration, publication, expected, pullRequest }) =>
+    (!integration || (publication === "promote" && expected.priorTarget !== null)) &&
+    (publication === "openPullRequest") === Boolean(pullRequest) &&
+    pullRequest?.baseRef !== expected.targetRef,
   ),
 });
 const archiveSchema = publishSchema.extend({
@@ -1027,10 +1036,13 @@ export function registerWorkspacePreparation(args: {
               details: { reason: "source_ref_unapproved" },
             });
           assertOwner();
-          return await publishOwnedWorkspace({
+          const input = {
             state, runtimeRoot, source, runId: workspace.runId,
             assignmentId: fence.assignmentId, assignmentEpoch: fence.epoch,
-          }, request);
+          };
+          return request.payload.publication === "openPullRequest"
+            ? await openRetainedWorkspacePullRequest(input, request, assertOwner, logger)
+            : await publishOwnedWorkspace(input, request);
         } catch (cause) {
           if (!replaying || cause instanceof WorkspaceGitEffectUnconfirmed) throw cause;
           throw new WorkspaceGitEffectUnconfirmed("Retained publication verification could not finish", { cause });

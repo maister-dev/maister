@@ -25,6 +25,8 @@ import type {
   WorkspacePrepareReceipt,
 } from "../../../runtime/workspace-prepare";
 
+import { installLocalPullRequestProvider, localPullRequestUrl } from "../../test/fixtures/local-pr-provider";
+
 import { HOST_STATE_FILE } from "../host-state";
 
 import {
@@ -1409,6 +1411,68 @@ it.each([undefined, "merge", "rebase"] as const)("C-10 publishes one retained re
   expect(git(remote, "reflog", "show", "--format=%H", "refs/heads/main").split("\n")).toEqual(
     integration ? [observedTarget, priorTarget, base] : [observedTarget, priorTarget],
   );
+}, 30_000);
+
+it("C-10 opens one provider PR from the approved retained checkout after a lost receipt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-retained-pr-"));
+  roots.push(root);
+  const repository = join(root, "upstream.git");
+  const seed = join(root, "seed");
+  git(root, "init", "--bare", "-b", "main", repository);
+  git(root, "init", "-b", "main", seed);
+  await writeFile(join(seed, "feature.txt"), "base\n");
+  git(seed, "add", "--", "feature.txt");
+  git(seed, "commit", "-m", "base");
+  git(seed, "push", "--", repository, "HEAD:refs/heads/main");
+  const base = git(seed, "rev-parse", "HEAD");
+  const { source, path, created: providerRecord } = await installLocalPullRequestProvider(root, repository);
+  vi.stubEnv("PATH", path);
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: source }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, { mode: "ownWorktree", repositoryId: "fixture", commit: base, inputDigest: "a".repeat(64) });
+  if (prepared.phase !== "completed") throw new Error("PR fixture did not prepare");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout) throw new Error("PR fixture has no worktree");
+  await writeFile(join(checkout.realPath, "feature.txt"), "reviewed\n");
+  git(checkout.realPath, "commit", "-am", "reviewed");
+  const head = git(checkout.realPath, "rev-parse", "HEAD");
+  const request = {
+    workspaceProtocol: 1,
+    command: { kind: "workspace.publish", id: randomUUID(), issuedAt: new Date().toISOString() },
+    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey,
+      workspaceHandle: handle, workspaceGeneration: generation, claimId: randomUUID(), fence: 1 },
+    payload: {
+      generation, publication: "openPullRequest",
+      expected: { head, remoteId: "fixture", targetRef: "refs/heads/feature", priorTarget: null },
+      pullRequest: { baseRef: "refs/heads/main", baseCommit: base, title: "Fixture PR", body: "Reviewed", draft: false },
+    },
+  };
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture stopped after the provider accepted the PR");
+  });
+  const route = `/v1/workspaces/${handle}/publication`;
+  expect((await addressedRequest(host, route, request)).status).toBe(202);
+  await vi.waitFor(async () => expect(await readFile(providerRecord, "utf8")).toBe("created\n"));
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  await writeFile(join(seed, "feature.txt"), "new base while offline\n");
+  git(seed, "commit", "-am", "advance upstream after PR creation");
+  git(seed, "push", "--", repository, "HEAD:refs/heads/main");
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect((await addressedRequest(restarted, route, request)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(restarted, request.command.id)).toMatchObject({
+    phase: "completed",
+    result: {
+      publication: "openPullRequest",
+      git: { head, observedTarget: head, priorTarget: null, generation },
+      pullRequest: { url: localPullRequestUrl, number: 7, reused: true },
+    },
+  });
+  expect(git(repository, "rev-parse", "refs/heads/feature")).toBe(head);
+  expect(await readFile(providerRecord, "utf8")).toBe("created\n");
 }, 30_000);
 
 it("C-10 syncs an exact retained target and verifies one checkout update after a lost receipt", async () => {

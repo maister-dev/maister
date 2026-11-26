@@ -495,8 +495,18 @@ operationCases:
         fence: 5
       payload:
         generation: 1
-        expected: *a27
-        publication: promote
+        expected:
+          head: 0123456789abcdef0123456789abcdef01234567
+          remoteId: project-123
+          targetRef: refs/heads/review-task
+          priorTarget: null
+        publication: openPullRequest
+        pullRequest:
+          baseRef: refs/heads/main
+          baseCommit: abcdef0123456789abcdef0123456789abcdef01
+          title: Review task changes
+          body: Checks completed on the selected supervisor.
+          draft: false
     invalidRequest:
       workspaceProtocol: 1
       command: *a30
@@ -510,12 +520,13 @@ operationCases:
       commandId: a7fced07-3241-4d20-9245-000000000007
       state: accepted
     result:
-      publication: promote
+      publication: openPullRequest
       git:
         generation: 1
         head: 0123456789abcdef0123456789abcdef01234567
-        priorTarget: 0123456789abcdef0123456789abcdef01234567
+        priorTarget: null
         observedTarget: 0123456789abcdef0123456789abcdef01234567
+      pullRequest: { url: "https://github.com/maister-example/private-repo/pull/7", number: 7, reused: false }
     refusal:
       status: 409
       body:
@@ -525,7 +536,7 @@ operationCases:
           reason: target_ref_changed
       newEffects: 0
     target: {"kind":"workspace","handle":"ws_354c9b5edffe43f0b3a53ffd05b047ef","generation":1}
-    requestSha256: 6a33e51a1537f7740e5277d46aeea7c56458be6c12ab77477d572a007dcd9d62
+    requestSha256: 3f0cda33762fd27a11b9c6f458ab80f3e87f8ac130a0623f32c2f0cb09e51f8c
     location: /v1/commands/a7fced07-3241-4d20-9245-000000000007
     replay:
       location: /v1/commands/a7fced07-3241-4d20-9245-000000000007

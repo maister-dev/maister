@@ -4,15 +4,20 @@ import type {
   WorkspacePublicationTarget,
 } from "../../runtime/workspace-prepare";
 import type { HostState, WorkspaceRow } from "./host-state";
+import type { Logger } from "pino";
 
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 
 import { workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
+import { normalizePublicationOrigin } from "../../runtime/workspace-publication";
+import { selectPrAdapter } from "../../runtime/pull-request";
+import { detectProvider } from "../../runtime/repository-url";
 
 import { SupervisorError } from "./types";
 import { commitAt, makeSyncCandidate } from "./workspace-git-candidate";
+import { openWorkspacePullRequest } from "./workspace-publication";
 import { WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
 import {
   executeWorkspaceGit,
@@ -317,4 +322,60 @@ export async function publishOwnedWorkspace(
     );
 
   return observedPublication(request, confirmed);
+}
+
+/** Publish the source and recover the provider result under the same retained claim. */
+export async function openRetainedWorkspacePullRequest(
+  input: PublishInput,
+  request: WorkspacePublishRequest,
+  assertOwner: () => void,
+  logger: Logger,
+): Promise<WorkspacePublishResult> {
+  const { generation, expected, pullRequest } = request.payload;
+  const handle = request.owner.workspaceHandle;
+  const repoIdentity = normalizePublicationOrigin(input.source);
+  if (!pullRequest || !repoIdentity)
+    throw publicationRefused("source_ref_unapproved", "The retained PR has no approved provider repository");
+  const { workspace, git } = await ownedWorkspaceSourceGit({
+    ...input, handle, generation, remoteId: expected.remoteId, targetRef: expected.targetRef,
+  });
+  const assertApprovedTarget = async (): Promise<void> => {
+    if (await observeWorkspaceTarget(input.source, pullRequest.baseRef, git) !== pullRequest.baseCommit)
+      throw publicationRefused("target_ref_changed", "The reviewed PR base advanced");
+  };
+  if (input.state.getWorkspaceExecutionState(handle)?.operationClaimId !== request.command.id) {
+    await assertApprovedTarget();
+    try {
+      await selectPrAdapter(detectProvider(input.source), { remoteUrl: input.source, logger })
+        .preflight(AbortSignal.timeout(8_000));
+    } catch (cause) {
+      throw new SupervisorError("PRECONDITION", "The approved PR provider could not be prepared", {
+        cause, details: { reason: "publication_provider_unavailable" },
+      });
+    }
+  }
+  assertOwner();
+  const published = await publishOwnedWorkspace(input, request);
+  try {
+    const observed = await openWorkspacePullRequest(workspace, {
+      action: "open_pr",
+      remote: "origin",
+      headRef: expected.targetRef,
+      expectedHead: published.git.observedTarget,
+      repoIdentity,
+      ...pullRequest,
+    }, assertOwner, logger, assertApprovedTarget);
+    const pr = observed.pullRequest;
+    const url = pr && URL.parse(pr.url);
+    const repo = URL.parse(`https://${repoIdentity}`);
+    if (!pr || pr.url.length > 2048 || url?.protocol !== "https:" ||
+      url.username || url.password || url.search || url.hash ||
+      !repo || url.host !== repo.host || !url.pathname.startsWith(repo.pathname + "/") ||
+      !Number.isSafeInteger(pr.number) || pr.number < 1 ||
+      url.pathname.split("/").at(-1) !== String(pr.number))
+      throw new WorkspaceGitEffectUnconfirmed("The provider did not confirm its PR");
+    return { ...published, pullRequest: pr };
+  } catch (cause) {
+    throw new WorkspaceGitEffectUnconfirmed("The published source has no confirmed provider receipt", { cause });
+  }
 }

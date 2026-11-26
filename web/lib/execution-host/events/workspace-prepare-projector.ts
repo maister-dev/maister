@@ -242,6 +242,7 @@ async function applyRetainedWorkspaceReceipt(
     const observed = receipt.result;
     if (observed.publication !== publication || observed.git.generation !== target.generation ||
       observed.git.head !== expected.head || observed.git.priorTarget !== expected.priorTarget ||
+      ((publication === "openPullRequest") !== !!observed.pullRequest) ||
       (!integration && observed.git.observedTarget !== expected.head))
       throw inconsistent();
   } else if (receipt.operationId === "stageCSync") {
