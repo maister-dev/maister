@@ -493,6 +493,14 @@ ref and reads the checkout identity before and after the provider request.
 A stale head, closed or retargeted PR, or an unconfirmed provider read leaves
 the Run parked. Web verifies the same ownership when applying finalization.
 
+Dropping a parked addressed Run or discarding it through the existing
+workbench endpoint first seals the original supervisor's preserved Git tree.
+PostgreSQL migration `0389` requires matching preservation and release
+receipts for both operations. Web records removal and abandonment together
+under the held lifecycle claim. A completed Run keeps its `Done` status.
+Repeating the same disposal returns its recorded outcome without another
+release. Conflicting disposal intents refuse.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential

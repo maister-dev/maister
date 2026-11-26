@@ -39,6 +39,7 @@ import {
   runSessions,
   workspaces,
 } from "@/lib/db/schema";
+import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { nodeWorkloadDeclarationId } from "@/lib/flows/addressed-workload-input";
 import { git, initRepo } from "@/test-support/git-fixture";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
@@ -1051,6 +1052,42 @@ it("C-10 retention GC preserves an overdue addressed worktree on its owning host
   ).toBe("retain before GC");
   await expect(stat(checkout)).rejects.toMatchObject({ code: "ENOENT" });
   expect(await sweep()).toMatchObject({ scanned: 0, pruned: 0 });
+}, 60_000);
+
+it("C-10 Drop preserves dirty retained work before abandoning the Run", async () => {
+  const { db, runId, readWorkspace, supervisor: owningHost } = await prepareWorkspaceFixture();
+  const { id, executionWorkspaceId: handle } = await readWorkspace();
+  if (!handle) throw new Error("The Drop fixture has no retained checkout");
+  const checkout = privateCheckoutPath(owningHost, handle);
+  const repository = await git(checkout, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  await writeFile(join(checkout, "draft.txt"), "preserve this draft\n");
+  await db.transaction(async (tx) => {
+    await tx.update(runs).set({ status: "Review", reviewEnteredAt: new Date() }).where(eq(runs.id, runId));
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+  });
+  startCanonicalProjectionWorker();
+  const { GET: readGitState } = await import("@/app/api/runs/[runId]/git-state/route");
+  const params = { params: Promise.resolve({ runId }) };
+  const actions = await readGitState(new Request(`http://localhost/api/runs/${runId}/git-state`), params);
+  expect(await actions.json()).toMatchObject({ actions: expect.arrayContaining([{ id: "drop", enabled: true, disabledReason: null }]) });
+  await expect(db.transaction(async (tx) => {
+    await tx.update(workspaces).set({ removedAt: new Date(), removalKind: "drop", preservationOutcome: "not_needed" })
+      .where(eq(workspaces.id, id));
+    tx.rollback();
+  })).rejects.toMatchObject({ cause: { code: "23514", constraint: "addressed_workspace_disposal_receipt" } });
+  const { POST: drop } = await import("@/app/api/runs/[runId]/drop/route");
+  const send = () => drop(new NextRequest(`http://localhost/api/runs/${runId}/drop`, { method: "POST" }), params);
+  const response = await send();
+  const outcome = await response.json();
+  expect(response.status, JSON.stringify(outcome)).toBe(200);
+  expect(outcome).toMatchObject({ operation: "drop", runStatus: "Abandoned", preservationOutcome: "snapshot_created", idempotent: false });
+  const archived = await readWorkspace();
+  expect(archived).toMatchObject({ removalKind: "drop", removedAt: expect.any(Date) });
+  expect(await git(repository, "show", `${archived.archivedCommit}:draft.txt`)).toBe("preserve this draft");
+  await expect(stat(checkout)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await (await send()).json()).toMatchObject({ idempotent: true, runStatus: "Abandoned" });
+  const commands = await listCommandsForRun(db, runId);
+  expect(commands.filter(({ kind }) => kind === "workspace.release")).toHaveLength(1);
 }, 60_000);
 
 it("C-10 projects a publication from the historical owner and holds removal until the outcome is verified", async () => {

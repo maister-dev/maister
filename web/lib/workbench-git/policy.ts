@@ -268,6 +268,7 @@ export function deriveWorkbenchGitActions(
     if (
       input.addressedWorkspace &&
       id !== "archive" &&
+      id !== "drop" &&
       id !== "stop" &&
       id !== "update" &&
       (id !== "finalizePr" || input.runStatus === "Review")

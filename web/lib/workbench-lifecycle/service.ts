@@ -926,6 +926,13 @@ function throwRemovedWorkspaceConflict(workspace: LifecycleWorkspace): never {
   );
 }
 
+async function findAddressedWorkbench(client: ExecutionDb, runId: string): Promise<Workspace | undefined> {
+  const [workspace] = await client.select().from(workspaces).where(and(
+    eq(workspaces.runId, runId), eq(workspaces.ownershipKind, "host_owned"),
+  ));
+  return workspace;
+}
+
 export async function archiveWorkbench(
   runId: string,
   options?: WorkbenchLifecycleOptions,
@@ -935,25 +942,18 @@ export async function archiveWorkbench(
   const sessionUser = await deps.requireActiveSession();
   if (!options?.deps) {
     const client = db();
-    const [addressed] = await client
-      .select()
-      .from(workspaces)
-      .where(
-        and(
-          eq(workspaces.runId, runId),
-          eq(workspaces.ownershipKind, "host_owned"),
-        ),
-      );
+    const addressed = await findAddressedWorkbench(client, runId);
     if (addressed) {
       await deps.authorize(
         requireRunProjectId(addressed.projectId, runId),
         "recoverRun",
       );
 
-      return archiveAddressedWorkbench(client, addressed, {
+      const receipt = await disposeAddressedWorkbench(client, addressed, {
         kind: "archive",
         actorUserId: sessionUser.id,
       });
+      return addressedArchiveResult(runId, receipt);
     }
   }
 
@@ -976,16 +976,14 @@ const RetainedArchiveResult = z.object({
 
 function addressedArchiveResult(
   runId: string,
-  status: WorkbenchRunStatus,
-  idempotent: boolean,
+  receipt: AddressedDisposalReceipt,
 ): ArchiveWorkbenchResult {
   return {
     ok: true,
     runId,
     operation: "archive",
-    runStatus: status,
+    ...receipt,
     workspaceRemoved: true,
-    idempotent,
     preservationOutcome: "snapshot_created",
     archived: true,
     archivedBranch: null,
@@ -993,8 +991,10 @@ function addressedArchiveResult(
   };
 }
 
-type AddressedArchiveOwner =
-  | { kind: "archive"; actorUserId: string }
+type AddressedDisposalReceipt = Pick<DropWorkbenchResult, "runStatus" | "idempotent">;
+
+type AddressedDisposalOwner =
+  | { kind: "archive" | "drop" | "discard"; actorUserId: string | null }
   | { kind: "retention_gc"; now: Date };
 
 export async function archiveExpiredAddressedWorkbench(
@@ -1012,16 +1012,17 @@ export async function archiveExpiredAddressedWorkbench(
       "The addressed retention candidate changed",
     );
 
-  return archiveAddressedWorkbench(client, candidate, {
+  const receipt = await disposeAddressedWorkbench(client, candidate, {
     kind: "retention_gc",
     now,
   });
+  return addressedArchiveResult(candidate.runId, receipt);
 }
 
-async function lockAddressedArchiveRun(
+async function lockAddressedDisposalRun(
   tx: ExecutionDb,
   workspace: Workspace,
-  owner: AddressedArchiveOwner,
+  owner: AddressedDisposalOwner,
 ) {
   const runId = workspace.runId;
   const [run] = await tx
@@ -1046,8 +1047,8 @@ async function lockAddressedArchiveRun(
     !WORKTREE_ACTION_STATUSES.has(run.status) ||
     run.workspaceMode === "shared"
   )
-    throw gitActionRefusal(runId, "archive", "unsupported-status");
-  assertCodeDeliveryAllowed(run, "archive");
+    throw gitActionRefusal(runId, owner.kind === "drop" || owner.kind === "discard" ? "drop" : "archive", "unsupported-status");
+  assertCodeDeliveryAllowed(run, owner.kind === "retention_gc" ? "archive" : owner.kind);
   if (owner.kind === "retention_gc" && !workspace.removedAt) {
     const fallbackDeadline =
       run.endedAt && new Date(run.endedAt.getTime() + gcAgeDays() * 86_400_000);
@@ -1087,11 +1088,11 @@ async function lockAddressedArchiveRun(
   return { ...run, runKind: run.runKind };
 }
 
-async function archiveAddressedWorkbench(
+async function disposeAddressedWorkbench(
   client: ExecutionDb,
   candidate: Workspace,
-  owner: AddressedArchiveOwner,
-): Promise<ArchiveWorkbenchResult> {
+  owner: AddressedDisposalOwner,
+): Promise<AddressedDisposalReceipt> {
   const runId = candidate.runId;
   const reserved = await client.transaction(async (tx) => {
     const [workspace] = await tx
@@ -1101,7 +1102,7 @@ async function archiveAddressedWorkbench(
       .for("update");
     if (!workspace)
       throw new MaisterError("CONFLICT", "The addressed workspace disappeared");
-    const run = await lockAddressedArchiveRun(tx, workspace, owner);
+    const run = await lockAddressedDisposalRun(tx, workspace, owner);
     if (
       workspace.ownershipKind !== "host_owned" ||
       run.projectId !== candidate.projectId ||
@@ -1120,7 +1121,7 @@ async function archiveAddressedWorkbench(
         workspace.archivedCommit
       )
         return {
-          completed: addressedArchiveResult(runId, run.status, true),
+          completed: { runStatus: run.status, idempotent: true },
         } as const;
       throw new MaisterError(
         "CONFLICT",
@@ -1165,7 +1166,7 @@ async function archiveAddressedWorkbench(
       workspaceId: workspace.id,
       operation: owner.kind,
       expectedRunStatus: run.status,
-      ...(owner.kind === "archive" ? { actorUserId: owner.actorUserId } : {}),
+      ...(owner.kind === "retention_gc" ? {} : { actorUserId: owner.actorUserId }),
       ...(resumed &&
       resumed.state !== "failed" &&
       workspace.lifecycleOperationAttemptId
@@ -1255,7 +1256,7 @@ async function archiveAddressedWorkbench(
       .for("update");
     if (!workspace)
       throw new MaisterError("CONFLICT", "The addressed workspace disappeared");
-    const run = await lockAddressedArchiveRun(tx, workspace, owner);
+    const run = await lockAddressedDisposalRun(tx, workspace, owner);
     if (
       run.status !== reserved.run.status ||
       run.executionAssignmentId !== reserved.target.assignmentId ||
@@ -1305,6 +1306,8 @@ async function archiveAddressedWorkbench(
       },
     );
   const now = owner.kind === "retention_gc" ? owner.now : new Date();
+  const nextRunStatus = (owner.kind === "drop" || owner.kind === "discard") && reserved.run.status !== "Done"
+    ? "Abandoned" : null;
   await recordDrop({
     database: client,
     runId,
@@ -1312,7 +1315,7 @@ async function archiveAddressedWorkbench(
     workspaceId: candidate.id,
     removedAt: now,
     expectedRunStatus: reserved.run.status,
-    nextRunStatus: null,
+    nextRunStatus,
     archivedAt: now,
     archivedBranch: null,
     archivedCommit: archive.data.retainedCommit,
@@ -1321,7 +1324,7 @@ async function archiveAddressedWorkbench(
     attemptId: reserved.attemptId,
   });
 
-  return addressedArchiveResult(runId, reserved.run.status, false);
+  return { runStatus: nextRunStatus ?? reserved.run.status, idempotent: false };
 }
 
 async function archiveWorkbenchForCtx(
@@ -1816,6 +1819,14 @@ async function removeWorkbench(
   const deps = depsFromOptions(options);
 
   const sessionUser = await deps.requireActiveSession();
+  if (!options?.deps) {
+    const client = db();
+    const addressed = await findAddressedWorkbench(client, runId);
+    if (addressed) {
+      await deps.authorize(requireRunProjectId(addressed.projectId, runId), "recoverRun");
+      return removeAddressedWorkbench(client, addressed, operation, sessionUser.id);
+    }
+  }
 
   const ctx = await deps.loadContext(runId);
 
@@ -1824,6 +1835,22 @@ async function removeWorkbench(
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
   return removeWorkbenchForCtx(runId, ctx, deps, operation);
+}
+
+async function removeAddressedWorkbench(
+  client: ExecutionDb,
+  workspace: Workspace,
+  operation: DropWorkbenchResult["operation"],
+  actorUserId: string | null,
+): Promise<DropWorkbenchResult> {
+  const owner = { kind: operation, actorUserId } satisfies AddressedDisposalOwner;
+  if (!workspace.removedAt) {
+    const run = await lockAddressedDisposalRun(client, workspace, owner);
+    await cascadeOrchestratorIfNeeded(run);
+  }
+  const receipt = await disposeAddressedWorkbench(client, workspace, owner);
+  return { ok: true, runId: workspace.runId, operation, ...receipt, workspaceRemoved: true,
+    preservationOutcome: "snapshot_created", archivedBranch: null };
 }
 
 async function removeWorkbenchForCtx(
@@ -2245,7 +2272,7 @@ async function stopLiveSupervisorSession(
 // scheduler/query graph out of this module's static eval graph (mirrors the
 // agent/scratch service imports). The default WorkbenchLifecycleDeps wires this
 // as cascadeOrchestratorIfNeeded.
-async function cascadeOrchestratorIfNeeded(run: LifecycleRun): Promise<void> {
+async function cascadeOrchestratorIfNeeded(run: Pick<LifecycleRun, "id" | "runKind" | "status" | "taskId">): Promise<void> {
   if (run.runKind !== "flow") return;
 
   const { getChildRuns } = await import("@/lib/queries/run");
@@ -2540,6 +2567,15 @@ export async function discardWorkbenchForToken(
   options?: WorkbenchLifecycleOptions,
 ): Promise<DropWorkbenchResult> {
   const deps = depsFromOptions(options);
+  if (!options?.deps) {
+    const client = db();
+    const addressed = await findAddressedWorkbench(client, runId);
+    if (addressed) {
+      if (addressed.projectId !== args.projectId)
+        throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+      return removeAddressedWorkbench(client, addressed, "discard", null);
+    }
+  }
   const ctx = await deps.loadContext(runId);
 
   // Token authority, no browser session: there is no viewer, so the ADR-160

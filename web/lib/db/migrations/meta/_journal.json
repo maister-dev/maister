@@ -2696,6 +2696,13 @@
       "when": 1795690371141,
       "tag": "0388_stage-c-host-capacity",
       "breakpoints": true
+    },
+    {
+      "idx": 389,
+      "version": "7",
+      "when": 1795692242293,
+      "tag": "0389_stage-c-addressed-drop",
+      "breakpoints": true
     }
   ]
 }

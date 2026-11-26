@@ -765,6 +765,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   test now contains an addressed workspace row and verifies that valid local
   roots remain discoverable. RED failed on the null path, GREEN passed all
   four GC tests.
+
+  Drop and Discard now use the addressed preservation and release transaction.
+  RED refused Drop in the Git panel. GREEN refused a forged disposal without
+  a matching receipt, preserved an untracked draft in Git, removed the
+  checkout once on its supervisor, and returned the original result on
+  repeat. The addressed workspace and legacy lifecycle suites passed 17
+  integrations. Migration 0389 extends the immutable disposal guards.
 - [x] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
 
   The admin host list now identifies the durable registration bound to the
