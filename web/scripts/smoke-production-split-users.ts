@@ -1625,10 +1625,7 @@ ${adapterScript}EOF
     const cancelled = await launchFromBoard(secondTask);
     await page.goto("/runs/" + cancelled);
     await expect(runStatus).toContainText(/NeedsInput$/, { timeout: 60_000 });
-    await page
-      .getByTestId("workbench-lifecycle-actions")
-      .getByRole("button", { name: "Stop", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Stop run", exact: true }).click();
     const stopped = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname ===
