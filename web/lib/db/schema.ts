@@ -3137,6 +3137,18 @@ export const executionAssignments = pgTable(
   }),
 );
 
+export const executionHostSlotReservations = pgTable(
+  "execution_host_slot_reservations",
+  {
+    assignmentId: text("assignment_id")
+      .primaryKey()
+      .references(() => executionAssignments.id, { onDelete: "cascade" }),
+    reservedAt: timestamp("reserved_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+);
+
 export const executionCommands = pgTable(
   "execution_commands",
   {

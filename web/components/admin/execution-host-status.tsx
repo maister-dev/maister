@@ -137,6 +137,7 @@ function HostsPanel({
   format: Format;
 }): ReactElement {
   const { t, time } = format;
+  const configuredHosts = [selectedHost, ...additionalHosts];
 
   return (
     <Panel subtitle={t("hosts.subtitle")} title={t("hosts.title")}>
@@ -208,6 +209,15 @@ function HostsPanel({
                     <Badge tone={readinessTone(host.readiness)}>
                       {t(`readiness.${host.readiness}`)}
                     </Badge>
+                    {configuredHosts.map((entry) => entry?.kind === "registered" && entry.hostId === host.id &&
+                      (entry.draining || entry.maxConcurrentRuns !== undefined) ? (
+                      <div className="mt-1 flex flex-wrap items-center gap-1" key={entry.hostId}>
+                        {entry.draining ? <Badge>{t("hosts.draining")}</Badge> : null}
+                        {entry.maxConcurrentRuns === undefined ? null : (
+                          <span className="text-xs text-mute">{t("hosts.slotLimit", { count: entry.maxConcurrentRuns })}</span>
+                        )}
+                      </div>
+                    ) : null)}
                   </td>
                   <td className="px-3 py-3">{host.readinessReason ?? "—"}</td>
                   <td className="px-3 py-3 font-mono text-xs">

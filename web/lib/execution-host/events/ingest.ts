@@ -426,6 +426,29 @@ async function isBoundHistoricalEvent(
 
     return command?.runId === input.runId && command.assignmentId === input.assignmentId && command.assignmentEpoch === input.assignmentEpoch;
   }
+  if (input.eventType === "workspace.command.terminal" && isWorkspaceTerminalPayload(input.payload) &&
+    input.payload.owner.kind === "assignment" &&
+    (input.payload.operationId === "stageCRunWorkload" || input.payload.operationId === "stageCCancelWorkload") &&
+    "handle" in input.payload.target
+  ) {
+    const { owner, target, commandId, operationId } = input.payload;
+    if (owner.runId !== input.runId || owner.assignmentId !== input.assignmentId ||
+      owner.assignmentEpoch !== input.assignmentEpoch) return false;
+    const [command] = await tx.select({ id: executionCommands.id })
+      .from(executionCommands)
+      .innerJoin(executionHosts, eq(executionHosts.id, executionCommands.executionHostId))
+      .where(and(
+        eq(executionCommands.id, commandId),
+        eq(executionCommands.kind, operationId === "stageCRunWorkload" ? "workspace.run" : "workspace.cancel"),
+        eq(executionCommands.runId, input.runId),
+        eq(executionCommands.executionHostId, input.executionHostId),
+        eq(executionCommands.executionAssignmentId, input.assignmentId),
+        eq(executionCommands.assignmentEpoch, input.assignmentEpoch),
+        eq(executionCommands.targetSessionId, target.handle),
+        eq(executionHosts.hostKey, owner.hostKey),
+      ));
+    return !!command;
+  }
   const reference = SessionContentReferenceSchema.safeParse(
     input.payload?.contentRef,
   );

@@ -7,6 +7,8 @@ import { MaisterError } from "@/lib/errors";
 export type SelectedExecutionEndpoint = Readonly<{
   url: string;
   hostKey: string;
+  maxConcurrentRuns?: number;
+  draining?: boolean;
 }>;
 
 export type AdditionalExecutionEndpoint = SelectedExecutionEndpoint & Readonly<{
@@ -22,6 +24,8 @@ const additionalEndpointsSchema = z.array(z.strictObject({
   hostKey: z.string().regex(EXECUTION_HOST_KEY_PATTERN),
   displayName: z.string().trim().min(1).max(128),
   projectIds: projectIdsSchema.optional(),
+  maxConcurrentRuns: z.int().min(1).max(1_000).optional(),
+  draining: z.boolean().optional(),
 })).max(1);
 
 /** Without a project list the existing single-endpoint configuration applies instance-wide. */
@@ -68,7 +72,14 @@ export function configuredSelectedExecutionEndpoint(): SelectedExecutionEndpoint
     );
   }
 
-  return { url, hostKey };
+  const capacity = process.env.MAISTER_SELECTED_EXECUTION_HOST_MAX_CONCURRENT_RUNS;
+  const drain = process.env.MAISTER_SELECTED_EXECUTION_HOST_DRAIN;
+  const maxConcurrentRuns = capacity === undefined ? undefined : Number(capacity);
+  if (capacity !== undefined && (!/^[1-9]\d{0,3}$/u.test(capacity) || Number(capacity) > 1_000))
+    throw new MaisterError("CONFIG", "MAISTER_SELECTED_EXECUTION_HOST_MAX_CONCURRENT_RUNS must be an integer from 1 to 1000");
+  if (drain !== undefined && drain !== "0" && drain !== "1")
+    throw new MaisterError("CONFIG", "MAISTER_SELECTED_EXECUTION_HOST_DRAIN must be 0 or 1");
+  return { url, hostKey, maxConcurrentRuns, draining: drain === "1" };
 }
 
 function supervisorOrigin(address: string | undefined): string | null {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PoolClient } from "pg";
 
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -25,22 +26,23 @@ let originalIntent: Record<string, unknown>;
 async function createRun(
   host: string,
   status: "Pending" | "Running" | "Review" = "Pending",
+  client: Pick<PoolClient, "query"> = database.pool,
 ): Promise<{ runId: string; assignmentId: string }> {
   const runId = randomUUID();
   const assignmentId = randomUUID();
 
-  await database.pool.query(
+  await client.query(
     `INSERT INTO runs (id, project_id, run_kind, status, flow_version, flow_revision)
      VALUES ($1, $2, 'scratch', $3, 'scratch', 'manual')`,
     [runId, projectId, status],
   );
-  await database.pool.query(
+  await client.query(
     `INSERT INTO execution_assignments
       (id, run_id, execution_host_id, epoch, state, placement_reason)
      VALUES ($1, $2, $3, 1, 'active', 'launch')`,
     [assignmentId, runId, host],
   );
-  await database.pool.query(
+  await client.query(
     "UPDATE runs SET execution_assignment_id = $2 WHERE id = $1",
     [runId, assignmentId],
   );
@@ -660,5 +662,42 @@ describe("C-02 workspace ownership", () => {
        VALUES ($1,$2,$3,2,'active','launch')`,
       [randomUUID(), before.find(({ run_id }) => run_id !== null)?.run_id, secondary],
     )).rejects.toMatchObject({ code: "P0001", message: expect.stringContaining("registry writer") });
+  });
+
+  it("backfills the existing addressed owner through 0388 without reserving a pending run", async () => {
+    await database.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('maister.execution_host_registry_writer', 'v2', true)`);
+      await tx.execute(sql`UPDATE execution_hosts SET capabilities = capabilities || '{"workspaceProtocol":[1]}'::jsonb WHERE id=${hostId}`);
+    });
+    const client = await database.pool.connect();
+    const { running, pending } = await (async () => {
+      try {
+        await client.query("BEGIN");
+        await client.query("SET LOCAL maister.execution_host_registry_writer='v2'");
+        const running = await createRun(hostId, "Running", client);
+        const pending = await createRun(hostId, "Pending", client);
+        await client.query("COMMIT");
+        return { running, pending };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    })();
+    const startedAt = new Date("2026-01-12T12:00:00.000Z");
+    await database.pool.query("UPDATE runs SET started_at=$1 WHERE id=$2", [startedAt, running.runId]);
+    const history = async () => (await database.pool.query(
+      "SELECT to_jsonb(a) AS assignment FROM execution_assignments a WHERE id=ANY($1::text[]) ORDER BY id",
+      [[running.assignmentId, pending.assignmentId]],
+    )).rows;
+    const before = await history();
+    await database.db.transaction((tx) => applyMainMigration(tx, "0388_stage-c-host-capacity"));
+    expect(await history()).toEqual(before);
+    const slots = await database.pool.query(
+      "SELECT assignment_id, reserved_at FROM execution_host_slot_reservations WHERE assignment_id=ANY($1::text[])",
+      [[running.assignmentId, pending.assignmentId]],
+    );
+    expect(slots.rows).toEqual([{ assignment_id: running.assignmentId, reserved_at: startedAt }]);
   });
 });

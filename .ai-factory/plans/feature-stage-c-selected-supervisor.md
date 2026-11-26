@@ -949,6 +949,19 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   original preparation refusal and holds the launch. The same-path
   container witness and full two-host board run are pending.
 - [ ] **T13 · Scheduler / quiescence (after T12).** Reserve host capacity atomically in addition to the global limit; enforce adapter/project/host eligibility and shared-root affinity. Integrate pressure, bounded retries and stale-owner fencing with the existing scheduler. Interrupt during acceptance, heartbeat timeout and cancellation; prove two distinct launches cannot exceed a single slot, old host effects cannot race a new owner, and pinned work never silently relocates. Expose waiting reason and operator recovery. Log reservation, last observed health and quiescence witness.
+
+  C-14 RED admitted two concurrent launches against B's single slot. GREEN
+  used competing PostgreSQL connections and a real B workload. Web released
+  the Run while the process remained active. The slot survived that release,
+  loss of the TCP connection, failed health attestation and B's restart. B
+  retained the terminal receipt while disconnected. Reconnection applied the
+  original receipt with proved quiescence, and both the drain and per-host
+  pressure checks deferred new admissions. After recovery, one competing
+  launch received the slot, and the next eligible Run followed queue order.
+  The populated 0388 migration preserved assignment history and reserved the
+  running owner without claiming the pending Run. The final split-user
+  acceptance repeats cancellation and ownership checks on the G2 candidate.
+
 - [ ] **T14 · Pilot / G2 (after T12–13).** Qualify the two-host matrix below and reconcile actual wire/schema versions, admin guide, metrics, test topology, deployment and error taxonomy. Validate migration/journal against latest master and reject rollback to a singleton writer while a second host owns work. Document shutdown/drain and coordinated restore. Release the pilot only for configurations matching its evidence. **Checkpoint 4:** two-host placement and recovery.
 
 ### Proposed commit checkpoints

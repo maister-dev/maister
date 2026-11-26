@@ -41,6 +41,8 @@ import {
 } from "@/lib/runs/state-transitions";
 import { getLatestAssignment } from "@/lib/execution-host/assignments";
 import { getHostById } from "@/lib/execution-host/hosts";
+import { readHostCapacityWaitReason, reserveRunHostCapacity, usesHostCapacityReservations, type HostCapacityWaitReason } from "@/lib/execution-host/host-capacity";
+import { configuredAdditionalExecutionEndpoints } from "@/lib/execution-host/selected-endpoint";
 import { workspacePreparationReadySql } from "@/lib/execution-host/workspace-preparation";
 import {
   HOST_PRESSURED_REASON,
@@ -208,7 +210,7 @@ export function capForPool(pool: SchedulerPool): number {
   return pool === "agent" ? agentCapFromEnv() : capFromEnv();
 }
 
-export type PoolCapFence = typeof HOST_PRESSURED_REASON;
+export type PoolCapFence = typeof HOST_PRESSURED_REASON | HostCapacityWaitReason;
 
 export type EffectivePoolCap = {
   cap: number;
@@ -224,7 +226,9 @@ export async function effectivePoolCap(
   tx: Db,
   pool: SchedulerPool,
 ): Promise<EffectivePoolCap> {
-  const pressuredSince = await localHostPressuredSince(tx);
+  const pressuredSince = configuredAdditionalExecutionEndpoints().length
+    ? null
+    : await localHostPressuredSince(tx);
 
   if (pressuredSince) {
     log.debug(
@@ -669,6 +673,7 @@ export async function tryStartRun(
           }
         : null;
 
+    let hostCapacityReason: HostCapacityWaitReason | null = null;
     if (
       automaticAllowed &&
       !sharedBlocked &&
@@ -686,12 +691,16 @@ export async function tryStartRun(
           .orderBy(...pendingContinuationOrder())
           .limit(1);
 
-        if (
-          head?.id === runId &&
-          (await admitConditionWaitResume(tx, pendingWait))
-        )
-          return { started: true } satisfies TryStartRunResult;
-      } else {
+        if (head?.id === runId) {
+          const owner = usesHostCapacityReservations() ? await getLatestAssignment(tx, runId) : null;
+          hostCapacityReason = owner ? await readHostCapacityWaitReason(tx, owner.executionHostId,
+            owner.state === "active" ? owner.id : undefined) : null;
+          if (!hostCapacityReason && await admitConditionWaitResume(tx, pendingWait)) {
+            await assertPromotedHostCapacity(tx, runId);
+            return { started: true } satisfies TryStartRunResult;
+          }
+        }
+      } else if (!(hostCapacityReason = await reserveRunHostCapacity(tx, runId))) {
         await acceptedDispatch?.apply(tx);
         const startedRows: Array<{ projectId: string | null }> = await tx
           .update(runs)
@@ -729,7 +738,7 @@ export async function tryStartRun(
       }
     }
 
-    await acceptedDispatch?.releaseCapacity(tx);
+    await acceptedDispatch?.releaseCapacity(tx, hostCapacityReason ?? undefined);
 
     const targetStartedAt =
       targetRows[0]?.waitQueuedAt ?? targetRows[0]?.startedAt ?? new Date();
@@ -748,6 +757,7 @@ export async function tryStartRun(
       );
 
     const queuePosition = Number(aheadRows[0]?.count ?? 0) + 1;
+    const queueReason = hostCapacityReason ?? effective.fence;
 
     log.info(
       {
@@ -756,7 +766,7 @@ export async function tryStartRun(
         liveCount,
         cap,
         queuePosition,
-        fence: effective.fence,
+        fence: queueReason,
         assignmentBudgetBlocked,
       },
       "tryStartRun → queued",
@@ -765,7 +775,7 @@ export async function tryStartRun(
     return {
       started: false,
       queuePosition,
-      ...(effective.fence ? { queueReason: effective.fence } : {}),
+      ...(queueReason ? { queueReason } : {}),
     } satisfies TryStartRunResult;
   });
 }
@@ -919,6 +929,14 @@ async function taskLaunchPromotionOutcome(
 // the cap is honored: the chosen unit consumes exactly one slot. `name` kept as
 // `promoteNextPending` because all 17 freed-slot call-sites already call it (G3
 // needs no new event wiring).
+async function assertPromotedHostCapacity(tx: Db, runId: string): Promise<void> {
+  const reason = await reserveRunHostCapacity(tx, runId);
+  if (reason)
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "The selected execution host cannot reserve a slot", {
+      details: { reason, runId },
+    });
+}
+
 export async function promoteNextPending(
   opts: PromoteNextPendingOptions = {},
 ): Promise<{ promotedRunId: string | null; taskLaunchProgress?: boolean }> {
@@ -1232,6 +1250,12 @@ export async function promoteNextPending(
           .select()
           .from(taskLaunchIntents)
           .where(eq(taskLaunchIntents.id, ref.intentId));
+        if (intent?.effectiveExecutionHostId && usesHostCapacityReservations()) {
+          const owner = intent.runId ? await getLatestAssignment(tx, intent.runId) : null;
+          const reason = await readHostCapacityWaitReason(tx, intent.effectiveExecutionHostId,
+            owner?.state === "active" ? owner.id : undefined);
+          if (reason) continue;
+        }
 
         if (intent?.state === "run_bound")
           return {
@@ -1273,6 +1297,9 @@ export async function promoteNextPending(
           .for("update", { skipLocked: true });
 
         if (!claimedRun) continue;
+        const placed = usesHostCapacityReservations() ? await getLatestAssignment(tx, runId) : null;
+        if (placed && await readHostCapacityWaitReason(tx, placed.executionHostId,
+          placed.state === "active" ? placed.id : undefined)) continue;
 
         // One writer per shared tree (ADR-099): skip a shared-mode candidate while
         // a writer sibling is active — applies to both queued and resuming runs.
@@ -1325,6 +1352,7 @@ export async function promoteNextPending(
             });
 
             if (!admitted) continue;
+            await assertPromotedHostCapacity(tx, runId);
 
             return {
               kind: "run" as const,
@@ -1373,6 +1401,7 @@ export async function promoteNextPending(
             .returning({ projectId: runs.projectId });
 
           if (flipped.length === 0) continue;
+          await assertPromotedHostCapacity(tx, runId);
 
           if (flipped[0].projectId !== null)
             await emitWebhookEvent({
@@ -1427,6 +1456,7 @@ export async function promoteNextPending(
           const resumed = await claimScratchIdleResume(tx, runId, { host });
 
           if (resumed.outcome !== "claimed") continue;
+          await assertPromotedHostCapacity(tx, runId);
           const [claimed]: Array<{ projectId: string | null }> = await tx
             .select({ projectId: runs.projectId })
             .from(runs)
@@ -1491,6 +1521,7 @@ export async function promoteNextPending(
           claimedProjectId = flipped[0]?.projectId ?? null;
         }
 
+        await assertPromotedHostCapacity(tx, runId);
         if (claimedProjectId !== null)
           await emitWebhookEvent({
             db: tx,

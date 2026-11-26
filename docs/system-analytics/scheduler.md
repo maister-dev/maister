@@ -381,7 +381,7 @@ flowchart TD
 
 Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
 
-## Addressed placement Stage C (Designed)
+## Addressed placement Stage C
 
 Use the authorized pinned host for each queued intent. Under the existing
 global admission lock, claim eligible host capacity before workspace writer
@@ -389,6 +389,16 @@ claims. Maintain that lock order on each dispatch path. Count live claims for
 the physical host. A saturated, stale or draining host leaves the intent
 waiting with a bounded reason and preserves existing ordering among eligible
 queued intents.
+
+Migration `0388` records one reservation per physical assignment. Admission
+locks the host row under the existing scheduler lock before counting occupied
+slots. A selected-host limit applies in addition to the global pool limit.
+The queue reports host capacity, drain, pressure or unavailability for the
+selected host. The execution-host admin screen shows configured limits and
+drain state. Existing reservations can complete and reconcile while the host
+is draining. To admit new work again, clear drain in Web configuration and
+reload Web. The scheduler sweep verifies each configured peer's identity and
+samples its own pressure before draining eligible work.
 
 A stale heartbeat or partition refuses new placement on the affected host.
 The current assignment, workspace writer claim and consumed capacity remain

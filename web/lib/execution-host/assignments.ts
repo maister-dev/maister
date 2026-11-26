@@ -20,6 +20,7 @@ import { MaisterError } from "@/lib/errors";
 import { isUniqueViolation } from "@/lib/db/pg-error";
 
 import { declareExecutionHostRegistryWriter } from "./hosts";
+import { assertCapacityOwnerQuiescent } from "./host-capacity";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -134,6 +135,7 @@ export async function mintAssignment(
   }
 
   const active = await getActiveAssignment(tx, input.runId);
+  await assertCapacityOwnerQuiescent(tx, input.runId);
   // D3/D7: the adopted handle is copied forward from the run's NEWEST prior
   // generation on the same host — released included (a resume follows a
   // checkpoint that released it), so a re-entry never re-adopts. A stale

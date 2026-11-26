@@ -1,7 +1,7 @@
 import type { Db } from "./db";
 import type { SupervisorEventStreamHealth } from "@/types/platform-status";
 
-import { and, eq, isNull, lte } from "drizzle-orm";
+import { and, eq, isNull, lte, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { LOCAL_DIRECT_KIND } from "./hosts";
@@ -312,6 +312,7 @@ export async function localHostPressuredSince(db: Db): Promise<Date | null> {
       and(
         eq(executionHosts.kind, LOCAL_DIRECT_KIND),
         isNull(executionHosts.retiredAt),
+        sql`coalesce(${executionHosts.transport}->>'role','default') = 'default'`,
       ),
     )
     .limit(1);

@@ -42,7 +42,7 @@ export type PreparedTaskLaunchDispatch = Readonly<{
   ownsCapacity: boolean;
   automaticDrain: boolean;
   apply: (tx: Db) => Promise<void>;
-  releaseCapacity: (tx: Db) => Promise<void>;
+  releaseCapacity: (tx: Db, reason?: string) => Promise<void>;
 }>;
 
 /** Repository probing precedes the short atomic dispatch transaction. */
@@ -159,7 +159,7 @@ export async function prepareTaskLaunchFirstDispatch(
     basis: intent.basis.kind,
     ownsCapacity: intent.preparationIdentity !== null,
     automaticDrain: isAutomaticTaskLaunchDrain(intent),
-    releaseCapacity: async (tx) => {
+    releaseCapacity: async (tx, reason = "launch_capacity_wait") => {
       const current = await lockCurrent(tx);
 
       if (current.intent.dispatchCommittedAt) return;
@@ -176,7 +176,7 @@ export async function prepareTaskLaunchFirstDispatch(
         .set({
           state: "queued",
           stateVersion: current.intent.stateVersion + 1,
-          reason: "launch_capacity_wait",
+          reason,
           dueAt: sql`clock_timestamp()+interval '1 second'`,
           updatedAt: sql`clock_timestamp()`,
         })

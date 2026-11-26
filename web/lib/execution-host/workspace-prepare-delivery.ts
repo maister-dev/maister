@@ -17,6 +17,7 @@ import type {
 } from "@/lib/db/schema";
 import type { Db } from "./db";
 import { transportForExecutionHost } from "./default-transport";
+import { reserveRunHostCapacity } from "./host-capacity";
 import type { ExecutionHostTransport } from "./contracts";
 
 import { and, eq, isNull, lte, or } from "drizzle-orm";
@@ -42,6 +43,7 @@ import { z } from "zod";
 
 import { executionCommands } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { takeSchedulerLock } from "@/lib/scheduler";
 
 function retainedOwner(
   command: ExecutionCommand,
@@ -177,21 +179,45 @@ export async function resolveWorkspacePreparationPeer(
   command: ExecutionCommand,
   transport: ExecutionHostTransport,
 ): Promise<{ host: ExecutionHost; assignment: ExecutionAssignment; transport: ExecutionHostTransport }> {
+  const peer = await readWorkspaceCommandPeer(db, command, transport);
+  if (!isAddressedRetainedWorkspaceCommand(command) && peer.assignment.state !== "active")
+    throw workspaceAssignmentFenced(command.id);
+  return peer;
+}
+
+function workspaceAssignmentFenced(commandId: string): MaisterError {
+  return new MaisterError("CONFLICT", "Workspace preparation assignment changed", {
+    details: { reason: "assignment_fenced", commandId },
+  });
+}
+
+/** A released workload can still return its terminal proof to the original owner. */
+export async function resolveWorkspaceReceiptPeer(
+  db: Db,
+  command: ExecutionCommand,
+  transport: ExecutionHostTransport,
+): Promise<{ host: ExecutionHost; assignment: ExecutionAssignment; transport: ExecutionHostTransport }> {
+  const peer = await readWorkspaceCommandPeer(db, command, transport);
+  if (peer.assignment.state === "superseded" ||
+    (peer.assignment.state === "released" && command.kind !== "workspace.run" &&
+      command.kind !== "workspace.cancel" && !isAddressedRetainedWorkspaceCommand(command)))
+    throw workspaceAssignmentFenced(command.id);
+  return peer;
+}
+
+async function readWorkspaceCommandPeer(
+  db: Db,
+  command: ExecutionCommand,
+  transport: ExecutionHostTransport,
+): Promise<{ host: ExecutionHost; assignment: ExecutionAssignment; transport: ExecutionHostTransport }> {
   const assignment = await getAssignmentById(db, command.executionAssignmentId);
   if (
     !assignment ||
-    (!isAddressedRetainedWorkspaceCommand(command) && assignment.state !== "active") ||
     assignment.runId !== command.runId ||
     assignment.epoch !== command.assignmentEpoch ||
     assignment.executionHostId !== command.executionHostId
   )
-    throw new MaisterError(
-      "CONFLICT",
-      "Workspace preparation assignment changed",
-      {
-        details: { reason: "assignment_fenced", commandId: command.id },
-      },
-    );
+    throw workspaceAssignmentFenced(command.id);
   const host = await hostForAssignment(db, assignment, { transport });
   if (!usesHostWorkspacePreparation(host))
     throw new MaisterError(
@@ -269,6 +295,16 @@ export async function recoverWorkspacePreparation(
     command,
     defaultHostTransport,
   );
+  if (command.kind === "workspace.prepare" && command.state === "queued" && command.attempts === 0) {
+    const reason = await db.transaction(async (tx) => {
+      await takeSchedulerLock(tx);
+      return reserveRunHostCapacity(tx, command.runId);
+    });
+    if (reason)
+      throw new MaisterError("EXECUTOR_UNAVAILABLE", "Workspace preparation awaits its selected host", {
+        details: { reason, runId: command.runId, hostId: host.id },
+      });
+  }
   if (
     !transport.sendWorkspacePreparation ||
     !transport.getWorkspaceCommandReceipt

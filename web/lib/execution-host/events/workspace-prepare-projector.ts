@@ -32,7 +32,7 @@ import {
 } from "../commands";
 import { defaultTransport } from "../default-transport";
 import {
-  resolveWorkspacePreparationPeer,
+  resolveWorkspaceReceiptPeer,
   retainedWorkspacePrepareRequest,
   retainedWorkspaceMaterializeRequest,
   retainedWorkspaceWorkloadRequest,
@@ -107,7 +107,7 @@ export async function prepareWorkspaceEvidence(
     command.assignmentEpoch !== event.assignmentEpoch
   )
     throw inconsistent();
-  const { host, transport } = await resolveWorkspacePreparationPeer(
+  const { host, transport } = await resolveWorkspaceReceiptPeer(
     db,
     command,
     defaultTransport(),
@@ -349,7 +349,10 @@ export async function applyWorkspaceEvidence(
     .where(eq(executionAssignments.id, receipt.owner.assignmentId))
     .for("update");
   if (
-    assignment?.state !== "active" ||
+    (!assignment || (assignment.state !== "active" && (
+      assignment.state !== "released" ||
+      (receipt.operationId !== "stageCRunWorkload" && receipt.operationId !== "stageCCancelWorkload")
+    ))) ||
     assignment.epoch !== receipt.owner.assignmentEpoch ||
     assignment.executionHostId !== event.executionHostId
   )

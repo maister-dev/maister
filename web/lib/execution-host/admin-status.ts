@@ -6,6 +6,7 @@ import type { ExecutionObservabilitySummary } from "@/lib/execution-host/events/
 import type { ExecutionEventLagReadModel } from "@/types/execution-host-observability";
 import type { SchedulerClockStatus } from "@/types/scheduler";
 import type { DurableWorkerState } from "@/lib/workers/health";
+import type { SelectedExecutionEndpoint } from "./selected-endpoint";
 
 import { sql } from "drizzle-orm";
 import pino from "pino";
@@ -81,7 +82,7 @@ export type AdminExecutionHostRow = Readonly<{
 export type AdminPanelFailure = Readonly<{ unavailable: true }>;
 
 type AdminSelectedHost =
-  | Readonly<{ kind: "registered"; hostKey: string; hostId: string }>
+  | Readonly<{ kind: "registered"; hostKey: string; hostId: string; draining?: true; maxConcurrentRuns?: number }>
   | Readonly<{ kind: "unregistered" | "registry_unavailable"; hostKey: string }>
   | Readonly<{ kind: "invalid_configuration" }>;
 
@@ -156,7 +157,7 @@ async function listHosts(db: AdminStatusDb): Promise<AdminExecutionHostRow[]> {
 
 function observedConfiguredHost(
   hosts: AdminExecutionHostStatus["hosts"],
-  hostKey: string,
+  { hostKey, draining, maxConcurrentRuns }: SelectedExecutionEndpoint,
 ): AdminSelectedHost {
   if (isPanelUnavailable(hosts))
     return { kind: "registry_unavailable", hostKey };
@@ -164,14 +165,17 @@ function observedConfiguredHost(
     (candidate) => candidate.hostKey === hostKey && !candidate.retiredAt,
   );
   return host
-    ? { kind: "registered", hostKey, hostId: host.id }
+    ? { kind: "registered", hostKey, hostId: host.id,
+        ...(draining ? { draining: true } : {}),
+        ...(maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns }),
+      }
     : { kind: "unregistered", hostKey };
 }
 
 function readSelectedHost(hosts: AdminExecutionHostStatus["hosts"]): AdminSelectedHost | null {
   try {
     const configured = configuredSelectedExecutionEndpoint();
-    return configured ? observedConfiguredHost(hosts, configured.hostKey) : null;
+    return configured ? observedConfiguredHost(hosts, configured) : null;
   } catch (error) {
     if (isMaisterError(error) && error.code === "CONFIG")
       return { kind: "invalid_configuration" };
@@ -181,7 +185,7 @@ function readSelectedHost(hosts: AdminExecutionHostStatus["hosts"]): AdminSelect
 
 function readAdditionalHosts(hosts: AdminExecutionHostStatus["hosts"]): readonly AdminSelectedHost[] {
   try {
-    return configuredAdditionalExecutionEndpoints().map(({ hostKey }) => observedConfiguredHost(hosts, hostKey));
+    return configuredAdditionalExecutionEndpoints().map((host) => observedConfiguredHost(hosts, host));
   } catch (error) {
     if (isMaisterError(error) && error.code === "CONFIG")
       return [{ kind: "invalid_configuration" }];
