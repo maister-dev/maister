@@ -3,8 +3,18 @@ import type { WorkspaceSyncRequest } from "../../runtime/workspace-prepare";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { WORKSPACE_SYNC_CONFLICT_MAX_BYTES, WORKSPACE_SYNC_CONFLICT_MAX_PATHS, WORKSPACE_SYNC_CONFLICT_MAX_PATH_LENGTH } from "../../runtime/workspace-prepare";
 import { SupervisorError } from "./types";
-import { executeWorkspaceGit } from "./workspace-source";
+import { executeWorkspaceGit, executeWorkspaceGitBytes } from "./workspace-source";
+
+export class WorkspaceCandidateConflict extends SupervisorError {
+  constructor(readonly paths: readonly string[]) {
+    super("CONFLICT", "The reviewed target conflicts with the retained workspace", {
+      details: { reason: "sync_conflict" },
+    });
+    Object.setPrototypeOf(this, WorkspaceCandidateConflict.prototype);
+  }
+}
 
 export function syncConflict(
   reason:
@@ -114,17 +124,22 @@ export async function makeSyncCandidate(
 
       return await executeWorkspaceGit([...isolated, "rev-parse", "HEAD"]);
     } catch (error) {
-      const conflicts = await executeWorkspaceGit([
+      const conflicts = await executeWorkspaceGitBytes([
         ...isolated,
         "diff",
+        "-z",
         "--name-only",
         "--diff-filter=U",
       ]);
-      if (conflicts)
-        throw syncConflict(
-          "sync_conflict",
-          "The reviewed target conflicts with the retained workspace",
-        );
+      if (conflicts.length) {
+        const paths = conflicts.toString("utf8").split("\0").slice(0, -1);
+        if (paths.length > WORKSPACE_SYNC_CONFLICT_MAX_PATHS ||
+          paths.some((path) => path.length > WORKSPACE_SYNC_CONFLICT_MAX_PATH_LENGTH) ||
+          Buffer.byteLength(JSON.stringify(paths)) > WORKSPACE_SYNC_CONFLICT_MAX_BYTES ||
+          !Buffer.from(paths.join("\0") + "\0", "utf8").equals(conflicts))
+          throw syncConflict("sync_conflict", "The conflict report exceeds its supported path or byte limit");
+        throw new WorkspaceCandidateConflict(paths);
+      }
       throw error;
     } finally {
       await executeWorkspaceGit([

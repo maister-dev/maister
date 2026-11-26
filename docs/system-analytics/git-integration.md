@@ -501,6 +501,46 @@ under the held lifecycle claim. A completed Run keeps its `Done` status.
 Repeating the same disposal returns its recorded outcome without another
 release. Conflicting disposal intents refuse.
 
+### Addressed conflict resolver (Designed)
+
+The conflict resolver keeps three Git effects under the existing Run sync
+claim. The Web manager authorizes the attempt for an eligible Run and pins the
+source HEAD, target branch and exact target SHA. Publication also pins the
+dedicated branch's expected old SHA. The original supervisor computes the
+mechanical candidate in a private checkout. A clean candidate settles through
+the existing sync command. An explicit mechanical conflict returns the
+conflicting paths and leaves the live checkout and publication intact.
+
+1. For an authorized AI resolve, the original supervisor records a private
+   checkpoint before materializing the conflict. The receipt binds the
+   checkpoint, paths and pinned commits to the workspace handle, generation,
+   original assignment and sync claim. The host persists this receipt before
+   Web can mint the resolver's next assignment on that same workspace. An
+   interrupted preparation is reconciled from the original command and Git
+   state. An unknown effect holds the claim and cannot launch the resolver.
+2. Web journals the resolved runner snapshot and starts an ACP session under
+   the existing `sync_resolver` prompt owner. A retry continues that exact
+   create or prompt. Web applies the result only after the owner has positively
+   retired the resolver's writer. Cancellation and interrupted sessions retain
+   the workspace while retirement is unknown. A proved abort restores the
+   original checkpoint on the supervisor and releases the Web claim.
+3. Before finalization the supervisor checks for a finished Git operation,
+   the expected target ancestry, no unresolved entries or conflict markers
+   in changed files, and a clean checkout at the resulting commit. It
+   publishes only against the approved lease and verifies the actual ref.
+   After a confirmed push, reconciliation applies the retained receipt.
+   It cannot restore an earlier checkout over that publication. The same
+   attempt and workspace claim settle together in PostgreSQL. Explicit
+   auto-finalization rechecks current authorization and calls the normal
+   addressed promotion boundary with the verified source and target.
+
+Qualification requires a conflict on a real Git remote, one fresh ACP
+resolver, a crash before a prepared reply or before ACP create, and a restart
+after a successful leased push. Also exercise a stale target or lease, a
+cancelled writer and a failed verification. Check the original dirty or
+conflicted bytes, exact resulting commit, single public ref update and no
+second writer. Run the legacy local sync scenarios against the same policy.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential

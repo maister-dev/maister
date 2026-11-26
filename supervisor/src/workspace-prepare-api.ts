@@ -258,6 +258,7 @@ const syncSchema = publishSchema.extend({
     generation,
     expected: publishSchema.shape.payload.shape.expected,
     strategy: z.enum(["fastForward", "merge", "rebase"]),
+    onConflict: z.literal("report").optional(),
     publish: publishSchema.shape.payload.shape.expected.omit({ head: true, remoteId: true }).optional(),
   }).strict(),
 });

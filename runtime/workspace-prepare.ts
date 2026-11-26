@@ -219,6 +219,10 @@ export type CheckoutExpectation = Readonly<{
   priorTarget: string | null;
 }>;
 
+export const WORKSPACE_SYNC_CONFLICT_MAX_PATHS = 256;
+export const WORKSPACE_SYNC_CONFLICT_MAX_PATH_LENGTH = 4096;
+export const WORKSPACE_SYNC_CONFLICT_MAX_BYTES = 32_768;
+
 export type WorkspaceSyncRequest = Readonly<{
   workspaceProtocol: 1;
   command: Readonly<{ id: string; kind: "workspace.sync"; issuedAt: string }>;
@@ -227,6 +231,7 @@ export type WorkspaceSyncRequest = Readonly<{
     generation: number;
     expected: CheckoutExpectation;
     strategy: "fastForward" | "merge" | "rebase";
+    onConflict?: "report";
     publish?: Readonly<{ targetRef: string; priorTarget: string | null }>;
   }>;
 }>;
@@ -237,6 +242,7 @@ export type WorkspaceSyncResult = Readonly<{
   priorTarget: string;
   observedTarget: string;
   behind: number;
+  conflictedFiles?: readonly string[];
   publication?: Readonly<{
     targetRef: string;
     priorTarget: string | null;

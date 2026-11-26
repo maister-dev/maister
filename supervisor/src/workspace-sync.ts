@@ -6,7 +6,7 @@ import type {
 
 import { createHash } from "node:crypto";
 
-import { commitAt, makeSyncCandidate, syncConflict } from "./workspace-git-candidate";
+import { commitAt, makeSyncCandidate, syncConflict, WorkspaceCandidateConflict } from "./workspace-git-candidate";
 import { WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
 import { ownedWorkspaceSourceGit } from "./workspace-publish";
 import {
@@ -90,7 +90,7 @@ export async function syncOwnedWorkspace(
   const {
     owner,
     command,
-    payload: { generation, expected, strategy, publish },
+    payload: { generation, expected, strategy, publish, onConflict },
   } = request;
   const handle = owner.workspaceHandle;
   const target = expected.priorTarget;
@@ -113,7 +113,7 @@ export async function syncOwnedWorkspace(
   const checkout = await inspectWorkspace(state, handle, generation);
   const observedHead = checkout?.workspace.observedCommit;
   const clean = checkout?.workingTree === "clean";
-  const result = async (head: string, push?: () => Promise<string>): Promise<WorkspaceSyncResult> => {
+  const behindCount = async (): Promise<number> => {
     const count = await executeWorkspaceGit([
       ...git,
       "rev-list",
@@ -125,6 +125,10 @@ export async function syncOwnedWorkspace(
       throw new WorkspaceGitEffectUnconfirmed(
         "The supervisor could not verify the sync distance",
       );
+    return behind;
+  };
+  const result = async (head: string, push?: () => Promise<string>): Promise<WorkspaceSyncResult> => {
+    const behind = await behindCount();
 
     const publication = publish && behind > 0
       ? await confirmSyncPublication({ git, source, publish, candidate: head, push: push ?? null })
@@ -174,13 +178,16 @@ export async function syncOwnedWorkspace(
         "target_ref_changed",
         "The approved sync target advanced during fetch",
       );
-    candidate = await makeSyncCandidate(
-      input.runtimeRoot,
-      git,
-      expected.head,
-      target,
-      strategy,
-    );
+    try {
+      candidate = await makeSyncCandidate(input.runtimeRoot, git, expected.head, target, strategy);
+    } catch (error) {
+      if (!(error instanceof WorkspaceCandidateConflict) || onConflict !== "report") throw error;
+      const current = await inspectWorkspace(state, handle, generation);
+      if (current?.workspace.observedCommit !== expected.head || current.workingTree !== "clean")
+        throw syncConflict("head_changed", "The retained checkout changed during conflict detection");
+      return { generation, head: expected.head, priorTarget: target, observedTarget: target,
+        behind: await behindCount(), conflictedFiles: error.paths };
+    }
     if (publish && candidate !== expected.head)
       await verifySyncPublicationLease({
         git, source, publish, head: expected.head, privateRef: candidateRef + "-publication",

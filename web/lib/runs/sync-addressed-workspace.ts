@@ -43,6 +43,7 @@ export async function syncAddressedWorkspace(input: {
 }): Promise<SyncRunOutcome> {
   const { db, operation, expectedStatus, strategy, target } = input;
   const { runId, actor } = operation;
+  const reportConflict = !(operation.agent ?? expectedStatus === "Review");
   if (operation.agent === true && expectedStatus !== "Review")
     throw new MaisterError(
       "PRECONDITION",
@@ -144,6 +145,7 @@ export async function syncAddressedWorkspace(input: {
               )
           : [];
       if (pending && pending.actorId === actor.id &&
+        (pending.command.payload.onConflict === "report") === reportConflict &&
         (operation.push === undefined || Boolean(pending.command.payload.publish) === operation.push))
         return pending.command;
       throw new MaisterError(
@@ -246,6 +248,7 @@ export async function syncAddressedWorkspace(input: {
         fence: await nextRetainedWorkspaceFence(tx, hostId, handle),
         strategy,
         expected: { head, remoteId: run.projectId, targetRef, priorTarget },
+        ...(reportConflict ? { onConflict: "report" } : {}),
         ...(publish ? { publish } : {}),
       },
     });
@@ -271,9 +274,9 @@ export async function syncAddressedWorkspace(input: {
 
   return {
     attemptId: command.payload.claimId,
-    outcome: result.data.behind ? "synced" : "noop",
+    outcome: result.data.conflictedFiles ? "conflict" : result.data.behind ? "synced" : "noop",
     behind: result.data.behind,
     pushed: result.data.publication !== undefined,
-    conflictedFiles: [],
+    conflictedFiles: result.data.conflictedFiles ?? [],
   };
 }

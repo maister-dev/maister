@@ -251,8 +251,11 @@ async function applyRetainedWorkspaceReceipt(
       receipt.result.observedTarget !== request.payload.expected.priorTarget)
       throw inconsistent();
     const { publish } = request.payload;
-    const { behind, head, publication } = receipt.result;
-    if ((Boolean(publish) && behind > 0) !== Boolean(publication) ||
+    const { behind, head, publication, conflictedFiles } = receipt.result;
+    if (conflictedFiles && (request.payload.onConflict !== "report" ||
+      head !== request.payload.expected.head || behind === 0 || publication))
+      throw inconsistent();
+    if ((!conflictedFiles && Boolean(publish) && behind > 0) !== Boolean(publication) ||
       (publication && (publication.targetRef !== publish?.targetRef ||
         publication.priorTarget !== publish.priorTarget ||
         publication.observedTarget !== head)))
@@ -279,10 +282,12 @@ async function settleAddressedSyncAttempt(
 ): Promise<void> {
   const { claimId } = receipt.owner;
   const publication = receipt.phase === "completed" ? receipt.result.publication : undefined;
+  const conflictedFiles = receipt.phase === "completed" ? receipt.result.conflictedFiles : undefined;
   const [attempt] = await tx
     .update(runSyncAttempts)
     .set(receipt.phase === "completed"
-      ? { phase: "succeeded", headShaAfter: receipt.result.head, pushed: !!publication, updatedAt: new Date() }
+      ? { phase: conflictedFiles ? "aborted" : "succeeded", headShaAfter: receipt.result.head,
+          ...(conflictedFiles ? { conflictedFiles: [...conflictedFiles] } : {}), pushed: !!publication, updatedAt: new Date() }
       : { phase: "failed", errorCode: receipt.refusal.code, errorMessage: receipt.refusal.message, updatedAt: new Date() })
     .where(and(eq(runSyncAttempts.id, claimId), eq(runSyncAttempts.workspaceId, workspaceId), eq(runSyncAttempts.phase, "starting")))
     .returning({ id: runSyncAttempts.id });

@@ -7,6 +7,9 @@ import {
   isWorkspaceCancelTarget,
   isWorkspaceOperationOwner,
   isWorkspaceSourceRef,
+  WORKSPACE_SYNC_CONFLICT_MAX_BYTES,
+  WORKSPACE_SYNC_CONFLICT_MAX_PATHS,
+  WORKSPACE_SYNC_CONFLICT_MAX_PATH_LENGTH,
   WORKSPACE_WORKLOAD_KINDS,
   type WorkspaceCancelTarget,
   type WorkspaceAssignmentOwner,
@@ -70,6 +73,7 @@ export const RetainedWorkspaceSyncSchema = RetainedWorkspacePublishFields.omit({
   pullRequest: true,
 }).extend({
   strategy: z.enum(["fastForward", "merge", "rebase"]),
+  onConflict: z.literal("report").optional(),
   publish: WorkspacePublishPayloadSchema.shape.expected.omit({ head: true, remoteId: true }).optional(),
 });
 const WorkspaceSyncPublicationSchema = RetainedWorkspaceSyncSchema.shape.publish.unwrap().extend({
@@ -81,6 +85,10 @@ export const WorkspaceSyncResultSchema = z.object({
   priorTarget: gitObject,
   observedTarget: gitObject,
   behind: z.int().nonnegative(),
+  conflictedFiles: z.array(z.string().min(1).max(WORKSPACE_SYNC_CONFLICT_MAX_PATH_LENGTH))
+    .nonempty().max(WORKSPACE_SYNC_CONFLICT_MAX_PATHS)
+    .refine((paths) => Buffer.byteLength(JSON.stringify(paths)) <= WORKSPACE_SYNC_CONFLICT_MAX_BYTES)
+    .optional(),
   publication: WorkspaceSyncPublicationSchema.optional(),
 }).strict();
 export const WorkspacePreservePayloadSchema = z.object({

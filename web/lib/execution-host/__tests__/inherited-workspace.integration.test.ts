@@ -610,11 +610,19 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
   await git(upstream, "push", "origin", "HEAD:refs/heads/main");
   const refusal = await send("rebase", false);
   const refusedBody = await refusal.json();
-  expect(refusal.status, JSON.stringify(refusedBody)).toBe(409);
+  const conflictCommand = (await listCommandsForRun(db, runId)).find(
+    ({ kind, payload }) => kind === "workspace.sync" && payload.strategy === "rebase",
+  );
+  expect(conflictCommand?.payload).toMatchObject({ onConflict: "report" });
+  expect(refusal.status, JSON.stringify({ result: refusedBody, lastError: conflictCommand?.lastError })).toBe(200);
   expect(refusedBody).toMatchObject({
-    code: "CONFLICT",
-    details: { reason: "sync_conflict" },
+    outcome: "conflict",
+    behind: 1,
+    pushed: false,
+    conflictedFiles: ["retained.txt"],
   });
+  const [aborted] = await db.select().from(runSyncAttempts).where(eq(runSyncAttempts.id, refusedBody.attemptId));
+  expect(aborted).toMatchObject({ phase: "aborted", conflictedFiles: ["retained.txt"] });
   expect(await git(checkout, "rev-parse", "HEAD")).toBe(observed);
   expect(await git(checkout, "status", "--porcelain")).toBe("");
   expect(await git(checkout, "show", "HEAD:retained.txt")).toBe("local commit");

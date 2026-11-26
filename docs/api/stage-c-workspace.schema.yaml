@@ -651,6 +651,9 @@ definitions:
       expected: { $ref: "#/definitions/CheckoutExpectation" }
       strategy:
         enum: [ fastForward, merge, rebase ]
+      onConflict:
+        description: Report a known mechanical conflict without changing the checkout or its publication.
+        const: report
       publish:
         description: Optional lease for the Run's dedicated branch at the same approved remote.
         type: object
@@ -863,6 +866,12 @@ definitions:
       priorTarget: *a4
       observedTarget: *a4
       behind: { type: integer, minimum: 0 }
+      conflictedFiles:
+        description: Repository-relative paths captured when the request opted in to conflict reporting. The encoded array is limited to 32 KiB. HEAD remains the original commit and there is no publication receipt.
+        type: array
+        minItems: 1
+        maxItems: 256
+        items: { type: string, minLength: 1, maxLength: 4096 }
       publication:
         description: Verified resulting public ref when a nontrivial sync requested publication.
         type: object

@@ -70,7 +70,7 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
   "workspace.restore": (payload) => pickScalars(payload, ["generation", "checkpointId", "policy"]),
   "workspace.preserve": (payload) => pickScalars(payload, ["generation", "claimId", "fence", "disposition", "quiescenceId"]),
   "workspace.sync": (payload) => ({
-    ...pickScalars(payload, ["generation", "claimId", "fence", "strategy"]),
+    ...pickScalars(payload, ["generation", "claimId", "fence", "strategy", "onConflict"]),
     expected: pickScalars(asObject(payload.expected), ["head", "remoteId", "targetRef", "priorTarget"]),
     ...(payload.publish === undefined ? {} : {
       publish: {

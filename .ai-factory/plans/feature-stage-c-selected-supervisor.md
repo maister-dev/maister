@@ -751,6 +751,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   checkout and public branch. A conflicted checkout still needs the
   addressed resolver, including recovery and optional finalization.
 
+  Mechanical sync now returns the normal API conflict result with the
+  repository-relative paths, exact behind count and no push. The RED route
+  returned a generic HTTP 409. GREEN applied the bounded supervisor receipt
+  and recorded the aborted sync while preserving the live checkout and
+  publication. The owning integration passed with eight Web and six
+  supervisor C-10 cases plus contract and documentation validation.
+
   Addressed retention GC now follows the same preservation and release
   receipts. RED found the legacy path probe on a pathless workspace. GREEN
   skipped a future deadline and kept the local reconciler out of the
