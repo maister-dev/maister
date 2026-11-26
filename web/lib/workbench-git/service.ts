@@ -744,6 +744,22 @@ export async function finalizePullRequestRun(
 ): Promise<PromoteRunResult> {
   const deps = depsFromOptions(options);
   const sessionUser = await deps.requireActiveSession();
+  const promoteCtx: PromoteRunContext = {
+    sessionUser,
+    authorize: (projectId) => deps.authorize(projectId, "promoteRun"),
+  };
+  if (!options?.deps) {
+    const [addressed] = await getDb().select({ projectId: workspaces.projectId })
+      .from(workspaces).where(and(
+        eq(workspaces.runId, runId),
+        eq(workspaces.ownershipKind, "host_owned"),
+      ));
+    if (addressed) {
+      await promoteCtx.authorize(addressed.projectId);
+      assertParkedPullRequestInput(input);
+      return finalizeParkedPullRequest({ runId, ctx: promoteCtx });
+    }
+  }
   const ctx = await deps.loadContext(runId);
 
   ctx.viewerUserId = sessionUser.id;
@@ -751,11 +767,6 @@ export async function finalizePullRequestRun(
   await deps.authorize(ctx.run.projectId, "promoteRun");
   await assertNativeProjectPublication(gitDepsFromOptions(options).db, ctx.run);
   requireActionAllowed(ctx, "finalizePr");
-
-  const promoteCtx: PromoteRunContext = {
-    sessionUser,
-    authorize: (projectId) => deps.authorize(projectId, "promoteRun"),
-  };
 
   if (ctx.run.status === "Review") {
     return promoteRun(
@@ -769,17 +780,7 @@ export async function finalizePullRequestRun(
     );
   }
 
-  // C23: accepted-and-dropped would read as honoured.
-  if (
-    input.reviewedTargetCommit !== undefined ||
-    input.allowTargetDrift !== undefined
-  ) {
-    throw new MaisterError(
-      "CONFIG",
-      `reviewedTargetCommit and allowTargetDrift apply to a Review run only; run ${runId} is ${ctx.run.status}`,
-      { details: { reason: "review_only_field" } },
-    );
-  }
+  assertParkedPullRequestInput(input);
 
   const workspace = requireWorkspace(ctx);
   const prNumber: number | null = workspace.prNumber ?? null;
@@ -827,4 +828,13 @@ export async function finalizePullRequestRun(
     ctx: promoteCtx,
     sourceHead: head,
   });
+}
+
+function assertParkedPullRequestInput(input: FinalizePullRequestInput): void {
+  if (input.reviewedTargetCommit !== undefined || input.allowTargetDrift !== undefined)
+    throw new MaisterError(
+      "CONFIG",
+      "reviewedTargetCommit and allowTargetDrift apply to a Review run only",
+      { details: { reason: "review_only_field" } },
+    );
 }

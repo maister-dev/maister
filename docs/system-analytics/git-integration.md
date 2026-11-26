@@ -486,6 +486,13 @@ candidate. It confirms the public ref before changing the checkout. Replay
 uses that same candidate and readback. An unverified remote outcome retains
 the claim. Web applies the new HEAD and publication evidence together.
 
+For a parked addressed Run, finalization compares the provider's current
+PR head to the original supervisor's checkout HEAD after the assignment is
+released. The supervisor checks the recorded repository, PR number and base
+ref and reads the checkout identity before and after the provider request.
+A stale head, closed or retargeted PR, or an unconfirmed provider read leaves
+the Run parked. Web verifies the same ownership when applying finalization.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential

@@ -235,6 +235,7 @@ export async function loadGitState(args: {
     run: {
       id: run.id,
       runKind: run.runKind,
+      agentKind: run.agentKind,
       status: run.status,
       scratchDialogStatus: scratch?.dialogStatus ?? null,
       workspaceMode: run.workspaceMode,
@@ -254,6 +255,8 @@ export async function loadGitState(args: {
           addressedWorkspace: true,
           hasWorkspace: true,
           promotionState: workspace.promotionState,
+          prUrl: workspace.prNumber === null ? null : workspace.prUrl,
+          prState: prStateOf(workspace.prState),
           updateSupported:
             facts.policy.updateSupported &&
             !facts.hasActiveAssignment &&
@@ -264,6 +267,7 @@ export async function loadGitState(args: {
             (workspace.lifecycleOperationName === "archive" &&
               workspace.lifecycleOperationState === "claiming"),
           busy:
+            facts.hasActiveAssignment ||
             facts.hasLiveSharedSibling ||
             (workspace.lifecycleOperationName !== "archive" &&
               workbenchClaimHoldsTree(workspace)),

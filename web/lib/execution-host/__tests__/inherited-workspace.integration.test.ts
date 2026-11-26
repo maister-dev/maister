@@ -906,6 +906,56 @@ it("C-10 opens an addressed PR through Review and replays the persisted delivery
   expect(await readFile(join(root, "pr-created"), "utf8")).toBe("created\n");
 }, 60_000);
 
+it("C-10 finalizes a parked addressed Run only at the provider's current PR head", async () => {
+  const { db, base, runId, readWorkspace, supervisor: owningHost } =
+    await prepareWorkspaceFixture({ usePullRequestProvider: true });
+  const { executionWorkspaceId: handle } = await readWorkspace();
+  if (!handle || !root) throw new Error("The PR finalization fixture has no checkout");
+  const checkout = privateCheckoutPath(owningHost, handle);
+  await writeFile(join(checkout, "README.md"), "ready for PR finalization\n");
+  await git(checkout, "commit", "-am", "finish addressed PR work");
+  const head = await git(checkout, "rev-parse", "HEAD");
+  await db.transaction(async (tx) => {
+    await tx.update(runs).set({ status: "Crashed" }).where(eq(runs.id, runId));
+    await tx.update(workspaces).set({
+      targetBranch: "main", prUrl: localPullRequestUrl, prNumber: 7, prState: "open",
+    }).where(eq(workspaces.runId, runId));
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+  });
+  const statusFile = join(root, "pr-state.json");
+  const { GET: gitState } = await import("@/app/api/runs/[runId]/git-state/route");
+  const available = await gitState(new Request(`http://localhost/api/runs/${runId}/git-state`), {
+    params: Promise.resolve({ runId }),
+  });
+  expect(available.status).toBe(200);
+  expect(await available.json()).toMatchObject({
+    actions: expect.arrayContaining([{ id: "finalizePr", enabled: true, disabledReason: null }]),
+  });
+  const { POST } = await import("@/app/api/runs/[runId]/pr/finalize/route");
+  const finalize = () => POST(
+    new NextRequest(`http://localhost/api/runs/${runId}/pr/finalize`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    }),
+    { params: Promise.resolve({ runId }) },
+  );
+  await writeFile(statusFile, JSON.stringify({ state: "OPEN", headRefOid: base, baseRefName: "main" }));
+  const stale = await finalize();
+  const staleBody = await stale.json();
+  expect(stale.status, JSON.stringify(staleBody)).toBe(409);
+  expect(staleBody).toMatchObject({ details: { reason: "publish_stale" } });
+  expect(await readWorkspace()).toMatchObject({ promotionState: "none" });
+  await writeFile(statusFile, JSON.stringify({ state: "CLOSED", headRefOid: head, baseRefName: "main" }));
+  expect(await (await finalize()).json()).toMatchObject({ details: { reason: "pr_closed" } });
+  await writeFile(statusFile, JSON.stringify({ state: "OPEN", headRefOid: head, baseRefName: "main" }));
+  const finalized = await finalize();
+  const result = await finalized.json();
+  expect(finalized.status, JSON.stringify(result)).toBe(200);
+  expect(result).toMatchObject({ mode: "pull_request", pullRequestUrl: localPullRequestUrl, prNumber: 7 });
+  const [observed] = await db.select().from(runs).where(eq(runs.id, runId));
+  expect(observed).toMatchObject({ status: "Done", promotedHeadSha: head, mergeCommitSha: null });
+  expect(await readWorkspace()).toMatchObject({ promotionState: "done", prState: "open", worktreePath: null });
+}, 60_000);
+
 it("C-10 retention GC preserves an overdue addressed worktree on its owning host", async () => {
   const {
     db,

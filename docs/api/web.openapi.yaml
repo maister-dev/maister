@@ -13035,6 +13035,11 @@ paths:
           `reviewedTargetCommit` and `allowTargetDrift` are refused outside
           `Review`.
 
+        An addressed workspace uses the main promotion route from Review,
+        which requires the checked source and target. For a parked addressed
+        Run this route reads the PR, its base and the stable checkout HEAD
+        through the original supervisor after execution release.
+
         An externally merged PR is surfaced by `pr_state_scan` and finalized
         manually; promotion stays manual by default.
       operationId: finalizeRunPullRequest

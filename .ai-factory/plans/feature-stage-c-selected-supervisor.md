@@ -725,8 +725,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   across replay and restart. The Web service persisted the verified PR and
   source ref together. Six C-10 cases passed on each side using real
   Git and a local provider CLI fixture, with both typechecks, contracts,
-  docs and ERD. Resolver-assisted sync and parked PR finalization remain
-  open.
+  docs and ERD. Resolver-assisted sync remains open.
+
+  Parked PR finalization reads the provider and Git HEAD on the original
+  supervisor after the assignment releases. RED found the path-only
+  workspace check and the missing PR facts in the Git panel. GREEN made
+  Finalize available and refused both a stale PR head and a closed PR.
+  The exact head moved the Run from Crashed to Done and retained the
+  recorded PR. The tests use real Git and a local provider CLI fixture.
 
   Retained sync can also publish under a second exact lease for the Run's
   dedicated branch. RED the Web update silently skipped the existing

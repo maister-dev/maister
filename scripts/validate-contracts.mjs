@@ -604,7 +604,7 @@ const STAGE_C_REQUIRED_OPERATIONS = [
   "stageCPrepare", "stageCMaterialize", "stageCRunWorkload", "stageCCancelWorkload",
   "stageCGetWorkspace", "stageCGetWorkspaceStatus", "stageCGetWorkspaceDiff", "stageCGetReviewFingerprint",
   "stageCGetWorkspaceLog", "stageCCheckpoint", "stageCRestore", "stageCSync",
-  "stageCPublish", "stageCGetPublicationTarget", "stageCPreserve", "stageCRelease", "stageCGetCommandReceipt",
+  "stageCPublish", "stageCGetPublicationTarget", "stageCGetWorkspacePullRequest", "stageCPreserve", "stageCRelease", "stageCGetCommandReceipt",
   "stageCGetRuntimeObjectContent", "stageCTaskHostOptions", "stageCFlowHostOptions",
   "stageCCreateIntent", "stageCCreateConcurrentIntents", "stageCReadIntent",
   "stageCReplaceIntent", "stageCCancelIntent",

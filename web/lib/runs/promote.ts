@@ -18,6 +18,7 @@ import { getAssignmentById } from "@/lib/execution-host/assignments";
 import { getCommand, insertCommand } from "@/lib/execution-host/commands";
 import {
   readAddressedWorkspacePublicationTarget,
+  readAddressedWorkspacePullRequest,
   readAddressedWorkspaceStatus,
 } from "@/lib/execution-host/workspace-preparation";
 import {
@@ -2660,7 +2661,7 @@ async function finalizePullRequest(args: {
   const result = await db.transaction(async (tx: Db) => {
     const ws = await loadPromotionWorkspaceForUpdate(tx, claim.run);
 
-    if (args.addressedPublication) {
+    if (ws.ownershipKind === "host_owned") {
       const current = await loadRunForUpdate(tx, runId);
       if (
         ws.executionHostId !== claim.workspace.executionHostId ||
@@ -2674,16 +2675,18 @@ async function finalizePullRequest(args: {
       if (ws.promotionState === "done" && current.status === "Done" &&
         ws.prUrl === pr.url && ws.prNumber === pr.number)
         return { replayed: true as const };
-      if (current.status !== "Review")
-        throw new MaisterError("CONFLICT", "The Run left Review during PR publication");
-      await recordPublished({
-        database: tx,
-        workspaceId: ws.id,
-        remote: args.addressedPublication.remote,
-        branch: args.addressedPublication.remoteBranch,
-        at: new Date(),
-        fence: { kind: "promotion", attemptId: claim.attemptId },
-      });
+      if (current.status !== claim.run.status || ws.prUrl !== claim.workspace.prUrl ||
+        ws.prNumber !== claim.workspace.prNumber || ws.prState === "closed")
+        throw new MaisterError("CONFLICT", "The Run or its recorded PR changed during finalization");
+      if (args.addressedPublication)
+        await recordPublished({
+          database: tx,
+          workspaceId: ws.id,
+          remote: args.addressedPublication.remote,
+          branch: args.addressedPublication.remoteBranch,
+          at: new Date(),
+          fence: { kind: "promotion", attemptId: claim.attemptId },
+        });
     }
 
     if (
@@ -3015,22 +3018,21 @@ async function finalizePullRequest(args: {
 // click is the decision. The promotion claim is minted as a promotion mints it
 // — fenced against a live workbench claim, a concurrent promotion and an
 // unsettled shared tree, all under the workspace row lock — and then the ONE PR
-// finalize runs, attributed `pr_finalize`. `sourceHead` is the published head,
-// which the caller proved equal to the worktree's HEAD.
+// finalize runs, attributed `pr_finalize`. The selected supervisor proves
+// the recorded provider head for an addressed checkout under this claim.
 export async function finalizeParkedPullRequest(args: {
   runId: string;
   ctx: PromoteRunContext;
-  sourceHead: string;
+  sourceHead?: string;
   db?: Db;
 }): Promise<PromoteRunResult> {
   const { runId, ctx, sourceHead } = args;
   const db = (args.db ?? getDb()) as Db;
 
-  const claim: FlowClaim = await db.transaction(async (tx: Db) => {
+  const claim: FlowClaim & { verifiedHead: string } = await db.transaction(async (tx: Db) => {
     const run = await loadRun(tx, runId);
-    const workspace = requireLegacyWorkspacePaths(
-      await loadPromotionWorkspaceForUpdate(tx, run),
-    );
+    const workspace: Workspace = await loadPromotionWorkspaceForUpdate(tx, run);
+    if (workspace.ownershipKind !== "host_owned") requireLegacyWorkspacePaths(workspace);
 
     await ctx.authorize(run.projectId);
     await assertNativeProjectPublication(() => tx, run);
@@ -3085,6 +3087,11 @@ export async function finalizeParkedPullRequest(args: {
     const project = await loadProject(tx, run.projectId);
     const resolvedTarget: string =
       workspace.targetBranch ?? project?.mainBranch ?? "main";
+    const verifiedHead = workspace.ownershipKind === "host_owned"
+      ? await readRetainedParkedPullRequestHead(tx, liveRun, workspace, resolvedTarget)
+      : sourceHead;
+    if (!verifiedHead)
+      throw new MaisterError("PRECONDITION", "The parked PR has no verified source commit");
     const attemptId = randomUUID();
 
     await tx
@@ -3122,6 +3129,7 @@ export async function finalizeParkedPullRequest(args: {
         projectMainBranch: resolvedTarget,
       }),
       baseCommit: workspace.baseCommit ?? null,
+      verifiedHead,
     };
   });
 
@@ -3134,13 +3142,48 @@ export async function finalizeParkedPullRequest(args: {
       url: claim.workspace.prUrl,
       number: claim.workspace.prNumber ?? null,
     },
-    sourceHead,
+    sourceHead: claim.verifiedHead,
     attribution: { source: "pr_finalize" },
   });
 
   await releaseTerminalRunMounts(runId, db);
 
   return result;
+}
+
+async function readRetainedParkedPullRequestHead(
+  db: ExecutionDb,
+  run: Run,
+  workspace: Workspace,
+  targetBranch: string,
+): Promise<string> {
+  const { prNumber, prUrl } = workspace;
+  if (!prNumber || !prUrl || !run.projectId)
+    throw new MaisterError("PRECONDITION", "An exact recorded PR is required", {
+      details: { reason: "pr_missing" },
+    });
+  const assignment = run.executionAssignmentId
+    ? await getAssignmentById(db, run.executionAssignmentId)
+    : null;
+  if (assignment?.state !== "released" || assignment.runId !== run.id ||
+    assignment.executionHostId !== workspace.executionHostId ||
+    assignment.executionWorkspaceId !== workspace.executionWorkspaceId)
+    throw new MaisterError("CONFLICT", "The retained workspace's original execution has not retired");
+  const { state, prHead, workspaceHead } = await readAddressedWorkspacePullRequest(db, workspace, {
+    remoteId: run.projectId, number: prNumber, url: prUrl, baseRef: `refs/heads/${targetBranch}`,
+  });
+  if (state === "closed")
+    throw new MaisterError("PRECONDITION", "The recorded pull request is closed", {
+      details: { reason: "pr_closed" },
+    });
+  if (prHead !== workspaceHead)
+    throw state === "merged"
+      ? mergedPullRequestBehind({ runId: run.id, prNumber, prHead, head: workspaceHead })
+      : new MaisterError("PRECONDITION", "The recorded PR does not carry the retained workspace HEAD", {
+        details: { reason: "publish_stale" },
+      });
+
+  return workspaceHead;
 }
 
 // Best-effort PR-evidence artifact carrying pr_url/pr_number in its payload (no

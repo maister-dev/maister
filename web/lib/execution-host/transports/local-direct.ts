@@ -288,6 +288,9 @@ export function createLocalDirectTransport(
     getWorkspacePublicationTarget(...args) {
       return wire.getWorkspacePublicationTarget(...args);
     },
+    getWorkspacePullRequest(...args) {
+      return wire.getWorkspacePullRequest(...args);
+    },
     cancelWorkspaceWorkload(...args) {
       return wire.cancelWorkspaceWorkload(...args);
     },

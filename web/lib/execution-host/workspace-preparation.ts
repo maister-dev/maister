@@ -8,6 +8,8 @@ import type {
   WorkspaceEvidenceObject,
   WorkspaceSourceRefPage,
   WorkspaceRevisionObservation,
+  WorkspacePullRequestQuery,
+  WorkspacePullRequestStatus,
 } from "../../../runtime/workspace-prepare";
 import type { Db } from "./db";
 import type { ExecutionHostTransport } from "./contracts";
@@ -240,6 +242,21 @@ export async function readAddressedWorkspacePublicationTarget(
   const { handle, generation } = await resolveAddressedWorkspaceRead(db, workspace, transport);
 
   return transport.getWorkspacePublicationTarget(handle, { ...input, generation });
+}
+
+export async function readAddressedWorkspacePullRequest(
+  db: Db,
+  workspace: RetainedWorkspaceRead,
+  input: Omit<WorkspacePullRequestQuery, "generation">,
+  transport = defaultTransport(),
+): Promise<WorkspacePullRequestStatus> {
+  if (!transport.getWorkspacePullRequest)
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "Transport cannot observe the workspace's PR", {
+      details: { reason: "workspace_protocol_unsupported" },
+    });
+  const { handle, generation } = await resolveAddressedWorkspaceRead(db, workspace, transport);
+
+  return transport.getWorkspacePullRequest(handle, { ...input, generation });
 }
 
 /** The caller authorizes repository content access before requesting history. */

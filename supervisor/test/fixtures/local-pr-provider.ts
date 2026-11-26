@@ -30,6 +30,9 @@ case "$1 $2" in
     else
       printf '[]\\n'
     fi ;;
+  'pr view')
+    test "$3" = "7" && test "$4" = "--repo" && test "$5" = "github.com/stage-c-fixture/repo" || exit 85
+    exec cat ${shellLiteral(join(root, "pr-state.json"))} ;;
   'pr create')
     test "$3" = "--repo" && test "$4" = "github.com/stage-c-fixture/repo" || exit 86
     printf 'created\\n' >> ${shellLiteral(created)}

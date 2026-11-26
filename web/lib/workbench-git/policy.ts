@@ -269,7 +269,8 @@ export function deriveWorkbenchGitActions(
       input.addressedWorkspace &&
       id !== "archive" &&
       id !== "stop" &&
-      id !== "update"
+      id !== "update" &&
+      (id !== "finalizePr" || input.runStatus === "Review")
     )
       return "unsupported-run";
     if (owner && OWNER_FORBIDDEN.has(id)) return "human-owned";

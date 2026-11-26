@@ -39,6 +39,7 @@ import type {
 import type { RuntimeEventWireEnvelope } from "./runtime-events";
 import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspaceRetainedRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../../runtime/workspace-prepare";
 import type { WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceCommandReceipt, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../../runtime/workspace-prepare";
+import type { WorkspacePullRequestQuery, WorkspacePullRequestStatus } from "../../../runtime/workspace-prepare";
 
 // ADR-166 D10: the typed boundary domain code addresses execution through.
 // `ExecutionHostTransport` is the replaceable wire (local-direct today); the
@@ -314,6 +315,7 @@ export interface ExecutionHostTransport {
   sendWorkspaceGitCommand?(handle: string, request: WorkspaceCheckpointRequest | WorkspaceRestoreRequest): Promise<void>;
   sendRetainedWorkspaceCommand?(request: WorkspaceRetainedRequest): Promise<void>;
   getWorkspacePublicationTarget?(handle: string, input: Omit<WorkspacePublicationTarget, "priorTarget">): Promise<WorkspacePublicationTarget>;
+  getWorkspacePullRequest?(handle: string, input: WorkspacePullRequestQuery): Promise<WorkspacePullRequestStatus>;
   observeWorkspaceRevision?(repositoryId: string, ref: string): Promise<string>;
   resolveWorkspaceRevision?(repositoryId: string, ref: string, pinnedCommit?: string): Promise<WorkspaceRevisionObservation>;
   listWorkspaceSourceRefs?(repositoryId: string, cursor?: string): Promise<WorkspaceSourceRefPage>;

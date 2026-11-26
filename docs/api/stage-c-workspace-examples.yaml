@@ -486,6 +486,30 @@ operationCases:
         message: The checkout has no approved publication remote.
         details: { reason: source_ref_unapproved }
       newEffects: 0
+  stageCGetWorkspacePullRequest:
+    request:
+      generation: 1
+      remoteId: project-123
+      number: 7
+      url: "https://github.com/maister-example/private-repo/pull/7"
+      baseRef: refs/heads/main
+    invalidRequest: { generation: 1, remoteId: project-123, number: 0, url: "http://example.invalid/private", baseRef: refs/heads/main }
+    response:
+      generation: 1
+      remoteId: project-123
+      number: 7
+      url: "https://github.com/maister-example/private-repo/pull/7"
+      baseRef: refs/heads/main
+      state: open
+      prHead: 0123456789abcdef0123456789abcdef01234567
+      workspaceHead: 0123456789abcdef0123456789abcdef01234567
+    refusal:
+      status: 409
+      body:
+        code: PRECONDITION
+        message: The recorded PR is outside the approved repository.
+        details: { reason: source_ref_unapproved }
+      newEffects: 0
   stageCPublish:
     request: &a33
       workspaceProtocol: 1

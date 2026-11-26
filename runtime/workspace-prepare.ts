@@ -279,6 +279,18 @@ export type WorkspacePublicationTarget = Readonly<{
   targetRef: string;
   priorTarget: string | null;
 }>;
+export type WorkspacePullRequestQuery = Readonly<{
+  generation: number;
+  remoteId: string;
+  number: number;
+  url: string;
+  baseRef: string;
+}>;
+export type WorkspacePullRequestStatus = WorkspacePullRequestQuery & Readonly<{
+  state: "open" | "closed" | "merged";
+  prHead: string;
+  workspaceHead: string;
+}>;
 export type WorkspacePreserveRequest = Readonly<{
   workspaceProtocol: 1;
   command: Readonly<{ id: string; kind: "workspace.preserve"; issuedAt: string }>;

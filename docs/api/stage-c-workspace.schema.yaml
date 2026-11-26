@@ -106,9 +106,10 @@ x-operations:
     replay: sameCommand
     implementedProfile:
       owner: workspaceOperation
-      publication: [push, promote]
+      publication: [push, openPullRequest, promote]
       integration: [merge, rebase]
   stageCGetPublicationTarget: { method: GET, path: "/v1/workspaces/{id}/publication-target", request: PublicationTargetQuery, response: PublicationTarget, status: 200 }
+  stageCGetWorkspacePullRequest: { method: GET, path: "/v1/workspaces/{id}/pull-request", request: WorkspacePullRequestQuery, response: WorkspacePullRequestStatus, status: 200 }
   stageCPreserve:
     method: POST
     path: /v1/workspaces/{id}/preserve
@@ -618,6 +619,29 @@ definitions:
       remoteId: *a3
       targetRef: { $ref: "#/definitions/GitRef" }
       priorTarget: *a7
+  WorkspacePullRequestQuery:
+    type: object
+    additionalProperties: false
+    required: [generation, remoteId, number, url, baseRef]
+    properties:
+      generation: *a1
+      remoteId: *a3
+      number: &stageCPrNumber { type: integer, minimum: 1, maximum: 9007199254740991 }
+      url: &stageCPrUrl { type: string, format: uri, pattern: "^https://", maxLength: 2048 }
+      baseRef: { $ref: "#/definitions/GitRef" }
+  WorkspacePullRequestStatus:
+    type: object
+    additionalProperties: false
+    required: [generation, remoteId, number, url, baseRef, state, prHead, workspaceHead]
+    properties:
+      generation: *a1
+      remoteId: *a3
+      number: *stageCPrNumber
+      url: *stageCPrUrl
+      baseRef: { $ref: "#/definitions/GitRef" }
+      state: { enum: [open, closed, merged] }
+      prHead: *a4
+      workspaceHead: *a4
   SyncPayload:
     type: object
     additionalProperties: false
@@ -1210,8 +1234,8 @@ definitions:
         additionalProperties: false
         required: [url, number, reused]
         properties:
-          url: { type: string, format: uri, pattern: "^https://", maxLength: 2048 }
-          number: { type: integer, minimum: 1, maximum: 9007199254740991 }
+          url: *stageCPrUrl
+          number: *stageCPrNumber
           reused: { type: boolean }
   PublicationResult:
     oneOf:

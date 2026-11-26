@@ -344,6 +344,27 @@ paths:
         "404": { description: No retained workspace on this host. }
         "409": { description: The repository or generation does not match the retained checkout. }
         "503": { description: The approved repository could not be read. }
+  /v1/workspaces/{id}/pull-request:
+    get:
+      tags: [execution-host]
+      operationId: stageCGetWorkspacePullRequest
+      summary: Observe the provider PR and its retained checkout at the owning supervisor
+      description: Using the configured repository and host credentials, read the recorded PR number and verify its base. Return the provider head and the stable current checkout head. This operation has no Git or provider write effect.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/WorkspacePullRequestQuery
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: generation, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: remoteId, in: query, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: number, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 9007199254740991 } }
+        - { name: url, in: query, required: true, schema: { type: string, format: uri, maxLength: 2048 } }
+        - { name: baseRef, in: query, required: true, schema: { type: string, maxLength: 256 } }
+      responses:
+        "200": { description: The current provider and checkout evidence. }
+        "400": { description: Invalid query. }
+        "404": { description: No retained workspace on this host. }
+        "409": { description: The configured source or recorded provider identity could not be verified. }
+        "503": { description: The approved provider could not confirm the PR. }
   /v1/workspaces/{id}:
     delete:
       tags: [execution-host]

@@ -2,6 +2,8 @@ import type {
   WorkspacePublishRequest,
   WorkspacePublishResult,
   WorkspacePublicationTarget,
+  WorkspacePullRequestQuery,
+  WorkspacePullRequestStatus,
 } from "../../runtime/workspace-prepare";
 import type { HostState, WorkspaceRow } from "./host-state";
 import type { Logger } from "pino";
@@ -13,7 +15,9 @@ import { join } from "node:path";
 import { workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
 import { normalizePublicationOrigin } from "../../runtime/workspace-publication";
 import { selectPrAdapter } from "../../runtime/pull-request";
+import { getPrState } from "../../runtime/pull-request-state";
 import { detectProvider } from "../../runtime/repository-url";
+import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 
 import { SupervisorError } from "./types";
 import { commitAt, makeSyncCandidate } from "./workspace-git-candidate";
@@ -145,6 +149,47 @@ export async function readOwnedPublicationTarget(
     targetRef,
     priorTarget: await observeWorkspaceTarget(source, targetRef, git),
   };
+}
+
+function matchesProviderPullRequest(source: string, url: string, number: number): boolean {
+  const repoIdentity = normalizePublicationOrigin(source);
+  const repository = repoIdentity && URL.parse(`https://${repoIdentity}`);
+  const pr = URL.parse(url);
+  return !!repository && !!pr && pr.protocol === "https:" &&
+    !pr.username && !pr.password && !pr.search && !pr.hash &&
+    url.length <= 2048 && pr.host === repository.host &&
+    pr.pathname.startsWith(repository.pathname + "/") &&
+    Number.isSafeInteger(number) && number > 0 &&
+    pr.pathname.split("/").at(-1) === String(number);
+}
+
+export async function readOwnedWorkspacePullRequest(
+  input: Omit<PublicationTargetInput, "targetRef">,
+  query: WorkspacePullRequestQuery,
+  logger: Logger,
+): Promise<WorkspacePullRequestStatus> {
+  const { source } = input;
+  const { number, url, baseRef } = query;
+  if (!matchesProviderPullRequest(source, url, number))
+    throw publicationRefused("source_ref_unapproved", "The recorded PR is outside the approved repository");
+  const { workspace } = await ownedWorkspaceSourceGit({ ...input, targetRef: baseRef });
+  const before = await observePreparedGitHead(workspace);
+  const read = await getPrState({
+    provider: detectProvider(source), remoteUrl: source, prNumber: number, signal: AbortSignal.timeout(8_000),
+  }, logger);
+  if (read.kind === "unsupported" || (read.kind === "skip" && !read.transient))
+    throw new SupervisorError("PRECONDITION", "The approved PR provider cannot read the PR", {
+      details: { reason: "publication_provider_unavailable" },
+    });
+  if (read.kind === "skip" || !read.headSha || !GIT_OBJECT_ID.test(read.headSha) || !read.baseRef)
+    throw new SupervisorError("EXECUTOR_UNAVAILABLE", "The provider could not confirm PR state and head");
+  if (read.baseRef !== baseRef)
+    throw publicationRefused("target_ref_changed", "The recorded PR has a different base branch");
+  const after = await observePreparedGitHead(workspace);
+  if (after.commit !== before.commit || after.ref !== before.ref)
+    throw publicationRefused("head_changed", "The retained checkout changed during PR observation");
+
+  return { ...query, state: read.state, workspaceHead: after.commit, prHead: read.headSha };
 }
 
 /** Bind one fast-forward publication to a private checkout and a retained mutation fence. */
@@ -366,13 +411,7 @@ export async function openRetainedWorkspacePullRequest(
       ...pullRequest,
     }, assertOwner, logger, assertApprovedTarget);
     const pr = observed.pullRequest;
-    const url = pr && URL.parse(pr.url);
-    const repo = URL.parse(`https://${repoIdentity}`);
-    if (!pr || pr.url.length > 2048 || url?.protocol !== "https:" ||
-      url.username || url.password || url.search || url.hash ||
-      !repo || url.host !== repo.host || !url.pathname.startsWith(repo.pathname + "/") ||
-      !Number.isSafeInteger(pr.number) || pr.number < 1 ||
-      url.pathname.split("/").at(-1) !== String(pr.number))
+    if (!pr || !matchesProviderPullRequest(input.source, pr.url, pr.number))
       throw new WorkspaceGitEffectUnconfirmed("The provider did not confirm its PR");
     return { ...published, pullRequest: pr };
   } catch (cause) {

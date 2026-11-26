@@ -45,6 +45,16 @@ export const WorkspacePublishPayloadSchema = z.object({
 }).strict();
 export const WorkspacePublicationTargetSchema = WorkspacePublishPayloadSchema.shape.expected
   .omit({ head: true }).extend({ generation });
+export const WorkspacePullRequestStatusSchema = z.strictObject({
+  generation,
+  remoteId: opaqueId,
+  number: z.int().positive(),
+  url: z.url({ protocol: /^https$/ }).max(2048),
+  baseRef: z.string().refine(isWorkspaceSourceRef),
+  state: z.enum(["open", "closed", "merged"]),
+  prHead: gitObject,
+  workspaceHead: gitObject,
+});
 const RetainedWorkspacePublishFields = WorkspacePublishPayloadSchema.extend({
   claimId: z.string().uuid(),
   fence: generation,

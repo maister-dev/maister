@@ -62,7 +62,7 @@ import { inspectWorkspace, loadPreparedWorkspace } from "./workspace-status";
 import { readWorkspaceReviewFingerprint, sealWorkspaceDiff } from "./workspace-diff";
 import { sealWorkspaceLog } from "./workspace-log";
 import { checkpointOwnedWorkspace, restoreOwnedWorkspace, WorkspaceGitEffectUnconfirmed } from "./workspace-git-checkpoint";
-import { openRetainedWorkspacePullRequest, publishOwnedWorkspace, readOwnedPublicationTarget } from "./workspace-publish";
+import { openRetainedWorkspacePullRequest, publishOwnedWorkspace, readOwnedPublicationTarget, readOwnedWorkspacePullRequest } from "./workspace-publish";
 import { syncOwnedWorkspace } from "./workspace-sync";
 import { preserveOwnedWorkspace, releaseArchivedWorkspace } from "./workspace-archive";
 import {
@@ -147,6 +147,12 @@ const reviewFingerprintQuery = workspaceQuery.extend({ base: z.string().regex(GI
 const publicationTargetQuery = workspaceQuery.extend({
   remoteId: opaqueId,
   targetRef: z.string().refine(isWorkspaceSourceRef),
+});
+const pullRequestQuery = workspaceQuery.extend({
+  remoteId: opaqueId,
+  number: z.string().regex(/^[1-9]\d{0,15}$/).transform(Number).pipe(z.int().positive()),
+  url: z.url({ protocol: /^https$/ }).max(2048),
+  baseRef: z.string().refine(isWorkspaceSourceRef),
 });
 const materializeSchema = z
   .object({
@@ -718,6 +724,24 @@ export function registerWorkspacePreparation(args: {
       return reply.status(409).send(refusal("PRECONDITION", "source_ref_unapproved", "The workspace has no approved publication source"));
 
     return readOwnedPublicationTarget({ state, runtimeRoot, source, handle: handle.data, generation, remoteId, targetRef });
+  });
+  app.get<StatusRequest>("/v1/workspaces/:id/pull-request", async (req, reply) => {
+    const handle = workspaceHandle.safeParse(req.params.id);
+    const parsed = pullRequestQuery.safeParse(req.query);
+    if (!handle.success || !parsed.success)
+      return reply.status(400).send(refusal("INVALID_REQUEST", "invalid_request", "PR read requires the recorded repository, number and base"));
+    const { generation, remoteId } = parsed.data;
+    const owned = loadPreparedWorkspace(state, handle.data, generation);
+    if (!owned) return reply.status(404).send(missingWorkspace);
+    const source = sources.get(remoteId);
+    if (!source || owned.mode !== "ownWorktree" || owned.workspace.projectSlug !== remoteId)
+      return reply.status(409).send(refusal("PRECONDITION", "source_ref_unapproved", "The workspace has no approved PR repository"));
+
+    return readOwnedWorkspacePullRequest(
+      { state, runtimeRoot, source, handle: handle.data, generation, remoteId },
+      parsed.data,
+      logger,
+    );
   });
   app.get<StatusRequest>("/v1/workspaces/:id/log", async (req, reply) => {
     const handle = workspaceHandle.safeParse(req.params.id);
