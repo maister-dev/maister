@@ -11,6 +11,7 @@ import type { FlowRunnerDraft, TaskLaunchRequest } from "./launch-schema";
 import type { TaskLaunchSettingsV2Snapshot } from "./launch-types";
 import type { ResolvedAgentLaunchSettings } from "./launch-agent-resolution";
 import type { TaskLaunchFlowAssetsSnapshot } from "./launch-flow-assets";
+import type { PackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 
 import { and, eq } from "drizzle-orm";
 
@@ -70,6 +71,7 @@ import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { MaisterError } from "@/lib/errors";
+import { preparePackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 
 export function launchRefusal(
   reason: string,
@@ -138,11 +140,64 @@ export function taskLaunchSelectedConfiguration(
   };
 }
 
+async function readTaskLaunchMetadataFlow(
+  db: Db,
+  projectId: string,
+  taskFlowId: string | null,
+  selection: Partial<TaskLaunchRequest>,
+) {
+  const selectedFlowId = selection.flowId ?? taskFlowId;
+  const flow = selectedFlowId
+    ? await resolveTaskLaunchFlow(db, projectId, selectedFlowId)
+    : null;
+  const selected = flow
+    ? await selectedTaskLaunchRevision(db, projectId, flow, selection)
+    : null;
+
+  return { flow, selected };
+}
+
+/** Capture package bytes before the preview's read-only snapshot begins. */
+export async function prepareTaskLaunchPreviewPackageDelivery(
+  db: Db,
+  projectId: string,
+  selection: Partial<TaskLaunchRequest> & { taskId: string },
+  captureDelivery: PackageDeliveryCapture,
+): Promise<void> {
+  const [task] = await db
+    .select({ flowId: tasks.flowId })
+    .from(tasks)
+    .where(and(eq(tasks.id, selection.taskId), eq(tasks.projectId, projectId)));
+
+  if (!task) throw launchRefusal("launch_settings_changed");
+  const { selected } = await readTaskLaunchMetadataFlow(
+    db,
+    projectId,
+    task.flowId,
+    selection,
+  );
+  const revision = selected?.revision;
+
+  if (revision)
+    await resolveTaskLaunchCapabilities(
+      db,
+      {
+        projectId,
+        flowRevisionId: revision.id,
+        flowSource: revision.source,
+        flowPackageInstallId: selected.packageInstallId,
+        flowManifest: revision.manifest,
+      },
+      captureDelivery,
+    );
+}
+
 /** Read-only config fence, including the current immutable Flow and runner identities. */
 export async function taskLaunchSettingsMetadataToken(
   db: Db,
   taskId: string,
   selection: Partial<TaskLaunchRequest> = {},
+  captureDelivery?: PackageDeliveryCapture,
 ): Promise<string> {
   const [row] = await db
     .select({ task: tasks, project: projects })
@@ -153,13 +208,12 @@ export async function taskLaunchSettingsMetadataToken(
   if (!row) throw launchRefusal("launch_task_missing", "PRECONDITION");
   if (selection.agentId)
     return agentTaskLaunchSettingsToken(db, row.task, row.project, selection);
-  const selectedFlowId = selection.flowId ?? row.task.flowId;
-  const flow = selectedFlowId
-    ? await resolveTaskLaunchFlow(db, row.project.id, selectedFlowId)
-    : null;
-  const selected = flow
-    ? await selectedTaskLaunchRevision(db, row.project.id, flow, selection)
-    : null;
+  const { flow, selected } = await readTaskLaunchMetadataFlow(
+    db,
+    row.project.id,
+    row.task.flowId,
+    selection,
+  );
   const revision = selected?.revision;
   const catalog = await loadRunnerCatalog(db);
   const [runtime] = await db
@@ -171,11 +225,17 @@ export async function taskLaunchSettingsMetadataToken(
     : [];
   const flowRunner = flow ? await readFlowRunnerBinding(db, flow.id) : null;
   const capabilities = revision
-    ? await resolveTaskLaunchCapabilities(db, {
-        projectId: row.project.id,
-        flowRevisionId: revision.id,
-        flowSource: revision.source,
-      })
+    ? await resolveTaskLaunchCapabilities(
+        db,
+        {
+          projectId: row.project.id,
+          flowRevisionId: revision.id,
+          flowSource: revision.source,
+          flowPackageInstallId: selected?.packageInstallId ?? null,
+          flowManifest: revision.manifest,
+        },
+        captureDelivery,
+      )
     : null;
 
   return retryDigest({
@@ -310,10 +370,11 @@ export async function resolveTaskLaunchSettings(
   task: typeof tasks.$inferSelect,
   project: typeof projects.$inferSelect,
   selection: Partial<TaskLaunchRequest>,
+  captureDelivery?: PackageDeliveryCapture,
 ): Promise<ResolvedTaskLaunchSettings> {
   return selection.agentId
     ? resolveAgentTaskLaunchSettings(db, task, project, selection)
-    : resolveFlowLaunchSettings(db, task, project, selection);
+    : resolveFlowLaunchSettings(db, task, project, selection, captureDelivery);
 }
 
 /** Resolve through the existing Flow runner/policy authorities; never materialize or launch. */
@@ -322,8 +383,16 @@ export async function resolveFlowLaunchSettings(
   task: typeof tasks.$inferSelect,
   project: typeof projects.$inferSelect,
   selection: Partial<TaskLaunchRequest>,
+  captureDelivery = preparePackageDeliveryCapture().prepare,
 ): Promise<ResolvedFlowLaunchSettings> {
-  return resolveFlowLaunchSettingsForSource(db, task, project, selection, null);
+  return resolveFlowLaunchSettingsForSource(
+    db,
+    task,
+    project,
+    selection,
+    null,
+    captureDelivery,
+  );
 }
 
 /** A database-owned source may pin a controlled target; no transport accepts these extras. */
@@ -333,6 +402,7 @@ export async function resolveServerFlowLaunchSettings(
   project: typeof projects.$inferSelect,
   selection: Partial<TaskLaunchRequest>,
   source: TaskLaunchServerSourceSnapshot,
+  captureDelivery = preparePackageDeliveryCapture().prepare,
 ): Promise<ResolvedFlowLaunchSettings> {
   return resolveFlowLaunchSettingsForSource(
     db,
@@ -340,6 +410,7 @@ export async function resolveServerFlowLaunchSettings(
     project,
     selection,
     source,
+    captureDelivery,
   );
 }
 
@@ -349,6 +420,7 @@ async function resolveFlowLaunchSettingsForSource(
   project: typeof projects.$inferSelect,
   selection: Partial<TaskLaunchRequest>,
   source: TaskLaunchServerSourceSnapshot | null,
+  captureDelivery: PackageDeliveryCapture,
 ): Promise<ResolvedFlowLaunchSettings> {
   const flowId = selection.flowId ?? task.flowId;
 
@@ -612,11 +684,17 @@ async function resolveFlowLaunchSettingsForSource(
           taskId: task.id,
         })
       : null,
-    ...(await resolveTaskLaunchCapabilities(db, {
-      projectId: project.id,
-      flowRevisionId: revision.id,
-      flowSource: revision.source,
-    })),
+    ...(await resolveTaskLaunchCapabilities(
+      db,
+      {
+        projectId: project.id,
+        flowRevisionId: revision.id,
+        flowSource: revision.source,
+        flowPackageInstallId: packageInstallId,
+        flowManifest: revision.manifest,
+      },
+      captureDelivery,
+    )),
     taskSettingsDigest: retryDigest(taskLaunchSelectedConfiguration(task)),
     resolutionToken: source
       ? retryDigest({
@@ -625,6 +703,7 @@ async function resolveFlowLaunchSettingsForSource(
             db,
             task.id,
             selection,
+            captureDelivery,
           ),
           source,
           revision: {
@@ -641,10 +720,20 @@ async function resolveFlowLaunchSettingsForSource(
         })
       : selection.flowRunnerDraft
         ? draftLaunchSettingsMetadataToken(
-            await taskLaunchSettingsMetadataToken(db, task.id, selection),
+            await taskLaunchSettingsMetadataToken(
+              db,
+              task.id,
+              selection,
+              captureDelivery,
+            ),
             selection.flowRunnerDraft,
             inspection,
           )
-        : await taskLaunchSettingsMetadataToken(db, task.id, selection),
+        : await taskLaunchSettingsMetadataToken(
+            db,
+            task.id,
+            selection,
+            captureDelivery,
+          ),
   };
 }

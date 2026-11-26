@@ -2,30 +2,33 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { LibrarianTurnFailureReason } from "./types";
+import type { LibrarianTurnStarter } from "./pool";
 
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
-import { admitNextTurnInTransaction, type AdmittedTurn } from "./admission";
+import { admitNextLibrarianTurn } from "./admission";
 import { revokeLibrarianTurnToken } from "./authority";
 import {
   appendConversationMessage,
   lockOwnerConversation,
 } from "./conversation";
+import {
+  checkpointPrivateQuestions,
+  closeUndeliveredQuestions,
+} from "./questions";
+import { turnSourceProjectIds } from "./disclosed-context";
 import { applyLibrarianPark } from "./park";
-import { dispatchLibrarianTurn, type LibrarianTurnStarter } from "./pool";
-import { readLibrarianSettings } from "./settings";
 import { queueLibrarianSummary, writeLibrarianSummary } from "./summary";
 
 import {
   librarianConversations,
   librarianMessages,
   librarianTurns,
-  tokenAuditLog,
+  runs,
 } from "@/lib/db/schema";
-import { localHost } from "@/lib/execution-host/resolver";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { promoteNextPending } from "@/lib/scheduler";
-import { admitNextLibrarianTurn } from "@/lib/librarian/admission";
 
 const log = pino({
   name: "librarian.turn",
@@ -42,8 +45,9 @@ export type LibrarianTurnFinish = Readonly<{
   runId: string | null;
   conversationId: string;
   parked: boolean;
-  next: AdmittedTurn | null;
 }>;
+
+type EndableTurnStatus = "admitted" | "running" | "awaiting_answer";
 
 /** A system line in the conversation: a stable code the panel localizes. */
 export function librarianSystemCode(end: LibrarianTurnEnd): string | null {
@@ -53,37 +57,18 @@ export function librarianSystemCode(end: LibrarianTurnEnd): string | null {
   return null;
 }
 
-/** The projects the turn's tool calls touched, from its own audit rows — what
- * masks the reply for an owner who later loses one of them (LMM-09). */
-async function sourceProjectIds(tx: Db, turnId: string): Promise<string[]> {
-  const rows = await tx
-    .selectDistinct({ projectId: tokenAuditLog.project_id })
-    .from(tokenAuditLog)
-    .where(
-      and(
-        eq(tokenAuditLog.librarian_turn_id, turnId),
-        isNotNull(tokenAuditLog.project_id),
-      ),
-    );
-
-  return rows
-    .map((row: { projectId: string | null }) => row.projectId)
-    .filter((id: string | null): id is string => id !== null)
-    .sort();
-}
-
 /** ADR-185 D3/D19: the ONE turn-end transaction. Under the conversation lock:
  * the turn reaches its terminal status exactly once, the reply or a system
- * line lands, the token dies, the run parks, and the next queued turn is
- * admitted. Returns null when another path already ended the turn. */
+ * line lands, the token dies, and the run parks. The successor is admitted
+ * after commit. Returns null when another path already ended the turn. */
 export async function finishLibrarianTurnInTransaction(
   tx: Db,
   input: {
     turnId: string;
     end: LibrarianTurnEnd;
-    /** A running turn only — the prompt owner's case. A stop also ends an
-     * admitted turn that never started. */
-    fromStatuses?: readonly ("admitted" | "running")[];
+    assignmentId?: string | null;
+    /** Stop may also end an admitted turn or a turn parked for a private answer. */
+    fromStatuses?: readonly EndableTurnStatus[];
     now?: Date;
   },
 ): Promise<LibrarianTurnFinish | null> {
@@ -109,13 +94,21 @@ export async function finishLibrarianTurnInTransaction(
     .for("update");
   const from = input.fromStatuses ?? ["running"];
 
-  if (!turn || !from.includes(turn.status as "admitted" | "running")) {
+  if (!turn || !from.some((status) => status === turn.status)) {
     log.debug(
       { turnId: input.turnId, status: turn?.status },
       "librarian turn already ended",
     );
 
     return null;
+  }
+  if (input.assignmentId !== undefined) {
+    const [current] = await tx
+      .select({ id: runs.executionAssignmentId })
+      .from(runs)
+      .where(eq(runs.id, locked.conversation.runId ?? ""));
+
+    if ((current?.id ?? null) !== input.assignmentId) return null;
   }
   let end = input.end;
 
@@ -132,6 +125,48 @@ export async function finishLibrarianTurnInTransaction(
       log.warn({ turnId: turn.id, error }, "librarian summary rejected");
     }
     if (!saved) end = { status: "failed", reason: "summary_invalid" };
+  }
+  const question =
+    end.status === "completed" && locked.conversation.resetState === "none"
+      ? await checkpointPrivateQuestions(tx, turn.id)
+      : await closeUndeliveredQuestions(tx, turn.id);
+
+  if (question) {
+    const runId = locked.conversation.runId;
+
+    if (!runId)
+      throw new MaisterError(
+        "CONFLICT",
+        "Private question lost its owning Run",
+      );
+    const park = await applyLibrarianPark(tx, runId);
+
+    if (!park.parked)
+      throw new MaisterError(
+        "CONFLICT",
+        "Private question could not park the owning Run",
+      );
+    await tx
+      .update(librarianTurns)
+      .set({ status: "awaiting_answer", startLeaseAt: null, deadlineAt: null })
+      .where(eq(librarianTurns.id, turn.id));
+    await appendConversationMessage(tx, {
+      conversationId: turn.conversationId,
+      segmentId: turn.segmentId,
+      authorKind: "librarian",
+      body: String(question.payload.question),
+      turnId: turn.id,
+      cardId: question.id,
+      sourceProjectIds: await turnSourceProjectIds(tx, turn.id),
+    });
+    await revokeLibrarianTurnToken(turn.id, tx);
+
+    return {
+      turnId: turn.id,
+      runId,
+      conversationId: turn.conversationId,
+      parked: true,
+    };
   }
   const [ended] = await tx
     .update(librarianTurns)
@@ -172,7 +207,7 @@ export async function finishLibrarianTurnInTransaction(
       authorKind: "librarian",
       body: end.reply,
       turnId: turn.id,
-      sourceProjectIds: await sourceProjectIds(tx, turn.id),
+      sourceProjectIds: await turnSourceProjectIds(tx, turn.id),
     });
   else
     await appendConversationMessage(tx, {
@@ -187,16 +222,6 @@ export async function finishLibrarianTurnInTransaction(
     await queueLibrarianSummary(tx, locked.conversation, turn.segmentId);
   const runId = locked.conversation.runId;
   const park = runId ? await applyLibrarianPark(tx, runId) : { parked: false };
-  const settings = await readLibrarianSettings(tx);
-  const next =
-    settings.availability === "ready" && settings.runner
-      ? await admitNextTurnInTransaction(tx, {
-          locked,
-          runner: settings.runner,
-          host: await localHost({ db: tx }),
-          now,
-        })
-      : null;
   const durationMs = turn.startedAt
     ? now.getTime() - turn.startedAt.getTime()
     : null;
@@ -230,7 +255,6 @@ export async function finishLibrarianTurnInTransaction(
     runId,
     conversationId: locked.conversation.id,
     parked: park.parked,
-    next,
   };
 }
 
@@ -242,17 +266,25 @@ export async function afterLibrarianTurnFinished(
   start?: LibrarianTurnStarter,
 ): Promise<void> {
   if (!finish) return;
-  if (finish.next?.started) {
-    // A turn runs for minutes; its start is never awaited by the one before.
-    void dispatchLibrarianTurn(finish.next.turnId, start);
 
-    return;
+  try {
+    const admitted = await admitNextLibrarianTurn(finish.conversationId, {
+      db,
+      start,
+    });
+
+    if (admitted?.started) return;
+    if (finish.parked) await promoteNextPending({ db, pool: "librarian" });
+  } catch (error) {
+    if (!isMaisterError(error) || error.code !== "EXECUTOR_UNAVAILABLE")
+      throw error;
+    log.warn(
+      {
+        turnId: finish.turnId,
+        conversationId: finish.conversationId,
+        reason: error.details?.reason,
+      },
+      "librarian successor admission deferred until execution host is available",
+    );
   }
-  const admitted = await admitNextLibrarianTurn(finish.conversationId, {
-    db,
-    start,
-  });
-
-  if (admitted?.started) return;
-  if (finish.parked) await promoteNextPending({ db, pool: "librarian" });
 }

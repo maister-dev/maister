@@ -10,8 +10,7 @@
 //     class. Asserts the panel renders the node + an "Instructed" verdict.
 //   • Scenario B `e2e-m11c-refuse` — a launchable Backlog task whose enabled
 //     flow revision pins an ai_coding `implement` node declaring
-//     `enforcement.skills: "strict"`. ADR-130 flipped tools/mcps/hooks to
-//     `enforced` but `skills` stays `instructed` (no tool-identity seam mechanism),
+//     strict restrictions. All supported agents instruct this class,
 //     so launch options expose a typed deterministic refusal and disable Launch
 //     before any intent/worktree/run/workspace is created. Direct canonical
 //     POST refusal remains covered by the real API integration suite. This

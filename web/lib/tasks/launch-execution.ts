@@ -1,8 +1,10 @@
 import "server-only";
 
+import type { FlowDeliverySnapshot } from "@/lib/capabilities/package-delivery";
 import type { Db } from "@/lib/execution-host/db";
 import { transportForSelectedHostId } from "@/lib/execution-host/default-transport";
 import type { CapabilityBundleSource } from "@/lib/capabilities/materialize-bundle";
+import type { PackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 import type { TaskAdmissionSnapshot } from "./qualification-types";
 import type {
   TaskLaunchClaim,
@@ -36,6 +38,7 @@ import {
 import {
   resolveTaskLaunchCapabilities,
   captureTaskLaunchCapabilityBundles,
+  taskLaunchBoundCapabilityAuthority,
 } from "./launch-capabilities";
 import {
   armedAutomaticTaskLaunchBasis,
@@ -60,8 +63,10 @@ import {
   flows,
   flowRevisions,
   workspaces,
+  runs,
 } from "@/lib/db/schema";
 import { retryDigest } from "@/lib/agents/retry-guards";
+import { preparePackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { snapshotRunner } from "@/lib/acp-runners/resolve";
@@ -91,6 +96,25 @@ import {
 const executionAuthority = Symbol("accepted task launch execution");
 
 type FlowSettings = Extract<TaskLaunchSettingsV2Snapshot, { kind: "flow" }>;
+
+/** A committed Run binding is the boundary between mutable preparation and frozen, receipt-backed delivery. */
+function boundTaskDelivery(
+  intent: typeof taskLaunchIntents.$inferSelect,
+  settings: FlowSettings,
+): { delivery: FlowDeliverySnapshot; authorityDigest: string } | undefined {
+  const delivery = settings.resolvedCapabilitySet?.delivery;
+
+  if (
+    intent.runId &&
+    intent.preparationPhase === "run_bound" &&
+    delivery?.version === 1 &&
+    settings.boundCapabilityAuthorityDigest
+  )
+    return {
+      delivery,
+      authorityDigest: settings.boundCapabilityAuthorityDigest,
+    };
+}
 
 /** This context is constructed from a current DB claim, never decoded from a request. */
 export type AcceptedTaskLaunchExecution = Readonly<{
@@ -134,6 +158,7 @@ export function assertAcceptedTaskLaunchExecution(
 export async function assertFrozenTaskLaunchCurrent(
   db: Db,
   intent: typeof taskLaunchIntents.$inferSelect,
+  captureDelivery: PackageDeliveryCapture,
 ): Promise<void> {
   const settings = intent.settingsSnapshot;
 
@@ -249,11 +274,49 @@ export async function assertFrozenTaskLaunchCurrent(
     if (retryDigest(snapshotRunner(runner)) !== slot.runnerConfigDigest)
       throw launchRefusal("launch_runner_changed");
   }
-  const capabilities = await resolveTaskLaunchCapabilities(db, {
-    projectId: intent.projectId,
-    flowRevisionId: settings.flowRevisionId,
-    flowSource: revision.source,
-  });
+  const bound = boundTaskDelivery(intent, settings);
+
+  if (bound && intent.runId) {
+    const [run] = await db
+      .select({ capabilities: runs.resolvedCapabilitySet })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.id, intent.runId),
+          eq(runs.taskLaunchIntentId, intent.id),
+          eq(runs.projectId, intent.projectId),
+        ),
+      );
+
+    if (
+      !run ||
+      retryDigest(run.capabilities) !==
+        retryDigest(settings.resolvedCapabilitySet)
+    )
+      throw launchRefusal("launch_input_snapshot_incomplete", "PRECONDITION");
+    if (
+      (await taskLaunchBoundCapabilityAuthority(
+        db,
+        intent.projectId,
+        bound.delivery,
+      )) !== bound.authorityDigest
+    )
+      throw launchRefusal("launch_capabilities_changed");
+
+    return;
+  }
+  const capabilities = await resolveTaskLaunchCapabilities(
+    db,
+    {
+      projectId: intent.projectId,
+      flowRevisionId: settings.flowRevisionId,
+      flowSource: revision.source,
+      flowPackageInstallId: settings.packageInstallId ?? flow.packageInstallId,
+      flowManifest: revision.manifest,
+      historical: settings.resolvedCapabilitySet?.delivery ? undefined : true,
+    },
+    captureDelivery,
+  );
 
   if (
     capabilities.capabilityResolutionDigest !==
@@ -315,10 +378,21 @@ export async function assertFrozenTaskLaunchRepository(
       preferRemote: "origin",
     });
   }
+  const standaloneIds = boundTaskDelivery(intent, settings)
+    ?.delivery.packages.filter((p) => p.installId.startsWith("import:"))
+    .flatMap((p) => p.bundleIds);
+  const expectedBundles = standaloneIds
+    ? settings.capabilityBundles.filter((b) => standaloneIds.includes(b.id))
+    : settings.capabilityBundles;
+
   if (
     retryDigest(
-      await captureTaskLaunchCapabilityBundles(db, intent.projectId),
-    ) !== retryDigest(settings.capabilityBundles)
+      await captureTaskLaunchCapabilityBundles(
+        db,
+        intent.projectId,
+        standaloneIds,
+      ),
+    ) !== retryDigest(expectedBundles)
   )
     throw launchRefusal("launch_capabilities_changed");
   if (intent.basis.kind === "automatic") {
@@ -497,7 +571,9 @@ export async function acceptedTaskLaunchExecution(
   const intent = await lockedTaskLaunchClaim(db, claim);
   const { identity } = claim;
 
-  await assertFrozenTaskLaunchCurrent(db, intent);
+  const packageDelivery = preparePackageDeliveryCapture();
+
+  await assertFrozenTaskLaunchCurrent(db, intent, packageDelivery.prepare);
   await assertFrozenTaskLaunchRepository(db, intent);
   const settings = intent.settingsSnapshot;
 
@@ -536,7 +612,11 @@ export async function acceptedTaskLaunchExecution(
   const assertCurrent = async (connection: Db): Promise<void> => {
     const current = await lockedTaskLaunchClaim(connection, claim);
 
-    await assertFrozenTaskLaunchCurrent(connection, current);
+    await assertFrozenTaskLaunchCurrent(
+      connection,
+      current,
+      packageDelivery.recheck,
+    );
   };
   const verifyWorkspace = (): Promise<void> =>
     assertTaskLaunchCheckoutIdentity(intent);

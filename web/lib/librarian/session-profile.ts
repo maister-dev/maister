@@ -112,6 +112,7 @@ export async function materializeLibrarianSummaryAdapterSettings(
 }
 
 export type LibrarianFacadeServer = {
+  platformOrigin?: "maister_facade";
   name: string;
   transport: "stdio";
   command: string;

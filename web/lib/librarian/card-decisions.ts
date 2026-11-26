@@ -179,6 +179,12 @@ export async function decideLibrarianCard(
 ): Promise<LibrarianOperationResult> {
   const card = await loadOwnedCard(input.cardId, input.user.id, db);
 
+  if (card.kind === "question")
+    throw new MaisterError(
+      "CONFLICT",
+      "Submit the requested answer in the conversation",
+    );
+
   if (
     ["knowledge_proposal", "brain_proposal", "vault_edit"].includes(card.kind)
   )

@@ -297,7 +297,7 @@ async function readDecisionContext(
     getCrossProjectHitlInbox(
       userId,
       globalRole,
-      { projectIds, companyIds },
+      { projectIds, companyIds, flowQuestionState: "awaiting_answer" },
       client,
     ),
     listPromotableForProjects(projectIds, { db: client }),

@@ -82,11 +82,8 @@ import {
   workspacePackageSkillsPrompt,
 } from "@/lib/capabilities/package-skills";
 import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
-import {
-  loadSelectableCapabilities,
-  resolveCapabilityProfile,
-} from "@/lib/capabilities/resolver";
-import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
+import { resolveCapabilityProfile } from "@/lib/capabilities/resolver";
+import { loadScratchCapabilityCatalog } from "@/lib/capabilities/scratch-catalog";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -948,15 +945,16 @@ export async function* launchScratchRunStaged(
 
   await validateLinkedTask(db, args.body.linkedTaskId, project.id);
 
-  const catalog = await loadSelectableCapabilities(project.id, db);
+  const { catalog, mcpBindings } = await loadScratchCapabilityCatalog(
+    project.id,
+    db,
+  );
   const policy = scratchPolicy(args.body);
   // FR-C3: scratch materializes a BROAD skill set (all project skills; the
   // resolver filters to runner-supported). MCP stays selected/defaults.
   const broadSkillIds = catalog
     .filter((record) => record.kind === "skill")
     .map((record) => record.capabilityRefId);
-  // ADR-129 (D5): scratch resolves through the same binding-aware path as flows.
-  const mcpBindings = await loadProjectMcpBindings(project.id, db as never);
   const profile = resolveCapabilityProfile({
     projectId: project.id,
     executorAgent: executor.agent,

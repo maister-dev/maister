@@ -30,8 +30,6 @@ export async function mintPlacement(
     runId: string;
     reason: PlacementReason;
     host?: ExecutionHost;
-    // Resolution db when the memo is cold; defaults to the caller's tx (a
-    // registrar savepoint inside the claim — rare, memoized 30 s otherwise).
     db?: Db;
     transport?: ExecutionHostTransport;
     now?: Date;
@@ -66,9 +64,7 @@ export async function mintPlacement(
         details: { reason: "workspace_preparation_changed" },
       },
     );
-  const host =
-    owner?.host ??
-    input.host ??
+  const host = owner?.host ?? input.host ??
     (await localHost({ db: input.db ?? tx, transport: input.transport }));
 
   return mintAssignment(tx, {

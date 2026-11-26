@@ -9,6 +9,12 @@ import type { ComponentPropsWithoutRef, ReactElement } from "react";
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { isMcpDescriptorPath } from "@/lib/local-packages/composition";
+import {
+  rewriteMcpIdentity,
+  rewriteSkillFolderImports,
+} from "@/lib/local-packages/catalog-manifest";
+import { isMaisterError } from "@/lib/errors-core";
 import {
   ContentEditor,
   uniqueNewPath,
@@ -46,6 +52,7 @@ export type PackageFileNavigatorLabels = {
   cancel: string;
   errorConflict: string;
   errorPrecondition: string;
+  errorConfiguration: string;
 };
 
 type ViewMode = "finder" | "tree";
@@ -167,6 +174,36 @@ export function PackageFileNavigator({
     );
   }
 
+  function reportIdentityError(error: unknown): void {
+    if (
+      isMaisterError(error) &&
+      (error.code === "CONFLICT" || error.code === "PRECONDITION")
+    ) {
+      showError(error.code);
+
+      return;
+    }
+    setError(labels.errorConfiguration);
+  }
+
+  function commitFolderChange(
+    next: AuthoredFlowPackageFile[],
+    oldPath: string,
+    newPath: string | null,
+  ): boolean {
+    try {
+      commit(
+        pathPrefix ? next : rewriteSkillFolderImports(next, oldPath, newPath),
+      );
+
+      return true;
+    } catch (error) {
+      reportIdentityError(error);
+
+      return false;
+    }
+  }
+
   function move(source: string, targetFolder: string): void {
     const result = movePathInDraft(draftFiles, source, targetFolder);
 
@@ -175,8 +212,12 @@ export function PackageFileNavigator({
 
       return;
     }
-    setVirtualFolders((prev) => prev.filter((v) => v !== targetFolder));
-    commit(result.files);
+    const destination = targetFolder
+      ? `${targetFolder}/${basename(source)}`
+      : basename(source);
+
+    if (commitFolderChange(result.files, source, destination))
+      setVirtualFolders((prev) => prev.filter((v) => v !== targetFolder));
   }
 
   function createFile(): void {
@@ -214,6 +255,9 @@ export function PackageFileNavigator({
       return;
     }
 
+    const dir = parentFolder(rename.path);
+    const newPath = dir ? `${dir}/${name}` : name;
+
     if (rename.isFolder) {
       const result = renameFolderInDraft(draftFiles, rename.path, name);
 
@@ -222,11 +266,8 @@ export function PackageFileNavigator({
 
         return;
       }
-      commit(result.files);
+      if (!commitFolderChange(result.files, rename.path, newPath)) return;
     } else {
-      const dir = parentFolder(rename.path);
-      const newPath = dir ? `${dir}/${name}` : name;
-
       if (
         newPath !== rename.path &&
         draftFiles.some((f) => f.path === newPath)
@@ -235,7 +276,17 @@ export function PackageFileNavigator({
 
         return;
       }
-      commit(renamePackageFilePath(draftFiles, rename.path, newPath));
+      try {
+        commit(
+          !pathPrefix && isMcpDescriptorPath(rename.path)
+            ? rewriteMcpIdentity(draftFiles, rename.path, newPath)
+            : renamePackageFilePath(draftFiles, rename.path, newPath),
+        );
+      } catch (error) {
+        reportIdentityError(error);
+
+        return;
+      }
       if (selectedPath === rename.path) setSelectedPath(newPath);
     }
     setRename(null);
@@ -245,13 +296,30 @@ export function PackageFileNavigator({
     if (isFolder) {
       const prefix = `${path}/`;
 
-      commit(draftFiles.filter((f) => !f.path.startsWith(prefix)));
+      if (
+        !commitFolderChange(
+          draftFiles.filter((f) => !f.path.startsWith(prefix)),
+          path,
+          null,
+        )
+      )
+        return;
       setVirtualFolders((prev) =>
         prev.filter((v) => v !== path && !v.startsWith(prefix)),
       );
       if (selectedPath?.startsWith(prefix)) setSelectedPath(null);
     } else {
-      commit(removePackageFile(draftFiles, path));
+      try {
+        commit(
+          !pathPrefix && isMcpDescriptorPath(path)
+            ? rewriteMcpIdentity(draftFiles, path, null)
+            : removePackageFile(draftFiles, path),
+        );
+      } catch (error) {
+        reportIdentityError(error);
+
+        return;
+      }
       if (selectedPath === path) setSelectedPath(null);
     }
   }

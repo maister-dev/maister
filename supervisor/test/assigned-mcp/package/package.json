@@ -1,0 +1,9 @@
+{
+  "name": "maister-fixture-mcp",
+  "version": "1.0.0",
+  "mcpName": "io.maister/fixture",
+  "license": "MIT",
+  "bin": {
+    "fixture": "server.mjs"
+  }
+}

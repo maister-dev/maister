@@ -2,14 +2,28 @@ import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { eq, inArray, sql } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
+
+import * as packageSkillTree from "../../../../runtime/package-skill-tree";
 
 import {
   flows,
+  capabilityRecords,
+  capabilityImports,
+  projectMcpBindings,
   flowRevisions,
   tasks,
   taskLaunchIntents,
@@ -17,11 +31,15 @@ import {
   workspaces,
   runSessions,
   domainEvents,
+  packageInstalls,
 } from "@/lib/db/schema";
 import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import {
   acceptInteractiveTaskLaunch,
   acceptConcurrentInteractiveTaskLaunch,
+  commitPreparedTaskLaunch,
+  interactiveTaskLaunchAuthority,
+  prepareTaskLaunchRequest,
   taskLaunchSettingsToken,
 } from "@/lib/tasks/launch-intent";
 import {
@@ -54,12 +72,22 @@ import { addTaskRelation } from "@/lib/social/relations";
 import { prepareTaskQualification } from "@/lib/tasks/qualification";
 import { qualificationFixture } from "@/test-support/task-qualification";
 import { countLiveAutoFlowRuns } from "@/lib/scheduler/c2-eligibility";
-import { acceptedTaskLaunchExecution } from "@/lib/tasks/launch-execution";
+import {
+  acceptedTaskLaunchExecution,
+  assertFrozenTaskLaunchCurrent,
+} from "@/lib/tasks/launch-execution";
+import { preparePackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 import {
   launchRun,
   launchRunStaged,
   launchAcceptedTaskRun,
 } from "@/lib/services/runs";
+import {
+  attachPackage,
+  installPackageRevision,
+  upgradeAttachment,
+} from "@/lib/packages/attach";
+import { prepareTaskLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
 import { taskLaunchReceipt } from "@/lib/tasks/launch-receipt";
 import {
   seedAgentDefinition,
@@ -2141,4 +2169,211 @@ it("LA04 freezes the actual revision manifest between preview, acceptance and ru
         .where(eq(taskLaunchIntents.id, accepted.intentId))
     )[0].state,
   ).toBe("queued");
+});
+
+it("CAP-03 dispatches the same materialized Run after an attachment and an adoption while preserving independent authority", async () => {
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", `${root}/worktrees`);
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", `${root}/runtime`);
+  const db = database.db;
+  const project = {
+    db,
+    projectId: fixture.projectId,
+    projectSlug: fixture.projectId,
+    workspaceRoot: root,
+  };
+
+  async function install(name: string, version: string) {
+    const source = path.join(root, name + "-" + version);
+    const skill = path.join(source, "bundle", "skills", name);
+
+    await mkdir(skill, { recursive: true });
+    await writeFile(path.join(skill, "SKILL.md"), name + " " + version);
+    await writeFile(
+      path.join(source, "maister-package.yaml"),
+      `schemaVersion: 1\nname: ${name}\ndelivery: {version: 1}\ncapabilities: [{id: ${name}-lib, path: bundle}]\n`,
+    );
+
+    return installPackageRevision({
+      source,
+      version,
+      trustStatus: "trusted",
+      db,
+    });
+  }
+  const home = vi.spyOn(os, "homedir").mockReturnValue(root);
+
+  onTestFinished(() => {
+    home.mockRestore();
+    vi.unstubAllEnvs();
+  });
+  const [target] = await db
+    .insert(capabilityRecords)
+    .values({
+      id: randomUUID(),
+      projectId: fixture.projectId,
+      capabilityRefId: "issue-list",
+      kind: "mcp",
+      label: "Issue list",
+      source: "project",
+      agents: ["codex"],
+      material: { transport: "http", url: "https://issues.example.org/mcp" },
+    })
+    .returning();
+  const [binding] = await db
+    .insert(projectMcpBindings)
+    .values({
+      id: randomUUID(),
+      projectId: fixture.projectId,
+      refId: target.capabilityRefId,
+      targetKind: "project",
+      targetId: target.id,
+    })
+    .returning();
+  const original = await install("selected-library", "v1");
+  const attachment = await attachPackage({
+    ...project,
+    packageInstallId: original.id,
+  });
+  const row = await task();
+  const prepared = await prepareTaskLaunchRequest(
+    db,
+    interactiveTaskLaunchAuthority(await interactiveTaskLaunchPrincipal()),
+    {
+      taskId: row.id,
+      expectedTaskRevision: row.revision,
+      expectedSettingsToken: await taskLaunchSettingsToken(db, row.id),
+      autoPromote: false,
+    },
+    randomUUID(),
+  );
+
+  if (prepared.kind !== "prepared")
+    throw new Error("Expected fresh launch preparation");
+  const skillHashes = vi.spyOn(packageSkillTree, "packageSkillSourceDigest");
+
+  try {
+    await db
+      .update(packageInstalls)
+      .set({ trustStatus: "untrusted" })
+      .where(eq(packageInstalls.id, original.id));
+    await expect(commitPreparedTaskLaunch(db, prepared)).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "launch_settings_changed" },
+    });
+    expect(
+      await db
+        .select({ id: taskLaunchIntents.id })
+        .from(taskLaunchIntents)
+        .where(eq(taskLaunchIntents.taskId, row.id)),
+    ).toEqual([]);
+  } finally {
+    await db
+      .update(packageInstalls)
+      .set({ trustStatus: "trusted" })
+      .where(eq(packageInstalls.id, original.id));
+  }
+  const accepted = await commitPreparedTaskLaunch(db, prepared);
+
+  expect(skillHashes).not.toHaveBeenCalled();
+  skillHashes.mockRestore();
+  const [intent] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, accepted.intentId));
+  const [bundle] = await db
+    .select({ installedPath: capabilityImports.installedPath })
+    .from(capabilityImports)
+    .where(eq(capabilityImports.packageInstallId, original.id));
+  const skillPath = path.join(
+    bundle.installedPath,
+    "skills",
+    "selected-library",
+    "SKILL.md",
+  );
+  const bytes = await readFile(skillPath);
+
+  try {
+    await writeFile(skillPath, "Changed after acceptance");
+    await expect(
+      assertFrozenTaskLaunchCurrent(
+        db,
+        intent,
+        preparePackageDeliveryCapture().prepare,
+      ),
+    ).rejects.toMatchObject({
+      details: { reason: "launch_capabilities_changed" },
+    });
+  } finally {
+    await writeFile(skillPath, bytes);
+  }
+  const bound = await prepareTaskLaunchIntent(db, accepted.intentId);
+
+  expect(bound.state).toBe("run_bound");
+  const runId = bound.runId!;
+  const read = async () =>
+    (await db.select().from(runs).where(eq(runs.id, runId)))[0];
+  const frozen = (await read()).resolvedCapabilitySet;
+
+  expect(frozen?.delivery?.packages).toContainEqual(
+    expect.objectContaining({
+      installId: original.id,
+      skills: ["selected-library"],
+    }),
+  );
+
+  const added = await install("later-library", "v1");
+
+  await attachPackage({ ...project, packageInstallId: added.id });
+  const replacement = await install("selected-library", "v2");
+
+  await upgradeAttachment({
+    ...project,
+    attachmentId: attachment!.attachmentId,
+    packageInstallId: replacement.id,
+  });
+  await db
+    .update(projectMcpBindings)
+    .set({ enabled: false })
+    .where(eq(projectMcpBindings.id, binding.id));
+  await expect(prepareTaskLaunchFirstDispatch(db, runId)).rejects.toMatchObject(
+    { details: { reason: "launch_capabilities_changed" } },
+  );
+  await db
+    .update(projectMcpBindings)
+    .set({ enabled: true })
+    .where(eq(projectMcpBindings.id, binding.id));
+  await db
+    .update(capabilityRecords)
+    .set({
+      material: { ...target.material, url: "https://changed.example.org/mcp" },
+    })
+    .where(eq(capabilityRecords.id, target.id));
+  await expect(prepareTaskLaunchFirstDispatch(db, runId)).rejects.toMatchObject(
+    { details: { reason: "launch_capabilities_changed" } },
+  );
+  await db
+    .update(capabilityRecords)
+    .set({ material: target.material })
+    .where(eq(capabilityRecords.id, target.id));
+  await dispatchBoundTaskLaunchIntent(db, accepted.intentId);
+  const [decision] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, accepted.intentId));
+
+  expect({
+    committed: !!decision.dispatchCommittedAt,
+    reason: decision.reason,
+  }).toEqual({ committed: true, reason: null });
+  await expect
+    .poll(
+      async () => {
+        const current = await read();
+
+        return { status: current.status, driverToken: current.flowDriverToken };
+      },
+      { timeout: 10_000 },
+    )
+    .toEqual({ status: "Review", driverToken: null });
+  expect((await read()).resolvedCapabilitySet).toEqual(frozen);
 });

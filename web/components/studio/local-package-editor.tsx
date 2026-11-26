@@ -22,13 +22,13 @@ import type { ReactElement, ReactNode } from "react";
 import type { PackageBom } from "@/lib/queries/package-bom";
 import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 
-import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SparklesIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
+import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
 import { useLibrarianHostComposer } from "@/components/librarian/librarian-provider";
@@ -81,7 +81,6 @@ import {
   buildAgentGroupFromFiles,
   buildMcpOptions,
   buildRunnerGroup,
-  buildSkillOptions,
 } from "@/lib/flows/editor/reference-sources";
 import {
   overlayFlowBuffer,
@@ -702,10 +701,6 @@ export function LocalPackageEditor({
     () => buildPackageCapabilityCatalog(draftFiles, promptAdapter),
     [draftFiles, promptAdapter],
   );
-  const skillOptions = useMemo(
-    () => buildSkillOptions(draftFiles),
-    [draftFiles],
-  );
   const mcpOptions = useMemo(() => buildMcpOptions(mcpCatalog), [mcpCatalog]);
 
   // The deepest breadcrumb segment: the open flow's name (or skill id), or null
@@ -736,6 +731,7 @@ export function LocalPackageEditor({
     cancel: tStudio("composition.files.cancel"),
     errorConflict: tStudio("composition.files.errorConflict"),
     errorPrecondition: tStudio("composition.files.errorPrecondition"),
+    errorConfiguration: tStudio("composition.files.errorConfiguration"),
   };
 
   return (
@@ -1030,6 +1026,9 @@ export function LocalPackageEditor({
                   crumbStudio: labels.crumbStudio,
                   crumbLocal: labels.crumbLocal,
                   crumbSkills: tStudio("viewer.tabSkills"),
+                  root: tStudio("catalog.root"),
+                  registerLegacy: tStudio("catalog.registerLegacy"),
+                  migrationError: tStudio("catalog.legacyRegistrationError"),
                   notFound: tStudio("composition.notFound"),
                   rename: renameLabels(tStudio),
                 }}
@@ -1084,6 +1083,8 @@ export function LocalPackageEditor({
                 packageId={packageId}
                 readOnly={readOnly}
                 saveLabel={labels.home.save}
+                sessionId={sessionId}
+                onCatalogApplied={onAssistantActivity}
                 onCompareElement={
                   divergence
                     ? (path: string) => {
@@ -1148,7 +1149,6 @@ export function LocalPackageEditor({
               readinessReady={false}
               saveAction={saveAction}
               schemaFiles={schemaFiles}
-              skillOptions={skillOptions}
               topology={topology}
               onDirtyChange={setFlowEditorDirty}
               onSelectNode={handleNodeSelected}

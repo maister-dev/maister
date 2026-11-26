@@ -24,7 +24,7 @@ const SUGGEST_CLS =
 
 // Selected values as removable chips + an add-combobox over `options`. Two modes:
 // `catalog` allows free-add (a typed value not in `options` — forward-refs to a
-// not-yet-authored skill/mcp); `fixed` rejects anything outside `options` (enum).
+// not-yet-authored MCP); `fixed` rejects anything outside `options` (enum).
 // Follows the model-autocomplete native-input + suggestion-list precedent rather
 // than a Popover, which is brittle inside the editor's scroll container.
 export function MultiSelectField({

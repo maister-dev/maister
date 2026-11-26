@@ -58,6 +58,8 @@ import { register } from "../../instrumentation";
 import { applicationLifecycle } from "../server-lifecycle";
 
 const originalRuntime = process.env.NEXT_RUNTIME;
+// A successful register() loads the entire Node runtime through dynamic imports.
+const fullBootTimeoutMs = 30_000;
 
 describe("instrumentation DB boot boundary", () => {
   beforeEach(() => {
@@ -131,7 +133,7 @@ describe("instrumentation DB boot boundary", () => {
       "session-crash-repair",
       "configuration",
     ]);
-  }, 30_000);
+  }, fullBootTimeoutMs);
 
   it("rejects boot when DB client initialization fails", async () => {
     getDb.mockImplementation(() => {
@@ -169,7 +171,7 @@ describe("instrumentation DB boot boundary", () => {
     await register();
 
     expect(startSchedulerTimer).toHaveBeenCalledOnce();
-  });
+  }, fullBootTimeoutMs);
 
   it("does nothing on the edge runtime", async () => {
     process.env.NEXT_RUNTIME = "edge";

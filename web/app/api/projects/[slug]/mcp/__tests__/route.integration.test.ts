@@ -15,6 +15,8 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { loadScratchCapabilityCatalog } from "@/lib/capabilities/scratch-catalog";
+import { connectPlatform } from "@/lib/mcp/binding-service";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -426,4 +428,100 @@ describe("project MCP project scoping (real postgres)", () => {
     expect(ownGet.status).toBe(200);
     expect(ownBody.command).toBe("b-cmd");
   });
+});
+
+it("PUT guards package MCP scope by project, revision and authority and updates scratch defaults", async () => {
+  const { PUT } =
+    await import("@/app/api/projects/[slug]/packages/[attachmentId]/mcps/[refId]/scope/route");
+  const attachmentId = randomUUID();
+  const installId = randomUUID();
+  const refId = "attachment-private-tool";
+  const packageName = "scoped-package";
+  const put = (slug: string, body: object) =>
+    PUT(
+      new NextRequest(
+        `http://localhost/api/projects/${slug}/packages/${attachmentId}/mcps/${refId}/scope`,
+        {
+          method: "PUT",
+          body: JSON.stringify(body),
+          headers: { "content-type": "application/json" },
+        },
+      ),
+      { params: Promise.resolve({ slug, attachmentId, refId }) },
+    );
+
+  await db.insert(schema.packageInstalls).values({
+    id: installId,
+    sourceUrl: "file:///test/scope",
+    name: packageName,
+    versionLabel: "v1",
+    resolvedRevision: "scope-rev",
+    manifestDigest: "scope-digest",
+    installedPath: "/test/scope",
+    packageStatus: "Installed",
+    trustStatus: "trusted",
+    manifest: { spec: { delivery: { version: 1 }, mcps: [{ id: refId }] } },
+  });
+  await db.insert(schema.projectPackageAttachments).values({
+    id: attachmentId,
+    projectId: PROJECT_A_ID,
+    packageInstallId: installId,
+    packageName,
+  });
+  await db.insert(schema.capabilityRecords).values({
+    id: randomUUID(),
+    projectId: PROJECT_A_ID,
+    capabilityRefId: refId,
+    kind: "mcp",
+    source: "flow-package",
+    label: "Package Tool",
+    agents: ["codex"],
+    material: { requirement: true, packageInstallId: installId },
+  });
+  await db.insert(schema.platformMcpServers).values({
+    id: refId,
+    transport: "http",
+    url: "https://mcp.example.test",
+    trustStatus: "trusted",
+  });
+  await connectPlatform(PROJECT_A_ID, refId, undefined, null, db);
+  const currentDefault = async () =>
+    (await loadScratchCapabilityCatalog(PROJECT_A_ID, db)).catalog.find(
+      (record) => record.capabilityRefId === refId,
+    )?.selectedByDefault;
+  const request = {
+    scope: "project",
+    expectedInstallId: installId,
+    expectedRevision: 1,
+  };
+
+  sessionRef.value = { user: { id: "u-viewer", role: "member" } };
+  expect((await put(PROJECT_A_SLUG, request)).status).toBe(403);
+  sessionRef.value = ADMIN;
+  expect((await put(PROJECT_B_SLUG, request)).status).toBe(404);
+  expect(await currentDefault()).toBe(false);
+  const accepted = await put(PROJECT_A_SLUG, request);
+
+  expect(accepted.status).toBe(200);
+  expect(await accepted.json()).toMatchObject({
+    declared: "package",
+    effective: "project",
+    origin: "override",
+    revision: 2,
+  });
+  expect(await currentDefault()).toBe(true);
+  expect((await put(PROJECT_A_SLUG, request)).status).toBe(409);
+  const reset = await put(PROJECT_A_SLUG, {
+    ...request,
+    scope: null,
+    expectedRevision: 2,
+  });
+
+  expect(reset.status).toBe(200);
+  expect(await reset.json()).toMatchObject({
+    effective: "package",
+    origin: "package",
+    revision: 3,
+  });
+  expect(await currentDefault()).toBe(false);
 });

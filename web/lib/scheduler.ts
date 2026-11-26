@@ -19,6 +19,10 @@ import {
 } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  currentFlowQuestionResumeEligible,
+  loadFlowQuestionCheckpointHost,
+} from "@/lib/execution-host/flow-question-source";
 import { taskLaunchIntents } from "@/lib/db/schema";
 import { claimTaskLaunchIntent } from "@/lib/tasks/launch-dispatch-claim";
 import { isTaskLaunchContention } from "@/lib/tasks/launch-contention";
@@ -40,7 +44,7 @@ import {
   markResumed,
 } from "@/lib/runs/state-transitions";
 import { getLatestAssignment } from "@/lib/execution-host/assignments";
-import { getHostById } from "@/lib/execution-host/hosts";
+import { findActiveLocalHost, getHostById } from "@/lib/execution-host/hosts";
 import { readHostCapacityWaitReason, reserveRunHostCapacity, usesHostCapacityReservations, type HostCapacityWaitReason } from "@/lib/execution-host/host-capacity";
 import { configuredAdditionalExecutionEndpoints } from "@/lib/execution-host/selected-endpoint";
 import { workspacePreparationReadySql } from "@/lib/execution-host/workspace-preparation";
@@ -1101,6 +1105,7 @@ export async function promoteNextPending(
         and(
           eq(runs.status, "NeedsInputIdle"),
           isNotNull(runs.resumeRequestedAt),
+          currentFlowQuestionResumeEligible(),
           inArray(runs.runKind, POOL_RUN_KINDS[pool]),
           sql`(${tasks.id} IS NULL OR ${tasks.queuePaused} = false)`,
           queuedRunHasAvailableSlots(),
@@ -1509,9 +1514,50 @@ export async function promoteNextPending(
 
           claimedProjectId = claimed.projectId;
         } else {
-          const resumed = await markResumed(runId, { db: tx });
+          const question = await loadFlowQuestionCheckpointHost(tx, runId);
 
-          if (!resumed.ok) continue;
+          if (question.kind === "blocked") continue;
+          const previous =
+            question.kind === "not_flow_question"
+              ? await getLatestAssignment(tx, runId)
+              : null;
+          const host =
+            question.kind === "ready"
+              ? question.host
+              : previous
+                ? await getHostById(tx, previous.executionHostId)
+                : await findActiveLocalHost(tx);
+
+          if (!host || host.retiredAt || host.readiness !== "ready") {
+            log.warn(
+              { runId, assignmentId: previous?.id ?? null },
+              "queued Flow resume has no ready checkpoint host; left queued",
+            );
+            continue;
+          }
+          const resumed = await markResumed(runId, {
+            db: tx,
+            placement: { host },
+          }).catch((error: unknown) => {
+            const reason = isMaisterError(error) ? error.details?.reason : null;
+
+            if (
+              reason !== "node_question_responder_revoked" &&
+              reason !== "node_question_resume_conflict" &&
+              reason !== "node_question_checkpoint_unavailable" &&
+              reason !== "node_question_closed"
+            )
+              throw error;
+
+            log.info(
+              { runId, reason },
+              "queued Flow question resume changed before claim",
+            );
+
+            return null;
+          });
+
+          if (!resumed?.ok) continue;
           const flipped: Array<{ projectId: string | null }> = await tx
             .update(runs)
             .set({ resumeRequestedAt: null })

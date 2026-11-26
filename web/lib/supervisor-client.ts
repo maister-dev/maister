@@ -2,6 +2,11 @@ import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
 import type { ClaudeNativePermissions } from "../../runtime/claude-native-permissions";
+import type { McpDistribution, McpPreparationReceipt } from "../../runtime/mcp-distribution";
+import type {
+  AddressedPackageSkill,
+  PackageSkillView,
+} from "../../runtime/package-skill-tree";
 import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspaceRetainedRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type { WorkspacePullRequestQuery, WorkspacePullRequestStatus } from "../../runtime/workspace-prepare";
@@ -63,7 +68,11 @@ import {
 } from "@/lib/execution-host/runtime-object-response";
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
-import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import {
+  isMaisterError,
+  MaisterError,
+  type MaisterErrorCode,
+} from "@/lib/errors";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceEvidenceObjectSchema, WorkspacePublicationTargetSchema, WorkspacePullRequestStatusSchema, WorkspaceReviewFingerprintSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import {
@@ -153,6 +162,8 @@ export type SupervisorRunnerInput = {
 // run dir, context mounts) derives from the adopted handle; only the
 // `workspace.adopt` payload built in `execution-host/adoption.ts` carries one.
 export type CreateSessionInput = {
+  packageSkillView?: PackageSkillView;
+  addressedPackageSkills?: readonly AddressedPackageSkill[];
   stepId: string;
   nodeAttemptId?: string;
   // M42 (ADR-114): the logical Flow session this ACP process serves — stamped
@@ -841,6 +852,8 @@ function unknownOutcomeError(
 }
 
 function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
+  if (isMaisterError(err) && err.code === "CONFIG") return err;
+
   return unknownOutcomeError(
     err,
     ctx,
@@ -904,6 +917,7 @@ export async function checkSupervisorHealth(
       signal: controller.signal,
     });
   } catch (err) {
+    if (isMaisterError(err) && err.code === "CONFIG") throw err;
     const message = err instanceof Error ? err.message : String(err);
 
     return {
@@ -988,6 +1002,7 @@ export async function checkSupervisorDiagnostics(
       signal: controller.signal,
     });
   } catch (err) {
+    if (isMaisterError(err) && err.code === "CONFIG") throw err;
     const message = err instanceof Error ? err.message : String(err);
 
     return {
@@ -1185,6 +1200,7 @@ export async function resolveModelSuggestions(
 // reference never leaves the host. The exec-trust gate is enforced web-side
 // BEFORE this call.
 export type SupervisorMcpProbeRequest = {
+  distribution?: McpDistribution;
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
@@ -2648,6 +2664,44 @@ export async function acknowledgeRuntimeEvents(input: {
       "supervisor returned a malformed runtime event acknowledgement",
     );
   }
+
+  return parsed.data;
+}
+
+export async function prepareMcpEnveloped(
+  envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
+): Promise<McpPreparationReceipt> {
+  const res = await request<McpPreparationReceipt>({
+    method: "POST",
+    path: "/mcp/prepare",
+    body: envelope,
+    ctx: "prepareMcp",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: opts.timeoutMs,
+  });
+  const parsed = z
+    .object({
+      hostId: z.string(),
+      commandId: z.string().uuid(),
+      assignmentEpoch: z.number().int().positive(),
+      artifactDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      runtime: z.string(),
+      cacheHit: z.boolean(),
+    })
+    .strict()
+    .safeParse(res.body);
+
+  if (
+    !parsed.success ||
+    parsed.data.commandId !== envelope.command.id ||
+    parsed.data.hostId !== envelope.fence.hostKey ||
+    parsed.data.assignmentEpoch !== envelope.fence.assignmentEpoch
+  )
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "MCP preparation returned a mismatched receipt",
+    );
 
   return parsed.data;
 }

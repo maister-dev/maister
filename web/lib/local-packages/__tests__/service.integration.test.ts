@@ -15,7 +15,7 @@ import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { stringify as stringifyYaml } from "yaml";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -25,6 +25,7 @@ import {
 } from "@/lib/local-packages/create-flow-operation";
 import { gitCommitWorkingDir } from "@/lib/local-packages/git";
 import {
+  withWorkingDirLock,
   acquireLock,
   assertHoldsLock,
   readLockState,
@@ -59,6 +60,13 @@ import {
   setLocalPackageStatus,
   writeWorkingDirFile,
 } from "@/lib/local-packages/service";
+import * as atomic from "@/lib/atomic";
+import {
+  applyCatalogPreview,
+  previewCatalogImport,
+  readCatalogOperation,
+  readCatalogRequestReceipt,
+} from "@/lib/local-packages/catalog-operation";
 import { cutLocalPackageVersion } from "@/lib/local-packages/versions";
 import {
   startMainPostgresTestDb,
@@ -342,6 +350,236 @@ describe("local-packages substrate (integration)", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it.each([
+    "before_first_file",
+    "between_files",
+    "before_receipt",
+    "revoked_mid_apply",
+    "after_receipt",
+    "divergent_draft",
+    "divergent_touched_file",
+  ] as const)(
+    "IT-CAT-03 serializes a cut and recovers %s under the shared DB lease",
+    async (boundary) => {
+      const { package: pkg } = await createLocalPackageWithFlow({
+        name: "Catalog " + boundary,
+        createdBy: userId,
+        flow: SECOND_FLOW,
+        db,
+      });
+      const owner = {
+        workingDir: pkg.workingDir,
+        packageId: pkg.id,
+        actorId: userId,
+      };
+      const manifestBefore = await readFile(
+        join(pkg.workingDir, "maister-package.yaml"),
+        "utf8",
+      );
+      const source = {
+        kind: "skill" as const,
+        sourceId: "anthropic-skills",
+        selector: "skills/design",
+        publisher: "anthropics",
+        sourceUrl:
+          "https://github.com/anthropics/skills/tree/main/skills/design",
+        pin: "a".repeat(40),
+        name: "design",
+        files: {
+          "SKILL.md": "---\nname: design\ndescription: Design\n---\nReview",
+          "reference.md": "Reference",
+        },
+        notices: [],
+        configuration: [],
+      };
+      const root = "capability/skills/design";
+      const preview = await previewCatalogImport(owner, source, root);
+      const request = {
+        requestKey: "import-1",
+        previewId: preview.previewId,
+        expectedDraftBase: preview.expectedDraftBase,
+      };
+      const writer = atomic.atomicWriteText;
+      const journalWrite = atomic.atomicWriteJson;
+      let writes = 0;
+      let observedCut = false;
+      const intercept = async () => {
+        await expect(cutLocalPackageVersion(pkg, { db })).rejects.toMatchObject(
+          { code: "CONFLICT" },
+        );
+        observedCut = true;
+        throw new Error("interrupted catalog apply");
+      };
+      const fileFault = vi
+        .spyOn(atomic, "atomicWriteText")
+        .mockImplementation(async (file, content) => {
+          writes++;
+          if (
+            (boundary === "before_first_file" && writes === 1) ||
+            ((boundary === "between_files" ||
+              boundary === "revoked_mid_apply" ||
+              boundary === "divergent_draft" ||
+              boundary === "divergent_touched_file") &&
+              writes === 2)
+          )
+            await intercept();
+          await writer(file, content);
+        });
+      const receiptFault = vi
+        .spyOn(atomic, "atomicWriteJson")
+        .mockImplementation(async (file, value) => {
+          if (boundary === "before_receipt" && file.includes("/operations/"))
+            await intercept();
+          await journalWrite(file, value);
+          if (boundary === "after_receipt" && file.includes("/operations/"))
+            await intercept();
+        });
+
+      try {
+        await expect(
+          withWorkingDirLock(
+            pkg.id,
+            () => applyCatalogPreview(owner, request),
+            db,
+          ),
+        ).rejects.toThrow("interrupted catalog apply");
+      } finally {
+        fileFault.mockRestore();
+        receiptFault.mockRestore();
+      }
+      expect(observedCut).toBe(true);
+      const committedBeforeEdit =
+        boundary === "after_receipt"
+          ? await readCatalogRequestReceipt(owner, request)
+          : null;
+      const previousCatalogSources = process.env.MAISTER_STUDIO_CATALOG_REPOS;
+
+      if (boundary === "revoked_mid_apply" || boundary === "after_receipt")
+        vi.stubEnv("MAISTER_STUDIO_CATALOG_REPOS", "[]");
+      try {
+        const skillFile = join(pkg.workingDir, root, "SKILL.md");
+        const independentEdit = "Independent edit";
+        const touched = boundary === "divergent_touched_file";
+        const touchedContent = Buffer.from([0x80, 0xff, 0]);
+        const diverged = boundary === "divergent_draft" || touched;
+        const unrelated = join(pkg.workingDir, "unexpected.md");
+
+        if (boundary === "divergent_draft") {
+          await writeFile(unrelated, independentEdit);
+        }
+        if (touched) await writeFile(skillFile, touchedContent);
+        if (boundary === "after_receipt")
+          await writeFile(skillFile, independentEdit);
+        if (boundary === "revoked_mid_apply") {
+          const abortFault = vi
+            .spyOn(atomic, "atomicWriteJson")
+            .mockImplementation(async (file, value) => {
+              await journalWrite(file, value);
+              if (file.endsWith("/pending.json"))
+                throw new Error("interrupted after abort decision");
+            });
+
+          try {
+            await expect(cutLocalPackageVersion(pkg, { db })).rejects.toThrow(
+              "interrupted after abort decision",
+            );
+            await expect(readFile(skillFile, "utf8")).resolves.toBe(
+              source.files["SKILL.md"],
+            );
+          } finally {
+            abortFault.mockRestore();
+            vi.stubEnv("MAISTER_STUDIO_CATALOG_REPOS", previousCatalogSources);
+          }
+          // The next cut takes the same lease, restores every prior byte, and can cut the old commit.
+          const cut = await cutLocalPackageVersion(pkg, { db });
+
+          expect(cut.installId).toBeTruthy();
+          expect(
+            await readFile(
+              join(pkg.workingDir, "maister-package.yaml"),
+              "utf8",
+            ),
+          ).toBe(manifestBefore);
+          await expect(stat(skillFile)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        } else {
+          await expect(
+            cutLocalPackageVersion(pkg, { db }),
+          ).rejects.toMatchObject({ code: "PRECONDITION" });
+        }
+        if (diverged || boundary === "revoked_mid_apply") {
+          const aborted = await withWorkingDirLock(
+            pkg.id,
+            () => applyCatalogPreview(owner, request),
+            db,
+          );
+
+          expect(aborted).toMatchObject({
+            state: "aborted",
+            reason: diverged ? "draft_changed" : "approval_revoked",
+          });
+          expect(
+            await readCatalogOperation(owner, aborted.operationId),
+          ).toEqual(aborted);
+          await expect(
+            readFile(join(pkg.workingDir, "maister-package.yaml"), "utf8"),
+          ).resolves.toBe(manifestBefore);
+          await expect(
+            stat(join(pkg.workingDir, root, "reference.md")),
+          ).rejects.toMatchObject({ code: "ENOENT" });
+          if (touched) {
+            await expect(readFile(skillFile)).resolves.toEqual(touchedContent);
+          } else if (diverged) {
+            await expect(readFile(unrelated, "utf8")).resolves.toBe(
+              independentEdit,
+            );
+            await expect(stat(skillFile)).rejects.toMatchObject({
+              code: "ENOENT",
+            });
+          }
+          await expect(
+            withWorkingDirLock(
+              pkg.id,
+              () =>
+                applyCatalogPreview(owner, {
+                  ...request,
+                  previewId: randomUUID(),
+                }),
+              db,
+            ),
+          ).rejects.toMatchObject({ status: 409 });
+        } else {
+          expect(await readFile(skillFile, "utf8")).toBe(
+            boundary === "after_receipt"
+              ? independentEdit
+              : source.files["SKILL.md"],
+          );
+          expect(
+            await readFile(join(pkg.workingDir, root, "reference.md"), "utf8"),
+          ).toBe("Reference");
+          const replay = await withWorkingDirLock(
+            pkg.id,
+            () => applyCatalogPreview(owner, request),
+            db,
+          );
+
+          expect(replay.state).toBe("applied");
+          if (boundary === "after_receipt")
+            expect(replay).toEqual(committedBeforeEdit);
+          expect(await readCatalogOperation(owner, replay.operationId)).toEqual(
+            replay,
+          );
+          await expect(
+            applyCatalogPreview(owner, { ...request, previewId: randomUUID() }),
+          ).rejects.toMatchObject({ status: 409 });
+        }
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("refuses an uncommitted cut inside the shared version service", async () => {
     const { package: pkg } = await createLocalPackageWithFlow({
       name: "Cut service gate",
@@ -613,16 +851,80 @@ describe("local-packages substrate (integration)", () => {
     expect(all.some((p) => p.id === pkgId)).toBe(true);
   });
 
-  it("delete removes the row and the working dir", async () => {
+  it("delete removes only the owning draft and its receipts after the package writer releases its lease", async () => {
     const pkg = await createLocalPackage({
       name: "Throwaway Pack",
       createdBy: userId,
       db,
     });
+    const sibling = (await getLocalPackage(pkgId, db))!;
+    const applySkill = async (draft: LocalPackage) => {
+      const owner = {
+        packageId: draft.id,
+        workingDir: draft.workingDir,
+        actorId: userId,
+      };
+      const preview = await previewCatalogImport(
+        owner,
+        {
+          kind: "skill",
+          sourceId: "anthropic-skills",
+          sourceUrl:
+            "https://github.com/anthropics/skills/tree/main/skills/delete-witness",
+          selector: "skills/delete-witness",
+          publisher: "anthropics",
+          pin: "b".repeat(40),
+          name: "delete-witness",
+          files: {
+            "SKILL.md":
+              "---\nname: delete-witness\ndescription: A receipt fixture\n---\nReceipt",
+          },
+          notices: [],
+          configuration: [],
+        },
+        "capability/skills/delete-witness",
+      );
+      const receipt = await withWorkingDirLock(
+        draft.id,
+        () =>
+          applyCatalogPreview(owner, {
+            previewId: preview.previewId,
+            expectedDraftBase: preview.expectedDraftBase,
+            requestKey: "owned-receipt",
+          }),
+        db,
+      );
+
+      return { owner, receipt };
+    };
+    const own = await applySkill(pkg);
+    const other = await applySkill(sibling);
+
+    await withWorkingDirLock(
+      pkg.id,
+      async () => {
+        await expect(deleteLocalPackage(pkg.id, db)).rejects.toMatchObject({
+          code: "CONFLICT",
+          details: { reason: "operation_in_progress" },
+        });
+        await expect(
+          readCatalogOperation(own.owner, own.receipt.operationId),
+        ).resolves.toEqual(own.receipt);
+      },
+      db,
+    );
 
     await deleteLocalPackage(pkg.id, db);
     expect(await getLocalPackage(pkg.id, db)).toBeNull();
-    await expect(stat(pkg.workingDir)).rejects.toBeTruthy();
+    await expect(stat(pkg.workingDir)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      readCatalogOperation(own.owner, own.receipt.operationId),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      readCatalogOperation(other.owner, other.receipt.operationId),
+    ).resolves.toEqual(other.receipt);
     // the archived package's working dir is untouched by the active-list query
     expect((await stat(workingDir)).isDirectory()).toBe(true);
   });

@@ -28,6 +28,7 @@ const hintSchema = z
       "run_messages",
       "agent_continuation_episodes",
       "run_waits",
+      "hitl_requests",
       "run_autonomous_decisions",
       "run_sync_attempts",
     ]),
@@ -38,8 +39,23 @@ const hintSchema = z
     rootRunId: z.string().nullable(),
   })
   .strict();
+const promptHintSchema = z
+  .object({
+    source: z.enum([
+      "execution_commands",
+      "run_session_incarnations",
+      "project_tokens",
+    ]),
+    runId: z.string().min(1).max(256),
+    id: z.string().min(1).max(256),
+  })
+  .strict();
 
 export type PeekHint = z.infer<typeof hintSchema>;
+type PromptHint = z.infer<typeof promptHintSchema>;
+type ChangeHint =
+  | { kind: "peek"; hint: PeekHint }
+  | { kind: "flow-question-prompt"; hint: PromptHint };
 
 /** Publish only an authorized read-model invalidation after the owning transaction commits. */
 export async function notifyContinuationAttentionChanged(
@@ -48,6 +64,17 @@ export async function notifyContinuationAttentionChanged(
 ): Promise<void> {
   await tx.execute(sql`SELECT pg_notify('maister_run_peek', jsonb_build_object(
     'source', 'agent_continuation_episodes', 'topic', 'summary', 'runId', ${runId}::text,
+    'parentRunId', NULL, 'previousParentRunId', NULL, 'rootRunId', NULL
+  )::text)`);
+}
+
+/** A human wait can open or change while another node keeps the same Run status and pointer. */
+export async function notifyNodeQuestionChanged(
+  tx: Pick<Db, "execute">,
+  runId: string,
+): Promise<void> {
+  await tx.execute(sql`SELECT pg_notify('maister_run_peek', jsonb_build_object(
+    'source', 'hitl_requests', 'topic', 'summary', 'runId', ${runId}::text,
     'parentRunId', NULL, 'previousParentRunId', NULL, 'rootRunId', NULL
   )::text)`);
 }
@@ -71,7 +98,7 @@ export async function notifyAutonomousDecisionChanged(
     'parentRunId', NULL, 'previousParentRunId', NULL, 'rootRunId', NULL
   )::text)`);
 }
-type Subscriber = { notify: (hint: PeekHint) => void; lost: () => void };
+type Subscriber = { notify: (change: ChangeHint) => void; lost: () => void };
 type Hub = {
   client: Client | null;
   starting: Promise<void> | null;
@@ -114,22 +141,31 @@ function loseListener(client: Client, error: unknown): void {
 }
 
 function deliver(notification: Notification): void {
-  const parsed = hintSchema.safeParse(
-    notification.payload ? parseHint(notification.payload) : null,
-  );
+  const payload = notification.payload ? parseHint(notification.payload) : null;
+  let change: ChangeHint | undefined;
 
-  if (!parsed.success) {
+  if (notification.channel === "maister_run_peek") {
+    const parsed = hintSchema.safeParse(payload);
+
+    if (parsed.success) change = { kind: "peek", hint: parsed.data };
+  } else if (notification.channel === "maister_flow_question_prompt") {
+    const parsed = promptHintSchema.safeParse(payload);
+
+    if (parsed.success)
+      change = { kind: "flow-question-prompt", hint: parsed.data };
+  }
+  if (!change) {
     const client = hub.client;
 
     if (client)
       loseListener(
         client,
-        new MaisterError("ACP_PROTOCOL", "Invalid peek notification"),
+        new MaisterError("ACP_PROTOCOL", "Invalid Run change notification"),
       );
 
     return;
   }
-  for (const subscriber of [...hub.subscribers]) subscriber.notify(parsed.data);
+  for (const subscriber of [...hub.subscribers]) subscriber.notify(change);
 }
 function parseHint(payload: string): unknown {
   try {
@@ -155,7 +191,9 @@ async function startListener(): Promise<void> {
   try {
     await client.connect();
     // Register first. Canonical ready reloads repair anything committed before LISTEN.
-    await client.query("LISTEN maister_run_peek");
+    await client.query(
+      "LISTEN maister_run_peek; LISTEN maister_flow_question_prompt",
+    );
     const catalog = await client.query<{
       indexes: number;
       triggers: number;
@@ -186,7 +224,7 @@ async function startListener(): Promise<void> {
 }
 
 /** One autocommit LISTEN connection per process, shared until the last owner leaves. */
-export async function subscribePeekChanges(
+async function subscribeRunChanges(
   notify: Subscriber["notify"],
   lost: Subscriber["lost"],
 ): Promise<() => Promise<void>> {
@@ -213,4 +251,33 @@ export async function subscribePeekChanges(
     hub.subscribers.delete(subscriber);
     if (hub.subscribers.size === 0) await closeListener();
   };
+}
+
+export function subscribePeekChanges(
+  notify: (hint: PeekHint) => void,
+  lost: Subscriber["lost"],
+): Promise<() => Promise<void>> {
+  return subscribeRunChanges((change) => {
+    if (change.kind === "peek") notify(change.hint);
+  }, lost);
+}
+
+/** These hints wake the waiter, which still checks the exact durable proof. */
+export function subscribeFlowQuestionPromptChanges(
+  runId: string,
+  owners: Record<PromptHint["source"], string>,
+  wake: () => void,
+  lost: Subscriber["lost"],
+): Promise<() => Promise<void>> {
+  return subscribeRunChanges((change) => {
+    if (change.hint.runId !== runId) return;
+    if (change.kind === "flow-question-prompt") {
+      if (change.hint.id === owners[change.hint.source]) wake();
+    } else if (
+      change.hint.source === "runs" ||
+      change.hint.source === "node_attempts"
+    ) {
+      wake();
+    }
+  }, lost);
 }

@@ -3,7 +3,7 @@ import { LIBRARIAN_TOOLSET } from "./toolset";
 // ADR-185 / ADR-187 (T2.7): the agent-facing SSOT. Bump the version on ANY
 // wording change; the context snapshot records it, so a reply stays
 // attributable to the instructions it ran under.
-export const LIBRARIAN_INSTRUCTIONS_VERSION = "librarian-instructions.v6";
+export const LIBRARIAN_INSTRUCTIONS_VERSION = "librarian-instructions.v7";
 
 export function librarianInstructions(
   tools: readonly string[] = LIBRARIAN_TOOLSET,
@@ -17,6 +17,7 @@ export function librarianInstructions(
     "- Help turn a request into a well-formed task, and act on the person's behalf only through the tools listed below.",
     "",
     "Rules:",
+    "- For a private owner clarification, call ask_human with a stable requestKey and a MAIster form, then end the turn. The answer will resume this conversation. Use clarification_request for a question addressed to a teammate about a task.",
     "- Ask when a request is ambiguous: which project, which task, what outcome. One short question beats a wrong action.",
     "- Before creating a task, call task_search for likely duplicates and mention any you find.",
     "- Create tasks with a typed statement: context, goal, acceptance criteria, constraints, out-of-scope work, links and open questions. A task without a selected launchable flow needs triage or a flow choice before launch.",

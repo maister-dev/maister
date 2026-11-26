@@ -6,10 +6,10 @@ import {
   createPackageCompatibilityResolver,
 } from "@/lib/queries/packages";
 
-const loadFlowManifestMock = vi.hoisted(() => vi.fn());
+const loadRetainedFlowManifestMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/config", () => ({
-  loadFlowManifest: loadFlowManifestMock,
+  loadRetainedFlowManifest: loadRetainedFlowManifestMock,
 }));
 
 const INSTALL = {
@@ -39,7 +39,7 @@ beforeEach(() => {
 
 describe("package compatibility resolver", () => {
   it("memoizes concurrent checks for the same install", async () => {
-    loadFlowManifestMock.mockResolvedValue(GRAPH_MANIFEST);
+    loadRetainedFlowManifestMock.mockResolvedValue(GRAPH_MANIFEST);
     const resolveCompatibility = createPackageCompatibilityResolver();
 
     const [first, second] = await Promise.all([
@@ -49,7 +49,7 @@ describe("package compatibility resolver", () => {
 
     expect(first).toEqual({ compatible: true, incompatibilityReason: null });
     expect(second).toEqual(first);
-    expect(loadFlowManifestMock).toHaveBeenCalledTimes(1);
+    expect(loadRetainedFlowManifestMock).toHaveBeenCalledTimes(1);
   });
 
   // `install.manifest` is a jsonb column: the cast to PackageInstallManifest
@@ -63,11 +63,11 @@ describe("package compatibility resolver", () => {
     await expect(
       resolveCompatibility({ ...INSTALL, manifest: { inventory: {} } }),
     ).resolves.toEqual({ compatible: true, incompatibilityReason: null });
-    expect(loadFlowManifestMock).not.toHaveBeenCalled();
+    expect(loadRetainedFlowManifestMock).not.toHaveBeenCalled();
   });
 
   it("keeps absolute manifest paths in structured logs, not client DTOs", async () => {
-    loadFlowManifestMock.mockRejectedValueOnce(
+    loadRetainedFlowManifestMock.mockRejectedValueOnce(
       new Error(
         "Cannot read /private/maister/packages/install-1/flows/aif/flow.yaml",
       ),
@@ -84,7 +84,7 @@ describe("package compatibility resolver", () => {
   });
 
   it("preserves an engine-incompatible range's canonical remediation", async () => {
-    loadFlowManifestMock.mockResolvedValue({
+    loadRetainedFlowManifestMock.mockResolvedValue({
       ...GRAPH_MANIFEST,
       compat: { engine_min: "4.0.0" },
     });

@@ -56,7 +56,10 @@ export async function seedTaskAgentFlowFacadeFixture(
     name: packageName,
     versionLabel: "fixture-v1",
     resolvedRevision: revision.resolvedRevision,
-    manifest: {},
+    manifest: {
+      spec: { schemaVersion: 1, name: packageName },
+      inventory: { skills: [], agents: [], platformAgents: ["facade"] },
+    },
     manifestDigest: "fixture",
     installedPath,
     packageStatus: "Installed",

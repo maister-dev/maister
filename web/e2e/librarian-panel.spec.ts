@@ -280,3 +280,145 @@ test("B3 keeps history and attention scrollable without displacing the composer"
     await expect(opener).toBeFocused();
   }
 });
+
+test("E2E-ASK-02-KEYBOARD owner answers an opened private question from the transcript with the keyboard", async ({
+  page,
+}) => {
+  await page.goto("/inbox");
+  const res = await page.request.get("/api/librarian/conversation");
+
+  expect(res.ok()).toBe(true);
+  const { conversation, segment } = (await res.json()) as {
+    conversation: { id: string };
+    segment: { id: string };
+  };
+  const cardId = randomUUID(),
+    turnId = randomUUID(),
+    messageId = randomUUID();
+
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      `WITH t AS (
+      INSERT INTO librarian_turns (id,conversation_id,segment_id,variant,status)
+      VALUES ($1,$2,$3,'owner_message','queued') RETURNING id
+    ), card AS (
+      INSERT INTO librarian_cards (id,conversation_id,segment_id,kind,status,target,payload,payload_digest,requires_owner,expires_at,question_turn_id,question_key,question_checkpoint_at)
+      SELECT $4,$2,$3,'question','pending','{}',$5,'fixture',true,now()+interval '1 day',t.id,'journey',NULL FROM t RETURNING id
+    ), seq AS (
+      UPDATE librarian_conversations SET last_seq=last_seq+1 WHERE id=$2 RETURNING last_seq
+    ) INSERT INTO librarian_messages (id,conversation_id,segment_id,turn_id,card_id,author_kind,seq,body,delivery_state)
+      SELECT $6,$2,$3,$1,card.id,'librarian',seq.last_seq,'Which customer journey?','processed' FROM card,seq`,
+      [
+        turnId,
+        conversation.id,
+        segment.id,
+        cardId,
+        JSON.stringify({
+          requestKey: "journey",
+          question: "Which customer journey?",
+          schema: {
+            schemaVersion: 1,
+            fields: [
+              {
+                name: "journey",
+                type: "string",
+                required: true,
+                label: "Journey",
+                options: ["Checkout", "Browse"],
+              },
+            ],
+          },
+        }),
+        messageId,
+      ],
+    );
+  });
+  try {
+    await openPanel(page);
+    const question = page
+      .getByTestId("librarian-private-question")
+      .filter({ hasText: "Which customer journey?" });
+
+    const beforeCheckpoint = await page.request.get(
+      "/api/librarian/messages?view=work",
+    );
+
+    expect(beforeCheckpoint.ok()).toBe(true);
+    expect((await beforeCheckpoint.json()).messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: messageId, card: null }),
+      ]),
+    );
+    await expect(question).toHaveCount(0);
+    await withE2EDb(async (pool) => {
+      await pool.query(
+        `WITH turn AS (
+          UPDATE librarian_turns SET status='awaiting_answer' WHERE id=$1 RETURNING id
+        ) UPDATE librarian_cards SET question_checkpoint_at=now()
+          FROM turn WHERE librarian_cards.id=$2 AND question_turn_id=turn.id`,
+        [turnId, cardId],
+      );
+    });
+    await page.reload();
+    await openPanel(page);
+    await expect(question).toBeVisible();
+    await page.getByTestId("librarian-composer").fill("Checkout draft");
+    await expect(page.getByTestId("librarian-send")).toBeDisabled();
+    await expect(page.getByTestId("librarian-send-reason")).toHaveText(
+      "Answer the open question above or stop the response.",
+    );
+    await expect(page.getByTestId("librarian-stop-response")).toBeEnabled();
+    await question.getByRole("button", { name: "Checkout" }).focus();
+    await page.keyboard.press("Enter");
+    const input = question.getByRole("textbox", { name: /Journey/ });
+
+    await expect(input).toHaveValue("Checkout");
+    await input.fill("Custom mobile checkout");
+    await page.route(
+      `**/api/librarian/cards/${cardId}/answer`,
+      (route) =>
+        route.fulfill({
+          status: 503,
+          json: {
+            code: "EXECUTOR_UNAVAILABLE",
+            message: "Private runner diagnostic",
+          },
+        }),
+      { times: 1 },
+    );
+    await question.getByRole("button", { name: "Send answer" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(question.getByRole("alert")).toHaveText(
+      "Executor unavailable",
+    );
+    await expect(input).toHaveValue("Custom mobile checkout");
+    const conversationRefresh = (url: URL): boolean =>
+      url.pathname === "/api/librarian/conversation" &&
+      url.searchParams.get("view") === "work";
+
+    await page.route(conversationRefresh, (route) =>
+      route.fulfill({ status: 503 }),
+    );
+    await question.getByRole("button", { name: "Send answer" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(question).toContainText("Answer queued");
+    await expect(question).toContainText("Custom mobile checkout");
+    await expect(
+      question.getByRole("button", { name: "Send answer" }),
+    ).toHaveCount(0);
+    await page.unroute(conversationRefresh);
+    await page.reload();
+    await openPanel(page);
+    await expect(question).toContainText("Custom mobile checkout");
+    await expect(
+      question.getByRole("button", { name: "Send answer" }),
+    ).toHaveCount(0);
+  } finally {
+    await withE2EDb(async (pool) => {
+      await pool.query("DELETE FROM librarian_messages WHERE turn_id=$1", [
+        turnId,
+      ]);
+      await pool.query("DELETE FROM librarian_turns WHERE id=$1", [turnId]);
+    });
+  }
+});

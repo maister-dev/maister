@@ -141,7 +141,6 @@ const labels: NodeSideFormProps["labels"] = {
   thinkingEffort: "Thinking effort",
   permissionMode: "Permission mode",
   workspaceAccess: "Workspace access",
-  skills: "Skills",
   restrictions: "Restrictions",
   mcps: "Additional MCPs",
   delegation: "Delegation",
@@ -159,7 +158,6 @@ const labels: NodeSideFormProps["labels"] = {
     title: "Enforcement",
     mcps: "MCPs",
     tools: "Tools",
-    skills: "Skills",
     restrictions: "Restrictions",
     permissionMode: "Permission mode",
     workspaceAccess: "Workspace access",
@@ -439,7 +437,7 @@ describe("NodeSideForm — ai_coding", () => {
     expect(html).toContain('data-testid="node-thinking-effort"');
     expect(html).toContain('data-testid="node-permission-mode"');
     expect(html).toContain('data-testid="node-workspace-access"');
-    expect(html).toContain('data-testid="node-skills"');
+    expect(html).not.toContain('data-testid="node-skills"');
     expect(html).toContain('data-testid="node-restrictions"');
     expect(html).toContain('data-testid="node-mcps"');
     expect(html).toContain('data-testid="node-enforcement-mcps"');
@@ -533,7 +531,7 @@ describe("NodeSideForm — ai_coding", () => {
     expect(html).not.toContain("capability-variable-button");
   });
 
-  it("renders skills/mcps as multiselects and rework lists as string rows", () => {
+  it("renders MCPs as a multiselect and rework lists as string rows", () => {
     const html = render(nodeById("plan"));
 
     // fixed-enum multiselect shows the stored policy as a removable chip
@@ -543,7 +541,7 @@ describe("NodeSideForm — ai_coding", () => {
     expect(html).toContain('data-testid="node-rework-allowed-targets-0"');
     expect(html).toContain('value="plan"');
     // catalog multiselects expose the free-add input affordance
-    expect(html).toContain('data-testid="node-skills-input"');
+    expect(html).not.toContain('data-testid="node-skills-input"');
     expect(html).toContain('data-testid="node-mcps-input"');
   });
 });

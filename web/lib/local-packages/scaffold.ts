@@ -1,5 +1,7 @@
 import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 
+import { registerSkillRoot } from "./catalog-manifest";
+
 import { upsertPackageFile } from "@/lib/flows/editor/package-files-draft";
 import {
   flowCanvasHref,
@@ -171,7 +173,29 @@ export function scaffoldArtifact(opts: {
       };
     }
     case "skill": {
-      const path = `skills/${name}/SKILL.md`;
+      const manifest = draftFiles.find(
+        (file) => file.path === PACKAGE_MANIFEST_FILENAME,
+      );
+
+      if (!manifest)
+        return {
+          ok: false,
+          code: "CONFIG",
+          message: "Package manifest missing",
+        };
+      let registered: ReturnType<typeof registerSkillRoot>;
+
+      try {
+        registered = registerSkillRoot(manifest.content, opts.capability);
+      } catch (error) {
+        return {
+          ok: false,
+          code: "CONFIG",
+          message:
+            error instanceof Error ? error.message : "Invalid skill root",
+        };
+      }
+      const path = `${registered.root}/skills/${name}/SKILL.md`;
 
       if (exists(draftFiles, path)) {
         return { ok: false, code: "CONFLICT", message: path };
@@ -179,7 +203,15 @@ export function scaffoldArtifact(opts: {
 
       return {
         ok: true,
-        files: upsertPackageFile(draftFiles, path, skillStub(name)),
+        files: upsertPackageFile(
+          upsertPackageFile(
+            draftFiles,
+            PACKAGE_MANIFEST_FILENAME,
+            registered.yaml,
+          ),
+          path,
+          skillStub(name),
+        ),
         navigate: skillScreenHref(packageId, name),
       };
     }

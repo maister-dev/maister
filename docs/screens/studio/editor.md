@@ -159,14 +159,11 @@ correctness and first-class kinds (behavior SSOT:
   raw-file view, dispatched by inferred kind. Platform agents live at
   package-root `maister-agents/`; subagents at `capability/<id>/agents/` (lenient
   schema) — see [`../../system-analytics/agents.md`](../../system-analytics/agents.md).
-  Platform-agent validation surfaces strict `capability_profile` issues inline:
-  only `{ mcps?: string[] }` is accepted, legacy `skills`, `mcp_servers`, or
-  `restrictions` keys are saved as invalid work-in-progress but hard-block the
-  top-bar Commit and Publish actions plus server-side commit/cut-version/publish.
-  The editor writes invalid JSON/schema values into the canonical artifact, so
-  the inline message and lifecycle gates never disagree about draft state.
-  Issue copy identifies the exact field path and keeps the compact structural
-  editor; this hardening adds no package-skill selector or new authoring IA.
+  The package agent editor offers skills and MCPs from the providing package.
+  The strict `capability_profile` accepts `skills` and `mcps` lists. Invalid
+  values and unknown keys such as `mcp_servers` or `restrictions` remain
+  editable in the draft. Studio names the offending field and blocks commit,
+  cut and publish until the author corrects it.
   **Canonical Create Flow (Implemented).** Studio Packages and Local Packages open
   one accessible dialog for package name (new package only), Flow ID, display
   title, `metadata.summary`, and `metadata.route_when`, with optional labels,
@@ -293,8 +290,7 @@ uses the same icon, hue, tooltip, handles, and compact node body.
 The properties panel replaces comma-separated text fields with structured
 controls; the persisted `flow.yaml` shapes are unchanged.
 
-- **MultiSelectField** — `skills` and `mcps` render as removable chips + an
-  add-combobox over a package-derived catalog (free-add allowed for forward
+- **MCP selector** — `mcps` renders a searchable project server list (free-add allowed for forward
   refs); `rework.workspacePolicies` is a fixed-enum multiselect (no free-add).
 - **StringListField** — `restrictions`, `roles`, `assignees`, `decisions`,
   `material_axes`, `rework.allowedTargets`, and `hooks.pathGuard.allowedPaths`
@@ -327,7 +323,7 @@ is authored as a first-class node — see
 
 **Acceptance criteria.**
 
-- Skills/mcps render as chips with an add affordance; workspace policies accept
+- MCPs render as chips with an add affordance; workspace policies accept
   only the three enum values; list fields add and remove rows.
 - The node prompt composer stores `@skill:<slug>`; an existing plain-text prompt
   renders unchanged until a token is inserted.
@@ -337,6 +333,26 @@ is authored as a first-class node — see
 - Read-only viewer mounts degrade to text/chips with no fetch.
 - EN and RU labels exist for every new multiselect, string-list, and composer
   control.
+
+### Add a skill or MCP from a catalog
+
+Open **Skills** or **MCPs** in a local package, choose **Add from catalog** and
+type a name or paste a supported source link. Results update as you type. Open
+a result to review its publisher, pinned revision, destination, file changes
+and notices. Applying the preview writes to the editable draft. Commit and cut
+a version to make it available for project adoption. **Update from source**
+compares later upstream changes with the previous import and local edits.
+
+An MCP preview lists the runner adapters that support the reviewed transport.
+For npm/stdio it also shows the SHA-256 descriptor digest used for host
+approval. Launch checks readiness and trust for the selected runner and host.
+If an interrupted apply reports a changed draft or withdrawn source approval,
+review the current draft and open a new preview.
+
+The package sharing controls govern which other sessions receive its skills
+and MCPs. Select a package agent’s skills and MCP references in the agent
+editor. In the Flow node editor, bind the agent and configure required or
+additional MCPs. [Effective inventories](../../system-analytics/capabilities.md#project-run-capability-inventory)
 
 ## States
 

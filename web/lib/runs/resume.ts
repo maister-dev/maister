@@ -10,6 +10,7 @@ import {
 } from "./state-transitions";
 import { continueResumeSessionCreate } from "./resume-session-create";
 
+import { loadCurrentFlowNodeQuestionSession } from "@/lib/execution-host/flow-question-source";
 import { getDb } from "@/lib/db/client";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
@@ -34,6 +35,8 @@ import {
 } from "@/lib/scheduler";
 import {
   createExecutionHosts,
+  getLatestAssignment,
+  hostForAssignment,
   isFencedError,
   localHost,
   type ExecutionHosts,
@@ -117,6 +120,8 @@ export async function resumeRun(
       runKind: runs.runKind,
       companyId: runs.companyId,
       agentWorkspace: runs.agentWorkspace,
+      flowQuestion: sql<boolean>`exists(select 1 from hitl_requests q where q.run_id=${runs.id} and q.step_id=${runs.currentStepId}
+        and q.flow_node_attempt_id is not null and q.flow_answer_accepted_at is not null and q.responded_at is null and q.superseded_at is null)`,
       resultContract: runs.resultContract,
       companyExecutionSnapshot: runs.companyExecutionSnapshot,
     })
@@ -152,7 +157,19 @@ export async function resumeRun(
 
   // M42 (ADR-114): the resume handle + runner snapshot come from the run's
   // ACTIVE logical session (the one checkpointed at the idle boundary).
-  const active = await loadActiveRunSession(db, runId);
+  const nodeQuestionSession = baseRow.flowQuestion
+    ? await loadCurrentFlowNodeQuestionSession(db, runId)
+    : null;
+
+  if (baseRow.flowQuestion && !nodeQuestionSession) {
+    return {
+      ok: false,
+      code: "CONFLICT",
+      retryable: false,
+      message: "The answered Flow node no longer owns its checkpointed session",
+    };
+  }
+  const active = nodeQuestionSession ?? (await loadActiveRunSession(db, runId));
   const runRow = {
     ...baseRow,
     acpSessionId: active?.acpSessionId ?? null,
@@ -227,18 +244,22 @@ export async function resumeRun(
     }
   }
 
-  // ADR-166: the resume is a new driver generation on the local host — resolve
+  // The checkpoint belongs to its previous host and workspace. Resolve
   // it BEFORE the claim so an unavailable host is a retryable refusal with no
   // claim taken (the row stays NeedsInputIdle; the response stays stored).
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
   let placementHost;
 
   try {
-    placementHost = await localHost({ db, transport: hosts.transport });
+    const prior = await getLatestAssignment(db, runId);
+
+    placementHost = prior
+      ? await hostForAssignment(db, prior, { transport: hosts.transport })
+      : await localHost({ db, transport: hosts.transport });
   } catch (err) {
     log.warn(
       { runId, err: err instanceof Error ? err.message : String(err) },
-      "resumeRun: local execution host unavailable — no claim taken, retryable",
+      "resumeRun: assigned execution host unavailable — no claim taken, retryable",
     );
 
     return {
@@ -383,8 +404,15 @@ export async function resumeRun(
 
   const assignmentId = claim.assignment?.id ?? null;
 
-  if (await hasFlowPermissionResume(db, runId)) {
-    log.info({ runId, assignmentId }, "owned permission resume authorized");
+  if (nodeQuestionSession || (await hasFlowPermissionResume(db, runId))) {
+    log.info(
+      {
+        runId,
+        assignmentId,
+        kind: nodeQuestionSession ? "node_question" : "permission",
+      },
+      "owned Flow resume authorized",
+    );
 
     return {
       ok: true,

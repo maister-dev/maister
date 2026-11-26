@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { ne, and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { withCardSavepoint } from "./confirmation-availability";
@@ -195,7 +195,12 @@ export async function getLinkedWork(
     db
       .select()
       .from(librarianCards)
-      .where(eq(librarianCards.conversationId, conversation.id))
+      .where(
+        and(
+          eq(librarianCards.conversationId, conversation.id),
+          ne(librarianCards.kind, "question"),
+        ),
+      )
       .orderBy(desc(librarianCards.createdAt))
       .limit(50),
     db

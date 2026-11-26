@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type { WorkspaceClaudeSubagent } from "../../runtime/workspace-flow-persona";
 import type { HostState, WorkspaceRow } from "./host-state";
+import type { AddressedPackageSkillSource } from "./package-skill-home";
 import type {
   AdoptWorkspacePayload,
   ContextMount,
@@ -33,6 +34,7 @@ export type WorkspaceResolution = {
   ownershipKind?: "host_owned";
   readOnlyCheckout?: true;
   packageInstructions?: string;
+  addressedPackageSkills?: readonly AddressedPackageSkillSource[];
   claudeSubagent?: WorkspaceClaudeSubagent;
 };
 

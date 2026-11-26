@@ -1,8 +1,6 @@
 /**
- * Minimal LCS-based unified line diff. Pure, dependency-free (the repo ships no
- * diff lib). Lines common to both sides are prefixed "  ", removals "- ",
- * additions "+ ". Identical inputs return "" (the empty-diff contract the
- * draft-vs-published view relies on).
+ * Minimal LCS-based unified line diff. Common lines use the prefix "  ",
+ * removals "- ", and additions "+ ". Identical inputs return an empty string.
  */
 export function unifiedLineDiff(before: string, after: string): string {
   if (before === after) return "";

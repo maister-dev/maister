@@ -19,6 +19,8 @@ import {
   publishMaterial,
 } from "@/lib/project-dependencies/material";
 import { materialLayoutDigest } from "@/lib/project-dependencies/content-digest";
+import { ATTACHMENT_ORIGIN, packageMcpMaterial } from "./mcp-material";
+
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
 import {
@@ -44,7 +46,7 @@ import {
   type InstallResult,
   type InstalledRevision,
 } from "@/lib/flows";
-import { loadFlowManifest } from "@/lib/config";
+import { loadRetainedFlowManifest } from "@/lib/config";
 import { isOperationalEvidenceContract } from "@/lib/run-results/contract";
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
@@ -93,6 +95,7 @@ import { withSettledSetups } from "@/lib/project-dependencies/setup";
 const {
   packageInstalls,
   projectPackageAttachments,
+  projectPackageMcpScopeOverrides,
   flows,
   flowRevisions,
   capabilityImports,
@@ -377,7 +380,7 @@ export async function installPackageRevision(opts: {
     await opts.onResolve?.(resolved.resolvedRevision, resolved.layoutDigest);
 
     for (const flow of resolved.manifest.flows) {
-      const manifest = await loadFlowManifest(
+      const manifest = await loadRetainedFlowManifest(
         join(resolved.pkgRoot, flow.path, "flow.yaml"),
         {
           errorCode: "CONFIG",
@@ -697,7 +700,6 @@ function isReadyFlowRevision(revision: {
 
 // Records ingested on attach carry this origin so the config SET/CLEAR sweep
 // never disables them — attach/detach own their lifecycle (ADR-088).
-const ATTACHMENT_ORIGIN = "package-attachment";
 
 // ADR-179 (D18): ONE chunked host read over the UNION of every template's
 // referenced names, issued BEFORE the transaction. Reads, not side effects: a
@@ -714,6 +716,7 @@ async function packageReadinessByRef(install: any): Promise<ReadinessByRef> {
         headers?: Record<string, string>;
         bearerTokenEnv?: string | null;
         transport?: "stdio" | "http";
+        distribution?: import("../../../runtime/mcp-distribution").McpDistribution;
         command?: string;
         url?: string;
       },
@@ -730,6 +733,7 @@ async function packageReadinessByRef(install: any): Promise<ReadinessByRef> {
       const readiness = evaluateMcpReadiness(
         {
           transport: mcp.transport ?? "stdio",
+          ...(mcp.distribution ? { distribution: mcp.distribution } : {}),
           command: mcp.command ?? null,
           url: mcp.url ?? null,
           env: mcp.env,
@@ -754,49 +758,11 @@ function ingestionRecords(
   const records: Array<Record<string, unknown>> = [];
 
   for (const mcp of manifest.spec.mcps) {
-    // ADR-179 (D34): `env` is ALREADY a map here — the loader folded the legacy
-    // `env:NAME` list once, so both manifest forms produce identical material.
-    const env = { ...(mcp.env ?? {}) };
-
-    // ADR-129 (D3): an entry with NO implementation is a REQUIREMENT, not a
-    // template. It is marked `requirement: true` so materialization skips it (it
-    // declares a needed ref; the project satisfies it via a binding). The
-    // requirements ledger reads these markers. A template keeps its impl.
-    const isRequirement =
-      mcp.command === undefined &&
-      mcp.url === undefined &&
-      mcp.transport === undefined;
-
     records.push({
       capabilityRefId: mcp.id,
       kind: "mcp",
       label: mcp.description ?? mcp.id,
-      material: isRequirement
-        ? {
-            origin: ATTACHMENT_ORIGIN,
-            packageInstallId: install.id,
-            requirement: true,
-            // A requirement declares SLOTS: the map keys. Since ADR-179 that is
-            // also what `resolveBindTarget` reads, so an overlay against a
-            // requirement or a package TEMPLATE can finally name them.
-            env,
-            headers: {},
-            recommendedPlatformServerId: mcp.recommendedPlatformServerId,
-          }
-        : {
-            origin: ATTACHMENT_ORIGIN,
-            packageInstallId: install.id,
-            transport: mcp.transport,
-            command: mcp.command,
-            args: mcp.args ?? [],
-            env,
-            url: mcp.url,
-            // Rebuilt wholesale per ingestion, so a version that DROPS these
-            // leaves no stale entry behind (SET/CLEAR symmetry).
-            headers: { ...(mcp.headers ?? {}) },
-            bearerTokenEnv: mcp.bearerTokenEnv ?? null,
-            recommendedPlatformServerId: mcp.recommendedPlatformServerId,
-          },
+      material: packageMcpMaterial(mcp, install.id),
     });
   }
 
@@ -815,7 +781,9 @@ function ingestionRecords(
 
   for (const skill of manifest.inventory.skills) {
     records.push({
-      capabilityRefId: skill,
+      capabilityRefId: manifest.spec.delivery
+        ? `${manifest.spec.name}:${skill}`
+        : skill,
       kind: "skill",
       label: skill,
       material: {
@@ -957,7 +925,9 @@ async function deleteIngestionRecords(
   const refIds = [
     ...manifest.spec.mcps.map((m) => m.id),
     ...manifest.spec.restrictions.map((r) => r.id),
-    ...manifest.inventory.skills,
+    ...manifest.inventory.skills.map((skill) =>
+      manifest.spec.delivery ? `${manifest.spec.name}:${skill}` : skill,
+    ),
   ];
 
   if (refIds.length === 0) return;
@@ -2066,9 +2036,27 @@ export async function workerUpgradeAttachment(
     );
     await deleteMemberEnablements(tx, removedFlowIds);
 
+    const survivingMcpRefs = manifestOf(next).spec.mcps.map((mcp) => mcp.id);
+
+    await tx
+      .delete(projectPackageMcpScopeOverrides)
+      .where(
+        and(
+          eq(projectPackageMcpScopeOverrides.attachmentId, att.id),
+          survivingMcpRefs.length
+            ? notInArray(
+                projectPackageMcpScopeOverrides.refId,
+                survivingMcpRefs,
+              )
+            : undefined,
+        ),
+      );
     await tx
       .update(projectPackageAttachments)
-      .set({ packageInstallId: next.id })
+      .set({
+        packageInstallId: next.id,
+        scopeRevision: sql`${projectPackageAttachments.scopeRevision} + 1`,
+      })
       .where(eq(projectPackageAttachments.id, att.id));
   });
 

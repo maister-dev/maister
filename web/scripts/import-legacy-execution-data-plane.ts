@@ -570,19 +570,13 @@ async function insertLegacyEvent(input: {
     ],
   );
   if (inserted.rowCount === 1) {
+    // The import window closes at 0135. Migration 0376 backfills the consumer
+    // horizon from the retained events when the database reaches that schema.
     await input.client.query(
-      `INSERT INTO execution_event_consumers (consumer_name, run_id, max_available_sequence)
-       SELECT consumer_name, $1, $3::bigint FROM unnest($2::text[]) AS consumer_name
-       ON CONFLICT (consumer_name, run_id)
-       DO UPDATE SET max_available_sequence = GREATEST(
-         execution_event_consumers.max_available_sequence,
-         EXCLUDED.max_available_sequence
-       )`,
-      [
-        input.runId,
-        Object.values(CANONICAL_PROJECTION_CONSUMERS),
-        input.runSequence.toString(),
-      ],
+      `INSERT INTO execution_event_consumers (consumer_name, run_id)
+       SELECT consumer_name, $1 FROM unnest($2::text[]) AS consumer_name
+       ON CONFLICT (consumer_name, run_id) DO NOTHING`,
+      [input.runId, Object.values(CANONICAL_PROJECTION_CONSUMERS)],
     );
 
     return;

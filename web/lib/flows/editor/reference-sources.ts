@@ -1,5 +1,3 @@
-import { SKILL_PATH_RE } from "@/lib/capabilities/package-catalog";
-
 export type ReferenceSourceKind = "runner" | "agent" | "schema";
 
 export type ReferenceSourceOption = {
@@ -10,9 +8,7 @@ export type ReferenceSourceOption = {
   filePath?: string;
 };
 
-// A plain {value,label} option for the node-form MultiSelectField (structurally
-// the component's MultiSelectOption); derived client-side from the package's own
-// skills and the platform MCP catalog.
+// An option for the node MCP selector.
 export type CapabilityOption = { value: string; label: string };
 
 export type ReferenceSourceGroup = {
@@ -45,22 +41,6 @@ type KnownSourceSets = {
 
 const ROOT_AGENT_PATTERN = /^maister-agents\/([^/]+)\.md$/;
 const ROOT_SCHEMA_PATTERN = /^schemas\/([^/]+)\.json$/;
-
-// Skill options for the node-form `skills` multiselect — one per
-// `skills/<slug>/SKILL.md` in the package (mirrors buildAgentGroupFromFiles).
-export function buildSkillOptions(
-  files: readonly PackageFileLike[],
-): CapabilityOption[] {
-  return files
-    .flatMap((file) => {
-      const match = SKILL_PATH_RE.exec(file.path);
-
-      if (!match) return [];
-
-      return [{ value: match[1], label: match[1] }];
-    })
-    .sort(compareCapabilityOptions);
-}
 
 // MCP options for the node-form `mcps` multiselect — the platform MCP catalog
 // ref ids (the only field read is `id`, so the input stays decoupled).

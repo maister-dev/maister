@@ -1,15 +1,14 @@
 import "server-only";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, exists } from "drizzle-orm";
 import pino from "pino";
 
+import { sessionNameForPackageNode } from "@/lib/capabilities/package-delivery";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { nodeAttempts, runSessions } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { nodeAttempts, runSessions, runSessionIncarnations, runs } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -40,7 +39,7 @@ export async function resolveNodeResumeSessionId(
   if (!input.nodeId) return null;
 
   const attemptRows = await db
-    .select({ acpSessionId: nodeAttempts.acpSessionId })
+    .select({ id: nodeAttempts.id, acpSessionId: nodeAttempts.acpSessionId })
     .from(nodeAttempts)
     .where(
       and(
@@ -60,13 +59,48 @@ export async function resolveNodeResumeSessionId(
     return attemptRows[0].acpSessionId as string;
   }
 
+  const [run] = await db
+    .select({ snapshot: runs.resolvedCapabilitySet })
+    .from(runs)
+    .where(eq(runs.id, input.runId))
+    .limit(1);
+  const name = sessionNameForPackageNode(
+    run?.snapshot?.delivery,
+    input.nodeId,
+    input.sessionName,
+  );
+  const isolated =
+    run?.snapshot?.delivery?.bindings?.[input.nodeId]?.mode === "session";
+
+  if (isolated && !attemptRows[0]) return null;
   const sessionRows = await db
     .select({ acpSessionId: runSessions.acpSessionId })
     .from(runSessions)
     .where(
       and(
         eq(runSessions.runId, input.runId),
-        eq(runSessions.sessionName, input.sessionName),
+        eq(runSessions.sessionName, name),
+        isolated
+          ? exists(
+              db
+                .select({ id: runSessionIncarnations.id })
+                .from(runSessionIncarnations)
+                .where(
+                  and(
+                    eq(runSessionIncarnations.runSessionId, runSessions.id),
+                    eq(runSessionIncarnations.runId, input.runId),
+                    eq(
+                      runSessionIncarnations.contextNodeAttemptId,
+                      attemptRows[0].id,
+                    ),
+                    eq(
+                      runSessionIncarnations.acpSessionId,
+                      runSessions.acpSessionId,
+                    ),
+                  ),
+                ),
+            )
+          : undefined,
       ),
     )
     .limit(1);

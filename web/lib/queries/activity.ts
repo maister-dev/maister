@@ -4,10 +4,11 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { visibleFlowNodeQuestion } from "@/lib/queries/hitl";
 import {
   activeSessionCapabilityAgent,
   activeSessionRunnerSnapshot,
@@ -158,7 +159,9 @@ export async function getActivityFeed(
       .from(hitlRequests)
       .innerJoin(runs, eq(runs.id, hitlRequests.runId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-      .where(inArray(hitlRequests.runId, runIds))
+      .where(
+        and(inArray(hitlRequests.runId, runIds), visibleFlowNodeQuestion()),
+      )
       .orderBy(desc(hitlRequests.createdAt))
       .limit(FEED_LIMIT);
 

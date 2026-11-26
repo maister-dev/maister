@@ -30,8 +30,6 @@ import pino from "pino";
 import { answerAssignmentQuestion } from "./assignment-question-response";
 
 import { decodeAssignmentQuestionSubject } from "@/lib/specialist-assignments/question-authority";
-import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
-import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { requireProjectAction } from "@/lib/authz";
 import {
   claimAssignment,
@@ -56,6 +54,7 @@ import {
 } from "@/lib/flows/graph/ledger";
 import { maxOperatorRestarts } from "@/lib/instance-config";
 import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
+import { resolveRunPlacementHost } from "@/lib/execution-host/resolver";
 import {
   createResumeBackoff,
   RESUME_STUCK_FAILURES,
@@ -106,6 +105,7 @@ import {
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import {
   claimAgentIdleResumeInTransaction,
   markResumed,
@@ -315,6 +315,10 @@ async function claimGraphResumeSlot(
   runId: string,
   executionHosts?: ExecutionHosts,
 ): Promise<"ready" | "queued" | "noop"> {
+  const placementHost = await resolveRunPlacementHost(db, runId, {
+    transport: executionHosts?.transport,
+  });
+
   return db.transaction(async (tx: any) => {
     await takeSchedulerLock(tx);
 
@@ -345,7 +349,7 @@ async function claimGraphResumeSlot(
 
     const resumed = await markResumed(runId, {
       db: tx,
-      placement: { transport: executionHosts?.transport },
+      placement: { host: placementHost },
     });
 
     if (!resumed.ok) return "noop";
@@ -4444,6 +4448,8 @@ async function handleInfraRecoveryResponse(args: {
         });
 
       if (terminal.length > 0) {
+        if (terminal[0].runKind === "flow")
+          await closeFlowNodeQuestions(tx, runId, "infra-recovery abandoned");
         await releaseAssignmentForRun(tx, runId, "failed");
         const errorCode =
           (hitlRow.schema as { code?: string } | null)?.code ??
@@ -4665,6 +4671,8 @@ async function terminalizeBudgetRun(args: {
   const row = terminal[0] ?? null;
 
   if (row) {
+    if (row.runKind === "flow")
+      await closeFlowNodeQuestions(args.tx, args.runId, args.assignmentReason);
     await releaseAssignmentForRun(args.tx, args.runId, "failed");
   }
 
@@ -4752,6 +4760,8 @@ async function markBudgetParkedRun(args: {
       );
     }
 
+    if (row.runKind === "flow")
+      await closeFlowNodeQuestions(tx, args.runId, "budget breach parked");
     await releaseAssignmentForRun(tx, args.runId, "abandoned");
 
     if (row.projectId) {
@@ -5660,6 +5670,8 @@ async function handleHookTripResponse(args: {
         });
 
       if (terminal.length > 0) {
+        if (terminal[0].runKind === "flow")
+          await closeFlowNodeQuestions(tx, runId, "hook trip aborted");
         await releaseAssignmentForRun(tx, runId, "failed");
       }
 
@@ -7038,6 +7050,7 @@ export async function respondToHitl(
     db: any;
     recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
     executionHosts?: ExecutionHosts;
+    wakeFlowQueue?: () => void;
     restartPrincipal?: InteractiveTaskLaunchPrincipal;
   },
 ): Promise<NextResponse> {
@@ -7150,6 +7163,45 @@ export async function respondToHitl(
   }
 
   if (hitlRow.kind === "agent_question") {
+    if (hitlRow.flowNodeAttemptId) {
+      if (actor.kind !== "user")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "A Flow node question requires a human responder",
+        );
+      if (bodyKeys.length !== 1 || bodyKeys[0] !== "response")
+        throw new MaisterError("CONFIG", "Submit exactly the response field");
+      const { answerFlowNodeQuestion } = await import("./flow-node-answer");
+
+      try {
+        const result = await answerFlowNodeQuestion(
+          db,
+          runId,
+          hitlRequestId,
+          actor.userId,
+          body.response,
+          recordSuccessAudit,
+        );
+
+        if (result.status === 202 && runRow.status === "NeedsInputIdle")
+          deps.wakeFlowQueue?.();
+
+        return NextResponse.json(
+          { ...result.receipt, ok: true, runStatus: runRow.status },
+          { status: result.status },
+        );
+      } catch (error) {
+        if (
+          isMaisterError(error) &&
+          error.details?.reason === "node_question_closed"
+        )
+          return NextResponse.json(
+            { code: error.code, message: error.message },
+            { status: 410 },
+          );
+        throw error;
+      }
+    }
     if (typeof hitlRow.specialistAssignmentId === "string") {
       if (actor.kind !== "user")
         throw new MaisterError(

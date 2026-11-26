@@ -94,7 +94,6 @@ export function FlowEditorTabs({
   schemaFiles,
   promptCatalog,
   promptAdapter,
-  skillOptions,
   mcpOptions,
   saveAction,
   publishAction,
@@ -127,7 +126,6 @@ export function FlowEditorTabs({
   schemaFiles?: { path: string; content: string }[];
   promptCatalog?: ProjectCapabilityCatalogEntry[];
   promptAdapter?: AdapterId;
-  skillOptions?: CapabilityOption[];
   mcpOptions?: CapabilityOption[];
   saveAction: ServerFormAction;
   publishAction: ServerFormAction;
@@ -384,7 +382,6 @@ export function FlowEditorTabs({
               promptAdapter={promptAdapter}
               promptCatalog={promptCatalog}
               schemaFiles={schemaFiles}
-              skillOptions={skillOptions}
               topology={seed.topology}
               onChange={handleCanvasChange}
               onSelectNode={onSelectNode}

@@ -1,3 +1,5 @@
+import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
+
 export const HITL_RESPOND_REASONS = [
   "permission_resume_in_flight",
   "assignment_fenced",
@@ -73,4 +75,13 @@ export function canReplayHitlAnswer(kind: string, schema: unknown): boolean {
     value.kind !== "consensus_resolution"
   );
 }
-import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
+
+/** Only the public ordinary-node question projection carries a requesting agent. */
+export function flowQuestionAgent(schema: unknown): string | null {
+  if (!schema || typeof schema !== "object" || !("requestingAgent" in schema))
+    return null;
+
+  return typeof schema.requestingAgent === "string"
+    ? schema.requestingAgent
+    : null;
+}

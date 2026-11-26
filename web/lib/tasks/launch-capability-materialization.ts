@@ -226,6 +226,7 @@ export async function withTaskLaunchCapabilityBundles(
       }
 
       captures.push({
+        id: source.accepted.id,
         installedPath: await assertManagedCapturePath(capturedPath),
       });
     }

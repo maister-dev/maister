@@ -39,7 +39,7 @@ describe("M11c settings fixtures", () => {
     expect(isMaisterError(caught)).toBe(true);
     expect((caught as { code: string }).code).toBe("CONFIG");
     expect((caught as Error).message).toContain("implement");
-    expect((caught as Error).message).toContain("skills");
+    expect((caught as Error).message).toContain("restrictions");
   });
 
   it("never refuses the settings-less greet fixture (AC-6)", async () => {

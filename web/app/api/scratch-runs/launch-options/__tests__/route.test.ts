@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listBranches: vi.fn(),
   loadSelectableCapabilities: vi.fn(),
+  readPackageMcpScopes: vi.fn(),
   requireActiveSession: vi.fn(),
 }));
 
@@ -77,6 +78,12 @@ vi.mock("@/lib/worktree", () => ({ listBranches: mocks.listBranches }));
 vi.mock("@/lib/capabilities/resolver", () => ({
   loadSelectableCapabilities: mocks.loadSelectableCapabilities,
 }));
+vi.mock("@/lib/packages/mcp-scope", () => ({
+  readPackageMcpScopes: mocks.readPackageMcpScopes,
+}));
+vi.mock("@/lib/mcp/binding-service", () => ({
+  loadProjectMcpBindings: vi.fn(async () => []),
+}));
 
 let GET: (req: NextRequest) => Promise<Response>;
 
@@ -133,6 +140,7 @@ beforeEach(async () => {
     role: "member",
   });
   mocks.listBranches.mockResolvedValue(["main", "release"]);
+  mocks.readPackageMcpScopes.mockResolvedValue([]);
   mocks.loadSelectableCapabilities.mockResolvedValue([
     {
       id: "cap-row-1",
@@ -278,5 +286,44 @@ describe("GET /api/scratch-runs/launch-options", () => {
     expect(mocks.listBranches).toHaveBeenCalledWith("/repos/alpha", {
       includeRemotes: true,
     });
+  });
+
+  it("keeps package-private MCPs selectable but defaults only project-shared MCPs", async () => {
+    mocks.loadSelectableCapabilities.mockResolvedValueOnce([
+      {
+        id: "private-row",
+        projectId: projectA.id,
+        capabilityRefId: "design",
+        kind: "mcp",
+        label: "Design",
+        source: "flow-package",
+        selectedByDefault: true,
+        agents: ["codex", "claude"],
+      },
+      {
+        id: "shared-row",
+        projectId: projectA.id,
+        capabilityRefId: "building",
+        kind: "mcp",
+        label: "Building",
+        source: "flow-package",
+        selectedByDefault: true,
+        agents: ["codex", "claude"],
+      },
+    ]);
+    mocks.readPackageMcpScopes.mockResolvedValueOnce([
+      { refId: "design", effective: "package" },
+      { refId: "building", effective: "project" },
+    ]);
+
+    const response = await GET(request(projectA.id));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.capabilities.defaultSelectedMcpIds).toEqual(["building"]);
+    expect(body.capabilities.mcps).toMatchObject([
+      { id: "design", selectedByDefault: false },
+      { id: "building", selectedByDefault: true },
+    ]);
   });
 });

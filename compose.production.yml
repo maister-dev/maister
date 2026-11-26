@@ -1,6 +1,5 @@
-# A/B execution event/file quotas and projection worker settings are host-process
-# settings in supervisor/.env and the web EnvironmentFile. This Postgres-only
-# topology has no application environment blocks or compose.override.yml.
+# The default topology runs web and supervisor on the host. The optional
+# remote-supervisor profile uses supervisor/.env and a private state volume.
 x-logging: &default-logging
   driver: json-file
   options:
@@ -13,7 +12,7 @@ x-security: &default-security
   cap_drop:
     - ALL
 
-# Production hardening overlay for the only containerized service, Postgres.
+# Production hardening for the default PostgreSQL service.
 # `web` and `supervisor` run on the host (see ADR-023); the base file's
 # 127.0.0.1:5432 publish lets them reach Postgres over loopback.
 # Assistant-activity thresholds stay in the host env / systemd unit alongside
@@ -22,6 +21,27 @@ x-security: &default-security
 # Librarian retention is configured in the host-run web EnvironmentFile, not
 # this Postgres-only overlay (see deploy/maister.env.example).
 services:
+  mcp-supervisor:
+    profiles: ["remote-supervisor"]
+    build:
+      context: .
+      target: production
+    working_dir: /app/supervisor
+    command: ["node", "--import", "tsx", "src/main.ts"]
+    user: "1001:1001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:nosuid,size=256m"]
+    env_file: supervisor/.env
+    environment:
+      HOME: /app/.maister/home
+      PATH: /app/supervisor/node_modules/.bin:/usr/local/pnpm:/usr/local/bin:/usr/bin:/bin
+      MAISTER_RUNTIME_ROOT: /app/.maister
+      MAISTER_EXECUTION_HOST_STATE_DIR: /app/.maister/execution-host
+      MAISTER_MCP_CACHE_DIR: /app/.maister/mcp-cache
+    ports: ["127.0.0.1:7777:7777"]
+    volumes: ["supervisor_state:/app/.maister"]
   postgres:
     # ADR-122 (Project Brain): pgvector-enabled PG16, data-compatible with
     # `postgres:16-alpine` (same PG16 data dir). Matches the base compose image.
@@ -44,3 +64,6 @@ networks:
   default:
     driver: bridge
     internal: false
+
+volumes:
+  supervisor_state:

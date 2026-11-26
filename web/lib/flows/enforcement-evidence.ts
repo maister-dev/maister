@@ -14,7 +14,6 @@ import {
 } from "./enforcement";
 
 import { MaisterError } from "@/lib/errors";
-import { executionHosts } from "@/lib/execution-host";
 
 // ADR-130 (DES-6): the async launch evidence gate for strict tools/mcps. Mirrors
 // `assertReadOnlySessionEvidence`. It admits a strict-enforced launch only when the
@@ -31,7 +30,7 @@ export async function assertEnforcementEvidence(args: {
   // dropped caller a compile error, not a runtime hole.
   permissionPolicy: string;
   table?: EnforceabilityTable;
-  checkDiagnostics?: () => Promise<SupervisorDiagnosticsStatus>;
+  checkDiagnostics: () => Promise<SupervisorDiagnosticsStatus>;
 }): Promise<void> {
   const table = args.table ?? ENFORCEABILITY_BY_AGENT;
   const strictEnforced = evaluateNodeEnforcement(
@@ -52,7 +51,7 @@ export async function assertEnforcementEvidence(args: {
 export async function assertCapabilityGuardEvidence(args: {
   agent: CapabilityAgent;
   permissionPolicy: string;
-  checkDiagnostics?: () => Promise<SupervisorDiagnosticsStatus>;
+  checkDiagnostics: () => Promise<SupervisorDiagnosticsStatus>;
 }): Promise<void> {
   if (args.permissionPolicy === "dangerously_skip_permissions") {
     throw new MaisterError(
@@ -61,9 +60,7 @@ export async function assertCapabilityGuardEvidence(args: {
     );
   }
 
-  const check =
-    args.checkDiagnostics ?? (() => executionHosts.local().diagnostics());
-  const diagnostics = await check();
+  const diagnostics = await args.checkDiagnostics();
 
   if (diagnostics.kind !== "ready") {
     throw new MaisterError(

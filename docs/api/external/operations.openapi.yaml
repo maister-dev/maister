@@ -152,6 +152,232 @@ tags:
       proposal and confirmation cards, explicit personal memory, and search
       over the owner's own conversation history.
 paths:
+  /api/v1/ext/librarian/human-asks:
+    post:
+      operationId: createPrivateTurnQuestion
+      summary: Record a private question from the current owner-message turn
+      description: The librarian:cards capability and bearer identify the conversation, segment and current turn. The question becomes answerable when this prompt completes and the Run parks. A reused request key must have identical content.
+      security:
+        - librarianTurnToken: []
+      parameters: []
+      responses:
+        "200":
+          description: Replayed question
+          content:
+            application/json:
+              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "open"}
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+        "202":
+          description: Checkpoint pending
+          content:
+            application/json:
+              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "checkpoint_pending"}
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum: [checkpoint_pending]
+        "401":
+          description: Missing, invalid, expired or revoked bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "403":
+          description: The token lacks the required scope or does not identify this current execution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "409":
+          description: Revision, owner or replay conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "413":
+          description: The request exceeds 64 KiB of UTF-8 JSON.
+        "422":
+          description: Invalid UTF-8 JSON, unexpected fields or an invalid form
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: {"requestKey": "question-1", "question": "Which journey should the prototype cover?", "schema": {"schemaVersion": 1, "fields": [{"name": "journey", "type": "string", "label": "Journey", "required": true}]}}
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - requestKey
+                - question
+                - schema
+              properties:
+                requestKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                question:
+                  type: string
+                  minLength: 1
+                  maxLength: 10000
+                schema:
+                  $ref: "#/components/schemas/FormSchemaV1"
+  /api/v1/ext/flow-node/human-asks:
+    post:
+      operationId: createFlowAttemptQuestion
+      summary: Request human input for the current appointed Flow node
+      description: >-
+        Requires hitl:request on the current Flow attempt credential. The server derives the project, Run, attempt, prompt ordinal, assigned host and epoch from the current credential
+        and accepted prompt. If the exact prompt is already delivering or its session activation is still being recorded, the
+        server waits up to eight seconds for acceptance and the live session while rechecking ownership. If they are still
+        pending, retry with the same request key. The 64 KiB JSON body carries a stable request key, a question and its form. Exact retries while
+        checkpointing reuse the pending receipt. A definitive checkpoint refusal can be replayed as `failed` while the source
+        credential is still current. A proved checkpoint revokes the credential and opens the question in the project Inbox
+        and Run detail. Later calls using that credential return 401.
+      security:
+        - projectToken: []
+      parameters: []
+      responses:
+        "200":
+          description: Replayed question while its source credential remains current
+          content:
+            application/json:
+              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "failed"}
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+                      - failed
+        "202":
+          description: Checkpoint pending
+          content:
+            application/json:
+              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "checkpoint_pending"}
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum: [checkpoint_pending]
+        "401":
+          description: Missing, invalid, expired or revoked bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "403":
+          description: The token lacks the required scope or does not identify this current execution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "409":
+          description: Revision, owner or replay conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "413":
+          description: Request exceeds 64 KiB
+        "422":
+          description: Invalid UTF-8 JSON, unexpected fields or an invalid form
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "503":
+          description: The exact current prompt's acceptance or session activation remains pending
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: {"requestKey": "question-1", "question": "Which journey should the prototype cover?", "schema": {"schemaVersion": 1, "fields": [{"name": "journey", "type": "string", "label": "Journey", "required": true}]}}
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - requestKey
+                - question
+                - schema
+              properties:
+                requestKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                question:
+                  type: string
+                  minLength: 1
+                  maxLength: 10000
+                schema:
+                  $ref: "#/components/schemas/FormSchemaV1"
   /api/v1/ext/runs/{runId}/waits/{waitId}/signal:
     post:
       operationId: deliverFlowWaitSignal

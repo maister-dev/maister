@@ -1,17 +1,20 @@
-import type { Db } from "@/lib/execution-host/db";
+import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { executionAssignments, runs } from "@/lib/db/schema";
-import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
-import { seedAgentRun } from "@/test-support/agent-run-seed";
+import { parseAgentDefinition } from "@/lib/agents/definition";
+import { buildOperationalContract } from "@/lib/agents/launch-contract";
+import { runs } from "@/lib/db/schema";
+import {
+  seedLocalHost,
+  seedProjectRow,
+} from "@/test-support/execution-host-seed";
 import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import {
   startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 const legacyHead = "0355_installation_credential_revocation";
 const definition =
@@ -30,28 +33,38 @@ beforeAll(async () => {
   await database.pool.query(
     "SET maister.agent_preparation_writer='v1'; SET maister.task_launch_writer='v3'",
   );
-  const db = database.db as unknown as Db;
-  await fakeExecutionHosts(db);
-  const runtimeRoot = await mkdtempReal("operational-continuation-upgrade-");
-  const input = {
-    runtimeRoot,
-    definition,
-    workspace: "repo_read" as const,
-    resultContract: null,
-    operational: true,
-  };
-  runId = await seedAgentRun(db, input);
-  newRunId = await seedAgentRun(db, input);
-  const [assignment] = await db
-    .select()
-    .from(executionAssignments)
-    .where(
-      and(
-        eq(executionAssignments.runId, runId),
-        eq(executionAssignments.state, "active"),
-      ),
-    );
-  assignmentId = assignment.id;
+  const { id: projectId } = await seedProjectRow(database.db);
+  const { id: hostId } = await seedLocalHost(database.db);
+  runId = randomUUID();
+  newRunId = randomUUID();
+  assignmentId = randomUUID();
+  const contract = buildOperationalContract({
+    parsed: parseAgentDefinition("fixture:operator", definition),
+    sourcePath: "/fixture/maister-agents/operator.md",
+    installedPath: "/fixture",
+    packageName: "fixture",
+    packageInstallId: randomUUID(),
+    versionLabel: "v1.0.0",
+    resolvedRevision: "rev-1",
+    manifest: null,
+    execTrust: "trusted",
+  });
+
+  await database.pool.query(
+    `INSERT INTO runs(id,project_id,run_kind,agent_kind,agent_workspace,status,flow_version,flow_revision,result_contract)
+     SELECT id,$2,'agent','operational','repo_read','Running','agent','manual',$3::jsonb
+     FROM unnest($1::text[]) AS ids(id)`,
+    [[runId, newRunId], projectId, JSON.stringify(contract)],
+  );
+  await database.pool.query(
+    `INSERT INTO execution_assignments(id,run_id,execution_host_id,epoch,state,placement_reason)
+     VALUES($1,$2,$3,1,'active','launch')`,
+    [assignmentId, runId, hostId],
+  );
+  await database.pool.query(
+    "UPDATE runs SET execution_assignment_id=$1 WHERE id=$2",
+    [assignmentId, runId],
+  );
   legacy = {
     version: 1,
     generation: 0,

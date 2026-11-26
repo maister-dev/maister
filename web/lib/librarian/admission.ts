@@ -76,7 +76,11 @@ export type LibrarianAdmissionDeps = {
   now?: () => Date;
 };
 
-const ACTIVE_TURN_STATUSES = ["admitted", "running"] as const;
+const ACTIVE_TURN_STATUSES = [
+  "admitted",
+  "running",
+  "awaiting_answer",
+] as const;
 
 function utcDate(now: Date): string {
   return now.toISOString().slice(0, 10);
@@ -423,6 +427,21 @@ export async function submitOwnerMessage(
     if (locked.conversation.resetState !== "none")
       throw new MaisterError("CONFLICT", "The conversation is being reset", {
         details: { reason: "reset_in_progress" },
+      });
+    const [awaitingAnswer] = await tx
+      .select({ id: librarianTurns.id })
+      .from(librarianTurns)
+      .where(
+        and(
+          eq(librarianTurns.conversationId, locked.conversation.id),
+          eq(librarianTurns.status, "awaiting_answer"),
+        ),
+      )
+      .limit(1);
+
+    if (awaitingAnswer)
+      throw new MaisterError("CONFLICT", "Answer the open question first", {
+        details: { reason: "question_awaiting_answer" },
       });
     await consumeDailyTurn(tx, locked.conversation, now);
     const { message } = await appendOwnerMessage(tx, locked, {

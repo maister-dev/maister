@@ -25,6 +25,7 @@ import { emitTaskLaunchChanged } from "./launch-events";
 import { takeSchedulerLock } from "@/lib/scheduler";
 import { workspacePreparationReadySql } from "@/lib/execution-host/workspace-preparation";
 import { retryDigest } from "@/lib/agents/retry-guards";
+import { preparePackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 import { agentPreparationResourceId } from "@/lib/agents/preparation-resource";
 import {
   runs,
@@ -80,15 +81,18 @@ export async function prepareTaskLaunchFirstDispatch(
   if (run.taskAdmissionCheckedAt)
     throw launchRefusal("launch_input_snapshot_incomplete", "PRECONDITION");
   const agent = intent.settingsSnapshot.kind === "agent";
+  const packageDelivery = preparePackageDeliveryCapture();
   const validateCurrent = agent
     ? assertFrozenTaskAgentCurrent
-    : assertFrozenTaskLaunchCurrent;
+    : (tx: Db, current: typeof taskLaunchIntents.$inferSelect) =>
+        assertFrozenTaskLaunchCurrent(tx, current, packageDelivery.recheck);
 
-  await validateCurrent(db, intent);
+  if (agent) await assertFrozenTaskAgentCurrent(db, intent);
   // Agent Running admits infrastructure preparation, whose physical owner
   // verifies repository integrity at commitTaskAgentLaunchFirstDispatch.
   // A scheduler-side probe here would race that owner's materialization.
   if (!agent) {
+    await assertFrozenTaskLaunchCurrent(db, intent, packageDelivery.prepare);
     await assertFrozenTaskLaunchRepository(db, intent);
     await assertTaskLaunchBoundWorkspace(db, intent);
   }

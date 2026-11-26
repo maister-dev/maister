@@ -3,9 +3,13 @@ import "server-only";
 import type { ParsedAgentDefinition } from "@/lib/agents/definition";
 import type { MaisterPackageManifest } from "@/lib/config.schema";
 
-import { readFile, readdir } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { parseDocument } from "yaml";
+import { z } from "zod";
+
+import { assertPrivateBoundSessionNames } from "@/lib/capabilities/package-delivery";
 import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
 import {
   TASK_QUALIFICATION_ENGINE_MIN,
@@ -106,15 +110,28 @@ export async function assertPackageOperationalContracts(
         `package ${manifest.name}: ${range.reason}`,
       );
   }
+  const sessionAgents = new Set<string>();
+
   for (const source of await readPackageAgentSources(root)) {
     const split = splitFrontmatter(source.content);
 
+    if (manifest.delivery && (!split.ok || !split.frontmatter))
+      throw new MaisterError(
+        "CONFIG",
+        `Agent ${source.stem} requires valid frontmatter`,
+      );
     if (
       !split.ok ||
       !split.frontmatter ||
       (split.frontmatter.kind === undefined &&
         split.frontmatter.completion === undefined &&
-        split.frontmatter.specialist === undefined)
+        split.frontmatter.specialist === undefined &&
+        !manifest.delivery &&
+        !(
+          typeof split.frontmatter.capability_profile === "object" &&
+          split.frontmatter.capability_profile !== null &&
+          "skills" in split.frontmatter.capability_profile
+        ))
     )
       continue;
     const definition = parseAgentDefinition(
@@ -122,6 +139,96 @@ export async function assertPackageOperationalContracts(
       source.content,
     );
 
+    if (definition.mode === "session") sessionAgents.add(definition.id);
     assertOperationalAgentCompatibility(definition, manifest.compat);
+    if (manifest.delivery) {
+      const declaredMcps = new Set(manifest.mcps.map((mcp) => mcp.id));
+
+      for (const ref of definition.capabilityProfile?.mcps ?? []) {
+        if (!declaredMcps.has(ref))
+          throw new MaisterError(
+            "CONFIG",
+            `Agent ${definition.id} references undeclared package MCP ${ref}`,
+            {
+              details: {
+                reason: "package_agent_reference",
+                agentId: definition.id,
+                file: `maister-agents/${source.stem}.md`,
+                ref,
+              },
+            },
+          );
+      }
+    }
+    for (const skill of definition.capabilityProfile?.skills ?? []) {
+      const matches = await Promise.all(
+        manifest.capabilities.map(async (bundle) => {
+          const entry = join(root, bundle.path, "skills", skill, "SKILL.md");
+
+          try {
+            const directory = await lstat(
+              join(root, bundle.path, "skills", skill),
+            );
+
+            return directory.isDirectory() && (await lstat(entry)).isFile();
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT")
+              return false;
+            throw error;
+          }
+        }),
+      );
+
+      if (matches.filter(Boolean).length !== 1)
+        throw new MaisterError(
+          "CONFIG",
+          `Agent ${definition.id} must select one unambiguous packaged skill: ${skill}`,
+          {
+            details: {
+              reason: "package_agent_reference",
+              agentId: definition.id,
+              file: `maister-agents/${source.stem}.md`,
+              ref: skill,
+            },
+          },
+        );
+    }
   }
+  if (manifest.delivery && sessionAgents.size)
+    for (const flow of manifest.flows) {
+      const file = join(root, flow.path, "flow.yaml");
+      const doc = parseDocument(await readFile(file, "utf8"));
+
+      if (doc.errors.length)
+        throw new MaisterError(
+          "CONFIG",
+          `Invalid Flow ${flow.id} for agent session validation`,
+        );
+      const parsed = z
+        .object({
+          nodes: z.array(
+            z.object({
+              id: z.string(),
+              session: z.string().optional(),
+              settings: z.unknown().optional(),
+            }),
+          ),
+        })
+        .safeParse(doc.toJS());
+
+      if (!parsed.success) continue;
+      const bound = new Set(
+        parsed.data.nodes
+          .filter((n) => {
+            const settings = z
+              .object({ agent: z.string() })
+              .safeParse(n.settings);
+
+            return settings.success && sessionAgents.has(settings.data.agent);
+          })
+          .map((n) => n.id),
+      );
+
+      assertPrivateBoundSessionNames(parsed.data.nodes, bound);
+    }
 }

@@ -339,6 +339,83 @@ test("HITL respond reason enums agree with the TypeScript contract", () => {
   }
 });
 
+test("catalog delivery and scoped ask examples satisfy their published operation and status", () => {
+  for (const [file, operations] of [
+    [
+      "../docs/api/web.openapi.yaml",
+      [
+        "searchDraftCatalog",
+        "previewDraftCatalog",
+        "applyDraftCatalog",
+        "readDraftCatalogOperation",
+        "setAttachmentMcpScope",
+        "answerLibrarianQuestion",
+      ],
+    ],
+    [
+      "../docs/api/external/operations.openapi.yaml",
+      ["createPrivateTurnQuestion", "createFlowAttemptQuestion"],
+    ],
+    ["../docs/api/supervisor.openapi.yaml", ["prepareAssignedMcp"]],
+  ]) {
+    const document = readContract(file);
+    const ajv = new Ajv({
+      strict: false,
+      allErrors: true,
+      validateFormats: false,
+    });
+    const handlers = Object.values(document.paths).flatMap((path) =>
+      Object.values(path),
+    );
+
+    for (const id of operations) {
+      const handler = handlers.find((entry) => entry.operationId === id);
+      assert.ok(handler, id);
+      const bodies = Object.entries(handler.responses)
+        .filter(([status]) => status.startsWith("2"))
+        .map(([, reply]) => reply.content["application/json"]);
+      if (handler.requestBody)
+        bodies.push(handler.requestBody.content["application/json"]);
+      for (const body of bodies) {
+        assert.ok(
+          Object.hasOwn(body, "example"),
+          `${id}: missing JSON example`,
+        );
+        const validate = ajv.compile({
+          ...body.schema,
+          components: document.components,
+        });
+        assertValidExample(validate, body.example);
+      }
+    }
+  }
+});
+
+test("ordinary Flow answers require their identity at acceptance and preserve legacy permission receipts", () => {
+  const web = readContract("../docs/api/web.openapi.yaml");
+  const route =
+    web.paths["/api/runs/{runId}/hitl/{hitlRequestId}/respond"].post;
+  const ajv = new Ajv({ strict: false, validateFormats: false });
+  const accepted = ajv.compile(
+    route.responses["202"].content["application/json"].schema,
+  );
+  const delivered = ajv.compile(
+    route.responses["200"].content["application/json"].schema,
+  );
+  const receipt = {
+    ok: true,
+    questionId: "question-1",
+    runStatus: "NeedsInputIdle",
+    state: "accepted",
+  };
+
+  assertValidExample(accepted, receipt);
+  assert.equal(accepted({ ok: true, state: "accepted" }), false);
+  assert.equal(delivered(receipt), false);
+  assertValidExample(delivered, { ...receipt, state: "delivered" });
+  assertValidExample(delivered, { ok: true, state: "delivered" });
+});
+
 test("HITL refusal examples satisfy real JSON Schema validation", () => {
   for (const [file, route, namespace, prefix] of [
     [

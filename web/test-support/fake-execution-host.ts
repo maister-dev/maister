@@ -2087,6 +2087,11 @@ export function createFakeExecutionHost(
           .finally(() => activePromptEnvelopes.delete(sessionId));
       }, 0);
 
+      if (lostResponses.delete("startPrompt"))
+        throw unknownOutcomeError(
+          "fake: prompt acknowledgement lost after host acceptance",
+        );
+
       return { commandId: envelope.command.id, state: "accepted" as const };
     },
     deliverInput(sessionId, envelope, opts) {
@@ -2558,8 +2563,8 @@ export async function fakeExecutionHosts(
     });
   }
 
-  // Every implicit resolution in this process (a claim transition minting
-  // through `localHost({db: tx})`, a route's `createExecutionHosts({db})`)
+  // Every implicit resolution in this process (a pre-claim host resolution,
+  // a route's `createExecutionHosts({db})`)
   // now reaches the fake instead of the real wire — and the resolver memo is
   // warm, so a suite's one-shot db fault never lands on a host registration.
   setDefaultTransportForTests(fake.transport);
@@ -2644,11 +2649,8 @@ export async function fakeExecutionHosts(
 
   fake.setCanonicalEventSink(
     async ({ envelope, sessionId, event, eventId }) => {
-      if (canonicalStreamState.bootId !== fake.identity.bootId) {
-        canonicalStreamState.bootId = fake.identity.bootId;
-        canonicalStreamState.streamId = randomUUID();
-        canonicalStreamState.nextSequence = 0n;
-      }
+      // A restarted supervisor retains its SQLite outbox and the stream's next sequence.
+      canonicalStreamState.bootId = fake.identity.bootId;
       const eventType = event.type;
       let payloadSchema = payloadSchemas.get(eventType);
 
@@ -3184,6 +3186,11 @@ export function memoryBoundClient(args: {
     },
     cancelPrompt: (sessionId) =>
       fake.transport.cancelPrompt(sessionId, envelope("session.cancel", {})),
+    prepareQuestionCheckpoint: async () => {
+      throw new Error(
+        "Durable question checkpoints require the DB-backed fake execution host",
+      );
+    },
     checkpoint: (sessionId) =>
       fake.transport.checkpointSession(
         sessionId,
@@ -3274,6 +3281,7 @@ export function memoryExecutionHosts(fake: FakeExecutionHost): ExecutionHosts {
 
       return { client, admin };
     },
+    inventoryForRun: (runId) => admin.listSessionsForRun(runId),
     local: () => admin,
   };
 }

@@ -369,3 +369,10 @@ new epoch at admission. The only added released-epoch Git read is the
 head observation against the exact wait workspace binding.
 
 See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).
+
+## Package and agent delivery
+
+Migration `0404` adds `mcp.prepare` to `execution_commands.kind` alongside
+the existing Stage C commands. A current assignment and a verified host
+receipt identify each preparation effect. Installation bytes remain on the
+execution host. See the [migration sequence](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions).

@@ -97,10 +97,8 @@ describe("probe-service — D4 trust gate + no-secret cache", () => {
 
     expect(request.transport).toBe("http");
     // ADR-179: references travel UNRESOLVED and a literal travels verbatim.
-    expect(request.env).toEqual({
-      GH_TOKEN: "env:GH_TOKEN",
-      FASTMCP_LOG_LEVEL: "ERROR",
-    });
+    expect(request.env).toBeUndefined();
+    expect(request.command).toBeUndefined();
     expect(request.headers).toEqual({ "X-Tenant": "acme" });
     // The bearer ref is forwarded as a NAME; the host composes the header.
     expect(request.bearerTokenEnv).toBe("env:MCP_TOKEN");
@@ -119,11 +117,20 @@ describe("probe-service — D4 trust gate + no-secret cache", () => {
       { targetKind: "platform", targetId: serverId },
       gateDb(),
       // Stub the supervisor call — no real spawn; return a value-free result.
-      async () => ({
-        ok: true,
-        latencyMs: 12,
-        serverInfo: { name: "srv", version: "1" },
-      }),
+      async (request) => {
+        expect(request).toMatchObject({
+          command: "npx",
+          env: { GH_TOKEN: "env:GH_TOKEN", FASTMCP_LOG_LEVEL: "ERROR" },
+        });
+        expect(request.headers).toBeUndefined();
+        expect(request.url).toBeUndefined();
+
+        return {
+          ok: true,
+          latencyMs: 12,
+          serverInfo: { name: "srv", version: "1" },
+        };
+      },
     );
 
     expect(result.ok).toBe(true);

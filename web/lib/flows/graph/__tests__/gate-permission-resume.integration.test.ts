@@ -218,114 +218,14 @@ describe("Owned Flow checkpointed gate permission resume", () => {
         window === "busy content" || window === "sustained busy content"
           ? await startSupervisorFaultProxy(supervisor.url)
           : undefined;
-      const heldRead = proxy?.arm(
-        {
-          caseId: "gate-permission-busy-content",
-          method: "GET",
-          path: /^\/runtime-objects\/[^/]+\/content$/,
-        },
-        "hold-requests",
-      );
-      const driver = startProcess(
-        "flow-prompt-owner-process.ts",
-        seeded.runId,
-        proxy?.url,
-      );
+      const driver = startProcess("flow-prompt-owner-process.ts", seeded.runId);
+      let resumedDriver: ReturnType<typeof startProcess> | undefined;
       const occupiedReads: IncomingMessage[] = [];
       let claimProcess: ReturnType<typeof startProcess> | undefined;
       let continuation:
         ReturnType<typeof startFlowContinuationWorker> | undefined;
 
       try {
-        if (heldRead && proxy) {
-          await heldRead.awaitReached();
-          const client = await hosts.forRun(seeded.runId);
-          const bytes = new Uint8Array(8 * 1024 * 1024).fill(120);
-          const objectId = randomUUID();
-          const sha256 = createHash("sha256").update(bytes).digest("hex");
-
-          await client.reserveRuntimeObject({
-            objectId,
-            kind: "generated_artifact",
-            logicalName: "read-cap-control.bin",
-            mimeType: "application/octet-stream",
-            sizeBytes: bytes.length,
-            sha256,
-            generation: 1,
-            retentionClass: "run",
-          });
-          await client.uploadRuntimeObject({
-            objectId,
-            generation: 1,
-            bytes,
-            sha256,
-          });
-          // Unread responses hold the real host's two verified response spools.
-          for (let index = 0; index < 2; index += 1) {
-            const response = await new Promise<IncomingMessage>(
-              (resolve, reject) => {
-                get(
-                  `${supervisor.url}/runtime-objects/${objectId}/content`,
-                  resolve,
-                ).once("error", reject);
-              },
-            );
-
-            occupiedReads.push(response);
-            expect(response.statusCode).toBe(200);
-          }
-          const busyResponse = proxy.arm(
-            {
-              caseId: "gate-permission-real-busy-response",
-              method: "GET",
-              path: /^\/runtime-objects\/[^/]+\/content$/,
-            },
-            "hold-responses",
-          );
-
-          heldRead.release();
-          expect((await busyResponse.awaitReached()).status).toBe(409);
-          await expect
-            .poll(() => busyResponse.observations.length)
-            .toBeGreaterThanOrEqual(heldRead.observations.length);
-          expect(
-            busyResponse.observations.every(
-              (response) => response.status === 409,
-            ),
-          ).toBe(true);
-          busyResponse.release();
-          if (window === "sustained busy content") {
-            await expect
-              .poll(() => driver.child.exitCode, { timeout: 10_000 })
-              .toBe(0);
-            const [yielded] = await db
-              .select()
-              .from(runs)
-              .where(eq(runs.id, seeded.runId));
-            const prompts = await db
-              .select()
-              .from(executionCommands)
-              .where(
-                and(
-                  eq(executionCommands.runId, seeded.runId),
-                  eq(executionCommands.kind, "session.prompt"),
-                ),
-              );
-
-            expect(yielded.status).toBe("Running");
-            expect(prompts).toHaveLength(1);
-            expect(prompts[0].state).toBe("accepted");
-            expect(driver.output()).toContain("command_in_progress");
-          }
-          for (const response of occupiedReads) response.destroy();
-          occupiedReads.length = 0;
-          if (window === "sustained busy content")
-            continuation = startFlowContinuationWorker({
-              db,
-              runtimeRoot: supervisor.runtimeRoot,
-              executionHosts: hosts,
-            });
-        }
         if (parentKind === "ai_coding") {
           await expect
             .poll(
@@ -380,10 +280,6 @@ describe("Owned Flow checkpointed gate permission resume", () => {
             { timeout: 45_000 },
           )
           .toMatchObject({ respondedAt: null });
-        if (window === "sustained busy content") {
-          await continuation?.stop();
-          continuation = undefined;
-        }
         const permissions = await db
           .select()
           .from(hitlRequests)
@@ -657,7 +553,120 @@ describe("Owned Flow checkpointed gate permission resume", () => {
               .where(eq(nodeAttempts.id, parent.id));
           }
         }
-        if (window !== "response" && window !== "permission cap")
+        if (proxy) {
+          // The initial prompt waits for permission before it can seal output.
+          // Occupy the spools before the resumed owner reads its finished turn.
+          const client = await hosts.forRun(seeded.runId);
+          const bytes = new Uint8Array(8 * 1024 * 1024).fill(120);
+          const objectId = randomUUID();
+          const sha256 = createHash("sha256").update(bytes).digest("hex");
+
+          await client.reserveRuntimeObject({
+            objectId,
+            kind: "generated_artifact",
+            logicalName: "read-cap-control.bin",
+            mimeType: "application/octet-stream",
+            sizeBytes: bytes.length,
+            sha256,
+            generation: 1,
+            retentionClass: "run",
+          });
+          await client.uploadRuntimeObject({
+            objectId,
+            generation: 1,
+            bytes,
+            sha256,
+          });
+          // Unread responses hold the real host's two verified response spools.
+          for (let index = 0; index < 2; index += 1) {
+            const response = await new Promise<IncomingMessage>(
+              (resolve, reject) => {
+                get(
+                  `${supervisor.url}/runtime-objects/${objectId}/content`,
+                  resolve,
+                ).once("error", reject);
+              },
+            );
+
+            occupiedReads.push(response);
+            expect(response.statusCode).toBe(200);
+          }
+          const busyResponse = proxy.arm(
+            {
+              caseId: "gate-permission-real-busy-response",
+              method: "GET",
+              path: /^\/runtime-objects\/[^/]+\/content$/,
+            },
+            "hold-responses",
+          );
+
+          resumedDriver = startProcess(
+            "flow-prompt-owner-process.ts",
+            seeded.runId,
+            proxy.url,
+          );
+          expect((await busyResponse.awaitReached(30_000)).status).toBe(409);
+          const retry =
+            window === "sustained busy content"
+              ? proxy.arm(
+                  {
+                    caseId: "gate-permission-real-busy-retry",
+                    method: "GET",
+                    path: /^\/runtime-objects\/[^/]+\/content$/,
+                  },
+                  "hold-responses",
+                )
+              : undefined;
+
+          busyResponse.release();
+          if (retry) {
+            try {
+              expect((await retry.awaitReached(30_000)).status).toBe(409);
+              await expect
+                .poll(
+                  async () => {
+                    const [waiting] = await db
+                      .select({ status: runs.status })
+                      .from(runs)
+                      .where(eq(runs.id, seeded.runId));
+                    const prompts = await db
+                      .select()
+                      .from(executionCommands)
+                      .where(
+                        and(
+                          eq(executionCommands.runId, seeded.runId),
+                          eq(executionCommands.kind, "session.prompt"),
+                        ),
+                      );
+                    const successor = prompts.find(
+                      (prompt) =>
+                        prompt.executionAssignmentId ===
+                        claimed.executionAssignmentId,
+                    );
+
+                    return {
+                      status: waiting.status,
+                      promptCount: prompts.length,
+                      state: successor?.state,
+                      applicationState: successor?.applicationState,
+                    };
+                  },
+                  { timeout: 15_000 },
+                )
+                .toEqual({
+                  status: "Running",
+                  promptCount: 2,
+                  state: "succeeded",
+                  applicationState: "pending",
+                });
+            } finally {
+              retry.release();
+            }
+          }
+          for (const response of occupiedReads) response.destroy();
+          occupiedReads.length = 0;
+        }
+        if (window !== "response" && window !== "permission cap" && !proxy)
           continuation = startFlowContinuationWorker({
             db,
             runtimeRoot: supervisor.runtimeRoot,
@@ -806,7 +815,13 @@ describe("Owned Flow checkpointed gate permission resume", () => {
           .join("\n");
 
         throw new Error(
-          [message, state, driverTail, claimProcess?.output()]
+          [
+            message,
+            state,
+            driverTail,
+            resumedDriver?.output(),
+            claimProcess?.output(),
+          ]
             .filter(Boolean)
             .join("\n"),
           { cause: error },
@@ -816,7 +831,9 @@ describe("Owned Flow checkpointed gate permission resume", () => {
         claimProcess?.child.kill("SIGKILL");
         await claimProcess?.exited;
         driver.child.kill("SIGKILL");
+        resumedDriver?.child.kill("SIGKILL");
         await driver.exited;
+        await resumedDriver?.exited;
         for (const response of occupiedReads) response.destroy();
         await proxy?.close();
       }

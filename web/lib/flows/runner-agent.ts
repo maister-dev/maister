@@ -2,6 +2,10 @@ import "server-only";
 
 import type { ChildLaunchReceipt } from "@/lib/orchestrator/child-launch-context";
 import type { ClaudeNativePermissions } from "../../../runtime/claude-native-permissions";
+import type {
+  AddressedPackageSkill,
+  PackageSkillView,
+} from "../../../runtime/package-skill-tree";
 import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -93,6 +97,7 @@ import {
   workspacePackageSkillsPrompt,
 } from "@/lib/capabilities/package-skills";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import { readWaitPromptBlocks } from "@/lib/waits/prompt-data";
 import { appendCapped } from "@/lib/flows/capped-text";
 import {
@@ -222,6 +227,8 @@ export type RunAgentStepCtx = {
   // consensus/runtime, and `sync-${attempt}` in runs/sync-target).
   sessionName: string;
   context: ExecutionFlowContext;
+  packageSkillView?: PackageSkillView;
+  addressedPackageSkills?: readonly AddressedPackageSkill[];
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   capabilityContent?: CapabilityBundleContent;
@@ -640,6 +647,12 @@ async function handlePermissionRequest(
           });
 
         if (rows.length > 0) {
+          if (rows[0].runKind === "flow")
+            await closeFlowNodeQuestions(
+              tx,
+              pctx.runId,
+              "permission persistence failed",
+            );
           await emitWebhookEvent({
             db: tx,
             type: "run.crashed",
@@ -1478,7 +1491,13 @@ async function dispatchAgentStep(
   const skillPrompt =
     "owner" in ctx.context.run || !ctx.worktreePath
       ? ""
-      : await workspacePackageSkillsPrompt(ctx.worktreePath, ctx.runId);
+      : await workspacePackageSkillsPrompt(
+          ctx.worktreePath,
+          ctx.runId,
+          ctx.packageSkillView || ctx.addressedPackageSkills
+            ? ctx.nodeAttemptId
+            : undefined,
+        );
   const ordinaryPrompt = appendScheduledRequest(
     nativeFindingsCompletionPrompt(
       isResultProducerNode(ctx.resultContract ?? null, ctx.stepId)
@@ -1503,7 +1522,7 @@ async function dispatchAgentStep(
         actionPrompt,
       )
     : actionPrompt;
-  const clarifiedPrompt =
+  let clarifiedPrompt =
     ctx.nodeAttemptId &&
     ctx.promptOwner?.variant === "node" &&
     ctx.promptOwner.promptOrdinal > 0
@@ -1514,6 +1533,26 @@ async function dispatchAgentStep(
           contextualPrompt,
         )
       : contextualPrompt;
+
+  if (
+    ctx.nodeAttemptId &&
+    ctx.promptOwner?.variant === "node" &&
+    ctx.promptOwner.promptOrdinal > 0
+  ) {
+    const { currentFlowNodeAnswer } =
+      await import("@/lib/services/flow-node-answer");
+    const received = await (ctx.db ?? getDb()).transaction((tx: Db) =>
+      currentFlowNodeAnswer(tx, ctx.runId, ctx.nodeAttemptId!),
+    );
+
+    if (received)
+      clarifiedPrompt +=
+        "\n\n[Human clarification for this same Flow node]\n" +
+        JSON.stringify({
+          question: received.question.prompt,
+          response: received.question.response,
+        });
+  }
   const nodeAttemptId = ctx.nodeAttemptId;
   const isProjectNode =
     nodeAttemptId &&
@@ -1629,8 +1668,48 @@ async function dispatchAgentStep(
           ctx.runId,
         ));
 
-  return runNewSession(step, ctx, bound, resolvedPrompt, memory?.projectId);
+  let nodeQuestion: NodeQuestionCapability | undefined;
+
+  if (
+    isProjectNode &&
+    ctx.agentBinding &&
+    role.personaId === ctx.agentBinding.id &&
+    !ctx.prepareSessionCapabilities &&
+    (ctx.promptOwner?.variant === "node" ||
+      ctx.promptOwner?.variant === "permission_resume")
+  ) {
+    const [run] = await database
+      .select({ projectId: runs.projectId })
+      .from(runs)
+      .where(eq(runs.id, ctx.runId));
+
+    if (!run?.projectId)
+      throw new MaisterError(
+        "PRECONDITION",
+        "The appointed agent requires its source project",
+      );
+    nodeQuestion = {
+      projectId: run.projectId,
+      agentId: ctx.agentBinding.id,
+      promptOrdinal: ctx.promptOwner.promptOrdinal,
+    };
+  }
+
+  return runNewSession(
+    step,
+    ctx,
+    bound,
+    resolvedPrompt,
+    memory?.projectId,
+    nodeQuestion,
+  );
 }
+
+type NodeQuestionCapability = Readonly<{
+  projectId: string;
+  agentId: string;
+  promptOrdinal: number;
+}>;
 
 async function runNewSession(
   _step: AgentStepLike,
@@ -1638,6 +1717,7 @@ async function runNewSession(
   execution: AgentExecution,
   resolvedPrompt: string,
   memoryProjectId?: string,
+  nodeQuestion?: NodeQuestionCapability,
 ): Promise<
   StepResult & {
     acpSessionId?: string;
@@ -1688,30 +1768,58 @@ async function runNewSession(
 
       if (
         !ctx.prepareSessionCapabilities &&
-        memoryProjectId &&
+        (memoryProjectId || nodeQuestion) &&
         ctx.nodeAttemptId
       ) {
-        const { issueProjectVaultNodeToken } =
+        const { issueProjectVaultNodeToken, issueFlowQuestionNodeToken } =
           await import("@/lib/agents/tokens");
         const { agentFacadeMcpServerForRun } = await import("@/lib/agents/launch");
-        const credential = await issueProjectVaultNodeToken({
-          projectId: memoryProjectId,
-          runId: ctx.runId,
-          nodeAttemptId: ctx.nodeAttemptId,
-          db: ctx.db,
-        });
+        const credential = nodeQuestion
+          ? await issueFlowQuestionNodeToken({
+              ...nodeQuestion,
+              runId: ctx.runId,
+              nodeAttemptId: ctx.nodeAttemptId,
+              assignmentId: client.assignment.id,
+              memoryScopes: memoryProjectId
+                ? ["agent_memory:read", "agent_memory:write"]
+                : undefined,
+              db: ctx.db,
+            })
+          : await issueProjectVaultNodeToken({
+              projectId: memoryProjectId!,
+              runId: ctx.runId,
+              nodeAttemptId: ctx.nodeAttemptId,
+              db: ctx.db,
+            });
         const facade = await agentFacadeMcpServerForRun(
-          ctx.db ?? getDb(), ctx.runId, credential.secret, "vault",
+          ctx.db ?? getDb(),
+          ctx.runId,
+          credential.secret,
+          memoryProjectId ? "vault" : "flow-node",
         );
 
         if (!facade)
           throw new MaisterError(
             "PRECONDITION",
-            "Flow memory requires the bundled MCP facade",
+            "Flow agent capabilities require the bundled MCP facade",
           );
+        if (sessionCapabilities.enforcementProfile) {
+          const { admitFacadeServer } =
+            await import("@/lib/flows/enforcement-profile");
+
+          sessionCapabilities.enforcementProfile = admitFacadeServer(
+            sessionCapabilities.enforcementProfile,
+            facade.name,
+          );
+        }
         sessionCapabilities.mcpServers = [
           ...(sessionCapabilities.mcpServers ?? []),
-          facade,
+          nodeQuestion
+            ? {
+                ...facade,
+                env: { ...facade.env, MAISTER_ASK_HUMAN_ORIGIN: "flow-node" },
+              }
+            : facade,
         ];
       }
 
@@ -1722,6 +1830,10 @@ async function runNewSession(
         stepId: ctx.stepId,
         nodeAttemptId: ctx.nodeAttemptId,
         sessionName: ctx.sessionName,
+        ...(ctx.packageSkillView
+          ? { packageSkillView: ctx.packageSkillView }
+          : {}),
+        addressedPackageSkills: ctx.addressedPackageSkills,
         executor: executorToSupervisorInput(ctx.executor),
         runner: ctx.runner,
         capabilityProfileObjectId: capabilityBundle?.profileObjectId,

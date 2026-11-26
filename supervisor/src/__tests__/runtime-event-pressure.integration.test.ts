@@ -147,21 +147,24 @@ describe("AT-02 real ACP pipe pressure", () => {
 
       if (rows.length > 0)
         host.hostState.ackRuntimeEvents(stats.streamId, rows.at(-1)!.sequence);
-      if (unacknowledgedPressure) {
-        // Cleared by the ACK alone: the producer resumes and nothing was
-        // pruned (the replay floor did not move).
-        await expect
-          .poll(() => record.outputPaused, { timeout: 5000 })
-          .toBe(false);
+      expect(host.hostState.runtimeEventHealthSnapshot().pressured).toBe(false);
+
+      // The committed ACK wakes the waiter synchronously. A frame may still
+      // need retained capacity when soft and hard pressure overlap.
+      if (!record.outputPaused) {
         expect(host.hostState.runtimeEventOutboxStats().replayFloor).toBe(
           stats.replayFloor,
         );
-        resumedByAck += 1;
+        if (unacknowledgedPressure) resumedByAck += 1;
       } else {
-        expect(record.outputPaused).toBe(true);
         clock += PRESSURE_LIMITS.eventAckGraceMs + 1;
-        host.hostState.pruneAcknowledgedRuntimeEvents(
-          new Date(clock - PRESSURE_LIMITS.eventAckGraceMs),
+        expect(
+          host.hostState.pruneAcknowledgedRuntimeEvents(
+            new Date(clock - PRESSURE_LIMITS.eventAckGraceMs),
+          ),
+        ).toBeGreaterThan(0);
+        expect(host.hostState.runtimeEventOutboxStats().replayFloor).not.toBe(
+          stats.replayFloor,
         );
       }
       cycles += 1;

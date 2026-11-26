@@ -16,6 +16,8 @@ import {
   renderAgentDefinition,
 } from "@/lib/agents/definition";
 import { registerPackageAgents } from "@/lib/agents/registry";
+import { availableAgentMcpCatalog } from "@/lib/agents/project-instance-profile";
+import { agentMcpTargets } from "@/lib/capabilities/mcp-targets";
 import { isMaisterError } from "@/lib/errors";
 import { upgradePreview } from "@/lib/flows/lifecycle";
 import {
@@ -608,6 +610,30 @@ describe("resolveAgentProfileMcpServers (RD7)", () => {
     });
 
     expect(untrusted).toHaveLength(0);
+
+    const frozenTargets = agentMcpTargets(
+      ["github"],
+      await availableAgentMcpCatalog(db, p),
+      [],
+      new Map(),
+    );
+
+    expect(frozenTargets).toHaveLength(1);
+    await expect(
+      resolveAgentProfileMcpServers({
+        db,
+        projectId: p,
+        capabilityProfile: { mcps: ["github"] },
+        frozenTargets,
+        requiredMcpRefs: ["github"],
+        capabilityAgent: "claude",
+        execTrust: "untrusted",
+        runId: "run-x",
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { refId: "github", reason: "exec-untrusted-stdio" },
+    });
 
     // No declaration → no catalog MCPs (never the project default set).
     const none = await resolveAgentProfileMcpServers({

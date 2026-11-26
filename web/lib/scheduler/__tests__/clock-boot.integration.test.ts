@@ -175,22 +175,22 @@ describe("scheduler clock in a production web", () => {
     const html = await page.text();
 
     expect(page.status).toBe(403);
-    // Assert on DTO CONTENT, not on panel labels: the i18n catalog ships with
-    // every page, so `adminExecutionHost.streams.title` is in the payload of a
-    // refusal too and would make a label assertion pass for the wrong reason.
-    expect(html).not.toContain("hostKey");
+    // The translation catalog includes the literal {hostKey} placeholder.
+    const health = await fetch(`${supervisor.url}/health`);
+    const { host } = (await health.json()) as { host: { hostKey: string } };
+
+    expect(host.hostKey).toMatch(/^eh_/);
+    expect(html).not.toContain(host.hostKey);
     expect(html).not.toContain("readinessReason");
     expect(html).not.toContain("execution:projection:rearm");
 
     const admin = await signInWithCredentials(current.url, WORKER_ADMIN);
+    const adminPage = await fetch(`${current.url}/admin/execution-host`, {
+      headers: { cookie: admin },
+    });
 
-    expect(
-      (
-        await fetch(`${current.url}/admin/execution-host`, {
-          headers: { cookie: admin },
-        })
-      ).status,
-    ).toBe(200);
+    expect(adminPage.status).toBe(200);
+    expect(await adminPage.text()).toContain(host.hostKey);
   });
 
   it("records durable job activity when an external clock invokes the route", async () => {

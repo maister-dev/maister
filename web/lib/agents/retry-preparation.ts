@@ -17,6 +17,7 @@ import pino from "pino";
 
 import { prepareProjectSpecialistReplacement } from "./project-specialist-retry";
 import { buildOperationalContract } from "./launch-contract";
+import { retainedProjectAgentProfile } from "./project-instance-profile";
 
 import { runs, runSessions, platformAcpRunners, tasks } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -176,6 +177,12 @@ export async function prepareAgentRetry(
       : undefined;
 
   if (replacement) reason = null;
+  if (
+    source.projectAgentProfile &&
+    source.projectAgentProfile.packageInstallId !==
+      context.effective.packageInstallId
+  )
+    reason = "retry_context_changed";
 
   if (context.effective.parsed.flow) reason = "retry_source_unsupported";
   const [task] = source.taskId
@@ -378,6 +385,9 @@ export async function prepareAgentRetry(
   const legacyContextDigest = retryDigest(contextValues);
   const contextDigest = retryDigest({
     ...contextValues,
+    ...(source.projectAgentProfile
+      ? { projectAgentProfile: source.projectAgentProfile }
+      : {}),
     strategy,
     qualificationSha,
     ...(replacement ? { replacement: replacement.witness } : {}),
@@ -474,6 +484,18 @@ export async function retryRecipeFor(
 
   return {
     version: 2,
+    ...(source.projectAgentProfile
+      ? {
+          projectAgentProfile: retainedProjectAgentProfile(
+            source.projectAgentProfile,
+            {
+              projectId: source.projectId,
+              agentId: source.sourceAgentId ?? source.agentId!,
+              packageInstallId: context.effective.packageInstallId,
+            },
+          )!,
+        }
+      : {}),
     strategy: preparation.options.strategy,
     qualificationSha: preparation.qualificationSha,
     ...(preparation.replacement

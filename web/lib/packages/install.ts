@@ -17,7 +17,7 @@ import {
   type AgentDefinitionCapabilityConfig,
   type MaisterPackageManifest,
 } from "@/lib/config.schema";
-import { loadFlowManifest } from "@/lib/config";
+import { loadRetainedFlowManifest } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
 import {
   gitClone,
@@ -245,10 +245,13 @@ export async function installPackage(
 
     for (const flow of resolved.manifest.flows) {
       const flowDir = join(resolved.pkgRoot, flow.path);
-      const flowManifest = await loadFlowManifest(join(flowDir, "flow.yaml"), {
-        errorCode: "FLOW_INSTALL",
-        surface: "package-member-install",
-      });
+      const flowManifest = await loadRetainedFlowManifest(
+        join(flowDir, "flow.yaml"),
+        {
+          errorCode: "FLOW_INSTALL",
+          surface: "package-member-install",
+        },
+      );
 
       if (flowManifest.name !== flow.id) {
         throw new MaisterError(

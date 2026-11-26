@@ -1,7 +1,5 @@
 import "server-only";
 
-import { promptContextFailureReason } from "../../../../runtime/acp-context-failure";
-
 import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
@@ -13,8 +11,10 @@ import type {
 import type { FlowOwnerRef } from "./prompt-owner-authority";
 import type { FlowActionCompletion } from "./action-completion";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
+
+import { promptContextFailureReason } from "../../../../runtime/acp-context-failure";
 
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { childCrashPrecededTerminal } from "./permission-park-crash";
@@ -30,12 +30,16 @@ import {
 } from "@/lib/agent-memory-vault/injection";
 import { assertNodePermissionContinuation } from "@/lib/execution-host/permission-handoff-source";
 import {
+  hitlRequests,
   nodeAttempts,
   runSessionIncarnations,
   runSessions,
   runs,
 } from "@/lib/db/schema";
-import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
+import {
+  PromptOwnerDeferred,
+  PromptOwnerInvariantError,
+} from "@/lib/execution-host/prompt-owners";
 import {
   ADMISSIBLE_PROMPT_INCARNATION_STATES,
   lockCurrentSessionAssignment,
@@ -51,6 +55,7 @@ import { closeTurnLostAttempt } from "@/lib/runs/turn-lost-boundary";
 import { appendCapped } from "@/lib/flows/capped-text";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
+import { latestFlowQuestionAttempt } from "@/lib/execution-host/flow-question-source";
 import { checkpointInterruptionReason } from "@/lib/execution-host/checkpoint-interruption";
 
 export type NodePromptOwner = Readonly<{
@@ -120,6 +125,12 @@ export async function admitNodePrompt(
       : permissionResume !== null)
   )
     throw new PromptOwnerInvariantError("node_admission_generation");
+  if (resume?.kind === "node_question") {
+    const { currentFlowNodeAnswer } =
+      await import("@/lib/services/flow-node-answer");
+
+    await currentFlowNodeAnswer(tx, runId, attempt.id);
+  }
   await assertNodePermissionContinuation(tx, attempt, assignment);
   await assertMemorySessionSources(tx, runId, attempt.id);
   const [binding] = await tx
@@ -144,7 +155,12 @@ export async function admitNodePrompt(
     .for("update")
     .limit(1);
 
-  if (!binding)
+  if (
+    !binding ||
+    (resume?.kind === "node_question" &&
+      (binding.incarnation.acpSessionId !== resume.resumeSessionId ||
+        binding.incarnation.id === resume.sourceIncarnationId))
+  )
     throw new PromptOwnerInvariantError("node_admission_incarnation");
 
   return {
@@ -242,7 +258,6 @@ export async function prepareNodePrompt(input: {
         !["Running", "NeedsInput"].includes(run.status) ||
         run.flowRevisionId !== originalRun.flowRevisionId ||
         !["ai_coding", "judge", "orchestrator"].includes(attempt.nodeType) ||
-        run.currentStepId !== attempt.nodeId ||
         attempt.runId !== ref.runId ||
         attempt.executionAssignmentId !== ref.assignmentId ||
         !["Running", "NeedsInput"].includes(attempt.status) ||
@@ -250,6 +265,38 @@ export async function prepareNodePrompt(input: {
         attempt.actionCompletion !== null
       )
         return "superseded";
+      if (
+        attempt.status === "NeedsInput" ||
+        run.currentStepId !== attempt.nodeId
+      ) {
+        const [sourceQuestion] = await tx
+          .select({ state: hitlRequests.activationState })
+          .from(hitlRequests)
+          .innerJoin(
+            nodeAttempts,
+            eq(nodeAttempts.id, hitlRequests.flowNodeAttemptId),
+          )
+          .where(
+            and(
+              eq(nodeAttempts.id, attempt.id),
+              latestFlowQuestionAttempt(),
+              sql`${hitlRequests.schema}->'flowQuestion'->>'commandId'=${command.id}`,
+            ),
+          )
+          .limit(1);
+
+        // A successful end_turn can arrive before its checkpoint. Keep this source result replayable
+        // until the checkpoint either advances the ordinal or returns this visit to the original turn.
+        if (
+          sourceQuestion?.state === "pending_termination" &&
+          !turnLost &&
+          !childCrashed
+        ) {
+          throw new PromptOwnerDeferred("node_question_checkpoint_pending");
+        }
+        if (run.currentStepId !== attempt.nodeId && !sourceQuestion)
+          return "superseded";
+      }
       if (turnLost || childCrashed) {
         // Permission delivery can park this same owned turn before or after
         // preparation. Classify the immutable crash evidence independently of

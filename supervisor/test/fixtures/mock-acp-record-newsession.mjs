@@ -11,7 +11,8 @@
 //                                    behaves like a hanging stub.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
@@ -75,6 +76,25 @@ class RecordingAgent {
           cwd: params.cwd,
           mcpServers: params.mcpServers,
           nativeContextWrites,
+          ...(process.env.MOCK_ACP_RECORD_PACKAGE_SKILLS === "1"
+            ? {
+                packageSkills: readdirSync(
+                  join(process.env.CLAUDE_CONFIG_DIR, "skills"),
+                ).map((slug) => ({
+                  slug,
+                  companion: readFileSync(
+                    join(
+                      process.env.CLAUDE_CONFIG_DIR,
+                      "skills",
+                      slug,
+                      "references",
+                      "companion.md",
+                    ),
+                    "utf8",
+                  ),
+                })),
+              }
+            : {}),
           ...(ENV_PROBE
             ? { probePresent: Object.hasOwn(process.env, ENV_PROBE) }
             : {}),

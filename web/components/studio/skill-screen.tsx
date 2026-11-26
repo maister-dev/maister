@@ -8,7 +8,13 @@ import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog
 import type { ReactElement } from "react";
 
 import Link from "next/link";
+import { useState } from "react";
 
+import { migrateLegacySkill } from "@/lib/local-packages/catalog-manifest";
+import {
+  PACKAGE_MANIFEST_FILENAME,
+  parsePackageManifest,
+} from "@/lib/local-packages/manifest";
 import { PackageFileNavigator } from "@/components/studio/package-file-navigator";
 import { RenameControl } from "@/components/studio/package-composition";
 import {
@@ -23,6 +29,9 @@ export type SkillScreenLabels = {
   crumbLocal: string;
   crumbSkills: string;
   notFound: string;
+  root: string;
+  registerLegacy: string;
+  migrationError: string;
   rename: { open: string; confirm: string; cancel: string };
 };
 
@@ -67,6 +76,14 @@ export function SkillScreen({
   // Identity rename of the skill folder → localized error message, or null.
   onRename: (newName: string) => string | null;
 }): ReactElement {
+  const manifest = parsePackageManifest(
+    draftFiles.find((f) => f.path === PACKAGE_MANIFEST_FILENAME)?.content ?? "",
+  );
+  const roots = manifest.ok
+    ? manifest.model.capabilities.map((c) => c.path)
+    : [];
+  const [selectedRoot, setSelectedRoot] = useState("");
+  const [migrationError, setMigrationError] = useState("");
   const subtreePrefix = resolveSkillSubtreePrefix(draftFiles, skillId);
   const scoped = scopeSkillFiles(draftFiles, skillId);
 
@@ -129,6 +146,48 @@ export function SkillScreen({
       data-testid="skill-screen"
     >
       {breadcrumb}
+      {!readOnly && subtreePrefix === "skills/" + skillId + "/" ? (
+        <div className="flex items-center gap-2">
+          {roots.length > 1 ? (
+            <label>
+              {labels.root}{" "}
+              <select
+                value={selectedRoot}
+                onChange={(e) => setSelectedRoot(e.target.value)}
+              >
+                <option value="">{labels.root}</option>
+                {roots.map((root) => (
+                  <option key={root} value={root}>
+                    {root}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <button
+            className="rounded-md border border-line px-2 py-1"
+            disabled={roots.length > 1 && !selectedRoot}
+            type="button"
+            onClick={() => {
+              try {
+                onDraftFilesChange(
+                  migrateLegacySkill(
+                    draftFiles,
+                    skillId,
+                    selectedRoot || undefined,
+                  ),
+                );
+                setMigrationError("");
+              } catch {
+                setMigrationError(labels.migrationError);
+              }
+            }}
+          >
+            {labels.registerLegacy}
+          </button>
+          {migrationError ? <span role="alert">{migrationError}</span> : null}
+        </div>
+      ) : null}
       {readOnly ? null : (
         <RenameControl
           currentName={skillId}

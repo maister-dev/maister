@@ -14,7 +14,11 @@ import { isMaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { projectHitlAnswer } from "@/lib/hitl-answer-view";
-import { extractOptions, getHitlRequestsForRun } from "@/lib/queries/hitl";
+import {
+  extractOptions,
+  getHitlRequestsForRun,
+  projectQuestionForm,
+} from "@/lib/queries/hitl";
 import { runProjectResolver } from "@/lib/tokens/run-project";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
@@ -52,7 +56,10 @@ function toExtHitlDTO(
     // supervisorSessionId, toolCall) written by runner-agent — NEVER cross the
     // external trust boundary. The OpenAPI contract documents schema=null for
     // permission; the actionable surface is `options` (projected below).
-    schema: row.kind === "permission" ? null : (row.schema ?? null),
+    schema:
+      row.kind === "permission"
+        ? null
+        : projectQuestionForm(row.kind, row.schema ?? null),
     options: extractOptions(row.kind, row.schema),
     criticality: row.criticality ?? null,
     requestedAt: row.createdAt.toISOString(),

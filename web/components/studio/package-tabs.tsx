@@ -15,6 +15,7 @@ export interface PackageTabDescriptor {
   id: string;
   label: string;
   count: number;
+  showWhenEmpty?: boolean;
 }
 
 export interface PackageTabsLabels {
@@ -60,7 +61,7 @@ export function PackageTabs({
   hrefFor,
   labels,
 }: PackageTabsProps): ReactElement {
-  const visibleTabs = tabs.filter((tab) => tab.count > 0);
+  const visibleTabs = tabs.filter((tab) => tab.count > 0 || tab.showWhenEmpty);
 
   if (visibleTabs.length === 0) {
     return (

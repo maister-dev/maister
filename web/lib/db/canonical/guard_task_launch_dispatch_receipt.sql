@@ -20,9 +20,40 @@ BEGIN
           AND NEW.dispatch_receipt->>'inputDigest'=NEW.input_digest
           AND NEW.dispatch_receipt->>'settingsDigest'=NEW.settings_digest
           AND (NEW.dispatch_receipt->>'committedAt')::timestamptz=NEW.dispatch_committed_at
-          AND NEW.dispatch_receipt-ARRAY['version','runId','assignmentId','assignmentEpoch','inputDigest','settingsDigest','committedAt','preparation']='{}'::jsonb
-          AND (NEW.settings_snapshot->>'kind'='flow' AND NOT NEW.dispatch_receipt ? 'preparation'
-            OR NEW.settings_snapshot->>'kind'='agent' AND jsonb_typeof(NEW.dispatch_receipt->'preparation')='object'
+          AND NEW.dispatch_receipt-ARRAY['version','runId','assignmentId','assignmentEpoch','inputDigest','settingsDigest','committedAt','preparation','addressedPreparation']='{}'::jsonb
+          AND (NEW.settings_snapshot->>'kind'='flow' AND NOT (NEW.dispatch_receipt ?| ARRAY['preparation','addressedPreparation'])
+            OR NEW.preparation_identity->'version'='4'::jsonb
+              AND NOT (NEW.dispatch_receipt ? 'preparation')
+              AND jsonb_typeof(NEW.dispatch_receipt->'addressedPreparation')='object'
+              AND (NEW.dispatch_receipt->'addressedPreparation')-ARRAY['workspaceId','handle','generation','materializationGeneration']='{}'::jsonb
+              AND EXISTS (
+                SELECT 1 FROM workspaces workspace
+                JOIN execution_assignments owner ON owner.id=NEW.dispatch_receipt->>'assignmentId'
+                JOIN execution_commands prepare ON prepare.target_session_id=workspace.id
+                  AND prepare.execution_host_id=workspace.execution_host_id
+                  AND prepare.execution_assignment_id=workspace.preparation_assignment_id
+                  AND prepare.kind='workspace.prepare' AND prepare.state='succeeded'
+                LEFT JOIN workspaces root ON root.id=workspace.root_workspace_id
+                WHERE workspace.id=NEW.dispatch_receipt->'addressedPreparation'->>'workspaceId'
+                  AND workspace.run_id=NEW.run_id
+                  AND workspace.project_id=NEW.project_id
+                  AND workspace.ownership_kind='host_owned'
+                  AND workspace.removed_at IS NULL
+                  AND workspace.execution_host_id=owner.execution_host_id
+                  AND workspace.execution_host_id=NEW.effective_execution_host_id
+                  AND owner.addressed_stop_requested_at IS NULL
+                  AND owner.execution_workspace_id=NEW.dispatch_receipt->'addressedPreparation'->>'handle'
+                  AND prepare.result->'workspace'->>'handle'=owner.execution_workspace_id
+                  AND (workspace.root_workspace_id IS NULL AND workspace.execution_workspace_id=owner.execution_workspace_id
+                    OR root.execution_host_id=workspace.execution_host_id AND root.project_id=workspace.project_id
+                      AND root.removed_at IS NULL
+                      AND root.execution_workspace_id=prepare.payload->>'parentHandle'
+                      AND to_jsonb(root.workspace_generation)=prepare.payload->'parentGeneration')
+                  AND to_jsonb(workspace.workspace_generation)=NEW.dispatch_receipt->'addressedPreparation'->'generation'
+                  AND to_jsonb(workspace.workspace_materialization_generation)=NEW.dispatch_receipt->'addressedPreparation'->'materializationGeneration'
+              )
+            OR NEW.settings_snapshot->>'kind'='agent' AND NEW.preparation_identity->'version'='2'::jsonb
+              AND NOT (NEW.dispatch_receipt ? 'addressedPreparation') AND jsonb_typeof(NEW.dispatch_receipt->'preparation')='object'
               AND NEW.dispatch_receipt->'preparation'->>'baselineDigest' ~ '^[0-9a-f]{64}$'
               AND NEW.dispatch_receipt->'preparation'->>'materializationDigest' ~ '^[0-9a-f]{64}$'
               AND EXISTS(SELECT 1 FROM agent_preparation_operations preparation JOIN runs prepared_run ON prepared_run.id=preparation.run_id

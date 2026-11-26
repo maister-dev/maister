@@ -5,7 +5,7 @@ import type { PackageArtifactFile } from "@/lib/local-packages/validate";
 
 import { parse as parseYaml } from "yaml";
 
-import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
+import { classifyFlowForCut } from "@/lib/flows/manifest-parser";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 import { readWorkingDirArtifactFiles } from "@/lib/local-packages/service";
 
@@ -32,7 +32,7 @@ export function classifyLocalPackageCutCompatibility(
     if (!isFlowPath(file.path)) continue;
 
     try {
-      const compatibility = classifyStoredFlowManifest(parseYaml(file.content));
+      const compatibility = classifyFlowForCut(parseYaml(file.content));
 
       if (compatibility.compatible) continue;
 

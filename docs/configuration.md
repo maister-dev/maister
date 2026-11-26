@@ -498,22 +498,32 @@ project file). Loader: `loadMaisterPackageManifest` (`CONFIG` on any reject).
 ```yaml
 schemaVersion: 1
 name: aif # MUST equal the packages[] consumer's expectations; capabilityRefId shape
-metadata: { title, summary, links, sources } # optional package frontmatter
+delivery: { version: 1, shareSkills: true }
+metadata: { title: AIF, summary: Development workflows }
 flows:
   - { id: aif-dev, path: flows/dev } # id MUST equal the flow.yaml `name` (CONFIG mismatch)
 capabilities:
   - { id: aif-bundle, path: capability }
 mcps:
-  [] # MCP server templates: {id, transport: stdio|http,
-  #  command?/args?/url?, env, headers?, bearerTokenEnv?, description?}
+  - id: prototype-preview
+    scope: package # package | project
+    transport: http
+    url: https://mcp.example.org/prototypes
 restrictions:
   [] # path-sets: {id, paths: [globs]} → ingested as
   #  flow-package-scoped restriction capability records on attach
 ```
 
 Rules: all `path` values are escape-guarded relative subpaths; ids unique per
-section. There is NO `version` field — the git tag is the only pin (ADR-021
-semantics).
+section. The Git revision pins the release. `delivery.version` selects the rules for
+distributing package capabilities.
+
+With `delivery.version: 1`, `shareSkills` defaults to `true`. Setting it to
+`false` limits that package’s skills to its own Flows and selected package
+agents. Set each MCP’s `scope` to `project` to offer it across project sessions.
+An omitted scope defaults to `package`. The project MCP Hub can override one
+attached server’s scope or restore the package setting. A legacy release
+without `delivery` keeps its existing defaults when attached. [Session inventory](system-analytics/capabilities.md#project-run-capability-inventory)
 
 **`mcps[]` values (Implemented — ADR-179).** `env` accepts either the legacy
 `string[]` of `env:NAME` entries — normalized at load to
@@ -772,7 +782,7 @@ separate authorization model.
    state until their explicit enable action.
 3. No duplicate flow IDs; no duplicate `capability_imports[].id`.
 4. **(Implemented)** Every Flow node settings capability reference
-   (`mcps[]`, `skills[]`, `restrictions[]`, `settingsProfile`, `tools.{claude|codex}`)
+   (`mcps[]`, `restrictions[]`, `settingsProfile`, `tools.{claude|codex}`)
    must resolve to a project, Flow-shipped, or system capability record. An
    unknown ref, or a ref present in the registry but not supported by the
    resolved runner's `capability_agent`, throws
@@ -893,7 +903,7 @@ record, the time-limit watchdog, capability-reference resolution, agent-aware
 name mapping, and per-session native materialization (delivery channel:
 `<worktree>/.claude/settings.local.json` + ACP `newSession` `params.mcpServers`,
 ADR-044). `tools`/`mcps`/`hooks` are **enforced** at the supervisor ACP seam
-(`capability_guard`, [ADR-130](decisions.md#adr-130)); `skills`/`restrictions`/
+(`capability_guard`, [ADR-130](decisions.md#adr-130)); `restrictions`/
 `permissionMode` stay `instructed` permanently. Field-by-field semantics and
 the enforcement table: [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md)
 (see [ADR-031](decisions.md#adr-031)/[ADR-032](decisions.md#adr-032)).
@@ -909,7 +919,7 @@ and [`supervisor.md`](supervisor.md) — not restated here (R7).
 `judge` carries the same capability shape MINUS `runner_type`, `runner`,
 `settingsProfile`, `workspaceAccess`, and `artifactAccess` — those five are
 `ai_coding`-only. The shared subset is `model`, `thinkingEffort`, `mcps`,
-`tools`, `skills`, `permissionMode`, `limits`, `restrictions`, and
+`tools`, `permissionMode`, `limits`, `restrictions`, and
 `enforcement`. `.strict()` parsing rejects any of the five `ai_coding`-only
 fields on a `judge` node.
 
@@ -921,7 +931,6 @@ fields on a `judge` node.
 | `thinkingEffort`  | `low \| medium \| high`                                                                                                                   | Unknown value rejected.                                                                                                                                                                                                                                                 |
 | `mcps`            | `string[]`                                                                                                                                | Capability class. Registry resolution against `capability_records` at validate/launch is **Implemented (ADR-041)**.                                                                                                                                                     |
 | `tools`           | `{ claude?: string[]; codex?: string[] }`                                                                                                 | Per-agent tool map; malformed map rejected. Capability class. Registry resolution is **Implemented (ADR-041)**.                                                                                                                                                         |
-| `skills`          | `string[]`                                                                                                                                | Capability class. Registry resolution is **Implemented (ADR-041)**.                                                                                                                                                                                                     |
 | `settingsProfile` | `string`                                                                                                                                  | **`ai_coding` only.** Named `agent_definition` capability reference. Registry resolution is **Implemented (ADR-041)**.                                                                                                                                                  |
 | `workspaceAccess` | `read \| write \| none`                                                                                                                   | **`ai_coding` only.** Capability class.                                                                                                                                                                                                                                 |
 | `artifactAccess`  | `string[]`                                                                                                                                | **`ai_coding` only.** Artifact ids the node may read/write.                                                                                                                                                                                                             |
@@ -929,7 +938,7 @@ fields on a `judge` node.
 | `limits`          | `{ maxDurationMinutes?: number > 0; maxCostUsd?: number > 0 }`                                                                            | Out-of-range rejected. `maxDurationMinutes` is the watchdog cap (below); `maxCostUsd` is record-only.                                                                                                                                                                   |
 | `restrictions`    | `string[]`                                                                                                                                | Capability class. Registry resolution is **Implemented (ADR-041)**.                                                                                                                                                                                                     |
 | `hooks`           | `{ disabled?: boolean; repetition?: { max: number > 0 }; noProgress?: { maxTurns: number > 0 }; pathGuard?: { allowedPaths: string[] } }` | **(Designed — ADR-108.)** Capability class. Per-tool-call guardrail rules enforced at the supervisor↔ACP seam; requires `compat.engine_min >= 1.8.0`. See [`flow-dsl.md`](flow-dsl.md) + [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md). |
-| `enforcement`     | `{ mcps?; tools?; skills?; restrictions?; permissionMode?; workspaceAccess?; hooks? }`                                                    | Per-class intent — see below.                                                                                                                                                                                                                                           |
+| `enforcement`     | `{ mcps?; tools?; restrictions?; permissionMode?; workspaceAccess?; hooks? }`                                                    | Per-class intent — see below.                                                                                                                                                                                                                                           |
 
 **`human` settings** (decision/role/takeover shape):
 
@@ -959,7 +968,7 @@ fields on a `judge` node.
 #### `enforcement` intent + the static enforceability table
 
 `settings.enforcement` declares, per capability class (`mcps`, `tools`,
-`skills`, `restrictions`, `permissionMode`, `workspaceAccess`, `hooks`), how
+`restrictions`, `permissionMode`, `workspaceAccess`, `hooks`), how
 strictly the class must hold:
 
 | Value      | Meaning                                                                    |
@@ -1325,9 +1334,9 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_HARNESS_NEVER_FIRED_MIN` | no | `10` | **(Implemented, [ADR-073](decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension).)** Minimum terminal gate executions in the observatory lookback window before the never-fired heuristic may flag a declared gate ("never fired — verify gate quality or a blind spot"). Read by `web/lib/instance-config.ts:harnessNeverFiredMin()` at the query layer and passed into the pure rollup as a parameter; invalid/non-positive values fall back to the default with a one-time WARN. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. See [`system-analytics/observatory.md`](system-analytics/observatory.md). |
 > | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
 > | `MAISTER_REPOS_ROOT` | no | `~/.maister/repos` | Root that `POST /api/projects` clones a `repoUrl` into (ADR-025). Resolved by `web/lib/instance-config.ts:reposRoot()`; surfaced read-only on `/settings`. |
-> | `MAISTER_MCP_FACADE_COMMAND` | no | `<repo>/mcp/node_modules/.bin/tsx` | **(Implemented, ADR-089 D9.)** Command an agent session uses to launch the maister MCP facade (its sanctioned write channel, carrying the per-launch ephemeral token via the literal `env` channel). Override for split-host topologies. |
-> | `MAISTER_MCP_FACADE_ARGS` | no | `<repo>/mcp/src/main.ts --stdio` | **(Implemented, ADR-089 D9.)** Space-split args for the facade command; only read when the command default is overridden or the default args do not fit. |
-> | `MAISTER_MCP_PROBE_TIMEOUT_MS` | no | `8000` | **(ADR-129 — Designed, W-F.)** Supervisor. Bounds the MCP `initialize` handshake in `POST /mcp-probe`; on timeout the probe releases the spawned child (SIGTERM→SIGKILL teardown grace is fixed by the MCP SDK transport, ~2s). Host env — the supervisor is not containerized (compose runs Postgres only). |
+> | `MAISTER_MCP_FACADE_COMMAND` | no | Node with the built MCP entry point, or `tsx` in development when available | **(Implemented, ADR-089 D9.)** Web-side command override for the built-in MAIster MCP on local assignments. A remote supervisor launches its bundled facade. |
+> | `MAISTER_MCP_FACADE_ARGS` | no | `--stdio` for the command override | **(Implemented, ADR-089 D9.)** Space-separated arguments used with `MAISTER_MCP_FACADE_COMMAND`. |
+> | `MAISTER_MCP_PROBE_TIMEOUT_MS` | no | `8000` | **(Implemented, ADR-129.)** Supervisor. Bounds the MCP `initialize` handshake in `POST /mcp-probe`. On timeout the probe closes the transport, which releases the spawned child. |
 > | `MAISTER_WORKTREES_ROOT` | no | `~/.maister/worktrees` | Root for run worktrees (ADR-025). Resolved by `worktreesRoot()`. The deprecated `MAISTER_WORKTREE_ROOT` is accepted as a fallback. Surfaced read-only on `/settings`. |
 > | `MAISTER_LOCAL_PACKAGES_ROOT` | no | `~/.maister/local` | **(ADR-096 — Designed, Flow Studio Phase C.)** Root for editable local-package working directories (one git-backed dir per `local_packages` row). Resolved by `web/lib/instance-config.ts:localPackagesRoot()`. Host-only — like the flows/worktrees roots, `.maister` is NOT container-mounted ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); host/service-env only. |
 > | `MAISTER_EVALUATION_EVIDENCE_ROOT` | no | `~/.maister/evaluations` | **(ADR-144 — Implemented.)** Root for the content-addressed immutable Evaluation Lab evidence store. Blobs are written tmp+fsync+rename BEFORE the DB seal, so a crash leaves an orphan blob (GC-eligible) but the DB never points at an absent blob. Resolved by `web/lib/instance-config.ts:evaluationEvidenceRoot()`. Host-only — `.maister` is NOT container-mounted ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); host/service-env only. |
@@ -1344,6 +1353,10 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_WORKSPACE_REPOSITORIES` | no | — | Supervisor-only JSON map from approved repository IDs to credential-free HTTPS/SSH URLs or trusted absolute paths. The default ID for a project checkout is the Web project ID. The supervisor uses its own Git credentials and private Git cache. |
 > | `MAISTER_API_BASE_URL` | for addressed MAIster MCP | — | Set the same Web origin on Web and its supervisor. The supervisor checks the configured origin before starting the facade and chooses its local executable. Use `MAISTER_MCP_FACADE_COMMAND` on the supervisor to override the executable. |
 > | `MAISTER_WORKSPACE_DIRECTORIES` | no | — | Supervisor-only JSON map from directory profile IDs to absolute directories inside its approved workspace roots. |
+> | `MAISTER_MCP_ALLOWED_DIGESTS` | for reviewed npm/stdio servers | empty | Supervisor. Comma-separated SHA-256 descriptor digests approved on this host. An empty list admits no reviewed npm distribution. |
+> | `MAISTER_MCP_CACHE_DIR` | no | `<MAISTER_RUNTIME_ROOT>/mcp-cache` | Supervisor. Writable host-owned directory for verified npm distributions. The production Compose profile sets `/app/.maister/mcp-cache`. |
+> | `MAISTER_MCP_SECRET_<NAME>` | when referenced by a server | unset | Supervisor. Per-server credential referenced as `env:MAISTER_MCP_SECRET_<NAME>`. The prefix is filtered from inherited ACP child environments. |
+> | `MAISTER_STUDIO_CATALOG_REPOS` | no | Anthropic skills and Vercel agent skills | Web. JSON array of approved public GitHub repository entries containing `id`, `repo` and `kind`. A configured array replaces the built-in repository list. See [Studio catalog sources](#studio-catalog-sources). |
 > | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
 > | `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |
 > | `MAISTER_HEARTBEAT_INTERVAL_MS` | no | `5000` | Supervisor orphan-child detection |
@@ -1842,3 +1855,55 @@ main database. A vector request reports provider failures after bounded retry.
 An inherited environment value must be a decimal integer in range. If a reset exposes invalid configuration, the update rolls back. Correct the environment or supply a platform override. Production host settings belong in `/etc/maister/maister.env`. Keep the environment consistent across web replicas. Project settings and repository files carry no authority over the limits.
 
 The per-file `config.worktree` limit is 1 MiB. See [operational integrity](system-analytics/operational-agent-lifecycle.md#integrity-boundary) for how to interpret failures.
+
+## Studio catalog sources
+
+Web searches skills.sh using the unauthenticated HTTPS endpoint used by the Skills CLI. It resolves GitHub-backed listings to pinned Git files. The official MCP Registry has its own public HTTPS connector. Both searches use their built-in sources regardless of `MAISTER_STUDIO_CATALOG_REPOS`.
+
+The optional `MAISTER_STUDIO_CATALOG_REPOS` is a JSON array of `{id,repo,kind}` entries. The built-in GitHub list contains Anthropic skills and Vercel agent skills. An explicit array replaces that list. Set `kind` to `skill` for repositories publishing `skills/<directory>/SKILL.md` or `mcp` for versioned Registry-format `server.json` descriptors.
+
+Web needs outbound TLS to skills.sh, api.github.com, registry.modelcontextprotocol.io and, for npm metadata, registry.npmjs.org. Preview and apply share the local-package storage volume, including its sibling `.maister-catalog` journal directory. Restrict that directory to the web service account and back it up with the drafts. A release carries the upstream identity and license information in `catalog-origins/`.
+
+GitHub's unauthenticated REST allowance is shared by the egress IP. Search
+reuses a short-lived tree cache and preview reads each distinct blob required
+by its approved bundle. A rate-limited source returns a retryable status.
+See [GitHub REST API rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#primary-rate-limit-for-unauthenticated-users).
+
+### Assigned supervisor MCPs
+
+Configure the primary trusted endpoint with `MAISTER_SUPERVISOR_URL` and
+pin its stable `host.hostKey` from `GET /health` in
+`MAISTER_SELECTED_EXECUTION_HOST_KEY`. Register an additional trusted endpoint
+through `MAISTER_ADDITIONAL_EXECUTION_HOSTS`. Control eligibility with
+`MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS` for the primary endpoint and
+`projectIds` for each additional endpoint. The board lists eligible hosts.
+Protect the listener at the network boundary. A selected supervisor uses
+`MAISTER_WORKSPACE_REPOSITORIES` and its own Git credentials to prepare
+host-owned workspaces. The legacy default can still adopt local worktrees.
+See the [selected supervisor deployment](deployment.md#selected-supervisor-local-pilot).
+
+Set the same reachable `MAISTER_API_BASE_URL` on Web and each supervisor that
+runs the addressed MAIster MCP facade. Its executable is resolved on that
+supervisor. The image includes `mcp/dist/main.js`. Checkpoint continuation
+requires the original supervisor and workspace.
+
+For reviewed, self-contained npm stdio releases, approve
+the descriptor SHA-256 shown in the Studio preview in `MAISTER_MCP_ALLOWED_DIGESTS`.
+An approval refusal reports the same value in `details.artifactDigest`. The host fetches
+the exact npm tarball, verifies its SHA-512, manifest publisher and executable,
+and atomically publishes the cache under `MAISTER_MCP_CACHE_DIR`. Every
+reuse checks the retained bytes and current approval. Place the host-owned
+cache outside project workspaces. Bind MCP credentials using `env:MAISTER_MCP_SECRET_<NAME>`
+on the selected server. The supervisor excludes this namespace and ambient MAIster access
+tokens from ACP child environments. HTTP MCPs connect directly from the workload.
+The production Compose profile `remote-supervisor` reads `supervisor/.env`.
+It runs with a read-only root, persists state and the MCP cache in the
+`supervisor_state` volume, and publishes port `7777` on loopback. Use private
+ingress or an authenticated tunnel and give each supervisor its own managed
+workspace root and Git access.
+
+The profile runs as UID/GID `1001:1001`. Its `supervisor_state` volume stays
+private to that supervisor. A cold install reclaims a bounded number of old
+staging directories whose owning processes are confirmed dead in that
+supervisor's runtime cache. A corrupt completed cache fails verification.
+Stop sessions using the entry before removing it for a fresh verified install.

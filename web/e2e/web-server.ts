@@ -30,9 +30,25 @@ let web = await startRealWeb({
   worktreesRoot,
   supervisorUrl,
   authSecret: process.env.AUTH_SECRET,
-  // Repo clones and immutable package, Flow and capability caches live under
-  // the fixture home. The E2E wrapper removes the owned root on exit.
-  env: { HOME: path.join(worktreesRoot, ".fixture-home") },
+  env: {
+    HOME: path.join(worktreesRoot, ".fixture-home"),
+    ...(process.env.MAISTER_E2E_CATALOG_FIXTURE === "1" && {
+      NODE_OPTIONS: [
+        process.env.NODE_OPTIONS,
+        `--import=${new URL("./_seed/catalog-upstream.mjs", import.meta.url).href}`,
+      ]
+        .filter(Boolean)
+        .join(" "),
+      MAISTER_STUDIO_CATALOG_REPOS: JSON.stringify([
+        { id: "fixture-skills", repo: "fixture/catalog-skills", kind: "skill" },
+        {
+          id: "indexed-fixture-skills",
+          repo: "catalog-author/checkout-skills",
+          kind: "skill",
+        },
+      ]),
+    }),
+  },
   logFile: path.join(invocation.directory, "e2e-web.log"),
 });
 let requestShutdown: () => void = () => {};

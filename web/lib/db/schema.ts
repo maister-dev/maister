@@ -5,6 +5,7 @@ import {
   type ProjectDependencyPin,
   type DependencyCheckpoint,
 } from "@/lib/project-dependencies/types";
+import type { ProjectAgentProfileSnapshot } from "@/lib/agents/project-instance-profile";
 import type { FlowPublicationGrant } from "@/lib/workbench-git/flow-publication-grant";
 import type {
   CompletionGitAnchor,
@@ -1359,6 +1360,7 @@ export const agentProjectLinks = pgTable(
     // since package slugs are not portable across installations. NULL = none
     // declared (the honest meaning for every pre-0124 row).
     contextRepos: jsonb("context_repos").$type<ContextRepoDecl[]>(),
+    promptOverride: text("prompt_override"),
     // ADR-140: fences full-replacement binding saves so a stale editor cannot
     // erase telemetry or bindings added after it loaded the attachment.
     schedulesRevision: integer("schedules_revision").notNull().default(1),
@@ -1370,6 +1372,10 @@ export const agentProjectLinks = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    promptCheck: check(
+      "agent_project_links_prompt_check",
+      sql`${t.promptOverride} IS NULL OR (length(${t.promptOverride}) <= 65536 AND ${t.promptOverride} ~ '[^[:space:]]')`,
+    ),
     uniqAgentProject: unique("agent_project_links_agent_project_uq").on(
       t.agentId,
       t.projectId,
@@ -1378,6 +1384,23 @@ export const agentProjectLinks = pgTable(
     memoryWritePolicy: check(
       "agent_project_links_memory_write_policy_check",
       sql`${t.memoryWritePolicy} IN ('auto','review')`,
+    ),
+  }),
+);
+
+export const agentProjectMcpAdditions = pgTable(
+  "agent_project_mcp_additions",
+  {
+    linkId: text("link_id")
+      .notNull()
+      .references(() => agentProjectLinks.id, { onDelete: "cascade" }),
+    refId: text("ref_id").notNull(),
+  },
+  (t) => ({
+    identity: primaryKey({ columns: [t.linkId, t.refId] }),
+    refCheck: check(
+      "agent_project_mcp_additions_ref_check",
+      sql`length(${t.refId}) BETWEEN 1 AND 128 AND ${t.refId} ~ '^[A-Za-z0-9._-]+$' AND ${t.refId} <> '.' AND position('..' IN ${t.refId}) = 0`,
     ),
   }),
 );
@@ -2263,6 +2286,7 @@ export type WithheldMcp = {
 };
 
 export type ResolvedCapabilitySet = {
+  delivery?: import("@/lib/capabilities/package-delivery").FlowDeliverySnapshot;
   flowRevisionId: string;
   flowOrigin: "authored" | "git";
   // `scope` is the winning record's source (project | platform | flow-package);
@@ -2401,6 +2425,9 @@ export const runs = pgTable(
       "activity_timestamp_provenance",
     ).$type<AgentActivityTimestampProvenance>(),
     knowledgeAccess: jsonb("knowledge_access").$type<KnowledgeAccessCapture>(),
+    projectAgentProfile: jsonb(
+      "project_agent_profile",
+    ).$type<ProjectAgentProfileSnapshot>(),
     agentActivitySnapshot: jsonb(
       "agent_activity_snapshot",
     ).$type<AgentActivitySnapshot>(),
@@ -7130,7 +7157,7 @@ export const nodeAttempts = pgTable(
     ),
     actionResumeCheck: check(
       "node_attempts_action_resume_check",
-      sql`${t.actionResume} IS NULL OR (jsonb_typeof(${t.actionResume}) = 'object' AND ${t.actionResume}->'version' = '1'::jsonb AND ((${t.actionResume}->>'kind' = 'clarification' AND jsonb_typeof(${t.actionResume}->'questionId')='string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId')='string' AND (${t.actionResume}->'answer'='null'::jsonb OR (jsonb_typeof(${t.actionResume}->'answer')='object' AND jsonb_typeof(${t.actionResume}->'answer'->'inputRevision')='number' AND ${t.actionResume}->'answer'->>'inputSha256' ~ '^[a-f0-9]{64}$' AND ${t.actionResume}->'answer'->>'receiptSha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.actionResume}->'answer'->'checkpointCommandId')='string'))) OR (${t.actionResume}->>'kind' = 'interrupt' AND ${t.actionResume}->>'cause' IN ('operator', 'host_pressure')) OR (${t.actionResume}->>'kind' = 'orchestrator' AND (NOT (${t.actionResume} ? 'permissionResult') OR (jsonb_typeof(${t.actionResume}->'permissionResult') = 'object' AND ${t.actionResume}->'permissionResult'->'version' = '1'::jsonb AND ${t.actionResume}->'permissionResult'->>'kind' = 'permission_result' AND ${t.actionPromptOrdinal} > 0 AND ${t.actionResume}->'permissionResult'->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal} - 1) AND ${t.actionResume}->'permissionResult'->>'sourceCommandId' = ${t.actionResume}->>'sourceCommandId' AND ${t.actionResume}->'permissionResult'->>'sourceAssignmentId' = ${t.actionResume}->>'sourceAssignmentId' AND ${t.actionResume}->'permissionResult'->>'resumeSessionId' = ${t.actionResume}->>'resumeSessionId' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'assignmentId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'optionId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceIncarnationId') = 'string'))) OR ((${t.actionResume}->>'kind' = 'permission' OR (${t.actionResume}->>'kind' = 'permission_continue' AND ${t.actionPromptOrdinal} > 0 AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string') OR (${t.actionResume}->>'kind' = 'permission_result' AND ${t.actionCompletion}->>'commandId' = ${t.actionResume}->>'sourceCommandId' AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string')) AND jsonb_typeof(${t.actionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'optionId') = 'string')) AND jsonb_typeof(${t.actionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceAssignmentId') = 'string' AND ${t.actionResume}->>'assignmentId' = ${t.executionAssignmentId} AND ${t.actionResume}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionResume}->'resumeSessionId') = 'string') IS TRUE`,
+      sql`${t.actionResume} IS NULL OR (jsonb_typeof(${t.actionResume}) = 'object' AND ${t.actionResume}->'version' = '1'::jsonb AND ((${t.actionResume}->>'kind' = 'clarification' AND jsonb_typeof(${t.actionResume}->'questionId')='string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId')='string' AND (${t.actionResume}->'answer'='null'::jsonb OR (jsonb_typeof(${t.actionResume}->'answer')='object' AND jsonb_typeof(${t.actionResume}->'answer'->'inputRevision')='number' AND ${t.actionResume}->'answer'->>'inputSha256' ~ '^[a-f0-9]{64}$' AND ${t.actionResume}->'answer'->>'receiptSha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.actionResume}->'answer'->'checkpointCommandId')='string'))) OR (${t.actionResume}->>'kind' = 'node_question' AND jsonb_typeof(${t.actionResume}->'questionId')='string' AND jsonb_typeof(${t.actionResume}->'checkpointCommandId')='string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId')='string') OR (${t.actionResume}->>'kind' = 'interrupt' AND ${t.actionResume}->>'cause' IN ('operator', 'host_pressure')) OR (${t.actionResume}->>'kind' = 'orchestrator' AND (NOT (${t.actionResume} ? 'permissionResult') OR (jsonb_typeof(${t.actionResume}->'permissionResult') = 'object' AND ${t.actionResume}->'permissionResult'->'version' = '1'::jsonb AND ${t.actionResume}->'permissionResult'->>'kind' = 'permission_result' AND ${t.actionPromptOrdinal} > 0 AND ${t.actionResume}->'permissionResult'->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal} - 1) AND ${t.actionResume}->'permissionResult'->>'sourceCommandId' = ${t.actionResume}->>'sourceCommandId' AND ${t.actionResume}->'permissionResult'->>'sourceAssignmentId' = ${t.actionResume}->>'sourceAssignmentId' AND ${t.actionResume}->'permissionResult'->>'resumeSessionId' = ${t.actionResume}->>'resumeSessionId' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'assignmentId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'optionId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceIncarnationId') = 'string'))) OR ((${t.actionResume}->>'kind' = 'permission' OR (${t.actionResume}->>'kind' = 'permission_continue' AND ${t.actionPromptOrdinal} > 0 AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string') OR (${t.actionResume}->>'kind' = 'permission_result' AND ${t.actionCompletion}->>'commandId' = ${t.actionResume}->>'sourceCommandId' AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string')) AND jsonb_typeof(${t.actionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'optionId') = 'string')) AND jsonb_typeof(${t.actionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceAssignmentId') = 'string' AND ${t.actionResume}->>'assignmentId' = ${t.executionAssignmentId} AND ${t.actionResume}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionResume}->'resumeSessionId') = 'string') IS TRUE`,
     ),
     contextFailureReasonCheck: check(
       "node_attempts_context_failure_reason_check",
@@ -8373,6 +8400,15 @@ export const hitlRequests = pgTable(
       () => specialistAssignments.id,
       { onDelete: "restrict" },
     ),
+    flowNodeAttemptId: text("flow_node_attempt_id"),
+    flowRequestKey: text("flow_request_key"),
+    flowAnswerAcceptedAt: timestamp("flow_answer_accepted_at", {
+      withTimezone: true,
+    }),
+    flowAnswerUserId: text("flow_answer_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    flowReconciledAt: timestamp("flow_reconciled_at", { withTimezone: true }),
     specialistInputRevision: integer("specialist_input_revision"),
     specialistAnswerInputRevision: integer("specialist_answer_input_revision"),
     specialistAnswer: jsonb("specialist_answer"),
@@ -8429,6 +8465,34 @@ export const hitlRequests = pgTable(
   },
   (t) => ({
     idxRun: index("hitl_requests_run_idx").on(t.runId),
+    flowQuestionOwner: foreignKey({
+      name: "hitl_flow_question_owner_fk",
+      columns: [t.runId, t.flowNodeAttemptId],
+      foreignColumns: [nodeAttempts.runId, nodeAttempts.id],
+    }).onDelete("cascade"),
+    flowQuestionTurn: uniqueIndex("hitl_flow_question_turn_uq")
+      .on(
+        t.flowNodeAttemptId,
+        sql`(${t.schema}->'flowQuestion'->>'promptOrdinal')`,
+      )
+      .where(sql`${t.flowNodeAttemptId} IS NOT NULL`),
+    flowQuestionShape: check(
+      "hitl_flow_question_shape_check",
+      sql`(
+      (${t.flowNodeAttemptId} IS NULL AND ${t.flowRequestKey} IS NULL AND ${t.flowAnswerAcceptedAt} IS NULL AND ${t.flowAnswerUserId} IS NULL AND ${t.flowReconciledAt} IS NULL)
+      OR (${t.flowNodeAttemptId} IS NOT NULL AND ${t.kind}='agent_question' AND length(${t.flowRequestKey}) BETWEEN 1 AND 128
+        AND jsonb_typeof(${t.schema}->'flowQuestion'->'promptOrdinal')='number'
+        AND ${t.schema}->'flowQuestion'->>'nodeAttemptId'=${t.flowNodeAttemptId}
+        AND jsonb_typeof(${t.schema}->'flowQuestion'->'commandId')='string'
+        AND jsonb_typeof(${t.schema}->'flowQuestion'->'assignmentId')='string'
+        AND jsonb_typeof(${t.schema}->'flowQuestion'->'incarnationId')='string'
+        AND jsonb_typeof(${t.schema}->'supervisorSessionId')='string' AND jsonb_typeof(${t.schema}->'tokenId')='string'
+        AND ${t.schema}->>'requestDigest' ~ '^[a-f0-9]{64}$'
+        AND ${t.taskId} IS NULL AND ${t.specialistAssignmentId} IS NULL AND ${t.reTriggerMode} IS NULL
+        AND ((${t.flowAnswerAcceptedAt} IS NULL AND ${t.flowAnswerUserId} IS NULL AND ${t.response} IS NULL AND ${t.respondedAt} IS NULL)
+          OR (${t.flowAnswerAcceptedAt} IS NOT NULL AND ${t.flowAnswerUserId} IS NOT NULL AND ${t.response} IS NOT NULL AND ${t.activationState}='active')))
+      ) IS TRUE`,
+    ),
     specialistInput: foreignKey({
       name: "hitl_specialist_input_fk",
       columns: [t.specialistAssignmentId, t.specialistInputRevision],
@@ -8489,9 +8553,8 @@ export const hitlRequests = pgTable(
       "hitl_requests_agent_question_shape_check",
       sql`(
         ${t.kind} = 'agent_question'
-        AND ((${t.taskId} IS NOT NULL AND ${t.specialistAssignmentId} IS NULL) OR (${t.taskId} IS NULL AND ${t.specialistAssignmentId} IS NOT NULL))
+        AND ((${t.flowNodeAttemptId} IS NULL AND (${t.taskId} IS NULL) <> (${t.specialistAssignmentId} IS NULL) AND ${t.reTriggerMode} IS NOT NULL) OR ${t.flowNodeAttemptId} IS NOT NULL)
         AND ${t.activationState} IS NOT NULL
-        AND ${t.reTriggerMode} IS NOT NULL
         AND ${t.schema} IS NOT NULL
       ) OR (
         ${t.kind} <> 'agent_question'
@@ -8519,6 +8582,12 @@ export const hitlRequests = pgTable(
             AND (
               (${t.supersededByHitlRequestId} IS NOT NULL AND ${t.supersededByRunId} IS NULL)
               OR (${t.supersededByHitlRequestId} IS NULL AND ${t.supersededByRunId} IS NOT NULL)
+              OR (
+                ${t.flowNodeAttemptId} IS NOT NULL
+                AND ${t.respondedAt} IS NULL
+                AND ${t.supersededByHitlRequestId} IS NULL
+                AND ${t.supersededByRunId} IS NULL
+              )
             )
           )
         )
@@ -8926,6 +8995,7 @@ export type NodeAttemptOutputContract = {
 };
 
 export type MaterializationPlan = {
+  packageSkills?: import("@/lib/capabilities/package-delivery").PackageSkillWitness[];
   profileDigest: string;
   resolvedRevisions: { refId: string; kind: string; sha: string }[];
   materializedFiles: string[];
@@ -9109,6 +9179,7 @@ export const projectPackageAttachments = pgTable(
     attachedAt: timestamp("attached_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
+    scopeRevision: integer("scope_revision").notNull().default(1),
   },
   (t) => ({
     projectAttachment: unique("project_package_attachments_owner_id_uq").on(
@@ -9297,6 +9368,28 @@ export const projectDependencySetupReceipts = pgTable(
     shape: check(
       "dependency_setup_shape",
       sql`${t.status} IN ('running','succeeded','failed') AND (${t.ownerPid} IS NULL OR ${t.ownerPid} > 0)`,
+    ),
+  }),
+);
+
+export const projectPackageMcpScopeOverrides = pgTable(
+  "project_package_mcp_scope_overrides",
+  {
+    attachmentId: text("attachment_id")
+      .notNull()
+      .references(() => projectPackageAttachments.id, { onDelete: "cascade" }),
+    refId: text("ref_id").notNull(),
+    scope: text("scope", { enum: ["package", "project"] }).notNull(),
+  },
+  (t) => ({
+    identity: primaryKey({ columns: [t.attachmentId, t.refId] }),
+    refCheck: check(
+      "project_package_mcp_scope_ref_check",
+      sql`length(${t.refId}) BETWEEN 1 AND 128 AND ${t.refId} ~ '^[A-Za-z0-9._-]+$' AND ${t.refId} <> '.' AND position('..' IN ${t.refId}) = 0`,
+    ),
+    validScope: check(
+      "project_package_mcp_scope_valid",
+      sql`${t.scope} IN ('package', 'project')`,
     ),
   }),
 );
@@ -10695,6 +10788,7 @@ export const LIBRARIAN_TURN_STATUSES = [
   "queued",
   "admitted",
   "running",
+  "awaiting_answer",
   "completed",
   "stopped",
   "failed",
@@ -10878,9 +10972,14 @@ export const librarianTurns = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    uniqOwner: unique("librarian_turns_owner_uq").on(
+      t.id,
+      t.conversationId,
+      t.segmentId,
+    ),
     uniqOneActive: uniqueIndex("librarian_turns_one_active_uq")
       .on(t.conversationId)
-      .where(sql`${t.status} IN ('admitted', 'running')`),
+      .where(sql`${t.status} IN ('admitted', 'running', 'awaiting_answer')`),
     uniqOneSummary: uniqueIndex("librarian_turns_one_summary_uq")
       .on(t.segmentId)
       .where(
@@ -10896,7 +10995,7 @@ export const librarianTurns = pgTable(
     ),
     statusCheck: check(
       "librarian_turns_status_check",
-      sql`${t.status} IN ('queued', 'admitted', 'running', 'completed', 'stopped', 'failed', 'withdrawn')`,
+      sql`${t.status} IN ('queued', 'admitted', 'running', 'awaiting_answer', 'completed', 'stopped', 'failed', 'withdrawn')`,
     ),
     runningHasSnapshot: check(
       "librarian_turns_running_has_snapshot_check",
@@ -11021,6 +11120,7 @@ export const librarianCards = pgTable(
         "knowledge_proposal",
         "brain_proposal",
         "vault_edit",
+        "question",
       ],
     }).notNull(),
     status: text("status", {
@@ -11035,6 +11135,17 @@ export const librarianCards = pgTable(
     }).notNull(),
     target: jsonb("target").$type<Record<string, string>>().notNull(),
     targetRevision: text("target_revision"),
+    questionTurnId: text("question_turn_id"),
+    questionKey: text("question_key"),
+    questionCheckpointAt: timestamp("question_checkpoint_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    questionAnswer: jsonb("question_answer").$type<Record<string, unknown>>(),
+    questionDeliveredAt: timestamp("question_delivered_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     effectContext: jsonb("effect_context").$type<Record<string, unknown>>(),
     payloadDigest: text("payload_digest").notNull(),
@@ -11049,6 +11160,34 @@ export const librarianCards = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    questionOwner: foreignKey({
+      name: "librarian_cards_question_owner_fk",
+      columns: [t.questionTurnId, t.conversationId, t.segmentId],
+      foreignColumns: [
+        librarianTurns.id,
+        librarianTurns.conversationId,
+        librarianTurns.segmentId,
+      ],
+    }).onDelete("cascade"),
+    questionKeyUnique: uniqueIndex("librarian_cards_question_key_uq")
+      .on(t.questionTurnId, t.questionKey)
+      .where(sql`${t.kind} = 'question'`),
+    pendingQuestion: uniqueIndex("librarian_cards_pending_question_uq")
+      .on(t.questionTurnId)
+      .where(sql`${t.kind} = 'question' AND ${t.status} = 'pending'`),
+    questionShape: check(
+      "librarian_cards_question_shape_check",
+      sql`(
+      (${t.kind} <> 'question' AND ${t.questionTurnId} IS NULL AND ${t.questionKey} IS NULL
+        AND ${t.questionCheckpointAt} IS NULL AND ${t.questionAnswer} IS NULL AND ${t.questionDeliveredAt} IS NULL)
+      OR (${t.kind} = 'question' AND ${t.questionTurnId} IS NOT NULL
+        AND length(${t.questionKey}) BETWEEN 1 AND 128 AND ${t.requiresOwner}
+        AND (${t.status} <> 'pending' OR (${t.questionAnswer} IS NULL AND ${t.decidedAt} IS NULL))
+        AND (${t.status} <> 'accepted' OR (${t.questionCheckpointAt} IS NOT NULL
+          AND jsonb_typeof(${t.questionAnswer}) = 'object' AND ${t.decidedAt} IS NOT NULL))
+        AND (${t.questionDeliveredAt} IS NULL OR ${t.status} = 'accepted'))
+    ) IS TRUE`,
+    ),
     idxHistory: index("librarian_cards_history_idx").on(
       t.conversationId,
       t.createdAt.desc(),
@@ -11059,7 +11198,7 @@ export const librarianCards = pgTable(
       .where(sql`${t.status} = 'pending'`),
     kindCheck: check(
       "librarian_cards_kind_check",
-      sql`${t.kind} IN ('statement_proposal', 'confirmation', 'memory_suggestion', 'knowledge_proposal', 'brain_proposal', 'vault_edit')`,
+      sql`${t.kind} IN ('statement_proposal', 'confirmation', 'memory_suggestion', 'knowledge_proposal', 'brain_proposal', 'vault_edit', 'question')`,
     ),
     statusCheck: check(
       "librarian_cards_status_check",

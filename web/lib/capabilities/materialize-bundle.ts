@@ -1,15 +1,22 @@
 import "server-only";
 
+import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { FlowDeliverySnapshot } from "./package-delivery";
+
 import { execFile } from "node:child_process";
 import { cp, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { sql } from "drizzle-orm";
 import pino from "pino";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { stagePackageSkillInputs } from "./package-skills";
 import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
+
+import { MaisterError } from "@/lib/errors";
 import { atomicWriteText } from "@/lib/atomic";
 import {
   AGENT_MATERIALIZATION_ROOT_RELATIVE,
@@ -50,6 +57,7 @@ async function pathExists(p: string): Promise<boolean> {
 // in the bundle (i.e. a copy was attempted) plus the exact entries MAIster wrote,
 // so only generated content can be hidden from the run diff.
 type BundleArtifactRequest = Readonly<{
+  trees?: readonly ("skills" | "agents")[];
   installedPath: string;
   worktreePath: string;
 }>;
@@ -74,7 +82,7 @@ async function copyBundleArtifacts(
     materializedPaths: [] as string[],
   };
 
-  for (const sub of ["skills", "agents"] as const) {
+  for (const sub of args.trees ?? (["skills", "agents"] as const)) {
     const src = fileURLToPath(runtimePathUrl(args.installedPath, sub));
 
     if (!(await pathExists(src))) continue;
@@ -286,18 +294,25 @@ export async function ensureWorktreeGitignore(
 export async function materializeProjectBundlesIntoWorktree(args: {
   runId: string;
   projectId: string;
+  delivery?: FlowDeliverySnapshot;
   worktreePath: string;
   baseBranch: string;
   // FIXME(any): dual drizzle-orm peer-dep variants (store idiom).
   db: any;
 }): Promise<{ bundles: number }> {
-  const installedImports: Array<{ installedPath: string }> = await args.db
-    .select({ installedPath: capabilityImports.installedPath })
-    .from(capabilityImports)
-    .where(eligibleProjectImport(args.projectId));
+  const installedImports: Array<{ id: string; installedPath: string }> =
+    await args.db
+      .select({
+        id: capabilityImports.id,
+        installedPath: capabilityImports.installedPath,
+      })
+      .from(capabilityImports)
+      .where(eligibleProjectImport(args.projectId));
 
   return materializeBundleSet(
     {
+      delivery: args.delivery,
+      db: args.db,
       bundles: installedImports,
       runId: args.runId,
       worktreePath: args.worktreePath,
@@ -308,11 +323,16 @@ export async function materializeProjectBundlesIntoWorktree(args: {
   );
 }
 
-export type CapabilityBundleSource = Readonly<{ installedPath: string }>;
+export type CapabilityBundleSource = Readonly<{
+  id?: string;
+  installedPath: string;
+}>;
 
 /** Materialize an explicit bundle set; accepted launches supply only verified private captures. */
 type BundleSetMaterialization = Readonly<{
+  db?: SqlTransaction;
   runId: string;
+  delivery?: FlowDeliverySnapshot;
   bundles: ReadonlyArray<CapabilityBundleSource>;
   worktreePath: string;
   baseBranch: string;
@@ -333,31 +353,94 @@ async function materializeBundleSet(
   copyArtifacts: BundleArtifactCopier,
   publishSkills: typeof materializeWorkspacePackageSkills,
 ): Promise<{ bundles: number }> {
-  if (args.bundles.length === 0) return { bundles: 0 };
+  if (
+    args.bundles.length === 0 &&
+    !args.delivery?.packages.some((p) => p.bundleIds.length)
+  )
+    return { bundles: 0 };
 
   const worktreePath = await assertSafeAgentMaterializationPath(
     args.worktreePath,
     ".maister/capabilities",
   );
-  const materializedPaths = await publishSkills({
-    cwd: worktreePath,
-    runId: args.runId,
-    installedPaths: args.bundles.map((bundle) => bundle.installedPath),
-  });
+  const materializedPaths: string[] = [];
 
-  if (materializedPaths.length > 0)
+  if (args.delivery) {
+    const sources = [...args.bundles];
+
+    for (const pin of args.delivery.packages) {
+      const missing = pin.bundleIds.filter(
+        (id) => !sources.some((s) => s.id === id),
+      );
+
+      if (!missing.length || !args.db) continue;
+      const {
+        rows: [install],
+      } = await args.db.execute(
+        sql`SELECT installed_path AS root FROM package_installs WHERE id=${pin.installId} AND resolved_revision=${pin.revision} AND package_status='Installed'`,
+      );
+
+      if (!install || typeof install.root !== "string")
+        throw new MaisterError(
+          "PRECONDITION",
+          `Cannot restore pinned package ${pin.name}@${pin.revision}`,
+        );
+      for (const id of missing) {
+        const member = pin.bundlePaths?.[id];
+
+        if (
+          !member ||
+          member.split("/").some((c) => !c || c === "." || c === "..")
+        )
+          throw new MaisterError("PRECONDITION", `Missing pinned bundle ${id}`);
+        sources.push({ id, installedPath: path.join(install.root, member) });
+      }
+    }
+    materializedPaths.push(
+      ...(await stagePackageSkillInputs({
+        cwd: worktreePath,
+        runId: args.runId,
+        bundles: sources,
+        delivery: args.delivery,
+      })),
+    );
+    for (const bundle of sources.filter((source) =>
+      args.delivery?.packages.some(
+        (p) => source.id && p.bundleIds.includes(source.id),
+      ),
+    )) {
+      const copied = await copyArtifacts({
+        installedPath: bundle.installedPath,
+        worktreePath,
+        trees: ["agents"],
+      });
+
+      materializedPaths.push(...copied.materializedPaths);
+    }
+    materializedPaths.push(
+      path.join(worktreePath, ".maister", "capabilities", args.runId),
+    );
+  } else {
+    materializedPaths.push(
+      ...(await publishSkills({
+        cwd: worktreePath,
+        runId: args.runId,
+        installedPaths: args.bundles.map((b) => b.installedPath),
+      })),
+    );
+    for (const imp of args.bundles) {
+      const copied = await copyArtifacts({
+        installedPath: imp.installedPath,
+        worktreePath,
+      });
+
+      materializedPaths.push(...copied.materializedPaths);
+    }
+  }
+  if (materializedPaths.length)
     materializedPaths.push(
       path.join(worktreePath, AGENT_MATERIALIZATION_ROOT_RELATIVE),
     );
-
-  for (const imp of args.bundles) {
-    const copied = await copyArtifacts({
-      installedPath: imp.installedPath,
-      worktreePath,
-    });
-
-    materializedPaths.push(...copied.materializedPaths);
-  }
   await writeAiFactoryConfigOverride({
     worktreePath,
     baseBranch: args.baseBranch,
@@ -372,5 +455,12 @@ async function materializeBundleSet(
     "[capabilities.bundle] materialized project bundles into worktree",
   );
 
-  return { bundles: args.bundles.length };
+  return {
+    bundles: args.delivery
+      ? args.delivery.packages.reduce(
+          (count, p) => count + p.bundleIds.length,
+          0,
+        )
+      : args.bundles.length,
+  };
 }

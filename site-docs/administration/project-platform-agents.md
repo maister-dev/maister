@@ -51,6 +51,12 @@ Set these fields before enabling the attachment:
 The attachment is the grant. Disabling or detaching it stops future triggers
 and revokes live agent tokens.
 
+### Change the project prompt and MCP servers
+
+Open **Project → Agents**, select the agent and open **Definition**. With repository-file access you can read the effective prompt. With project-settings access you can also choose **Edit instance**, edit the instructions and save. The **!** icon appears when the saved text differs from the currently adopted package. Focus or hover over the icon to read its hint. Activate it to compare the two versions. To follow the package again, choose **Restore package prompt**, then **Save changes**.
+
+The same editor lists inherited MCP servers and lets you select additional servers connected to this project. Clear a local selection to remove the addition. An inherited server stays available if the package also declares it. Changes apply to future Runs. If another editor saves first or the project adopts a different package revision, reload the definition before saving.
+
 ### Read and edit an agent’s memory
 
 Once the operator has [activated the memory vault](/operations/deployment#activate-the-agent-memory-vault),

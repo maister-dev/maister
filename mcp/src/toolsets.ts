@@ -17,6 +17,7 @@ import { PERSONAL_KNOWLEDGE_TOOLS } from "../../runtime/knowledge-tool-effects";
 // `run_plan`), the triager's verdict (`triage_set`) and every agent-memory,
 // Brain-write and evaluation tool are deliberately absent.
 export const LIBRARIAN_TOOLSET = [
+  "ask_human",
   "project_list",
   "project_get",
   "task_search",
@@ -87,6 +88,7 @@ export const TOOLSETS = {
       ...PERSONAL_KNOWLEDGE_TOOLS,
     ],
   },
+  "flow-node": ["ask_human"],
   company: COMPANY_FLOW_TOOL_CONTRACT.map((tool) => tool.name),
   librarian: LIBRARIAN_TOOLSET,
   installation: installationToolNames(Object.keys(INSTALLATION_SCOPE_TOOLS)),

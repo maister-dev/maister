@@ -42,7 +42,26 @@ BEGIN
     IF OLD.state<>'preparing' OR OLD.lease_expires_at<=clock_timestamp()
       OR OLD.lease_token IS DISTINCT FROM NEW.lease_token AND NEW.state='preparing'
       OR (array_position(phases,NEW.preparation_phase)<>array_position(phases,OLD.preparation_phase)+1
-        AND NOT (NEW.preparation_identity->'version'='2'::jsonb AND NEW.preparation_identity->>'kind'='agent' AND OLD.preparation_phase='reserved' AND NEW.preparation_phase='run_bound'))
+        AND NOT (NEW.preparation_identity->'version'='2'::jsonb AND NEW.preparation_identity->>'kind'='agent' AND OLD.preparation_phase='reserved' AND NEW.preparation_phase='run_bound')
+        AND NOT (
+          OLD.preparation_phase='reserved' AND NEW.preparation_phase='run_bound'
+          AND EXISTS (
+            SELECT 1
+            FROM workspaces workspace
+            JOIN execution_commands command ON command.target_session_id = workspace.id
+              AND command.run_id = workspace.run_id
+              AND command.execution_host_id = workspace.execution_host_id
+              AND command.execution_assignment_id = workspace.preparation_assignment_id
+            WHERE workspace.run_id = NEW.run_id
+              AND workspace.project_id = NEW.project_id
+              AND workspace.ownership_kind = 'host_owned'
+              AND workspace.execution_workspace_id IS NULL
+              AND workspace.workspace_input_digest = NEW.input_digest
+              AND workspace.base_commit IS NOT DISTINCT FROM (NEW.preparation_identity->>'baseCommit')
+              AND command.kind = 'workspace.prepare'
+              AND command.state = 'queued'
+          )
+        ))
       OR NEW.preparation_phase='run_bound' AND (NEW.state<>'run_bound' OR NEW.run_id IS DISTINCT FROM NEW.preparation_identity->>'runId') THEN
       RAISE EXCEPTION 'Preparation publication requires its current owner and next phase'
         USING ERRCODE='23514',CONSTRAINT='task_launch_preparation_owner';

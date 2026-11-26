@@ -6,6 +6,8 @@ import {
   AgentsAttachPanel,
   type AgentRecommendedView,
 } from "@/components/board/panels/agents-attach-panel";
+import { readDivergentAgentIds } from "@/lib/agents/project-instance-profile";
+import { getDb } from "@/lib/db/client";
 import { getProjectAgentsView } from "@/lib/agents/project-links";
 import { AGENT_TRIGGER_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 
@@ -57,6 +59,16 @@ export async function ProjectAgentsPanel({
   }>;
 }): Promise<ReactElement> {
   const view = await getProjectAgentsView(projectId);
+  const visibleRows = view.attached.filter(
+    (row) => agentId === undefined || row.agent.id === agentId,
+  );
+  const diverged = canReadRepoFiles
+    ? await readDivergentAgentIds(
+        getDb(),
+        projectId,
+        visibleRows.map((row) => row.agent.id as string),
+      )
+    : new Set<string>();
   // ADR-129 (W-G, T7.2): an agent's effective MCPs = the refs it declares,
   // resolved through the project's bindings. The hub already threads bindings
   // into `requirements` and stamps `declaredBy: ["agent:<id>", …]`, so filtering
@@ -70,51 +82,50 @@ export async function ProjectAgentsPanel({
 
   return (
     <AgentsAttachPanel
-      attached={view.attached
-        .filter((row) => agentId === undefined || row.agent.id === agentId)
-        .map((row) => ({
-          linkId: row.linkId,
-          activity: row.agent.activity as AgentActivitySummary | undefined,
-          enabled: row.enabled,
-          runnerOverrideId: row.runnerOverrideId,
-          branchBase: row.branchBase,
-          executionPolicyOverride: row.executionPolicyOverride,
-          config: row.config,
-          canReadBrain: row.canReadBrain,
-          canWriteBrain: row.canWriteBrain,
-          memoryEnabled: row.memoryEnabled,
-          memoryWritePolicy: row.memoryWritePolicy,
-          crossProjectReach: row.crossProjectReach,
-          schedulesRevision: row.schedulesRevision,
-          schedules: canReadRepoFiles
-            ? row.schedules
-            : row.schedules.map(
-                ({
-                  requestAtLaunch: _request,
-                  assignmentReview: _review,
-                  ...schedule
-                }) => schedule,
-              ),
-          agent: {
-            id: row.agent.id as string,
-            name: row.agent.name as string,
-            packageName: row.agent.packageName as string,
-            kind: row.agent.kind as "operational" | "code_delivery",
-            workspace: row.agent.workspace as string,
-            mode: row.agent.mode as string,
-            triggers: row.agent.triggers as string[],
-            riskTier: row.agent.riskTier as string,
-            enabled: row.agent.enabled as boolean,
-            quarantinedAt: row.agent.quarantinedAt
-              ? new Date(row.agent.quarantinedAt as Date).toISOString()
-              : null,
-            flowRef: (row.agent.flowRef as string | null) ?? null,
-            recommended: toRecommendedView(row.agent.recommended),
-            configSchema:
-              (row.agent.configSchema as AgentConfigParam[] | null) ?? null,
-            effectiveMcps: effectiveMcpsFor(row.agent.id as string),
-          },
-        }))}
+      attached={visibleRows.map((row) => ({
+        linkId: row.linkId,
+        promptDiverged: diverged.has(row.agent.id as string),
+        activity: row.agent.activity as AgentActivitySummary | undefined,
+        enabled: row.enabled,
+        runnerOverrideId: row.runnerOverrideId,
+        branchBase: row.branchBase,
+        executionPolicyOverride: row.executionPolicyOverride,
+        config: row.config,
+        canReadBrain: row.canReadBrain,
+        canWriteBrain: row.canWriteBrain,
+        memoryEnabled: row.memoryEnabled,
+        memoryWritePolicy: row.memoryWritePolicy,
+        crossProjectReach: row.crossProjectReach,
+        schedulesRevision: row.schedulesRevision,
+        schedules: canReadRepoFiles
+          ? row.schedules
+          : row.schedules.map(
+              ({
+                requestAtLaunch: _request,
+                assignmentReview: _review,
+                ...schedule
+              }) => schedule,
+            ),
+        agent: {
+          id: row.agent.id as string,
+          name: row.agent.name as string,
+          packageName: row.agent.packageName as string,
+          kind: row.agent.kind as "operational" | "code_delivery",
+          workspace: row.agent.workspace as string,
+          mode: row.agent.mode as string,
+          triggers: row.agent.triggers as string[],
+          riskTier: row.agent.riskTier as string,
+          enabled: row.agent.enabled as boolean,
+          quarantinedAt: row.agent.quarantinedAt
+            ? new Date(row.agent.quarantinedAt as Date).toISOString()
+            : null,
+          flowRef: (row.agent.flowRef as string | null) ?? null,
+          recommended: toRecommendedView(row.agent.recommended),
+          configSchema:
+            (row.agent.configSchema as AgentConfigParam[] | null) ?? null,
+          effectiveMcps: effectiveMcpsFor(row.agent.id as string),
+        },
+      }))}
       available={(agentId === undefined ? view.available : []).map((agent) => ({
         id: agent.id as string,
         name: agent.name as string,

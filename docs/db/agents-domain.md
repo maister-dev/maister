@@ -353,3 +353,14 @@ Positive and missing numbers use bounded integers at the command boundary.
 | Main 0348–0349 | Reviewed installation reach, versioned execution principal and exact disclosure provenance. See the [company domain](company-brain-domain.md). | Legacy grant or historical execution gains no new scope. Provenance that cannot resolve remains unavailable. |
 | Main 0354 | Stable owner on note import receipts, backfilled from an exact retained destination when available. | A published receipt retains its original project and agent. An interrupted pre-upgrade inventory with no destination remains unclassified. |
 | Main 0355 | Permit one terminal `revoked` reason on installation Run credentials, including previously rotated credentials. | Run finalization retires the entire credential family. Recorded reasons, scope bindings and revocation remain protected against later changes that would restore access. |
+
+## Package and agent delivery
+
+Migration `0403` adds nullable `agent_project_links.prompt_override`. Null
+inherits the package persona. A value must contain non-whitespace text and is
+limited to 65,536 characters. `agent_project_mcp_additions` has primary key
+`(link_id, ref_id)`, with `link_id` cascading from `agent_project_links.id`.
+The checked `ref_id` is a safe path segment of 1–128 characters. Persona and
+MCP additions share the link revision precondition. `runs.project_agent_profile`
+is nullable JSONB recording the standalone Run's admitted profile for recovery.
+See the [migration sequence](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions).

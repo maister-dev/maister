@@ -3,7 +3,7 @@ import "server-only";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 
 import { compileManifest } from "@/lib/flows/graph/compile";
-import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
+import { parseRetainedGraphShape } from "@/lib/flows/manifest-parser";
 import {
   presentationLayout,
   type FlowLayout,
@@ -34,7 +34,7 @@ export function buildAuthoredFlowGraph(
   storedManifest: unknown,
   draftVersion: number,
 ): AuthoredFlowGraph {
-  const manifest = parseGraphOnlyFlowManifest(storedManifest, {
+  const manifest = parseRetainedGraphShape(storedManifest, {
     code: "CONFIG",
     surface: "authored-flow-graph",
     manifestLabel: "authored flow manifest",

@@ -3,14 +3,40 @@ import "server-only";
 import type { KnowledgeAccessRestriction } from "@/lib/company/types";
 import type { Db } from "@/lib/execution-host/db";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
-import { librarianConversations, librarianTurns } from "@/lib/db/schema";
+import {
+  librarianConversations,
+  librarianTurns,
+  tokenAuditLog,
+} from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 
 type LibrarianSources = readonly KnowledgeAccessRestriction[];
+
+/** The projects the turn's tool calls touched, from its own audit rows — what
+ * masks the reply for an owner who later loses one of them (LMM-09). */
+export async function turnSourceProjectIds(
+  tx: Db,
+  turnId: string,
+): Promise<string[]> {
+  const rows = await tx
+    .selectDistinct({ projectId: tokenAuditLog.project_id })
+    .from(tokenAuditLog)
+    .where(
+      and(
+        eq(tokenAuditLog.librarian_turn_id, turnId),
+        isNotNull(tokenAuditLog.project_id),
+      ),
+    );
+
+  return rows
+    .map((row: { projectId: string | null }) => row.projectId)
+    .filter((id: string | null): id is string => id !== null)
+    .sort();
+}
 
 export function librarianProjectSources(
   projectIds: readonly string[],

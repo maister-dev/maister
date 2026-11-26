@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 import { claudeContextWindow } from "../../runtime/acp-context";
 
+import { preparePackageSkillHome } from "./package-skill-home";
 import { prepareProducerFiles, type ProducerFiles } from "./producer-files";
 import { HostRuntimeEventError } from "./host-runtime-errors";
 import { producerPressure, type ProducerPauseBound } from "./producer-pressure";
@@ -123,7 +124,10 @@ export function buildChildEnv(
       : {};
 
   return {
-    ...(opts.hostEnvironment ?? process.env),
+    ...Object.fromEntries(Object.entries(opts.hostEnvironment ?? process.env).filter(([name]) =>
+      !name.startsWith("MAISTER_MCP_SECRET_") &&
+      name !== "MAISTER_PROJECT_TOKEN" && name !== "MAISTER_ACCESS_TOKEN",
+    )),
     ...(request.executor.env ?? {}),
     ...(request.adapterLaunch?.env ?? {}),
     ...(opts.capabilityProfilePath
@@ -205,6 +209,7 @@ export async function spawnSession(
         opts.runtimeObjectEnv?.capabilityInstructionsPath,
       outputPaths: opts.runtimeObjectEnv?.outputPaths,
     });
+    Object.assign(childEnv, await preparePackageSkillHome(request, workspace));
     const nativeLaunch = await protectWorkspaceProcess(workspace, {
       binary,
       arguments: args,
@@ -215,6 +220,7 @@ export async function spawnSession(
         sessionId,
         agent: request.executor.agent,
         adapter: adapterRuntime.id,
+        addressedPackageSkillCount: request.addressedPackageSkills?.length,
         binary,
         binarySource: binaryResolution.source,
         binaryOverrideEnv: binaryResolution.overrideEnv ?? null,

@@ -62,10 +62,12 @@ export type ExecutionEventProjector = {
     event: ExecutionEvent,
     signal: AbortSignal,
   ) => Promise<ExecutionEvent>;
-  // A process-local wake is allowed only after both the event projection and
-  // durable cursor advance commit. It is an optimization: readers still query
-  // Postgres after a missed wake.
-  afterCommit?: (events: readonly ExecutionEvent[]) => void;
+  // Follow-up projections and wake hints run after committing the cursor.
+  // Their durable inputs must remain independently recoverable.
+  afterCommit?: (
+    events: readonly ExecutionEvent[],
+    db: Db,
+  ) => void | Promise<void>;
 };
 
 export type ExecutionEventProjectorSummary = {
@@ -594,7 +596,10 @@ export async function applyClaimedExecutionProjection(input: {
     });
 
   if (transactionResult.projectedEvents.length > 0) {
-    input.projector.afterCommit?.(transactionResult.projectedEvents);
+    await input.projector.afterCommit?.(
+      transactionResult.projectedEvents,
+      input.db,
+    );
   }
 
   return transactionResult.summary;

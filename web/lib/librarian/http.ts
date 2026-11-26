@@ -15,6 +15,8 @@ const log = pino({
 // 429, an unknown or foreign id a 404 (existence-hidden), a busy or
 // non-queued state a 409, an unavailable runner a 503.
 export function librarianStatusFor(code: string, reason: unknown): number {
+  if (reason === "json_body_too_large") return 413;
+  if (reason === "question_closed") return 410;
   if (reason === "not_found") return 404;
   switch (code) {
     case "UNAUTHENTICATED":

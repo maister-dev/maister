@@ -48,6 +48,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { cache } from "react";
 import pino from "pino";
 
+import { publicCapabilitySet } from "@/lib/capabilities/package-delivery";
 import {
   flowPermissionEnvelopeSchema,
   gatePermissionSourceSchema,
@@ -97,7 +98,11 @@ import {
 } from "@/lib/execution-host/host-pressure";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
-import { extractOptions } from "@/lib/queries/hitl";
+import {
+  extractOptions,
+  projectQuestionForm,
+  visibleFlowNodeQuestion,
+} from "@/lib/queries/hitl";
 import { getInboxCardContext } from "@/lib/queries/inbox-context";
 import {
   getGraphOnlyCutoverFailure,
@@ -758,7 +763,13 @@ export const getRunDetail = cache(async function getRunDetail(
       dirtyResolution: hitlRequests.dirtyResolution,
     })
     .from(hitlRequests)
-    .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)))
+    .where(
+      and(
+        eq(hitlRequests.runId, runId),
+        isNull(hitlRequests.respondedAt),
+        visibleFlowNodeQuestion(),
+      ),
+    )
     .orderBy(desc(hitlRequests.createdAt));
   const verifiedGateRows = await pendingGateLinks(client, runId, hitlRows);
   const pendingHitlIds = hitlRows.map((hitl) => hitl.id);
@@ -862,7 +873,10 @@ export const getRunDetail = cache(async function getRunDetail(
         : {}),
       budgetProgress: budgetContext?.budgetProgress ?? null,
       claimStage: budgetContext?.claimStage ?? null,
-      schema: pending.kind === "permission" ? null : pending.rawSchema,
+      schema:
+        pending.kind === "permission"
+          ? null
+          : projectQuestionForm(pending.kind, pending.rawSchema),
       criticality: pending.criticality ?? null,
       dirtyResolution: pending.dirtyResolution ?? null,
     };
@@ -1851,9 +1865,11 @@ export async function getRunResolvedCapabilitySet(
   // ADR-129 (W-E): merge the run-level withheld-MCP sink into the read model so
   // the run-detail panel surfaces trust/exec-trust withholds (visible but not
   // executed) alongside the frozen resolved set.
+  const publicSet = publicCapabilitySet(row.resolved);
+
   return row.withheld && row.withheld.length > 0
-    ? { ...row.resolved, withheldMcps: row.withheld }
-    : row.resolved;
+    ? { ...publicSet, withheldMcps: row.withheld }
+    : publicSet;
 }
 
 // null when the run has no such node (no capability materialization happened).

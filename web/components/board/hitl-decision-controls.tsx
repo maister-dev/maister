@@ -804,7 +804,8 @@ function CriticalityBadge({
   );
 }
 
-function FormFieldControl({
+export function FormFieldControl({
+  idPrefix = "hitl-form",
   field,
   value,
   placeholder,
@@ -815,7 +816,11 @@ function FormFieldControl({
   field: HitlFormFieldView;
   value: string;
   placeholder: string;
-  labels: HitlDecisionControlsLabels;
+  idPrefix?: string;
+  labels: Pick<
+    HitlDecisionControlsLabels,
+    "jsonFieldParsed" | "jsonFieldPlainText"
+  >;
   disabled: boolean;
   onChange: (v: string) => void;
 }): ReactElement {
@@ -826,16 +831,16 @@ function FormFieldControl({
       <label
         className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
         htmlFor={
-          field.type === "enum" ? undefined : `hitl-form-field-${field.name}`
+          field.type === "enum" ? undefined : `${idPrefix}-field-${field.name}`
         }
-        id={`hitl-form-label-${field.name}`}
+        id={`${idPrefix}-label-${field.name}`}
       >
         {field.label ?? field.name}
         {field.required ? " *" : ""}
       </label>
       {options.length > 0 ? (
         <div
-          aria-labelledby={`hitl-form-label-${field.name}`}
+          aria-labelledby={`${idPrefix}-label-${field.name}`}
           className="flex flex-wrap gap-2"
           role="group"
         >
@@ -870,7 +875,7 @@ function FormFieldControl({
           <textarea
             className="min-h-[80px] rounded-[7px] border border-line bg-paper px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-amber"
             disabled={disabled}
-            id={`hitl-form-field-${field.name}`}
+            id={`${idPrefix}-field-${field.name}`}
             placeholder={placeholder}
             value={value}
             onChange={(e) => onChange(e.target.value)}
@@ -894,7 +899,7 @@ function FormFieldControl({
         <input
           className="rounded-[7px] border border-line bg-paper px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-amber"
           disabled={disabled}
-          id={`hitl-form-field-${field.name}`}
+          id={`${idPrefix}-field-${field.name}`}
           placeholder={placeholder}
           type="text"
           value={value}

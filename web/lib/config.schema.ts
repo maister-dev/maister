@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+import {
+  isMcpDistribution,
+  type McpDistribution,
+} from "../../runtime/mcp-distribution";
 import { ACP_CONTEXT_FAILURE_REASONS } from "../../runtime/acp-context-failure";
 
 import {
@@ -597,7 +601,6 @@ export const enforcementMapSchema = z
   .object({
     mcps: enforcementModeSchema.optional(),
     tools: enforcementModeSchema.optional(),
-    skills: enforcementModeSchema.optional(),
     restrictions: enforcementModeSchema.optional(),
     permissionMode: enforcementModeSchema.optional(),
     workspaceAccess: enforcementModeSchema.optional(),
@@ -804,7 +807,6 @@ export const aiCodingSettingsSchema = z
     thinkingEffort: thinkingEffortSchema.optional(),
     mcps: nodeMcpsSchema.optional(),
     tools: agentToolsSchema.optional(),
-    skills: z.array(z.string().min(1)).optional(),
     settingsProfile: z.string().min(1).optional(),
     workspaceAccess: z.enum(["read", "write", "none"]).optional(),
     artifactAccess: z.array(z.string().min(1)).optional(),
@@ -818,7 +820,7 @@ export const aiCodingSettingsSchema = z
   .strict();
 
 // M37 (ADR-098): orchestrator settings inherit the full ai_coding capability
-// shape (mcps/skills/tools/restrictions/permissionMode/enforcement) plus an
+// shape (mcps/tools/restrictions/permissionMode/enforcement) plus an
 // optional `delegation` block bounding the run-tree (defaults from the env
 // MAISTER_MAX_ORCHESTRATOR_FANOUT / MAISTER_ORCHESTRATOR_MAX_DEPTH at runtime).
 export const orchestratorSettingsSchema = aiCodingSettingsSchema
@@ -860,7 +862,6 @@ export const judgeSettingsSchema = z
     runner: runnerSlotSchema.optional(),
     mcps: nodeMcpsSchema.optional(),
     tools: agentToolsSchema.optional(),
-    skills: z.array(z.string().min(1)).optional(),
     restrictions: z.array(z.string().min(1)).optional(),
     permissionMode: permissionModeSchema.optional(),
     thinkingEffort: thinkingEffortSchema.optional(),
@@ -1208,20 +1209,40 @@ const publishNodeSchema = waitNodeSchema
     transitions: z.record(z.string(), transitionTargetSchema).optional(),
   });
 
-const nodeSchemaBase = z.discriminatedUnion("type", [
-  aiCodingNodeSchema,
-  orchestratorNodeSchema,
+// Historical Run snapshots retain their original node selection and enforcement.
+const storedSkillSettings = {
+  skills: z.array(z.string().min(1)).optional(),
+  enforcement: enforcementMapSchema
+    .extend({ skills: enforcementModeSchema.optional() })
+    .optional(),
+};
+const storedAiSettings = aiCodingSettingsSchema.extend(storedSkillSettings);
+const storedJudgeSettings = judgeSettingsSchema.extend(storedSkillSettings);
+const sharedNodeVariants = [
   consensusNodeSchema,
-  judgeNodeSchema,
   cliNodeSchema,
   checkNodeSchema,
   humanNodeSchema,
   formNodeSchema,
   waitNodeSchema,
   publishNodeSchema,
+] as const;
+const nodeSchemaBase = z.discriminatedUnion("type", [
+  aiCodingNodeSchema,
+  orchestratorNodeSchema,
+  judgeNodeSchema,
+  ...sharedNodeVariants,
+]);
+const storedNodeSchemaBase = z.discriminatedUnion("type", [
+  aiCodingNodeSchema.extend({ settings: storedAiSettings.optional() }),
+  orchestratorNodeSchema.extend({
+    settings: orchestratorSettingsSchema.extend(storedSkillSettings).optional(),
+  }),
+  judgeNodeSchema.extend({ settings: storedJudgeSettings.optional() }),
+  ...sharedNodeVariants,
 ]);
 
-type NodeSchemaBase = z.infer<typeof nodeSchemaBase>;
+type NodeSchemaBase = z.infer<typeof storedNodeSchemaBase>;
 
 function omitReservedPolicyKeys(node: NodeSchemaBase): NodeSchemaBase {
   if (node.type === "ai_coding") return node;
@@ -1237,7 +1258,9 @@ function omitReservedPolicyKeys(node: NodeSchemaBase): NodeSchemaBase {
   return withoutPolicyKeys;
 }
 
-export const nodeSchema = nodeSchemaBase.transform(omitReservedPolicyKeys);
+export const nodeSchema = nodeSchemaBase.transform(
+  (node): z.infer<typeof nodeSchemaBase> => omitReservedPolicyKeys(node),
+);
 
 // M22 (ADR-064): additive, runner-ignored presentation section — per-node
 // canvas display options (position/size/color) keyed by node `id`, authored
@@ -1624,7 +1647,8 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
               "Plain-workspace result execution does not support repository takeover or further tracks",
           });
         if (node.type !== "ai_coding" && node.type !== "orchestrator") continue;
-        const settings = node.settings;
+        // The same execution constraint applies to retained revisions.
+        const settings: AiCodingSettings | undefined = node.settings;
         const unsupported = (
           [
             "mcps",
@@ -1665,6 +1689,15 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
           });
       }
     }),
+);
+
+// safeExtend preserves the graph-level refinements for retained revisions.
+export const storedFlowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
+  flowYamlV1Schema.out.safeExtend({
+    nodes: z
+      .array(storedNodeSchemaBase.transform(omitReservedPolicyKeys))
+      .min(1),
+  }),
 );
 
 // M26 (ADR-063): the grammar gains a nested `object` type with recursive
@@ -1790,8 +1823,8 @@ export type HumanDecision = z.infer<typeof humanDecisionSchema>;
 export type EnforcementMode = z.infer<typeof enforcementModeSchema>;
 export type EnforcementMap = z.infer<typeof enforcementMapSchema>;
 export type HooksSettings = z.infer<typeof hooksSettingsSchema>;
-export type AiCodingSettings = z.infer<typeof aiCodingSettingsSchema>;
-export type JudgeSettings = z.infer<typeof judgeSettingsSchema>;
+export type AiCodingSettings = z.infer<typeof storedAiSettings>;
+export type JudgeSettings = z.infer<typeof storedJudgeSettings>;
 export type HumanSettings = z.infer<typeof humanSettingsSchema>;
 export type FormSettings = z.infer<typeof formSettingsSchema>;
 export type CliCheckSettings = z.infer<typeof cliCheckSettingsSchema>;
@@ -1812,6 +1845,8 @@ export const packageManifestEntrySchema = z
 export const packageManifestMcpSchema = z
   .object({
     id: capabilityRefIdSchema,
+    scope: z.enum(["package", "project"]).optional(),
+    distribution: z.custom<McpDistribution>(isMcpDistribution).optional(),
     // ADR-132 (D3): all three impl fields are optional — an entry with NEITHER
     // command NOR url NOR transport is a REQUIREMENT (a needed ref, no impl).
     transport: z.enum(["stdio", "http"]).optional(),
@@ -1834,6 +1869,17 @@ export const packageManifestMcpSchema = z
   })
   .strict()
   .superRefine((mcp, ctx) => {
+    if (
+      mcp.distribution &&
+      (mcp.transport !== "stdio" || mcp.command !== mcp.distribution.executable)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["distribution"],
+        message:
+          "A reviewed npm distribution requires stdio and its declared executable as command",
+      });
+    }
     const hasImplementation =
       mcp.command !== undefined ||
       mcp.url !== undefined ||
@@ -1959,6 +2005,13 @@ function addDuplicateIdIssues(
 export const maisterPackageManifestSchema = z
   .object({
     schemaVersion: z.literal(1),
+    delivery: z
+      .object({
+        version: z.literal(1),
+        shareSkills: z.boolean().default(true),
+      })
+      .strict()
+      .optional(),
     name: capabilityRefIdSchema,
     compat: flowCompatSchema.optional(),
     metadata: flowMetadataSchema.optional(),

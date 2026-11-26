@@ -147,3 +147,7 @@ erDiagram
 | `assignment_events`  | `assignment_events_project_created_idx` | `(project_id, created_at)`      | Project audit stream.         |
 
 Source: `web/lib/db/schema.ts`.
+
+## Package and agent delivery
+
+The project human assignment and Run detail point to one durable Flow question. [Migration sequence and constraints](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions)

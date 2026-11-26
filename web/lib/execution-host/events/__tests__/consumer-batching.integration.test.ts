@@ -199,16 +199,19 @@ async function startCase(name: string): Promise<Case> {
 }
 
 describe("batched runtime-event consumer on a real supervisor", () => {
-  it("cold transactional host resolution leaves ingestion usable after commit", async () => {
+  it("cold transactional host resolution reads the durable host and activates ingestion after commit", async () => {
     const host = await startCase("transactional-resolution");
     const transport = createLocalDirectTransport();
+    const health = vi.spyOn(transport, "health");
 
     resetResolverForTests();
     await db.transaction(async (tx) => {
       expect((await localHost({ db: tx, transport })).id).toBe(host.hostId);
+      expect(health).not.toHaveBeenCalled();
     });
     // The next issuer uses the pooled DB after the claim transaction has ended.
     expect((await localHost({ db, transport })).id).toBe(host.hostId);
+    expect(health).toHaveBeenCalledOnce();
     await host.emit();
     const head = (await host.head()).toString();
 

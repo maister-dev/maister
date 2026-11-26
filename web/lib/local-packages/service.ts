@@ -22,6 +22,7 @@ import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 import { stringify as stringifyYaml } from "yaml";
 
+import { removeDeletedDraftCatalog } from "./catalog-operation";
 import {
   ensureLocalPackageGitExclude,
   gitCommitWorkingDir,
@@ -39,6 +40,7 @@ import {
   acquireWorkingDirLock,
   assertHoldsLock,
   releaseWorkingDirLock,
+  withWorkingDirLock,
 } from "./lock";
 import {
   readCreationJournal,
@@ -1408,13 +1410,24 @@ export async function deleteLocalPackage(id: string, db?: Db): Promise<void> {
     );
   }
 
-  await assertNoLiveLocalPackageAssistants(id, database);
+  await withWorkingDirLock(
+    id,
+    () => deleteLockedLocalPackage(row, database),
+    database,
+  );
+}
 
-  const deleted = await database
+async function deleteLockedLocalPackage(
+  row: LocalPackage,
+  database: Db,
+): Promise<void> {
+  await assertNoLiveLocalPackageAssistants(row.id, database);
+
+  const [deleted] = await database
     .delete(lp)
     .where(
       and(
-        eq(lp.id, id),
+        eq(lp.id, row.id),
         isNull(lp.projectId),
         eq(lp.isDefault, false),
         or(
@@ -1424,24 +1437,36 @@ export async function deleteLocalPackage(id: string, db?: Db): Promise<void> {
         ),
       ),
     )
-    .returning();
+    .returning({ id: lp.id, slug: lp.slug, workingDir: lp.workingDir });
 
-  if (deleted.length === 0) {
+  if (!deleted) {
     throw new MaisterError(
       "CONFLICT",
       `local package "${row.name}" changed while deleting — reload and try again`,
     );
   }
 
-  // Explicit user delete removes the working dir; there is no background GC
-  // (owner decision) — orphans from a crash mid-delete are cleaned manually.
-  await rm(row.workingDir, { recursive: true, force: true }).catch((err) =>
+  // After the row is gone no new editor can write receipts. Keep the established
+  // operator cleanup boundary for a crash between the DB commit and filesystem cleanup.
+  await removeDeletedDraftCatalog({
+    packageId: deleted.id,
+    workingDir: deleted.workingDir,
+  }).catch((err) =>
     log.warn(
-      { packageId: row.id, packageSlug: row.slug, err },
+      { packageId: deleted.id, packageSlug: deleted.slug, err },
+      "catalog receipt cleanup failed (left for manual cleanup)",
+    ),
+  );
+  await rm(deleted.workingDir, { recursive: true, force: true }).catch((err) =>
+    log.warn(
+      { packageId: deleted.id, packageSlug: deleted.slug, err },
       "working dir rm failed (left for manual cleanup)",
     ),
   );
-  log.info({ id, slug: row.slug }, "deleted local package + working dir");
+  log.info(
+    { id: deleted.id, slug: deleted.slug },
+    "deleted local package + working dir",
+  );
 }
 
 async function assertNoLiveLocalPackageAssistants(
@@ -1581,8 +1606,8 @@ export async function registerFlowElementInManifest(
   // ADR-106: the manifest flow id MUST equal the copied flow.yaml `name` — the
   // installer enforces id === flow.yaml.name, so deriving the id from the dir
   // basename (`flows/dev` → `dev`) forks an UNCUTTABLE package when the two
-  // differ (`name: aif-dev`). Parse it with the SAME loader the installer uses;
-  // a malformed copy fails fast rather than registering a wrong id.
+  // differ (`name: aif-dev`). The authoring parser also checks a copied Flow
+  // against the current schema before registering it in the draft.
   const flowManifest = await loadFlowManifest(
     path.join(pkg.workingDir, flowDir, "flow.yaml"),
   );

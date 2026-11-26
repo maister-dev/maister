@@ -5,7 +5,7 @@ import type {
   SpineSegment,
 } from "@/lib/queries/board";
 
-import { flowYamlV1Schema } from "@/lib/config.schema";
+import { storedFlowYamlV1Schema } from "@/lib/config.schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 
 const LEGACY_SPINE_LENGTH = 7;
@@ -146,7 +146,7 @@ function nodeAttemptDone(status?: ProgressNodeAttempt["status"]): boolean {
 }
 
 function graphSpine(input: FlightProgressInput): FlightProgress | null {
-  const parsed = flowYamlV1Schema.safeParse(input.manifest);
+  const parsed = storedFlowYamlV1Schema.safeParse(input.manifest);
 
   if (!parsed.success || parsed.data.nodes.length === 0) return null;
 

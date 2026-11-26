@@ -811,7 +811,51 @@ deduplication and lineage use the resolved install ID. Element path confinement
 and the existing partial-copy behavior apply to that exact bundle (UX-01C).
 See the [Web API](../api/web.openapi.yaml).
 
+### Catalog provenance
+
+Each imported skill tree or MCP declaration retains the reviewed upstream digest, publisher, license, exact revision, package-relative destination and applied digest through version cut. Update compares the previous imported bytes to both the working tree and the newly reviewed source. Adoption publishes the cut revision to one project. [Studio authoring](flow-studio.md#catalog-authoring)
+
+#### Draft publication and recovery
+
+The apply sequence publishes its terminal receipt after the draft reaches the
+recorded outcome.
+
+```mermaid
+sequenceDiagram
+  participant E as Package editor
+  participant S as Studio
+  participant D as Draft store
+  E->>S: Preview approved source and exact pin
+  S-->>E: Preview ID, digest, draft base and changes
+  E->>S: Apply preview with live editor session, expected base and request key
+  S->>D: Acquire package lease, verify editor lock and draft base
+  S->>D: Persist pending journal with before and after bytes
+  S->>D: Stage files, manifest and provenance
+  S->>D: Publish journaled paths and compute the resulting draft digest
+  S->>D: Persist applied receipt, remove pending and release lease
+  S-->>E: Applied receipt with draft digest
+```
+
+Each preview binds the actor, draft tree SHA-256, exact source pin and reviewed
+bytes for 15 minutes. The package-wide lease also covers save, commit, discard,
+cut and Studio assistant actions. While an operation holds the lease, the
+same actor can observe its `pending` or terminal receipt. An exact replay
+returns the receipt. Reusing the same actor's request key with a changed
+payload returns `409 CONFLICT`.
+
+On the next lease claim, `reconcileCatalogApply` rolls forward when approval
+still holds, every journaled path matches its recorded before or after bytes,
+and reconstructing the base yields the reviewed digest. On approval revocation
+or draft divergence it persists the abort decision before compensating. It
+restores only paths still carrying the exact bytes written by the apply and
+preserves independent changes. The terminal receipt is `aborted` with reason
+`approval_revoked` or `draft_changed`. The actor can preview again and submit a
+new request key. An existing terminal receipt commits the outcome and recovery
+then removes only the pending journal, leaving later draft edits intact.
+
 ## Expectations
+
+- **CAT-03:** (Implemented) With a current editor session and matching reviewed base, `applyCatalogPreview` and `reconcileCatalogApply` must converge on one replayable applied or aborted receipt per actor and request key, preserving independent edits and releasing the next lease after the interrupted, conflicting or revoked operations verified by `IT-CAT-03`.
 
 - A `local_packages` row MUST have a UNIQUE `slug`; its `working_dir` MUST
   resolve under `localPackagesRoot()` and MUST NEVER appear in any client

@@ -525,7 +525,7 @@ export function startFlowContinuationWorker(input: {
     let liveSession: boolean;
 
     try {
-      const records = await hosts.local().listSessionsForRun(candidate.id);
+      const records = await hosts.inventoryForRun(candidate.id);
 
       liveSession = records.some(
         (record: { runId: string; status: string }) =>

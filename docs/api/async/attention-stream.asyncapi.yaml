@@ -32,6 +32,8 @@ info:
 
     `attention.heartbeat` and `attention.stream_timeout` are synthetic web-tier
     messages. They carry no SSE `id` and never advance a replay cursor.
+    Activating or settling a checkpointed ordinary Flow question changes the eligible recipient's existing attention.tick counters. Only the existing authorized assignment read returns question contents.
+
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster

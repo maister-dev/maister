@@ -1,7 +1,3 @@
-import {
-  readWorkspaceIntegrityLimit,
-  type WorkspaceIntegrityLimit,
-} from "@/lib/agents/operational-diagnostics";
 import "server-only";
 
 import type { ClaudeNativePermissions } from "../../../../runtime/claude-native-permissions";
@@ -34,6 +30,10 @@ import type { FlowDriverClaim } from "./driver-claim";
 import type { EmitWebhookEventInput } from "@/lib/webhooks/outbox";
 import type { RunDomainEventScope } from "@/lib/domain-events/outbox";
 import type { SupervisorDiagnosticsStatus } from "@/lib/execution-host";
+import type {
+  AddressedPackageSkill,
+  PackageSkillView,
+} from "../../../../runtime/package-skill-tree";
 
 import { randomUUID } from "node:crypto";
 import { readFile, stat, unlink } from "node:fs/promises";
@@ -51,6 +51,10 @@ import {
   parsePlanReviewContract,
   type PlanReviewV1,
 } from "../plan-review-contract";
+import {
+  acpContextFailureReason,
+  type AcpContextFailureReason,
+} from "../../../../runtime/acp-context-failure";
 
 import {
   asError,
@@ -153,6 +157,10 @@ import {
 } from "./mutation-check";
 
 import {
+  readWorkspaceIntegrityLimit,
+  type WorkspaceIntegrityLimit,
+} from "@/lib/agents/operational-diagnostics";
+import {
   captureGateEvidence,
   confirmGateEvidence,
 } from "@/lib/auto-promotion/gate-evidence";
@@ -177,7 +185,19 @@ import {
 } from "@/lib/worktree-provenance";
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
 import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
-import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
+import {
+  assertRequiredMcpServers,
+  gateAndOverlayMcpServers,
+} from "@/lib/mcp/materialization-gate";
+import { resolveCurrentPackageSessionCatalog } from "@/lib/capabilities/session-package-catalog";
+import {
+  materializePackageSessionSkills,
+  witnessPackageSkillView,
+} from "@/lib/capabilities/package-skills";
+import {
+  resolvePackageSession,
+  sessionNameForPackageNode,
+} from "@/lib/capabilities/package-delivery";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
   mergeRunnerAdapterLaunch,
@@ -229,6 +249,7 @@ import {
 import { headCommit, resolveBaseRef, resolveRefSha } from "@/lib/worktree";
 import {
   allNodeMcpRefs,
+  normalizeNodeMcps,
   workspacePolicySchema,
   type WorkspacePolicy,
 } from "@/lib/config.schema";
@@ -250,6 +271,7 @@ import {
 } from "@/lib/execution-host";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import {
   checksFromSnapshot,
   dirtyResolveFromSnapshot,
@@ -293,10 +315,6 @@ import {
   type MaisterErrorCode,
 } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
-import {
-  acpContextFailureReason,
-  type AcpContextFailureReason,
-} from "../../../../runtime/acp-context-failure";
 import { WORKSPACE_GIT_CHECKPOINT_PREFIX } from "../../../../runtime/workspace-prepare";
 
 import { nodeAttempts } from "@/lib/db/schema";
@@ -1608,6 +1626,8 @@ async function executeNodeAction(
     // The traversal-independent root handle (opts.driver.rootDb, else db) for
     // work that outlives this traversal — a coordinator's child dispatch.
     rootDb: Db;
+    packageSkillView?: PackageSkillView;
+    addressedPackageSkills?: readonly AddressedPackageSkill[];
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
     capabilityContent?: CapabilityBundleContent;
@@ -1891,6 +1911,8 @@ async function executeNodeAction(
               env: sessionExecutor.env ?? undefined,
             },
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
+            packageSkillView: ctx.packageSkillView,
+            addressedPackageSkills: ctx.addressedPackageSkills,
             capabilityProfilePath: ctx.capabilityProfilePath,
             capabilityInstructionsPath: ctx.capabilityInstructionsPath,
             capabilityContent: ctx.capabilityContent,
@@ -2182,6 +2204,8 @@ async function findLatestRespondedHitl(
 // placeholders the materializer emits (R-SECRET). Does NOT write the
 // materialization ledger (that is T4.2).
 type MaterializedNodeCapabilities = {
+  packageSkillView?: PackageSkillView;
+  addressedPackageSkills?: readonly AddressedPackageSkill[];
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   capabilityContent?: CapabilityBundleContent;
@@ -2268,15 +2292,33 @@ async function materializeNodeCapabilities(
   // codex node needs no materialization.
   const pinModelOnly = !declares && agent === "claude" && !!executor.model;
 
-  if (!declares && !pinModelOnly && !usesStructuredKnowledgeContext(loaded.run))
+  const delivery = loaded.run.resolvedCapabilitySet?.delivery;
+  const scoped = delivery
+    ? resolvePackageSession(
+        delivery,
+        node.id,
+        settings?.mcps === undefined
+          ? undefined
+          : allNodeMcpRefs(settings.mcps),
+      )
+    : undefined;
+
+  if (
+    !scoped &&
+    !declares &&
+    !pinModelOnly &&
+    !usesStructuredKnowledgeContext(loaded.run)
+  )
     return undefined;
 
   const selectedMcpIds =
-    declares && settings
+    scoped?.mcps ??
+    (declares && settings
       ? settings.mcps === undefined
         ? undefined
         : allNodeMcpRefs(settings.mcps)
-      : [];
+      : []);
+  // Only retained revisions can supply an explicit node skill selection.
   const selectedSkillIds = declares && settings ? settings.skills : [];
   const selectedRuleIds: string[] = [];
   const selectedAgentDefinitionIds: string[] = [];
@@ -2290,6 +2332,25 @@ async function materializeNodeCapabilities(
     db as never,
   );
 
+  const required = normalizeNodeMcps(settings?.mcps).required;
+  const current =
+    scoped && delivery && loaded.run.resolvedCapabilitySet
+      ? await resolveCurrentPackageSessionCatalog(db, {
+          projectId: loaded.run.projectId,
+          delivery,
+          snapshot: loaded.run.resolvedCapabilitySet,
+          skills: scoped.skills,
+          selected: scoped.mcps,
+          required,
+          bindings: mcpBindings,
+        })
+      : undefined;
+
+  if (current?.withheld.length)
+    logger.warn(
+      { nodeId: node.id, refs: current.withheld },
+      "Optional MCP targets are unavailable under their captured identity",
+    );
   const profile = resolveCapabilityProfile({
     projectId: loaded.run.projectId,
     executorAgent: agent,
@@ -2297,16 +2358,17 @@ async function materializeNodeCapabilities(
     // declares: undefined mcps → resolver default set; explicit list → that set
     // (required ∪ additional, T-C6). model-only pin → explicit [] so NO default
     // MCPs are pulled in (idsForKind treats undefined as "the default set").
-    selectedMcpIds,
+    selectedMcpIds: current?.mcps ?? selectedMcpIds,
     selectedSkillIds,
     selectedRuleIds,
     selectedAgentDefinitionIds,
     selectedRestrictionIds: declares && settings ? settings.restrictions : [],
     planMode: "off",
-    catalog,
+    catalog: current?.catalog ?? catalog,
   });
 
   const capabilityArgs = {
+    scopedSession: scoped ? (true as const) : undefined,
     runId: loaded.run.id,
     profile,
     nodeAttemptId,
@@ -2358,6 +2420,7 @@ async function materializeNodeCapabilities(
     adapter: agent,
   });
 
+  if (scoped) assertRequiredMcpServers(required, mcpServers, withheldMcps);
   if (overlaidRefs.length > 0) {
     logger.debug(
       { nodeId: node.id, overlaidRefs },
@@ -2382,7 +2445,11 @@ async function materializeNodeCapabilities(
   const addressedRole = addressed && (node.nodeType === "ai_coding" || node.nodeType === "orchestrator")
     ? (settings && "agent" in settings ? settings.agent : undefined) ?? loaded.run.agentId
     : null;
+  if (!addressed && scoped && delivery && worktreePath) {
+    await materializePackageSessionSkills({cwd:worktreePath,runId:loaded.run.id,nodeAttemptId,delivery,skills:scoped.skills});
+  }
   const plan: MaterializationPlan = {
+    ...(scoped ? { packageSkills: scoped.skills } : {}),
     // Fold the enforcement profile into the digest so the long-lived-session
     // consistency guard catches a mid-session enforcement change (D4).
     profileDigest: foldEnforcementProfileIntoDigest(
@@ -2444,6 +2511,15 @@ async function materializeNodeCapabilities(
   );
 
   return {
+    packageSkillView: scoped && worktreePath && "settingsLocalPath" in m ? await witnessPackageSkillView(worktreePath, loaded.run.id, nodeAttemptId, m.settingsLocalPath) : undefined,
+    addressedPackageSkills: addressed && scoped
+      ? scoped.skills.map(({ slug, digest }) => {
+          if (!digest)
+            throw new MaisterError("PRECONDITION", `Addressed skill ${slug} has no captured tree digest`);
+
+          return { slug, treeDigest: digest };
+        })
+      : undefined,
     ...("capabilityContent" in m
       ? {
           capabilityContent: m.capabilityContent,
@@ -2847,6 +2923,7 @@ export async function runGraph(
           });
 
         if (rows.length > 0) {
+          await closeFlowNodeQuestions(tx, runId, "stale graph resume pointer");
           await releaseAssignmentForRun(tx, runId, "run_terminal");
           await emitProjectFlowWebhook({
             db: tx,
@@ -3383,6 +3460,26 @@ export async function runGraph(
                 lastForNode.actionCompletion !== null &&
                 lastForNode.finishContinuation === null))));
 
+      if (
+        !resumingThisNode &&
+        lastForNode?.actionResume?.kind === "node_question" &&
+        lastForNode.status === "NeedsInput"
+      ) {
+        if (opts.driver?.claim.scope !== "assignment")
+          throw new MaisterError(
+            "CONFLICT",
+            "Parked node requires its current driver",
+          );
+        const { settleFlowNodeQuestionWait } =
+          await import("@/lib/services/flow-node-question");
+        const assignmentId = opts.driver.claim.assignmentId;
+
+        checkpointed = await db.transaction((tx: Db) =>
+          settleFlowNodeQuestionWait(tx, runId, assignmentId),
+        );
+        needsInput = !checkpointed;
+        break;
+      }
       if (pendingDurableResumeNodeId === node.id)
         pendingDurableResumeNodeId = null;
 
@@ -3475,7 +3572,15 @@ export async function runGraph(
       // that session's host runner and shares its continuous acp_session_id; the
       // `default` session keeps byte-identical run-level behavior (the run-level
       // executor/runner snapshot are used directly).
-      const nodeSessionName = node.session ?? "default";
+      const declaredSessionName = node.session ?? "default";
+      const delivery = isCompanyFlowRun(loaded)
+        ? undefined
+        : loaded.run.resolvedCapabilitySet?.delivery;
+      const nodeSessionName = sessionNameForPackageNode(
+        delivery,
+        node.id,
+        declaredSessionName,
+      );
       const nodeSession = loaded.sessions.get(nodeSessionName);
       const usesNamedSession =
         nodeSession !== undefined && nodeSessionName !== "default";
@@ -3735,6 +3840,7 @@ export async function runGraph(
       if (
         !startsFresh &&
         !attemptResumeSessionId &&
+        nodeSessionName === declaredSessionName &&
         usesNamedSession &&
         nodeSession?.acpSessionId
       ) {
@@ -3887,6 +3993,8 @@ export async function runGraph(
             settings,
             agent: nodeExecutor.agent,
             permissionPolicy: nodeRunnerSnapshot.permissionPolicy,
+            checkDiagnostics: async () =>
+              (await ensureExecution()).admin.diagnostics(),
           });
         } catch (err) {
           const e = isMaisterError(err)
@@ -4255,6 +4363,8 @@ export async function runGraph(
               signal: opts.driver?.signal,
               bindExecution: ensureExecution,
               rootDb,
+              packageSkillView: materialized?.packageSkillView,
+              addressedPackageSkills: materialized?.addressedPackageSkills,
               capabilityProfilePath: materialized?.capabilityProfilePath,
               capabilityInstructionsPath:
                 materialized?.capabilityInstructionsPath,
@@ -6316,6 +6426,24 @@ export async function runGraph(
     return;
   }
 
+  if (
+    !failed &&
+    !isCompanyFlowRun(loaded) &&
+    opts.driver?.claim.scope === "assignment"
+  ) {
+    const { settleFlowNodeQuestionWait } =
+      await import("@/lib/services/flow-node-question");
+    const held = await db.transaction((tx: Db) =>
+      settleFlowNodeQuestionWait(tx, runId, opts.driver!.claim.assignmentId!),
+    );
+
+    if (held) {
+      await safeProject();
+      await promoteAfterExit(rootDb, { ...opts, db: rootDb }, log2);
+
+      return;
+    }
+  }
   const endedAt = new Date();
 
   if (isCompanyFlowRun(loaded)) {
@@ -6380,6 +6508,7 @@ export async function runGraph(
         });
 
       if (rows.length > 0) {
+        await closeFlowNodeQuestions(tx, runId, "graph flow crashed");
         await releaseAssignmentForRun(tx, runId, "run_terminal");
         await emitProjectFlowWebhook({
           db: tx,
@@ -6470,6 +6599,7 @@ export async function runGraph(
                 isNull(nodeAttempts.endedAt),
               ),
             );
+        await closeFlowNodeQuestions(tx, runId, "graph flow failed");
         await releaseAssignmentForRun(tx, runId, "run_terminal");
         await emitProjectFlowWebhook({
           db: tx,
@@ -6589,6 +6719,11 @@ export async function runGraph(
           });
 
         if (rows.length === 0) return;
+        await closeFlowNodeQuestions(
+          tx,
+          runId,
+          "required public result missing",
+        );
         await releaseAssignmentForRun(tx, runId, "run_terminal");
 
         // The `invalid` row is the ONE durable source for the coordinator's
@@ -6644,6 +6779,7 @@ export async function runGraph(
         });
 
         if (!row) return;
+        await closeFlowNodeQuestions(tx, runId, "result-only flow completed");
         // ADR-166 D7: result-only completion is a terminal flip like every
         // other Done/Failed/Crashed exit — it ends the driver generation.
         await releaseAssignmentForRun(tx, runId, "run_terminal");
@@ -6678,6 +6814,7 @@ export async function runGraph(
           });
 
         if (rows.length > 0) {
+          await closeFlowNodeQuestions(tx, runId, "flow completed for review");
           await releaseAssignmentForRun(tx, runId, "run_terminal");
           await emitProjectFlowWebhook({
             db: tx,

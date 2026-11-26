@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { formSchemaSchema } from "@/lib/config.schema";
 
+export const SCOPED_HUMAN_ASK_MAX_BYTES = 64 * 1024;
+
 /** The Human-ask HTTP body and generated MCP input share this form grammar. */
 export const humanAskBodySchema = z
   .object({
@@ -19,5 +21,10 @@ export const askHumanToolInputSchema = humanAskBodySchema.extend({
   slug: z.string(),
   taskId: z.string(),
 });
+
+export const scopedHumanAskBodySchema = humanAskBodySchema
+  .omit({ reTriggerMode: true })
+  .extend({ requestKey: z.string().min(1).max(128) });
+export type ScopedHumanAskBody = z.infer<typeof scopedHumanAskBodySchema>;
 
 export type HumanAskBody = z.infer<typeof humanAskBodySchema>;

@@ -10,6 +10,7 @@ import {
   type AdapterId,
 } from "@/lib/acp-runners/adapter-support";
 import { platformMcpServers } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import {
   assertOverlayAgainstSlots,
   loadProjectMcpOverlays,
@@ -236,6 +237,7 @@ export async function gateAndOverlayMcpServers(args: {
   db: GateDb;
   projectId: string;
   runId: string;
+  overlays?: Map<string, McpConfigOverlay>;
   supported: ReadonlyArray<{
     kind: string;
     capabilityRefId: string;
@@ -266,14 +268,37 @@ export async function gateAndOverlayMcpServers(args: {
     await mergeRunWithheldMcps(args.db, args.runId, withheld);
   }
 
-  const overlays = await loadProjectMcpOverlays(
-    args.projectId,
-    args.db as never,
-  );
+  const overlays =
+    args.overlays ??
+    (await loadProjectMcpOverlays(args.projectId, args.db as never));
 
   return {
     mcpServers: overlays.size > 0 ? applyMcpOverlays(kept, overlays) : kept,
     withheld,
     overlaidRefs: [...overlays.keys()],
   };
+}
+
+/** Admission pins are prerequisites. The final transport and trust verdict controls dispatch. */
+export function assertRequiredMcpServers(
+  refs: readonly string[],
+  servers: readonly AgentMcpServer[],
+  withheld: readonly WithheldMcp[],
+): void {
+  const available = new Set(servers.map((server) => server.name));
+  const refId = refs.find((ref) => !available.has(ref));
+
+  if (refId !== undefined)
+    throw new MaisterError(
+      "PRECONDITION",
+      `Required MCP ${refId} was withheld by the current transport or trust gate`,
+      {
+        details: {
+          refId,
+          reason:
+            withheld.find((item) => item.refId === refId)?.reason ??
+            "agent_mcp_target_unavailable",
+        },
+      },
+    );
 }

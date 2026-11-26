@@ -7,7 +7,7 @@ import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
 import pino from "pino";
 
-import { loadFlowManifest } from "@/lib/config";
+import { loadRetainedFlowManifest } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
@@ -203,7 +203,7 @@ export function installedPackageSource(install: {
         );
       }
 
-      return loadFlowManifest(real);
+      return loadRetainedFlowManifest(real);
     },
   };
 }

@@ -1,9 +1,31 @@
 import "server-only";
 
-import { cp, lstat, mkdir, readdir } from "node:fs/promises";
+import type {
+  FlowDeliverySnapshot,
+  PackageSkillWitness,
+} from "./package-delivery";
+
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+} from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import pino from "pino";
+
+import {
+  confinedPackageSkillPath,
+  packageSkillTreeDigest,
+  type PackageSkillView,
+} from "../../../runtime/package-skill-tree";
 
 import {
   agentMaterializationPathsForRun,
@@ -23,6 +45,7 @@ type WorkspaceSkillProjection = Readonly<{
   cwd: string;
   runId: string;
   installedPaths: readonly string[];
+  selectedSkills?: readonly string[];
 }>;
 
 const capturedBundlePrefix = ".bundle-";
@@ -86,10 +109,18 @@ export async function materializeWorkspacePackageSkills(
     const source = path.join(installedPath, "skills");
 
     for (const slug of await skillEntries(source)) {
+      if (args.selectedSkills && !args.selectedSkills.includes(slug)) continue;
       if (!skills.has(slug)) skills.set(slug, path.join(source, slug));
     }
   }
 
+  for (const slug of args.selectedSkills ?? []) {
+    if (!skills.has(slug))
+      throw new MaisterError(
+        "CONFIG",
+        `Selected package skill is missing: ${slug}`,
+      );
+  }
   if (skills.size === 0) return [];
 
   return publishSkillProjection(args, async (root) => {
@@ -168,12 +199,15 @@ export async function materializeCapturedWorkspacePackageSkills(
 async function publishSkillProjection(
   { cwd: worktree, runId }: Pick<WorkspaceSkillProjection, "cwd" | "runId">,
   copy: (root: string) => Promise<void>,
+  subpath?: string,
 ): Promise<string[]> {
   const cwd = await assertSafeAgentMaterializationPath(
     worktree,
     ".maister/capabilities",
   );
-  const root = skillRoot(cwd, runId);
+  const root = subpath
+    ? path.join(capabilityMaterializationRootPath(cwd, runId), subpath)
+    : skillRoot(cwd, runId);
   const relative = path.relative(cwd, root);
 
   return materializeWithAgentLease({
@@ -191,8 +225,19 @@ async function publishSkillProjection(
       }
 
       await recordIntent([root]);
-      await mkdir(root, { recursive: true });
-      await copy(root);
+      await mkdir(path.dirname(root), { recursive: true });
+      await assertSafeAgentMaterializationPath(
+        cwd,
+        path.relative(cwd, path.dirname(root)),
+      );
+      const staged = await mkdtemp(root + ".staging-");
+
+      try {
+        await copy(staged);
+        await rename(staged, root);
+      } finally {
+        await rm(staged, { recursive: true, force: true });
+      }
       log.debug(
         { runId },
         "packaged skills materialized within session workspace",
@@ -206,8 +251,12 @@ async function publishSkillProjection(
 export async function workspacePackageSkillsPrompt(
   cwd: string,
   runId: string,
+  nodeAttemptId?: string,
 ): Promise<string> {
-  const root = skillRoot(cwd, runId);
+  const root = path.join(
+    capabilityMaterializationRootPath(cwd, runId, nodeAttemptId),
+    "package-skills",
+  );
   const relative = path.relative(cwd, root);
 
   if (!(await entryStat(root))) return "";
@@ -251,4 +300,163 @@ export function appendPackageSkillsPrompt(
   skillsPrompt: string,
 ): string {
   return skillsPrompt ? `${prompt}\n\n${skillsPrompt}` : prompt;
+}
+
+function bundleKey(id: string): string {
+  return createHash("sha256").update(id).digest("hex");
+}
+
+/** This Run-only staging area is outside every adapter's native discovery directories. */
+export function stagePackageSkillInputs(args: {
+  cwd: string;
+  runId: string;
+  delivery: FlowDeliverySnapshot;
+  bundles: readonly { id?: string; installedPath: string }[];
+}): Promise<string[]> {
+  return publishSkillProjection(
+    args,
+    async (root) => {
+      for (const id of args.delivery.packages.flatMap((p) => p.bundleIds)) {
+        const bundle = args.bundles.find((b) => b.id === id);
+
+        if (!bundle)
+          throw new MaisterError(
+            "PRECONDITION",
+            `Pinned capability bundle ${id} is unavailable`,
+          );
+        const source = path.join(bundle.installedPath, "skills");
+
+        if (!(await entryStat(source))) continue;
+        const bundleRoot = await realpath(bundle.installedPath);
+
+        await cp(source, path.join(root, bundleKey(id)), {
+          recursive: true,
+          dereference: true,
+          filter: async (file) => {
+            const target = await confinedPackageSkillPath(bundleRoot, file);
+            const stat = await lstat(target);
+
+            if (!stat.isFile() && !stat.isDirectory())
+              throw new MaisterError(
+                "CONFIG",
+                "Package skill companion must be a regular file or directory",
+              );
+
+            return true;
+          },
+        });
+      }
+    },
+    "package-inputs",
+  );
+}
+
+/** Publish one flat discovery directory for this attempt, with the same origins as the prompt index. */
+export async function materializePackageSessionSkills(args: {
+  cwd: string;
+  runId: string;
+  nodeAttemptId: string;
+  delivery: FlowDeliverySnapshot;
+  skills: readonly PackageSkillWitness[];
+}): Promise<string[]> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(args.nodeAttemptId))
+    throw new MaisterError("CONFIG", "Invalid node attempt identity");
+  const paths = await publishSkillProjection(
+    args,
+    async (root) => {
+      for (const skill of args.skills) {
+        if (!SLUG_PATTERN.test(skill.slug))
+          throw new MaisterError("CONFIG", "Invalid package skill ref");
+        const pin = args.delivery.packages.find(
+          (p) => p.installId === skill.installId,
+        );
+        const matches: string[] = [];
+
+        for (const bundle of pin?.bundleIds ?? []) {
+          const candidate = path.join(
+            capabilityMaterializationRootPath(args.cwd, args.runId),
+            "package-inputs",
+            bundleKey(bundle),
+            skill.slug,
+          );
+
+          if ((await entryStat(path.join(candidate, "SKILL.md")))?.isFile())
+            matches.push(candidate);
+        }
+        if (matches.length !== 1)
+          throw new MaisterError(
+            "PRECONDITION",
+            `Expected one pinned source for ${skill.packageName}:${skill.slug}, found ${matches.length}`,
+          );
+        await assertSafeAgentMaterializationPath(
+          args.cwd,
+          path.relative(args.cwd, matches[0]!),
+        );
+        await cp(matches[0]!, path.join(root, skill.slug), {
+          recursive: true,
+          filter: async (file) => {
+            const stat = await lstat(file);
+
+            if (!stat.isFile() && !stat.isDirectory())
+              throw new MaisterError(
+                "PRECONDITION",
+                "Pinned skill contains a replaced path",
+              );
+
+            return true;
+          },
+        });
+      }
+    },
+    path.join(args.nodeAttemptId, "package-skills"),
+  );
+  const root = path.join(
+    capabilityMaterializationRootPath(args.cwd, args.runId, args.nodeAttemptId),
+    "package-skills",
+  );
+  const names = (await readdir(root)).sort();
+
+  if (
+    JSON.stringify(names) !==
+    JSON.stringify(args.skills.map((s) => s.slug).sort())
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The pinned skill selection changed before dispatch",
+    );
+  for (const skill of args.skills)
+    if (
+      skill.digest &&
+      (await packageSkillTreeDigest(path.join(root, skill.slug))) !==
+        skill.digest
+    )
+      throw new MaisterError(
+        "PRECONDITION",
+        `Pinned skill bytes changed: ${skill.packageName}:${skill.slug}`,
+      );
+
+  return paths;
+}
+
+export async function witnessPackageSkillView(
+  cwd: string,
+  runId: string,
+  attemptId: string,
+  settingsPath: string | null,
+): Promise<PackageSkillView> {
+  return {
+    skillsDigest: await packageSkillTreeDigest(
+      path.join(
+        capabilityMaterializationRootPath(cwd, runId, attemptId),
+        "package-skills",
+      ),
+    ),
+    ...(settingsPath
+      ? {
+          settingsDigest: createHash("sha256")
+            .update(await readFile(settingsPath))
+            .digest("hex"),
+        }
+      : {}),
+  };
 }

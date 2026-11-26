@@ -67,6 +67,13 @@ export type FlowClarificationResume = ActionResumeIdentity &
   }>;
 
 export type FlowActionResume =
+  | (ActionResumeIdentity &
+      Readonly<{
+        kind: "node_question";
+        questionId: string;
+        checkpointCommandId: string;
+        sourceIncarnationId: string;
+      }>)
   | FlowClarificationResume
   | FlowPermissionResultResume
   | FlowPermissionContinueResume

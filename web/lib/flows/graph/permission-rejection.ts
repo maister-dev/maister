@@ -30,6 +30,7 @@ import {
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -273,6 +274,7 @@ export async function failCheckpointedFlowPermission(
         flowDriverLeaseExpiresAt: null,
       })
       .where(eq(runs.id, runId));
+    await closeFlowNodeQuestions(tx, runId, "permission delivery rejected");
     await systemCloseActiveAssignmentsForRun({
       db: tx,
       runId,

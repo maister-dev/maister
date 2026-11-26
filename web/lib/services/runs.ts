@@ -27,6 +27,11 @@ import pino from "pino";
 import { WORKSPACE_FLOW_ASSET_DIRECTORY } from "../../../runtime/workspace-input-policy";
 
 import { requireReadyDeclaredFlowRunner } from "@/lib/acp-runners/declared-flow-runner";
+import { capturePackageDelivery } from "@/lib/capabilities/capture-package-delivery";
+import {
+  includeCapturedPlatformMcpTargets,
+  sessionNameForPackageNode,
+} from "@/lib/capabilities/package-delivery";
 import { runnerAdmissionError } from "@/lib/flows/runner-admission-error";
 import { isAutomaticTaskLaunchDrain } from "@/lib/tasks/launch-capacity";
 import {
@@ -1587,6 +1592,7 @@ async function* executeFlowLaunch(
           settings,
           agent: capabilityAgent,
           permissionPolicy: runnerResolution.runnerSnapshot.permissionPolicy,
+          checkDiagnostics: () => transportForExecutionHost(placementHost).diagnostics(),
         });
       }
 
@@ -1923,6 +1929,7 @@ async function* executeFlowLaunch(
           capabilityRefId: capabilityRecords.capabilityRefId,
           kind: capabilityRecords.kind,
           source: capabilityRecords.source,
+          selectedByDefault: capabilityRecords.selectedByDefault,
           revision: capabilityRecords.revision,
         })
         .from(capabilityRecords)
@@ -1935,6 +1942,7 @@ async function* executeFlowLaunch(
         capabilityRefId: string;
         kind: string;
         source: string;
+        selectedByDefault: boolean;
         revision: string | null;
       }>;
       // ADR-130 (W-B): thread bindings into the frozen snapshot so mcps[] records
@@ -1944,14 +1952,34 @@ async function* executeFlowLaunch(
         project.id,
         _db as never,
       );
+      const delivery = accepted
+        ? undefined
+        : await capturePackageDelivery(_db, {
+            projectId: project.id,
+            flowPackageInstallId:
+              input.packagePin?.packageInstallId ??
+              flow.packageInstallId ??
+              null,
+            flowManifest: manifest,
+            nonPackageMcpRefs: snapshotRecords
+              .filter(
+                (r) =>
+                  r.kind === "mcp" &&
+                  r.selectedByDefault &&
+                  r.source !== "flow-package",
+              )
+              .map((r) => r.capabilityRefId),
+          });
       const resolvedCapabilitySet =
-        accepted?.settings.resolvedCapabilitySet ??
-        buildResolvedCapabilitySet({
-          records: snapshotRecords,
+        accepted?.settings.resolvedCapabilitySet ?? {
+        ...buildResolvedCapabilitySet({
+          records: includeCapturedPlatformMcpTargets(snapshotRecords, delivery),
           flowRevisionId: revision.id,
           flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
           mcpBindings: snapshotMcpBindings,
-        });
+        }),
+        ...(delivery ? { delivery } : {}),
+      };
 
       log.debug(
         {
@@ -2010,6 +2038,8 @@ async function* executeFlowLaunch(
           materializeWorkspace(() =>
             materializeCapabilityBundlesIntoWorktree({
               bundles,
+              db: _db,
+              delivery: resolvedCapabilitySet.delivery,
               runId,
               worktreePath,
               baseBranch: base,
@@ -2021,6 +2051,7 @@ async function* executeFlowLaunch(
           materializeProjectBundlesIntoWorktree({
             runId,
             projectId: project.id,
+            delivery: resolvedCapabilitySet.delivery,
             worktreePath,
             baseBranch: base,
             db: _db,
@@ -2070,6 +2101,7 @@ async function* executeFlowLaunch(
               runId,
               intentId: accepted?.intent.id,
               acceptedBundles: accepted?.settings.capabilityBundles,
+              delivery: resolvedCapabilitySet.delivery,
             }),
           ]
         : [];
@@ -2373,7 +2405,30 @@ async function* executeFlowLaunch(
         // Inserted in the SAME transaction as `runs` (atomic: a crash before
         // commit leaves no run; the sweep recovers a commit-without-spawn).
         await tx.insert(runSessions).values(
-          sessionResolutions.map((session) => ({
+          [
+            ...sessionResolutions,
+            ...Array.from(compiled.nodes.values()).flatMap((node) => {
+              const declared = node.session ?? "default";
+              const name = sessionNameForPackageNode(
+                resolvedCapabilitySet.delivery,
+                node.id,
+                declared,
+              );
+
+              if (name === declared) return [];
+              const runner = sessionResolutions.find(
+                (session) => session.sessionName === declared,
+              );
+
+              if (!runner)
+                throw new MaisterError(
+                  "CONFIG",
+                  `Agent node ${node.id} has no runner for session ${declared}`,
+                );
+
+              return [{ ...runner, sessionName: name }];
+            }),
+          ].map((session) => ({
             id: randomUUID(),
             runId,
             sessionName: session.sessionName,

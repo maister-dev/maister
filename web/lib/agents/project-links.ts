@@ -6,7 +6,7 @@ import type { AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
 import type { ProjectSourceContent } from "@/lib/agents/project-source-review";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { resolveScheduledRequestFlowRevision } from "@/lib/agents/scheduled-request-flow";
@@ -14,6 +14,7 @@ import {
   assertAgentPackageAttachable,
   listEnabledPackageRefs,
   resolveEffectiveAgentDefinition,
+  splitQualifiedAgentId,
 } from "@/lib/agents/effective";
 import { getAgentActivitySummaries } from "@/lib/agents/activity-queries";
 import { validateInstanceConfig } from "@/lib/agents/config";
@@ -29,6 +30,11 @@ import {
   validateCronExpression,
   validateTimezone,
 } from "@/lib/run-schedules/cron";
+import {
+  additionalMcpRefsSchema,
+  connectedAgentMcpRefs,
+  promptOverrideSchema,
+} from "@/lib/agents/project-instance-profile";
 import { assertAgentQualificationPolicy } from "@/lib/agents/qualification-policy";
 import { parseProjectSourceReview } from "@/lib/agents/project-source-review-types";
 import {
@@ -40,6 +46,7 @@ import {
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
   agentProjectLinks,
+  agentProjectMcpAdditions,
   agents,
   agentSchedules,
   platformAcpRunners,
@@ -499,6 +506,9 @@ export async function updateAgentLink(
       contextRepos?: ContextRepoDecl[] | null;
       schedules?: AgentScheduleInput[];
       schedulesRevision?: number;
+      expectedInstallId?: string;
+      promptOverride?: string | null;
+      additionalMcpRefs?: string[];
     };
   },
   db?: Db,
@@ -666,13 +676,26 @@ export async function updateAgentLink(
     }
   }
 
+  const profileWrite =
+    input.patch.promptOverride !== undefined ||
+    input.patch.additionalMcpRefs !== undefined;
+  const revisioned = normalizedSchedules !== undefined || profileWrite;
+
   if (
-    normalizedSchedules !== undefined &&
+    profileWrite &&
+    (!input.patch.expectedInstallId || !input.patch.schedulesRevision)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Agent profile edits require the loaded install and link revision",
+    );
+  if (
+    revisioned &&
     input.patch.schedulesRevision !== linkRows[0].schedulesRevision
   ) {
     throw new MaisterError(
       "CONFLICT",
-      "agent schedule bindings have changed; reload before saving",
+      "agent instance settings have changed; reload before saving",
     );
   }
 
@@ -692,6 +715,31 @@ export async function updateAgentLink(
       ? await captureProjectEventCursor(tx, input.projectId)
       : null;
     const set: Record<string, unknown> = { updatedAt: now };
+
+    if (profileWrite) {
+      const { packageName } = splitQualifiedAgentId(input.agentId);
+      const {
+        rows: [pin],
+      } = await tx.execute(sql`
+        SELECT package_install_id FROM project_package_attachments
+        WHERE project_id = ${input.projectId} AND package_name = ${packageName} FOR SHARE
+      `);
+
+      if (pin?.package_install_id !== input.patch.expectedInstallId)
+        throw new MaisterError(
+          "CONFLICT",
+          "The adopted agent package changed. Reload its definition before saving.",
+        );
+      if (input.patch.promptOverride !== undefined) {
+        const result = promptOverrideSchema
+          .nullable()
+          .safeParse(input.patch.promptOverride);
+
+        if (!result.success)
+          throw new MaisterError("CONFIG", "Invalid project agent prompt");
+        set.promptOverride = result.data;
+      }
+    }
 
     if (input.patch.enabled !== undefined) set.enabled = input.patch.enabled;
     if (input.patch.runnerOverrideId !== undefined) {
@@ -745,7 +793,7 @@ export async function updateAgentLink(
     if (input.patch.canWriteBrain !== undefined) {
       set.canWriteBrain = input.patch.canWriteBrain;
     }
-    if (normalizedSchedules !== undefined) {
+    if (revisioned) {
       set.schedulesRevision = (linkRows[0].schedulesRevision as number) + 1;
     }
 
@@ -753,7 +801,7 @@ export async function updateAgentLink(
       .update(agentProjectLinks)
       .set(set)
       .where(
-        normalizedSchedules === undefined
+        !revisioned
           ? eq(agentProjectLinks.id, linkRows[0].id)
           : and(
               eq(agentProjectLinks.id, linkRows[0].id),
@@ -765,11 +813,39 @@ export async function updateAgentLink(
       )
       .returning({ id: agentProjectLinks.id });
 
-    if (normalizedSchedules !== undefined && updatedLinks.length === 0) {
+    if (revisioned && updatedLinks.length === 0) {
       throw new MaisterError(
         "CONFLICT",
-        "agent schedule bindings have changed; reload before saving",
+        "agent instance settings have changed; reload before saving",
       );
+    }
+
+    if (input.patch.additionalMcpRefs !== undefined) {
+      const parsed = additionalMcpRefsSchema.safeParse(
+        input.patch.additionalMcpRefs,
+      );
+
+      if (!parsed.success)
+        throw new MaisterError("CONFIG", "Invalid project MCP reference list");
+      const connected = new Set(
+        await connectedAgentMcpRefs(tx, input.projectId),
+      );
+      const missing = parsed.data.find((ref) => !connected.has(ref));
+
+      if (missing)
+        throw new MaisterError(
+          "CONFIG",
+          `MCP "${missing}" is not connected to this project`,
+        );
+      const linkId = linkRows[0].id;
+
+      await tx
+        .delete(agentProjectMcpAdditions)
+        .where(eq(agentProjectMcpAdditions.linkId, linkId));
+      if (parsed.data.length)
+        await tx
+          .insert(agentProjectMcpAdditions)
+          .values(parsed.data.map((refId) => ({ linkId, refId })));
     }
 
     // ADR-089 rotation guarantee: disabling an attachment revokes its live
@@ -983,6 +1059,14 @@ export async function updateAgentLink(
       agentId: input.agentId,
       projectId: input.projectId,
       schedules: normalizedSchedules?.length,
+      profileRevision: profileWrite
+        ? linkRows[0].schedulesRevision + 1
+        : undefined,
+      addedRefCount: input.patch.additionalMcpRefs?.length,
+      promptOverridden:
+        input.patch.promptOverride === undefined
+          ? undefined
+          : input.patch.promptOverride !== null,
       nativeReviewRecorded: reviewsNativeSources,
       reviewedSourceRevision: reviewsNativeSources
         ? (linkRows[0].schedulesRevision as number) + 1

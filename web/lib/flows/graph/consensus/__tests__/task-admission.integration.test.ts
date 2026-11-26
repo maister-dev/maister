@@ -10,6 +10,8 @@ import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
+import * as packageSkillTree from "../../../../../../runtime/package-skill-tree";
+
 import { POST as previewLaunch } from "@/app/api/runs/launch-options/route";
 import {
   flows,
@@ -97,14 +99,48 @@ beforeAll(async () => {
     "---\nname: Writer\ndescription: owned consensus participant\nkind: code_delivery\nworkspace: repo_read\nmode: session\ntriggers: [flow]\nrisk_tier: read_only\nplatform_mcp: false\n---\nReview the exact parent request.\n",
   );
   const packageId = randomUUID();
+  const skill = path.join(installed, "bundle", "skills", "consensus-writing");
+
+  await mkdir(skill, { recursive: true });
+  await writeFile(
+    path.join(skill, "SKILL.md"),
+    "Retain the accepted consensus runner.",
+  );
 
   await database.pool.query(
-    "INSERT INTO package_installs(id,source_url,name,version_label,resolved_revision,manifest,manifest_digest,installed_path,package_status,trust_status) VALUES($1,'local','consensus-fixture','v1','consensus-revision','{}','digest',$2,'Installed','trusted')",
-    [packageId, installed],
+    "INSERT INTO package_installs(id,source_url,name,version_label,resolved_revision,manifest,manifest_digest,installed_path,package_status,trust_status) VALUES($1,'local','consensus-fixture','v1','consensus-revision',$3::jsonb,'digest',$2,'Installed','trusted')",
+    [
+      packageId,
+      installed,
+      JSON.stringify({
+        spec: {
+          schemaVersion: 1,
+          name: "consensus-fixture",
+          capabilities: [{ id: "writer-bundle", path: "bundle" }],
+        },
+        inventory: {
+          skills: ["consensus-writing"],
+          agents: [],
+          platformAgents: ["writer"],
+        },
+      }),
+    ],
   );
   await database.pool.query(
     "INSERT INTO project_package_attachments(id,project_id,package_install_id,package_name) VALUES($1,$2,$3,'consensus-fixture')",
     [randomUUID(), fixture.projectId, packageId],
+  );
+  await database.pool.query(
+    `INSERT INTO capability_imports
+       (id,project_id,capability_ref_id,source,version_tag,resolved_revision,
+        manifest_digest,manifest,installed_path,package_install_id,package_status,trust_status,setup_status)
+     VALUES($1,$2,'writer-bundle','local','v1','consensus-revision','digest','{}',$3,$4,'Installed','trusted','not_required')`,
+    [
+      randomUUID(),
+      fixture.projectId,
+      path.join(installed, "bundle"),
+      packageId,
+    ],
   );
   await database.pool.query(
     "INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path,enabled) VALUES('consensus-fixture:writer','consensus-fixture','v1','authored','Writer','owned consensus participant','repo_read','session','[\"flow\"]','read_only',$1,true)",
@@ -185,7 +221,14 @@ async function runningConsensusParent(oneRunRunnerId?: string) {
             { id: "debate_log", kind: "human_note", current: true },
           ],
         },
-        transitions: { success: "done", agreement: "done" },
+        transitions: { success: "bound-note", agreement: "done" },
+      },
+      {
+        id: "bound-note",
+        type: "ai_coding",
+        action: { prompt: "Write the accepted notes." },
+        settings: { agent: "consensus-fixture:writer" },
+        transitions: { success: "done" },
       },
     ],
   };
@@ -219,6 +262,34 @@ async function runningConsensusParent(oneRunRunnerId?: string) {
   let expectedSettingsToken: string;
 
   if (flowRunnerDraft) {
+    let insideReadOnly = false;
+    let readOnlySnapshots = 0;
+    const hashStages: boolean[] = [];
+    const previewDb: Db = database.db;
+    const transact = previewDb.transaction.bind(previewDb);
+    const digest = packageSkillTree.packageSkillSourceDigest;
+    const transaction = vi
+      .spyOn(previewDb, "transaction")
+      .mockImplementation((operation, config) =>
+        transact(async (tx) => {
+          if (config?.accessMode !== "read only") return operation(tx);
+          insideReadOnly = true;
+          readOnlySnapshots += 1;
+
+          try {
+            return await operation(tx);
+          } finally {
+            insideReadOnly = false;
+          }
+        }, config),
+      );
+    const hashes = vi
+      .spyOn(packageSkillTree, "packageSkillSourceDigest")
+      .mockImplementation((directory, bundle) => {
+        hashStages.push(insideReadOnly);
+
+        return digest(directory, bundle);
+      });
     const response = await previewLaunch(
       new NextRequest("http://localhost/api/runs/launch-options", {
         method: "POST",
@@ -228,9 +299,14 @@ async function runningConsensusParent(oneRunRunnerId?: string) {
         },
         body: JSON.stringify({ taskId, flowRunnerDraft }),
       }),
-    );
+    ).finally(() => {
+      hashes.mockRestore();
+      transaction.mockRestore();
+    });
 
     expect(response.status).toBe(200);
+    expect(readOnlySnapshots).toBe(1);
+    expect(hashStages).toEqual([false]);
     const result = await response.json();
 
     expect(result.options.runnerSlots).toEqual(

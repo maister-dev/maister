@@ -5,6 +5,7 @@ import type { AgentRetryRecipe } from "./retry-types";
 import { z } from "zod";
 import pino from "pino";
 
+import { projectAgentProfileSnapshotSchema } from "./project-instance-profile";
 import { frozenAgentDefinitionSchema } from "./frozen-definition";
 import { scheduledRequestSnapshotSchema } from "./scheduled-request";
 import { companyConfigurationReferenceSchema } from "./trigger-attempt-types";
@@ -128,6 +129,7 @@ const recipeSchema = z.union([
     .extend({
       ...projectFields,
       version: z.literal(2),
+      projectAgentProfile: projectAgentProfileSnapshotSchema.optional(),
       strategy: z.enum(["pre_work_retry", "fresh_qualification"]),
       qualificationSha: z.string().nullable(),
       replacement: projectSpecialistReplacementSchema.optional(),
@@ -177,7 +179,13 @@ export function parseAgentRetryRecipe(value: unknown): AgentRetryRecipe {
 
   if (
     !parsed.success ||
-    parsed.data.agentId !== parsed.data.definition.parsed.id
+    parsed.data.agentId !== parsed.data.definition.parsed.id ||
+    (parsed.data.version === 2 &&
+      parsed.data.projectAgentProfile !== undefined &&
+      (parsed.data.projectAgentProfile.projectId !== parsed.data.projectId ||
+        parsed.data.projectAgentProfile.agentId !== parsed.data.agentId ||
+        parsed.data.projectAgentProfile.packageInstallId !==
+          parsed.data.definition.packageInstallId))
   ) {
     log.debug(
       {

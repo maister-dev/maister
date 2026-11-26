@@ -6,6 +6,7 @@ import type { LibrarianSubject } from "./types";
 
 import { and, asc, desc, eq, gt, inArray, or } from "drizzle-orm";
 
+import { privateQuestionView } from "./questions";
 import { librarianTurnRef } from "./admission";
 import {
   readCurrentWork,
@@ -32,6 +33,7 @@ import {
 import { visibleLibrarianTurnSources } from "./disclosed-context";
 
 import {
+  librarianCards,
   librarianConversations,
   librarianSegments,
   librarianContextSnapshots,
@@ -70,7 +72,7 @@ export type LibrarianMessageDto = {
   subject: LibrarianSubject | null;
   turnId: string | null;
   turnVariant?: "explain";
-  card: null;
+  card: ReturnType<typeof privateQuestionView> | null;
   update: LibrarianUpdateDto | null;
   taskChips: never[];
   usedMemoryItemIds: string[];
@@ -114,6 +116,7 @@ export function librarianMessageDto(
   options: {
     masked?: boolean;
     update?: LibrarianUpdateDto | null;
+    card?: ReturnType<typeof privateQuestionView> | null;
     usedMemoryItemIds?: string[];
     turnVariant?: LibrarianTurnRow["variant"];
   } = {},
@@ -135,7 +138,7 @@ export function librarianMessageDto(
     ...(row.authorKind === "owner" && options.turnVariant === "explain"
       ? { turnVariant: "explain" as const }
       : {}),
-    card: null,
+    card: options.masked ? null : (options.card ?? null),
     update: options.masked ? null : (options.update ?? null),
     taskChips: [],
     usedMemoryItemIds: options.masked ? [] : (options.usedMemoryItemIds ?? []),
@@ -314,6 +317,25 @@ export async function librarianMessageDtos(
     eventRows.map((event) => [event.id, event.occurredAt]),
   );
 
+  const ids = rows.flatMap((row) => (row.cardId ? [row.cardId] : []));
+  const questions = ids.length
+    ? await db
+        .select({ card: librarianCards })
+        .from(librarianCards)
+        .innerJoin(
+          librarianConversations,
+          eq(librarianConversations.id, librarianCards.conversationId),
+        )
+        .where(
+          and(
+            eq(librarianConversations.userId, ownerId),
+            eq(librarianCards.kind, "question"),
+            inArray(librarianCards.id, ids),
+          ),
+        )
+    : [];
+  const byCardId = new Map(questions.map(({ card }) => [card.id, card]));
+
   const disclosures = await visibleLibrarianTurnSources(
     db,
     ownerId,
@@ -350,8 +372,18 @@ export async function librarianMessageDtos(
       : null;
     const projectKey = task ? keyByProjectId.get(task.projectId) : null;
 
+    const card = row.cardId ? byCardId.get(row.cardId) : null;
+
     return librarianMessageDto(row, {
       masked,
+      card:
+        row.authorKind === "librarian" &&
+        !masked &&
+        card &&
+        card.questionTurnId === row.turnId &&
+        card.segmentId === row.segmentId
+          ? privateQuestionView(card)
+          : null,
       turnVariant: row.turnId
         ? ownerTurnVariantById.get(row.turnId)
         : undefined,
@@ -424,16 +456,21 @@ export async function librarianActivityIndicator(
   conversation: { id: string; readThroughSeq: bigint },
 ): Promise<LibrarianIndicatorState> {
   const [active] = await db
-    .select({ id: librarianTurns.id })
+    .select({ id: librarianTurns.id, status: librarianTurns.status })
     .from(librarianTurns)
     .where(
       and(
         eq(librarianTurns.conversationId, conversation.id),
-        inArray(librarianTurns.status, ["admitted", "running"]),
+        inArray(librarianTurns.status, [
+          "admitted",
+          "running",
+          "awaiting_answer",
+        ]),
       ),
     )
     .limit(1);
 
+  if (active?.status === "awaiting_answer") return "action_required";
   if (active) return "running";
   const [unread] = await db
     .select({ id: librarianMessages.id })
@@ -632,7 +669,11 @@ async function librarianConversationCommon(
     .where(
       and(
         eq(librarianTurns.conversationId, conversation.id),
-        inArray(librarianTurns.status, ["admitted", "running"]),
+        inArray(librarianTurns.status, [
+          "admitted",
+          "running",
+          "awaiting_answer",
+        ]),
       ),
     )
     .limit(1);

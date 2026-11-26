@@ -18,6 +18,13 @@ info:
     `session.stream_ready` and `session.stream_timeout` are synthetic web-tier
     messages. They have no SSE `id` and never advance a durable replay cursor.
     New work has no legacy file-backed stream branch.
+    For an ordinary Flow node question, the manager records run.needs_input
+    when the checkpoint becomes actionable. It records hitl.responded on
+    answer acceptance and again when the host accepts the continuation prompt.
+    Reconnect reads the current question, attempt and delivery status under
+    current Run authority. Question and answer content stay in the authorized
+    read model.
+
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster
@@ -102,6 +109,8 @@ channels:
         run.changed ticks. No SSE id/replay cursor; ready/resync causes canonical projection reads.
         Designed (ADR-216/217) — wait or autonomy writes use the same content-free
         invalidation after commit, including waits with no execution host event.
+        Opening a node question, accepting its answer and delivering it each
+        invalidate the summary, including while a sibling keeps the Run active.
         New metadata and final projection changes remain observable after execution settles.
         Unrelated `transcript`, `execution_events`, foreign-`rootRunId`, and unrelated top-level
         root `runs` hints are discarded in memory before enqueueing into the 128-entry `pending`

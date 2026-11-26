@@ -46,6 +46,8 @@ export type SeedGraphRunOptions = {
   task?: Record<string, unknown>;
   /** Extra/override columns for the runs row. */
   run?: Record<string, unknown>;
+  /** Supply the historical INSERT when seeding a Run before current schema migrations. */
+  insertRun?: (run: typeof schema.runs.$inferInsert) => Promise<void>;
   /** Legacy pre-M42 shape: runner triplet on the runs row, no run_sessions. */
   runnerOnRun?: boolean;
   /** false skips the workspaces row. */
@@ -148,7 +150,7 @@ export async function seedGraphRun(
     flowId,
     ...options.task,
   });
-  await db.insert(schema.runs).values({
+  const run = {
     id: runId,
     taskId,
     projectId,
@@ -164,7 +166,10 @@ export async function seedGraphRun(
         }
       : {}),
     ...options.run,
-  });
+  } satisfies typeof schema.runs.$inferInsert;
+
+  if (options.insertRun) await options.insertRun(run);
+  else await db.insert(schema.runs).values(run);
   if (!options.runnerOnRun) {
     await db.insert(schema.runSessions).values({
       id: randomUUID(),

@@ -45,11 +45,10 @@ context.
 
 ## Decision Rationale
 
-- **Project type:** Web control plane (Next.js + separate supervisor
-  daemon, two Node processes; single host current target — the two share
-  the host filesystem (ADR-023), and the supervisor is addressed as a
-  registered execution host behind a typed boundary (ADR-166) so later
-  stages can move it without rewriting domain code).
+- **Project type:** Next.js control plane with a separate supervisor daemon.
+  The default local deployment shares the host filesystem (ADR-023).
+  Selected supervisors own their workspace generations through the same typed
+  execution-host boundary (ADR-166, ADR-219).
 - **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI
   v3 · Tailwind 4 · Drizzle ORM · Postgres 16 · ACP (Zed-standard) via
   separate `supervisor/` daemon · Node `child_process.spawn` for agent
@@ -59,9 +58,9 @@ context.
   plugin engine, multi-executor (claude + codex), workspace lifecycle,
   ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
   (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
-- **Scale:** current target, single host (one registered local execution
-  host; multi-host is a later stage behind the ADR-166 seam),
-  `MAISTER_MAX_CONCURRENT_RUNS=6` (global cap).
+- **Scale:** one local supervisor by default. Stage C can route new assignments
+  to the selected supervisor or its registered peer. The global cap is
+  `MAISTER_MAX_CONCURRENT_RUNS=6`.
 - **Key factors:**
   - ACP is the executor interface — the multi-executor pool is inherent,
     not bolted on later. The registry owns adapter launch args, provider
@@ -365,12 +364,14 @@ affected editor e2e (`m27-flow-editor.spec.ts` precedent).
   `BoundClient` via `executionHosts.forAssignment(assignment)` (every
   command carries a unique id + the assignment fence and is written to the
   `execution_commands` ledger before the wire call) or a `HostAdminClient`
-  via `executionHosts.local()`; `lib/supervisor-client.ts` is the
-  local-direct transport behind it and is lint-fenced to that module. The
-  supervisor URL is `MAISTER_SUPERVISOR_URL` (env, read at call time),
-  defaults to `http://localhost:7777`; it is never stored. Repository and
-  worktree placement remain shared on the supported single host until Stage C;
-  execution-runtime data is not mounted into web.
+  via `executionHosts.local()` or the paired `executionHosts.executionFor()`.
+  `lib/supervisor-client.ts` is the transport behind that boundary.
+  `MAISTER_SUPERVISOR_URL` configures loopback by default. Web routes a
+  selected assignment by its pinned host key on a trusted network. That host
+  owns checkout and workspace preparation, connects to selected HTTP MCP
+  servers, and starts selected stdio servers and the bundled facade. Checkpoints
+  stay with their original host and workspace. The execution-runtime data plane
+  uses HTTP and SSE. [Operator settings](../docs/configuration.md#assigned-supervisor-mcps)
 - **Live updates:** the supervisor commits redacted events to its private
   SQLite outbox and the manager ingests canonical Postgres rows. Next.js
   `app/api/runs/[id]/stream/route.ts` replays those rows exclusively after
@@ -703,8 +704,10 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
   only. Structured-form HITL goes via artifact, not custom notification.
 - ❌ **Enforcing cost/time/regex guards without contract updates.** Parse-and-persist as
   metrics on disk only today. Enforcement is Phase 2.
-- ❌ **Trusting Flow plugins from arbitrary sources.** Current target trusts internal
-  sources only. Sandboxing + trust UI is Phase 2.
+- ❌ **Trusting Flow plugins from arbitrary sources.** Package installation and
+  execution use the package trust gates. Studio imports reviewed artifacts from
+  approved public catalogs, and an imported npm MCP requires assigned-host
+  approval before execution ([ADR-221](../docs/decisions/adr-221.md)).
 - ❌ **Anemic `MaisterError`.** Constructing `new Error('something failed')`
   for a known domain failure. If the error has a meaningful UI branch,
   it belongs in the `code` taxonomy.

@@ -37,6 +37,7 @@ const BASE_URL = process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000";
 // Named company/librarian processes expose only their declared tool subset.
 // Current token, owner and action authority are still enforced by the routes.
 const TOOLSET = process.env.MAISTER_MCP_TOOLSET;
+const ASK_HUMAN_ORIGIN = process.env.MAISTER_ASK_HUMAN_ORIGIN;
 const INSTALLATION_SCOPES = (
   process.env.MAISTER_INSTALLATION_SCOPES ?? ""
 ).split(",");
@@ -52,9 +53,13 @@ function buildServer(transportType: "stdio" | "http"): Server {
   // A generic Zod record serializes to an empty object schema in the SDK.
   // Publish the JSON Schemas directly; the ext routes own input validation.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: toolNamesForToolset(TOOLSET, INSTALLATION_SCOPES).map((name) => ({
+    tools: toolNamesForToolset(
+      TOOLSET,
+      INSTALLATION_SCOPES,
+      ASK_HUMAN_ORIGIN,
+    ).map((name) => ({
       name,
-      ...toolSpecForToolset(name, TOOLSET),
+      ...toolSpecForToolset(name, TOOLSET, ASK_HUMAN_ORIGIN),
       execution: { taskSupport: "forbidden" as const },
     })),
   }));
@@ -62,7 +67,9 @@ function buildServer(transportType: "stdio" | "http"): Server {
   server.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
     const toolName = params.name;
 
-    if (!isToolInToolset(toolName, TOOLSET, INSTALLATION_SCOPES)) {
+    if (
+      !isToolInToolset(toolName, TOOLSET, INSTALLATION_SCOPES, ASK_HUMAN_ORIGIN)
+    ) {
       return {
         isError: true,
         content: [
@@ -103,6 +110,7 @@ function buildServer(transportType: "stdio" | "http"): Server {
       baseUrl: BASE_URL,
       signal: extra.signal,
       toolset: TOOLSET,
+      askHumanOrigin: ASK_HUMAN_ORIGIN,
     });
 
     if (result.isError) {

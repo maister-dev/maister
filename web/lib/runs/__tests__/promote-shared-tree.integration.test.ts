@@ -31,13 +31,14 @@ import {
   vi,
 } from "vitest";
 
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
+  currentBranchName,
   fetchRemote,
   inspectDeliveryBase,
   resolveBaseRef,
 } from "@/lib/worktree";
-import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
-import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -479,6 +480,10 @@ describe("ADR-134 — shared pull-request promotion owns one tree root", () => {
           SET "provider" = 'github', "repo_url" = 'https://github.com/acme/shared.git'
         WHERE "id" = $1`,
       [projectId],
+    );
+
+    vi.mocked(currentBranchName).mockResolvedValueOnce(
+      `maister/agents/${root}`,
     );
 
     const result = await promoteRun(

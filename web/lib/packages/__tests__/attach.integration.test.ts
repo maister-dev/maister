@@ -7,6 +7,7 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,13 +17,32 @@ import { setTimeout } from "node:timers/promises";
 import { and, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
 import { parse as parseYaml } from "yaml";
 
 import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
+import { resolveAgentProfileMcpServers } from "@/lib/agents/launch";
+import {
+  availableAgentMcpCatalog,
+  captureProjectAgentProfile,
+} from "@/lib/agents/project-instance-profile";
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import { resolveCurrentPackageSessionCatalog } from "@/lib/capabilities/session-package-catalog";
+import { resolveTaskLaunchCapabilities } from "@/lib/tasks/launch-capabilities";
+import { capturePackageDelivery } from "@/lib/capabilities/capture-package-delivery";
+import {
+  resolvePackageSession,
+  sessionNameForPackageNode,
+} from "@/lib/capabilities/package-delivery";
+import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
+import {
+  materializePackageSessionSkills,
+  workspacePackageSkillsPrompt,
+  witnessPackageSkillView,
+} from "@/lib/capabilities/package-skills";
 import { readAndValidateFormSchemaDoc } from "@/lib/config";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { classifyFlowForCut } from "@/lib/flows/manifest-parser";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 import {
   attachPackage,
@@ -31,7 +51,11 @@ import {
   trustPackageRevision,
   upgradeAttachment,
 } from "@/lib/packages/attach";
-import { resolveBindTarget } from "@/lib/mcp/binding-service";
+import {
+  readPackageMcpScopes,
+  setPackageMcpScope,
+} from "@/lib/packages/mcp-scope";
+import { connectPlatform, resolveBindTarget } from "@/lib/mcp/binding-service";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -160,6 +184,88 @@ describe("package attach lifecycle (integration)", () => {
     } finally {
       await rm(legacyPackage, { recursive: true, force: true });
     }
+  });
+
+  it("accepts published node-skill declarations through install, attach and rollback without rewriting the cut", async () => {
+    const projectId = await seedProject("retired-node-skills");
+    const roots = await Promise.all([
+      mkdtemp(join(workspaceRoot, "retired-node-skills-old-")),
+      mkdtemp(join(workspaceRoot, "retired-node-skills-new-")),
+    ]);
+    const flowId = "retired-node-skills";
+    const memberPath = `flows/${flowId}/flow.yaml`;
+    const legacyYaml = `schemaVersion: 1
+name: ${flowId}
+compat: {engine_min: '3.0.0'}
+nodes:
+  - id: s1
+    type: ai_coding
+    action: {prompt: legacy skill}
+    settings: {skills: [skill-one], enforcement: {skills: strict}}
+    transitions: {success: done}
+`;
+
+    await Promise.all(roots.map((root) => buildPackage(root, [flowId])));
+    await writeFile(join(roots[0], memberPath), legacyYaml);
+    expect(classifyFlowForCut(parseYaml(legacyYaml)).compatible).toBe(false);
+    const [previous, current] = await Promise.all(
+      roots.map((source, index) =>
+        installPackageRevision({
+          source,
+          version: `attpkg/node-skills-v${index + 1}`,
+          trustStatus: "trusted_by_policy",
+          db,
+        }),
+      ),
+    );
+    const args = {
+      db,
+      projectId,
+      projectSlug: "retired-node-skills",
+      workspaceRoot,
+    };
+    const attached = await attachPackage({
+      ...args,
+      packageInstallId: previous.id,
+    });
+
+    if (!attached) throw new Error("Legacy attachment was not created");
+    for (const packageInstallId of [current.id, previous.id]) {
+      expect(
+        await upgradeAttachment({
+          ...args,
+          attachmentId: attached.attachmentId,
+          packageInstallId,
+        }),
+      ).toEqual({ upgraded: true });
+    }
+    const [flow] = await db
+      .select()
+      .from(schema.flows)
+      .where(
+        and(
+          eq(schema.flows.projectId, projectId),
+          eq(schema.flows.flowRefId, flowId),
+        ),
+      );
+
+    expect(flow).toMatchObject({
+      packageInstallId: previous.id,
+      revision: previous.resolvedRevision,
+      manifest: {
+        nodes: [
+          {
+            settings: {
+              skills: ["skill-one"],
+              enforcement: { skills: "strict" },
+            },
+          },
+        ],
+      },
+    });
+    expect(await readFile(join(flow.installedPath, "flow.yaml"), "utf8")).toBe(
+      legacyYaml,
+    );
   });
 
   it("installPackageRevision: two-phase install + idempotent reuse", async () => {
@@ -1694,6 +1800,122 @@ describe("package mcps[] value model (ADR-179)", () => {
     expect(target?.slots.env.sort()).toEqual(["ATT_TOKEN", "GH_HOST"]);
   });
 
+  it("IT-CAP-02 preserves explicit scope per attachment through adoption, reset and rollback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "scope-upgrade-"));
+
+    dirsToClean.push(root);
+    const release = async (version: string, declarations: string) => {
+      await writeFile(
+        join(root, "maister-package.yaml"),
+        `schemaVersion: 1\nname: scope-pkg\n${declarations}\n`,
+      );
+
+      return installPackageRevision({
+        source: root,
+        version,
+        trustStatus: "trusted_by_policy",
+        db,
+      });
+    };
+    const legacy = await release("scope-pkg/v1", "mcps: [{ id: design }]");
+    const next = await release(
+      "scope-pkg/v2",
+      "delivery: {version: 1}\nmcps: [{id: design}, {id: shared, scope: project}]",
+    );
+    const dropped = await release(
+      "scope-pkg/v3",
+      "delivery: {version: 1}\nmcps: [{id: replacement}]",
+    );
+    const first = await seedProject("scope-first");
+    const second = await seedProject("scope-second");
+    const attach = (projectId: string, projectSlug: string) =>
+      attachPackage({
+        projectId,
+        projectSlug,
+        packageInstallId: legacy.id,
+        workspaceRoot,
+        db,
+      });
+    const att = (await attach(first, "scope-first"))!;
+
+    await attach(second, "scope-second");
+    const base = {
+      projectId: first,
+      projectSlug: "scope-first",
+      attachmentId: att.attachmentId,
+      workspaceRoot,
+      db,
+    };
+    const mutate = (
+      scope: "package" | "project" | null,
+      revision: number,
+      pin: string,
+    ) =>
+      setPackageMcpScope(
+        {
+          ...base,
+          refId: "design",
+          mutation: {
+            scope,
+            expectedInstallId: pin,
+            expectedRevision: revision,
+          },
+        },
+        db as unknown as Parameters<typeof setPackageMcpScope>[1],
+      );
+    const states = () => readPackageMcpScopes(db, first);
+
+    expect(await states()).toMatchObject([
+      { effective: "project", revision: 1 },
+    ]);
+    const written = await Promise.allSettled([
+      mutate("package", 1, legacy.id),
+      mutate("package", 1, legacy.id),
+    ]);
+
+    expect(written.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    expect(written.filter((x) => x.status === "rejected")).toMatchObject([
+      { reason: { code: "CONFLICT" } },
+    ]);
+    await upgradeAttachment({ ...base, packageInstallId: next.id });
+    expect(await states()).toMatchObject([
+      {
+        refId: "design",
+        declared: "package",
+        effective: "package",
+        origin: "override",
+        revision: 3,
+      },
+      { refId: "shared", effective: "project" },
+    ]);
+    expect(await readPackageMcpScopes(db, second)).toMatchObject([
+      { effective: "project", revision: 1 },
+    ]);
+    await expect(mutate("project", 3, legacy.id)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(await mutate("project", 3, next.id)).toMatchObject({
+      effective: "project",
+    });
+    expect(await mutate(null, 4, next.id)).toMatchObject({
+      effective: "package",
+      origin: "package",
+    });
+    await mutate("project", 5, next.id);
+    await upgradeAttachment({ ...base, packageInstallId: dropped.id });
+    await upgradeAttachment({ ...base, packageInstallId: next.id });
+    expect(await states()).toMatchObject([
+      { refId: "design", effective: "package", origin: "package" },
+      { refId: "shared", effective: "project" },
+    ]);
+    await detachPackage(base);
+    expect(await states()).toEqual([]);
+    await attach(first, "scope-first");
+    expect(await states()).toMatchObject([
+      { refId: "design", effective: "project", origin: "package", revision: 1 },
+    ]);
+  });
+
   it("rebuilds material on upgrade — a dropped headers block leaves nothing behind (SET/CLEAR/re-SET)", async () => {
     const root = await mkdtemp(join(tmpdir(), "attach-mcpv-upg-"));
 
@@ -2155,4 +2377,386 @@ it("IT-UX-19 refuses an active attachment upgrade to a qualifier until the proje
     .where(eq(schema.projectPackageAttachments.id, attached.attachmentId));
 
   expect(changed.packageInstallId).toBe(nextInstall.id);
+});
+it("IT-CAP-03/04 captures attached packages and prepares different bound, unbound and child native discovery views", async () => {
+  const projectId = await seedProject("delivery");
+  const releases: Record<string, string> = {};
+  const sources: Record<string, string> = {};
+  const attachments: Record<string, string> = {};
+
+  for (const [name, share, skills] of [
+    ["tool-core", true, ["shared", "collide"]],
+    ["tool-design", false, ["private", "collide"]],
+    ["tool-dev", false, ["build"]],
+  ] as const) {
+    const root = await mkdtemp(join(workspaceRoot, "delivery-"));
+
+    sources[name] = root;
+    for (const slug of skills) {
+      const directory = join(root, "bundle", "skills", slug);
+
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, "SKILL.md"), "Read companion.md");
+      if (name === "tool-design" && slug === "collide") {
+        await writeFile(join(root, "bundle", "reference.md"), name);
+        await symlink("../../reference.md", join(directory, "companion.md"));
+      } else await writeFile(join(directory, "companion.md"), name);
+    }
+    await writeFile(
+      join(root, "maister-package.yaml"),
+      `schemaVersion: 1\nname: ${name}\ndelivery: {version: 1, shareSkills: ${share}}\ncapabilities: [{id: ${name}-lib, path: bundle}]\nmcps: [{id: ${name}-mcp, transport: http, url: "https://mcp.example.com", scope: ${share ? "project" : "package"}}]\n`,
+    );
+    if (name === "tool-design") {
+      await mkdir(join(root, "maister-agents"));
+      await writeFile(
+        join(root, "maister-agents", "artist.md"),
+        `---\nname: artist\ndescription: Art\nworkspace: repo_read\nworkspace_ref: trigger\nmode: session\ntriggers: [flow]\nrisk_tier: read_only\ncapability_profile: {skills: [collide], mcps: [tool-design-mcp]}\n---\nDesign`,
+      );
+    }
+    const install = await installPackageRevision({
+      source: root,
+      version: name + "/v1",
+      trustStatus: "trusted_by_policy",
+      db,
+    });
+    const attached = await attachPackage({
+      projectId,
+      projectSlug: "delivery",
+      packageInstallId: install.id,
+      workspaceRoot,
+      db,
+    });
+
+    releases[name] = install.id;
+    attachments[name] = attached!.attachmentId;
+  }
+  const graph = {
+    nodes: [
+      { id: "build", type: "ai_coding" },
+      {
+        id: "sketch",
+        type: "ai_coding",
+        settings: { agent: "tool-design:artist" },
+      },
+    ],
+  };
+  const delivery = (await capturePackageDelivery(db, {
+    projectId,
+    flowPackageInstallId: releases["tool-dev"]!,
+    flowManifest: graph,
+    nonPackageMcpRefs: [],
+  }))!;
+  const child = (await capturePackageDelivery(db, {
+    projectId,
+    flowPackageInstallId: releases["tool-design"]!,
+    flowManifest: graph,
+    nonPackageMcpRefs: [],
+  }))!;
+  const build = resolvePackageSession(delivery, "build"),
+    sketch = resolvePackageSession(delivery, "sketch");
+
+  expect(build.mcps).toEqual(["tool-core-mcp", "tool-dev-mcp"]);
+  expect(sketch.mcps).toEqual(["tool-core-mcp", "tool-design-mcp"]);
+  expect(
+    resolvePackageSession(child, "build").skills.map((s) => s.slug),
+  ).toContain("private");
+  expect(sessionNameForPackageNode(delivery, "sketch", "default")).not.toEqual(
+    "default",
+  );
+  const cwd = await mkdtemp(join(workspaceRoot, "delivery-run-"));
+  const runId = randomUUID();
+
+  await materializeProjectBundlesIntoWorktree({
+    db,
+    runId,
+    projectId,
+    worktreePath: cwd,
+    baseBranch: "main",
+    delivery,
+  });
+  await Promise.all(
+    (
+      [
+        ["attempt-a", build.skills],
+        ["attempt-b", sketch.skills],
+      ] as const
+    ).map(async ([id, selected]) => {
+      await materializePackageSessionSkills({
+        cwd,
+        runId,
+        nodeAttemptId: id,
+        delivery,
+        skills: selected,
+      });
+    }),
+  );
+  expect(
+    await workspacePackageSkillsPrompt(cwd, runId, "attempt-a"),
+  ).not.toContain("private");
+  expect(await workspacePackageSkillsPrompt(cwd, runId, "attempt-b")).toContain(
+    "collide",
+  );
+  const root = join(cwd, ".maister", "capabilities", runId);
+
+  expect(
+    await readFile(
+      join(root, "attempt-a", "package-skills", "collide", "companion.md"),
+      "utf8",
+    ),
+  ).toBe("tool-core");
+  expect(
+    await readFile(
+      join(root, "attempt-b", "package-skills", "collide", "companion.md"),
+      "utf8",
+    ),
+  ).toBe("tool-design");
+  expect(
+    (await witnessPackageSkillView(cwd, runId, "attempt-a", null)).skillsDigest,
+  ).not.toBe(
+    (await witnessPackageSkillView(cwd, runId, "attempt-b", null)).skillsDigest,
+  );
+  const captured = await resolveTaskLaunchCapabilities(
+    db as unknown as Parameters<typeof resolveTaskLaunchCapabilities>[0],
+    {
+      projectId,
+      flowRevisionId: "accepted",
+      flowSource: "/studio",
+      flowPackageInstallId: releases["tool-dev"]!,
+      flowManifest: graph,
+    },
+  );
+  const action = {
+    projectId,
+    snapshot: captured.resolvedCapabilitySet,
+    delivery,
+    skills: sketch.skills,
+    selected: sketch.mcps,
+    required: ["tool-design-mcp"],
+    bindings: [],
+  };
+
+  expect((await resolveCurrentPackageSessionCatalog(db, action)).mcps).toEqual(
+    sketch.mcps,
+  );
+  const refId = "tool-design-mcp";
+
+  await db.insert(schema.platformMcpServers).values({
+    id: refId,
+    transport: "http",
+    url: "https://platform.example.test/mcp",
+    enabled: true,
+    trustStatus: "trusted",
+  });
+  const binding = await connectPlatform(projectId, refId, undefined, null, db);
+  const bound = await resolveTaskLaunchCapabilities(
+    db as unknown as Parameters<typeof resolveTaskLaunchCapabilities>[0],
+    {
+      projectId,
+      flowRevisionId: "accepted",
+      flowSource: "/studio",
+      flowPackageInstallId: releases["tool-dev"]!,
+      flowManifest: graph,
+    },
+  );
+  const boundAction = {
+    ...action,
+    snapshot: bound.resolvedCapabilitySet,
+    delivery: bound.resolvedCapabilitySet.delivery!,
+    bindings: [binding],
+  };
+
+  expect(
+    (await resolveCurrentPackageSessionCatalog(db, boundAction)).catalog,
+  ).toContainEqual(
+    expect.objectContaining({
+      capabilityRefId: refId,
+      source: "platform",
+      material: expect.objectContaining({
+        url: "https://platform.example.test/mcp",
+      }),
+    }),
+  );
+  await db
+    .delete(schema.projectMcpBindings)
+    .where(eq(schema.projectMcpBindings.id, binding.id));
+  await db
+    .delete(schema.platformMcpServers)
+    .where(eq(schema.platformMcpServers.id, refId));
+  const agentId = "tool-design:artist";
+
+  await db.insert(schema.agentProjectLinks).values({
+    id: randomUUID(),
+    projectId,
+    agentId,
+    enabled: true,
+  });
+  const effective = await resolveEffectiveAgentDefinition(
+    { projectId, agentId },
+    db,
+  );
+  const profile = await db.transaction((tx) =>
+    captureProjectAgentProfile(tx, {
+      projectId,
+      agentId,
+      packageName: effective.packageName,
+      packageInstallId: effective.packageInstallId,
+      definition: effective.parsed,
+    }),
+  );
+  const standalone = {
+    db,
+    projectId,
+    capabilityProfile: { mcps: profile.packageMcpRefs },
+    frozenTargets: profile.mcpTargets,
+    requiredMcpRefs: profile.packageMcpRefs,
+    capabilityAgent: "claude",
+    execTrust: "trusted" as const,
+    runId: randomUUID(),
+  };
+  const designRoot = sources["tool-design"]!;
+  const manifestPath = join(designRoot, "maister-package.yaml");
+
+  await writeFile(
+    manifestPath,
+    (await readFile(manifestPath, "utf8")).replace(
+      "https://mcp.example.com",
+      "https://v2.example.com",
+    ),
+  );
+  await writeFile(
+    join(designRoot, "bundle", "skills", "collide", "companion.md"),
+    "new-design",
+  );
+  const upgraded = await installPackageRevision({
+    source: designRoot,
+    version: "tool-design/v2",
+    trustStatus: "trusted_by_policy",
+    db,
+  });
+
+  await upgradeAttachment({
+    projectId,
+    projectSlug: "delivery",
+    attachmentId: attachments["tool-design"]!,
+    packageInstallId: upgraded.id,
+    workspaceRoot,
+    db,
+  });
+  const afterAdoption = await resolveCurrentPackageSessionCatalog(db, action);
+
+  expect(
+    afterAdoption.catalog.find((c) => c.capabilityRefId === "tool-design-mcp")
+      ?.material.url,
+  ).toBe("https://mcp.example.com");
+  expect(await resolveAgentProfileMcpServers(standalone)).toEqual([
+    expect.objectContaining({ name: refId, url: "https://mcp.example.com" }),
+  ]);
+  expect(await availableAgentMcpCatalog(db, projectId)).toContainEqual(
+    expect.objectContaining({
+      capabilityRefId: refId,
+      material: expect.objectContaining({ url: "https://v2.example.com" }),
+    }),
+  );
+  await db
+    .update(schema.packageInstalls)
+    .set({ trustStatus: "untrusted" })
+    .where(eq(schema.packageInstalls.id, effective.packageInstallId));
+  try {
+    await expect(
+      resolveAgentProfileMcpServers(standalone),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "agent_mcp_target_unavailable", refId },
+    });
+  } finally {
+    await db
+      .update(schema.packageInstalls)
+      .set({ trustStatus: "trusted_by_policy" })
+      .where(eq(schema.packageInstalls.id, effective.packageInstallId));
+  }
+  expect(
+    (
+      await capturePackageDelivery(db, {
+        projectId,
+        flowPackageInstallId: releases["tool-dev"]!,
+        flowManifest: graph,
+        nonPackageMcpRefs: [],
+      })
+    )?.packages.find((p) => p.name === "tool-design")?.installId,
+  ).toBe(upgraded.id);
+  await materializePackageSessionSkills({
+    cwd,
+    runId,
+    nodeAttemptId: "later-sketch",
+    delivery,
+    skills: sketch.skills,
+  });
+  expect(
+    await readFile(
+      join(root, "later-sketch", "package-skills", "collide", "companion.md"),
+      "utf8",
+    ),
+  ).toBe("tool-design");
+  await db
+    .update(schema.capabilityRecords)
+    .set({ disabledAt: new Date() })
+    .where(
+      and(
+        eq(schema.capabilityRecords.projectId, projectId),
+        eq(schema.capabilityRecords.capabilityRefId, "tool-design-mcp"),
+      ),
+    );
+  await expect(resolveCurrentPackageSessionCatalog(db, action)).rejects.toThrow(
+    "tool-design-mcp",
+  );
+  expect(
+    (await resolveCurrentPackageSessionCatalog(db, { ...action, required: [] }))
+      .withheld,
+  ).toEqual(["tool-design-mcp"]);
+  await expect(resolveAgentProfileMcpServers(standalone)).rejects.toMatchObject(
+    {
+      code: "PRECONDITION",
+      details: { reason: "agent_mcp_target_unavailable", refId },
+    },
+  );
+  await writeFile(
+    join(root, "attempt-a", "package-skills", "collide", "companion.md"),
+    "changed",
+  );
+  await expect(
+    materializePackageSessionSkills({
+      cwd,
+      runId,
+      nodeAttemptId: "attempt-a",
+      delivery,
+      skills: build.skills,
+    }),
+  ).rejects.toThrow("Pinned skill bytes changed");
+  const [activeBundle] = await db
+    .select({ root: schema.capabilityImports.installedPath })
+    .from(schema.capabilityImports)
+    .where(eq(schema.capabilityImports.packageInstallId, upgraded.id));
+  const companion = join(
+    activeBundle!.root,
+    "skills",
+    "collide",
+    "companion.md",
+  );
+  const captureCurrent = () =>
+    capturePackageDelivery(db, {
+      projectId,
+      flowPackageInstallId: upgraded.id,
+      flowManifest: graph,
+      nonPackageMcpRefs: [],
+    });
+
+  await rm(companion);
+  await symlink(designRoot, companion);
+  await expect(captureCurrent()).rejects.toThrow("outside its pin");
+  await rm(companion);
+  await symlink(".", companion);
+  await expect(captureCurrent()).rejects.toThrow("directory cycle");
+  await expect(stat(join(cwd, ".claude", "skills"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });

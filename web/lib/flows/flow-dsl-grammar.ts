@@ -67,7 +67,7 @@ validation. Company result-only graphs require engine 3.12.0 or newer and a
 current reviewed company binding. Enablement and launch enforce the declared
 engine range before execution; no project carrier or repository is synthesized.
 The initial native company path also refuses package/node \`mcps\`, node
-\`skills\`, \`restrictions\`, \`tools\`, \`settingsProfile\`, \`artifactAccess\`, \`enforcement\`,
+\`restrictions\`, \`tools\`, \`settingsProfile\`, \`artifactAccess\`, \`enforcement\`,
 \`hooks\` and permission-mode overrides. Its current reviewed professional policy
 supplies the exact native knowledge MCP-only surface; project capability defaults
 and ambient built-in tools cannot enter through this declaration.
@@ -164,11 +164,11 @@ the metadata.
 ## Node \`settings\` by type
 
 - **ai_coding / orchestrator**: \`runner_type\`, \`runner\`, \`agent\`, \`model\`,
-  \`thinkingEffort\`, \`mcps\`, \`tools\`, \`skills\`, \`settingsProfile\`,
+  \`thinkingEffort\`, \`mcps\`, \`tools\`, \`settingsProfile\`,
   \`workspaceAccess\`, \`artifactAccess\`, \`permissionMode\`, \`limits\`,
   \`restrictions\`, \`enforcement\`, \`hooks\`, \`context_repos\`
   (orchestrator also: \`delegation\`).
-- **judge**: \`runner\`, \`mcps\`, \`tools\`, \`skills\`, \`restrictions\`,
+- **judge**: \`runner\`, \`mcps\`, \`tools\`, \`restrictions\`,
   \`permissionMode\`, \`thinkingEffort\`, \`limits\`, \`enforcement\`, \`hooks\`,
   \`context_repos\` (\`settings.model\` was REMOVED — judge is runner-bearing).
 - \`context_repos\` (engine_min >= 3.4.0, ADR-157) declares READ-ONLY sibling

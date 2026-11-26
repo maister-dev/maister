@@ -1,10 +1,13 @@
 import "server-only";
 
+import type { FlowDeliverySnapshot } from "@/lib/capabilities/package-delivery";
+
 import { readFile } from "node:fs/promises";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { resolveInstalledAgentDefinition } from "./effective";
 import { resolveCompanyFlowPersona } from "./company-flow-persona";
 
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
@@ -87,6 +90,7 @@ export async function resolveFlowBoundAgent(args: {
   const runRows = await _db
     .select({
       projectId: runs.projectId,
+      capabilitySet: runs.resolvedCapabilitySet,
       companyId: runs.companyId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
@@ -140,8 +144,60 @@ export async function resolveFlowBoundAgent(args: {
 
   const { resolveEffectiveAgentDefinition } =
     await import("@/lib/agents/effective");
+  const frozen = runRows[0]?.capabilitySet?.delivery as
+    FlowDeliverySnapshot | undefined;
+  const pin =
+    args.requireFlowTrigger !== false
+      ? Object.values(frozen?.bindings ?? {}).find(
+          (b) => b.agentId === args.agentId,
+        )
+      : undefined;
+
+  if (pin && projectId) {
+    const [attached] = await _db
+      .select({ id: schemaModule.projectPackageAttachments.id })
+      .from(schemaModule.projectPackageAttachments)
+      .where(
+        and(
+          eq(schemaModule.projectPackageAttachments.projectId, projectId),
+          eq(
+            schemaModule.projectPackageAttachments.packageName,
+            args.agentId.split(":")[0]!,
+          ),
+        ),
+      );
+
+    if (!attached)
+      throw new MaisterError(
+        "PRECONDITION",
+        "The bound agent package is no longer attached",
+      );
+    if (pin.linkRevision !== null) {
+      const [link] = await _db
+        .select({ enabled: agentProjectLinks.enabled })
+        .from(agentProjectLinks)
+        .where(
+          and(
+            eq(agentProjectLinks.projectId, projectId),
+            eq(agentProjectLinks.agentId, args.agentId),
+          ),
+        );
+
+      if (!link?.enabled)
+        throw new MaisterError(
+          "PRECONDITION",
+          "The project agent is no longer enabled",
+        );
+    }
+  }
   const effective =
     companyPersona?.effective ??
+    (pin
+      ? await resolveInstalledAgentDefinition(_db, {
+          agentId: args.agentId,
+          packageInstallId: pin.installId,
+        })
+      : undefined) ??
     (await resolveEffectiveAgentDefinition(
       {
         agentId: args.agentId,
@@ -150,6 +206,12 @@ export async function resolveFlowBoundAgent(args: {
       _db,
     ));
   const parsed = effective.parsed;
+
+  if (pin && pin.definitionDigest !== agentDefinitionSha256(parsed))
+    throw new MaisterError(
+      "PRECONDITION",
+      "The captured agent definition has changed",
+    );
   const assignedInput =
     typeof projectId === "string" && args.agentId === runRows[0]?.sourceAgentId
       ? await loadProjectAssignmentExecutionInput(_db, {
@@ -252,10 +314,11 @@ export async function resolveFlowBoundAgent(args: {
   const configuration =
     companyPersona?.configuration ??
     assignedInput?.snapshot.standingDefinition.configuration;
+  const basePrompt = pin?.promptOverride ?? parsed.prompt;
   const prompt =
     configuration !== undefined
-      ? `${parsed.prompt.trim()}\n\n## Specialist configuration\n${JSON.stringify(configuration)}`
-      : parsed.prompt.trim();
+      ? `${basePrompt.trim()}\n\n## Specialist configuration\n${JSON.stringify(configuration)}`
+      : basePrompt.trim();
 
   return { mode: "session", prompt };
 }

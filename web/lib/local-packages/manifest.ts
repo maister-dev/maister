@@ -138,6 +138,7 @@ export function applyManifestScalars(
 export function serializeScaffoldManifest(name: string, title: string): string {
   return stringifyYaml({
     schemaVersion: 1,
+    delivery: { version: 1 },
     name,
     metadata: { title },
     flows: [],

@@ -107,6 +107,7 @@ import { streamCanonicalSessionEvents } from "./events/session-stream";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { assertReadOnlySessionCreateEvidence } from "@/lib/agents/runner-readonly-evidence";
 import {
   assertNativeRunKnowledgeInputs,
   assertNativeRunKnowledgeInputsInTransaction,
@@ -245,6 +246,11 @@ export interface BoundClient {
     sessionId: HostSessionId | string,
   ): Promise<{ cancelled: boolean }>;
   checkpoint(sessionId: HostSessionId | string): Promise<CheckpointResult>;
+  prepareQuestionCheckpoint(
+    tx: Db,
+    sessionId: string,
+    commandId: string | null,
+  ): Promise<{ commandId: string; deliver: () => Promise<void> }>;
   deleteSession(
     sessionId: HostSessionId | string,
     options?: { assertCommit: (tx: Db) => Promise<void> },
@@ -333,6 +339,8 @@ export type ExecutionHosts = {
   // `forAssignment` when the caller carries the assignment id, else `forRun`,
   // paired with the admin client — the ONE composition every driver binds.
   executionFor(runId: string, opts?: BindRunOptions): Promise<ExecutionBinding>;
+  // Read the active or released host inventory without minting a placement.
+  inventoryForRun(runId: string): Promise<SupervisorSessionRecord[]>;
   local(): HostAdminClient;
 };
 
@@ -411,7 +419,45 @@ export function createExecutionHosts(
     assignment: ExecutionAssignment,
     host: ExecutionHost,
   ): BoundClient {
-    const transport = transportForExecutionHost(host, defaultHostTransport);
+    const hostTransport = transportForExecutionHost(host, defaultHostTransport);
+    const transport: ExecutionHostTransport = {
+      ...hostTransport,
+      async createSession(envelope, options) {
+        for (const server of envelope.payload.mcpServers ?? []) {
+          if (!server.distribution) continue;
+          const prepare = hostTransport.prepareMcp;
+
+          if (!prepare) {
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "Assigned supervisor lacks MCP preparation",
+            );
+          }
+          const payload = { ...server.distribution, refId: server.name };
+          const receipt = await immediate(
+            "mcp.prepare",
+            payload,
+            (req) => prepare(req, timeoutFor("mcp.prepare")),
+            {
+              resultSummary: (result) => ({
+                artifactDigest: result.artifactDigest,
+                hostId: result.hostId,
+                cacheHit: result.cacheHit,
+              }),
+            },
+          );
+
+          if (receipt.artifactDigest !== payload.artifactDigest) {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "MCP preparation receipt references a different distribution",
+            );
+          }
+        }
+
+        return hostTransport.createSession(envelope, options);
+      },
+    };
     let current = assignment;
     const db = dbOf();
 
@@ -661,6 +707,9 @@ export function createExecutionHosts(
         );
       },
       async createSession(payload, opts) {
+        await assertReadOnlySessionCreateEvidence(payload, () =>
+          transport.diagnostics(),
+        );
         const sessionName =
           opts?.sessionName ?? payload.sessionName ?? "default";
         const attempt = async (executionWorkspaceId: ExecutionWorkspaceId) => {
@@ -975,6 +1024,77 @@ export function createExecutionHosts(
             ),
           { targetSessionId: sessionId },
         );
+      },
+      async prepareQuestionCheckpoint(tx, sessionId, commandId) {
+        const send = (issued: IssuedCommand<Record<string, never>>) => ({
+          commandId: issued.row.id,
+          deliver: async () => {
+            await deliver(
+              issued,
+              (env) =>
+                transport.checkpointSession(
+                  sessionId,
+                  env,
+                  timeoutFor("session.checkpoint"),
+                ),
+              { targetSessionId: sessionId },
+            );
+          },
+        });
+
+        if (commandId === null)
+          return send(await issue(tx, "session.checkpoint", {}, sessionId));
+        const [prior] = await tx
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, commandId))
+          .for("update");
+
+        if (
+          !prior ||
+          prior.kind !== "session.checkpoint" ||
+          prior.runId !== current.runId ||
+          prior.executionAssignmentId !== current.id ||
+          prior.assignmentEpoch !== current.epoch ||
+          prior.executionHostId !== host.id ||
+          prior.targetSessionId !== sessionId
+        )
+          throw new MaisterError(
+            "CONFLICT",
+            "Checkpoint command belongs to another session or assignment",
+          );
+        if (prior.state === "succeeded")
+          return { commandId, deliver: async () => {} };
+        if (prior.state !== "queued" && prior.state !== "delivering")
+          throw new MaisterError(
+            "CONFLICT",
+            "Flow question checkpoint command is terminal",
+            { details: { reason: "question_checkpoint_failed" } },
+          );
+        const row =
+          prior.state === "queued"
+            ? prior
+            : (await requeueDelivering(tx, commandId, { logger })).row;
+
+        if (!row)
+          throw new MaisterError(
+            "CONFLICT",
+            "Checkpoint command changed during recovery",
+          );
+
+        return send({
+          row,
+          envelope: buildEnvelope({
+            commandId,
+            kind: "session.checkpoint",
+            hostKey: host.hostKey,
+            assignmentId: current.id,
+            assignmentEpoch: current.epoch,
+            runId: current.runId,
+            issuedAt: prior.createdAt,
+            payload: {},
+          }),
+        });
       },
       checkpoint(sessionId) {
         return immediate<Record<string, never>, CheckpointResult>(
@@ -1406,6 +1526,13 @@ export function createExecutionHosts(
         client,
         admin: adminForRun(runId, transportForExecutionHost(client.host, defaultHostTransport)),
       };
+    },
+    async inventoryForRun(runId) {
+      const previous = await getLatestAssignment(dbOf(), runId);
+
+      return previous
+        ? (await forAssignment(previous)).sessionsForRun()
+        : admin.listSessionsForRun(runId);
     },
     local() {
       return admin;

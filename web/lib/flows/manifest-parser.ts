@@ -2,7 +2,11 @@ import "server-only";
 
 import pino from "pino";
 
-import { flowYamlV1Schema, type FlowYamlV1 } from "@/lib/config.schema";
+import {
+  flowYamlV1Schema,
+  storedFlowYamlV1Schema,
+  type FlowYamlV1,
+} from "@/lib/config.schema";
 import {
   isMaisterError,
   MaisterError,
@@ -111,8 +115,14 @@ export type StoredFlowManifestCompatibility =
 export function classifyGraphOnlyFlowManifestShape(
   value: unknown,
 ): GraphOnlyManifestShapeParse {
+  return classifyParsedManifest(value, flowYamlV1Schema.safeParse(value));
+}
+
+function classifyParsedManifest(
+  value: unknown,
+  parsed: ReturnType<typeof flowYamlV1Schema.safeParse>,
+): GraphOnlyManifestShapeParse {
   const manifestShape = classifyFlowManifestShape(value);
-  const parsed = flowYamlV1Schema.safeParse(value);
 
   if (parsed.success) {
     for (const node of parsed.data.nodes) {
@@ -171,8 +181,22 @@ export function classifyGraphOnlyFlowManifestShape(
 export function classifyStoredFlowManifest(
   value: unknown,
 ): StoredFlowManifestCompatibility {
-  const shape = classifyGraphOnlyFlowManifestShape(value);
+  return classifyExecutableShape(classifyStoredGraphShape(value));
+}
 
+function classifyStoredGraphShape(value: unknown): GraphOnlyManifestShapeParse {
+  return classifyParsedManifest(value, storedFlowYamlV1Schema.safeParse(value));
+}
+
+export function classifyFlowForCut(
+  value: unknown,
+): StoredFlowManifestCompatibility {
+  return classifyExecutableShape(classifyGraphOnlyFlowManifestShape(value));
+}
+
+function classifyExecutableShape(
+  shape: GraphOnlyManifestShapeParse,
+): StoredFlowManifestCompatibility {
   if (!shape.valid) {
     return {
       compatible: false,
@@ -294,8 +318,20 @@ export function parseGraphOnlyFlowManifest(
   value: unknown,
   context: FlowManifestParseContext,
 ): FlowYamlV1 {
-  const shape = classifyGraphOnlyFlowManifestShape(value);
+  return requireGraphShape(classifyGraphOnlyFlowManifestShape(value), context);
+}
 
+export function parseRetainedGraphShape(
+  value: unknown,
+  context: FlowManifestParseContext,
+): FlowYamlV1 {
+  return requireGraphShape(classifyStoredGraphShape(value), context);
+}
+
+function requireGraphShape(
+  shape: GraphOnlyManifestShapeParse,
+  context: FlowManifestParseContext,
+): FlowYamlV1 {
   if (shape.valid) {
     log.debug(
       {

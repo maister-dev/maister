@@ -1,9 +1,12 @@
+import type { SearchResponse } from "@/lib/local-packages/catalog-contract";
+
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
@@ -124,7 +127,7 @@ nodes:
 }
 
 // A package whose flow exercises the structured node-form controls (TE.3): an
-// ai_coding node (skills McpSelect picker + `/`-autosuggest action.prompt) and a
+// ai_coding node (`/`-autosuggest action.prompt) and a
 // human node (roles StringListField), plus a bundled skill so `/` has a catalog.
 function buildStructuredControlsPackageRepo(): string {
   const repo = mkdtempSync(join(tmpdir(), "maister-e2e-struct-"));
@@ -197,6 +200,13 @@ nodes:
   return repo;
 }
 
+function visibleComposition(page: Page): Locator {
+  return page
+    .getByRole("main")
+    .getByTestId("package-composition")
+    .filter({ visible: true });
+}
+
 async function installPackageFromRepo(
   page: Page,
   repo: string,
@@ -208,12 +218,20 @@ async function installPackageFromRepo(
 
   await dialog.getByRole("radio", { name: "Local directory" }).click();
   await dialog.getByLabel("Absolute directory path").fill(repo);
+  const created = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/admin/package-sources",
+  );
+
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText(repo)).toBeVisible();
-  await page
-    .locator("tr", { hasText: repo })
-    .getByRole("button", { name: "Refresh", exact: true })
-    .click();
+  const sourceReceipt = await created;
+
+  expect(sourceReceipt.status(), await sourceReceipt.text()).toBe(201);
+  const source = page.getByRole("row").filter({ hasText: repo });
+
+  await expect(source).toBeVisible({ timeout: 30_000 });
+  await source.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByText(tag, { exact: true })).toBeVisible({
     timeout: 30_000,
   });
@@ -335,7 +353,7 @@ test("canonical Studio wizard creates a package Flow and adds another Flow in th
 
   expect(packageId).toBeTruthy();
   await page.goto(`/studio/edit/${packageId}`);
-  await expect(page.getByTestId("package-composition")).toBeVisible();
+  await expect(visibleComposition(page)).toBeVisible();
   await page.getByTestId("composition-create-flow-open").click();
 
   const add = page.getByTestId("create-flow-dialog");
@@ -521,7 +539,7 @@ test("fork an installed package to local → land in the /studio/edit editor", a
 
   expect(editId).toBeTruthy();
   await page.goto(`/studio/edit/${editId}`);
-  await expect(page.getByTestId("package-composition")).toBeVisible();
+  await expect(visibleComposition(page)).toBeVisible();
   await expect(page.getByTestId("flow-yaml-sync-error")).toHaveCount(0);
 
   // The manifest form is reached by OPENING the manifest, not by landing.
@@ -604,18 +622,25 @@ test("local editor reference pickers save runner, agent, free-text agent, and sc
   await saveViaTopBar(page, editId as string);
 
   await page.goto(`/studio/edit/${editId}`);
-  await expect(page.getByTestId("package-composition")).toBeVisible();
+  const composition = visibleComposition(page);
+
+  await expect(composition).toBeVisible();
   // The composition lands on the Flows tab; the package file list lives on the
   // Files tab, and that tree starts with every folder COLLAPSED — so the saved
   // schema needs both the tab and its folder opened before it is on screen.
-  await page.getByRole("tab", { name: /^Files/u }).click();
-  await page.getByRole("button", { name: "schemas", exact: true }).click();
+  await composition.getByRole("tab", { name: /^Files/u }).click();
+  await composition
+    .getByRole("button", { name: "schemas", exact: true })
+    .click();
   await expect(
-    page.getByRole("button", { name: "review-intake.json", exact: true }),
+    composition.getByRole("button", {
+      name: "review-intake.json",
+      exact: true,
+    }),
   ).toBeVisible();
 });
 
-test("local editor structured controls: skills multiselect, /-autosuggest prompt, roles string-list, assistant composer", async ({
+test("local editor structured controls: /-autosuggest prompt, roles string-list, assistant composer", async ({
   page,
 }) => {
   test.setTimeout(180_000);
@@ -638,7 +663,7 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   const flowYamlInput = page.locator('input[name="flowYaml"]');
   const packageFilesInput = page.locator('input[name="packageFilesJson"]');
 
-  // --- ai_coding node: skills multiselect + /-autosuggest prompt composer ---
+  // --- ai_coding node: /-autosuggest prompt composer ---
   await selectGraphNode(page, "code");
 
   // (a/c) the action.prompt is the capability composer, not a plain textarea
@@ -671,31 +696,7 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await expect(variableMenu).toHaveCSS("overflow-y", "auto");
   await page.getByTestId("capability-variable-button").click();
 
-  // (c) skills picker: free-add a value, then remove it.
-  //
-  // The node form's `skills` (and `mcps`) field is an `McpSelect`, which
-  // REPLACED the MultiSelectField this block was written against — its own
-  // source says "type-to-filter parity with the old MultiSelectField". It has
-  // no `-chip`: a selected value is the option button itself, rendered
-  // `aria-pressed` and toggled off by clicking it again. The old
-  // `node-skills-chip` assertions therefore waited on a node that cannot
-  // exist, while the free-add underneath them had in fact worked — the page
-  // snapshot showed `button "extra-skill" [pressed]` the whole time.
-  await page.getByTestId("node-skills-input").fill("extra-skill");
-  await page.getByTestId("node-skills-free-add").click();
-
-  const freeAdded = page.getByTestId("node-skills-option-extra-skill");
-
-  await expect(freeAdded).toHaveAttribute("aria-pressed", "true");
-  await expect(flowYamlInput).toHaveValue(/extra-skill/);
-  // Same control removes it — `onClick={() => toggle(option.value)}`. A
-  // free-added value has no catalog entry, so it is only rendered while it is
-  // SELECTED ("selected values with no catalog entry are free-added
-  // forward-refs"); deselecting drops the button entirely rather than leaving
-  // it unpressed.
-  await freeAdded.click();
-  await expect(freeAdded).toHaveCount(0);
-  await expect(flowYamlInput).not.toHaveValue(/extra-skill/);
+  await expect(page.getByTestId("node-skills")).toHaveCount(0);
 
   // (c) insert a skill chip via `/` autosuggest → stores a canonical token
   await promptEditor.click();
@@ -715,7 +716,7 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await promptEditor.click();
   await promptEditor.focus();
   await promptEditor.pressSequentially(" /aif-plan ", { delay: 25 });
-  await page.getByTestId("node-skills-input").click();
+  await page.getByTestId("node-mcps-input").click();
   await expect(flowYamlInput).toHaveValue(/@skill:aif-plan/);
 
   // `{{` autosuggest inserts definite required variables as bare template refs.
@@ -885,4 +886,329 @@ test("UX-03A/B Fit View and keyboard location keep eleven editor nodes reachable
       ),
   );
   await expect(transform).toHaveAttribute("style", minimapCamera!);
+});
+
+test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill and MCP to two projects", async ({
+  page,
+}) => {
+  test.setTimeout(180000);
+  const name = "catalog-" + Date.now().toString(36);
+  const created = await page.request.post("/api/studio/local-packages", {
+    data: {
+      name,
+      flow: {
+        id: name,
+        metadata: {
+          title: "Catalog",
+          summary: "Catalog test",
+          route_when: "Catalog work",
+        },
+      },
+    },
+  });
+
+  expect(created.status(), await created.text()).toBe(201);
+  const {
+    localPackage: { id },
+  } = await created.json();
+  const base = "/api/studio/local-packages/" + id;
+  const oldSearch = Promise.withResolvers<void>();
+  const oldSearchFinished = Promise.withResolvers<void>();
+  const releaseRepositories = Promise.withResolvers<void>();
+  const repositoryPage = Promise.withResolvers<SearchResponse>();
+  const oldPreview = Promise.withResolvers<void>();
+  const oldPreviewFinished = Promise.withResolvers<void>();
+
+  // Delay browser delivery while the production API performs search and review.
+  await page.route("**/catalog/search?**", async (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const scope = params.get("scope");
+    const old = params.get("q") === "old" && scope !== "skills.sh";
+    const response = await route.fetch();
+
+    if (old) await oldSearch.promise;
+    if (params.get("q") === "design" && scope === "repositories") {
+      repositoryPage.resolve(await response.json());
+      await releaseRepositories.promise;
+    }
+    await route.fulfill({ response });
+    if (old) oldSearchFinished.resolve();
+  });
+  await page.route("**/catalog/preview", async (route) => {
+    const { destination } = route.request().postDataJSON();
+    const old = destination.endsWith("/old-preview");
+    const response = await route.fetch();
+
+    if (old) await oldPreview.promise;
+    await route.fulfill({ response });
+    if (old) oldPreviewFinished.resolve();
+  });
+  for (const kind of ["skills", "mcps"]) {
+    await page.goto("/studio/edit/" + id + "?tab=" + kind);
+    await page.getByTestId("catalog-open").click();
+    const panel = page.getByTestId("catalog-panel");
+    const search = panel.getByRole("searchbox");
+    const results = panel.getByRole("listbox", { name: "Catalog results" });
+
+    if (kind === "skills") {
+      const requested = page.waitForRequest((r) => {
+        const url = new URL(r.url());
+
+        return (
+          url.pathname.endsWith("/catalog/search") &&
+          url.searchParams.get("q") === "old" &&
+          url.searchParams.get("scope") !== "skills.sh"
+        );
+      });
+
+      await search.fill("old");
+      await requested;
+      await expect(panel.getByTestId("catalog-results")).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
+      await search.fill("intermediate");
+      await results
+        .getByRole("option", { name: "intermediate · fixture/catalog-skills" })
+        .waitFor();
+      await search.fill("");
+      oldSearch.resolve();
+      await oldSearchFinished.promise;
+      await expect(results).toHaveCount(0);
+
+      await search.fill("unavailable");
+      await expect(
+        panel.getByRole("status").filter({ hasText: "skills.sh:" }),
+      ).toHaveText("skills.sh: Source rate limit reached");
+      await results
+        .getByRole("option", { name: "unavailable · fixture/catalog-skills" })
+        .click();
+      await expect(panel.getByRole("alert")).toHaveText(
+        "The catalog item or draft is unavailable.",
+      );
+      await expect(
+        panel.getByText("Catalog item unavailable", { exact: true }),
+      ).toHaveCount(0);
+
+      const requestedPreview = page.waitForRequest(
+        (r) =>
+          r.url().endsWith("/catalog/preview") &&
+          r.postDataJSON()?.destination.endsWith("/old-preview"),
+      );
+
+      await search.fill("old-preview");
+      await results
+        .getByRole("option", { name: "old-preview · fixture/catalog-skills" })
+        .click();
+      await requestedPreview;
+    } else {
+      await search.fill("needs-config");
+      const refused = page.waitForResponse((response) =>
+        response.url().endsWith("/catalog/preview"),
+      );
+
+      await results
+        .getByRole("option", { name: "com.example/needs-config · com.example" })
+        .click();
+      const refusedResponse = await refused;
+
+      expect(refusedResponse.status()).toBe(422);
+      expect(await refusedResponse.text()).not.toContain("hidden-source-");
+      await expect(panel.getByRole("alert")).toHaveText(
+        "Choose a public Streamable HTTP server that works without headers or URL variables. Declared header names: Authorization. URL variables: tenant.",
+      );
+    }
+    await search.fill("design");
+    const preview = page.getByTestId("catalog-preview");
+
+    if (kind === "skills") {
+      const indexedSkill = results.getByRole("option", {
+        name: "design · catalog-author/checkout-skills",
+        exact: true,
+      });
+      const distinctSkill = results.getByRole("option", {
+        name: "design · fixture/catalog-skills",
+        exact: true,
+      });
+
+      try {
+        await expect(indexedSkill).toBeVisible();
+        await expect(distinctSkill).toHaveCount(0);
+        await indexedSkill.click();
+        await expect(preview).toContainText("companion.md");
+      } finally {
+        releaseRepositories.resolve();
+      }
+      await expect(distinctSkill).toBeVisible();
+      expect((await repositoryPage.promise).results).toContainEqual(
+        expect.objectContaining({
+          sourceId: "indexed-fixture-skills",
+          resultId: "skills/library/design-workflow",
+          canonicalSkillId: "catalog-author/checkout-skills/design",
+        }),
+      );
+      await expect(results.getByRole("option")).toHaveCount(2);
+      await expect(indexedSkill).toHaveAttribute("aria-selected", "true");
+    } else {
+      await results
+        .getByRole("option", {
+          name: "com.example/design · com.example",
+          exact: true,
+        })
+        .click();
+    }
+
+    await expect(preview).toContainText(
+      kind === "skills" ? "companion.md" : "mcps/design.yaml",
+    );
+    if (kind === "mcps") {
+      await expect(
+        preview.getByText("Compatible runner adapters"),
+      ).toBeVisible();
+      await expect(preview).toContainText(
+        "claude, codex, gemini, opencode, mimo",
+      );
+      await expect(preview).toContainText(
+        "Transport support only. Launch still checks runner readiness and MCP approval.",
+      );
+      const integrity =
+        "sha512-" +
+        createHash("sha512").update("fixture archive").digest("base64");
+      const artifactDigest = createHash("sha256")
+        .update(
+          JSON.stringify([
+            "com.example/design",
+            "maister-e2e-design-mcp",
+            "1.0.0",
+            integrity,
+            "design-mcp",
+          ]),
+        )
+        .digest("hex");
+
+      await expect(
+        preview.getByTestId("catalog-artifact-digest"),
+      ).toContainText(artifactDigest);
+      await preview
+        .locator("summary")
+        .filter({ hasText: "mcps/design.yaml" })
+        .click();
+      const descriptorDiff = preview.getByTestId("catalog-file-diff");
+
+      await expect(descriptorDiff).toContainText(
+        "packageName: maister-e2e-design-mcp",
+      );
+      await expect(descriptorDiff).toContainText("version: 1.0.0");
+    } else {
+      oldPreview.resolve();
+      await oldPreviewFinished.promise;
+      await expect(preview).toContainText("capability/skills/design");
+      await expect(preview.getByRole("link")).toHaveAttribute(
+        "href",
+        `https://github.com/catalog-author/checkout-skills/tree/${"a".repeat(40)}/skills/library/design-workflow`,
+      );
+      await expect(preview.getByText("Compatible runner adapters")).toHaveCount(
+        0,
+      );
+      await expect(preview.getByTestId("catalog-artifact-digest")).toHaveCount(
+        0,
+      );
+      await preview
+        .locator("summary")
+        .filter({ hasText: "companion.md" })
+        .click();
+      await expect(preview.getByTestId("catalog-file-diff")).toContainText(
+        "Fixture journey",
+      );
+    }
+    const applied = page.waitForResponse((r) =>
+      r.url().endsWith("/catalog/apply"),
+    );
+
+    await panel.getByTestId("catalog-apply").click();
+    const appliedResponse = await applied;
+
+    expect(appliedResponse.ok(), await appliedResponse.text()).toBeTruthy();
+    await expect(page).toHaveURL(
+      kind === "skills" ? /\/skills\/design$/ : /tab=mcps&sel=design$/,
+    );
+  }
+  await page
+    .getByRole("checkbox", { name: "Share this MCP across project sessions" })
+    .check();
+  const saveMcp = page.getByTestId("composition-inline-save-top");
+
+  await saveMcp.click();
+  await expect(saveMcp).toBeDisabled();
+  await page.getByTestId("local-editor-end-edit").click();
+  await page.waitForURL(/\/studio\/local$/);
+  const sessionId = "catalog-e2e";
+  const lock = await page.request.post(base + "/lock-refresh", {
+    data: { sessionId },
+  });
+
+  expect(lock.ok()).toBeTruthy();
+  const filePath = "capability/skills/design/companion.md";
+  const edit = await page.request.put(base + "/files/" + filePath, {
+    data: { sessionId, content: "Updated checkout journey" },
+  });
+
+  expect(edit.ok(), await edit.text()).toBeTruthy();
+  const commit = await page.request.post(base + "/commit", {
+    data: { sessionId, message: "Catalog acceptance" },
+  });
+
+  expect(commit.ok(), await commit.text()).toBeTruthy();
+  const { board, scratch } = loadFixtures().byKey;
+  const cut = await page.request.post(base + "/cut-version", {
+    data: { attachToProjectId: board.projectId },
+  });
+
+  expect(cut.ok(), await cut.text()).toBeTruthy();
+  const { installId } = await cut.json();
+  const attachment = await page.request.post(
+    `/api/projects/${scratch.projectSlug}/packages`,
+    { data: { packageInstallId: installId } },
+  );
+
+  expect(attachment.ok(), await attachment.text()).toBeTruthy();
+  const installed = await withE2EDb(
+    async (pool) =>
+      (
+        await pool.query<{ installed_path: string; project_id: string }>(
+          "select pi.installed_path, pa.project_id from package_installs pi join project_package_attachments pa on pa.package_install_id=pi.id where pi.id=$1 and pa.project_id=any($2::text[])",
+          [installId, [board.projectId, scratch.projectId]],
+        )
+      ).rows,
+  );
+
+  expect(installed.map((row) => row.project_id).sort()).toEqual(
+    [board.projectId, scratch.projectId].sort(),
+  );
+  for (const { installed_path } of installed) {
+    expect(readFileSync(join(installed_path, filePath), "utf8")).toBe(
+      "Updated checkout journey",
+    );
+    expect(
+      readFileSync(join(installed_path, "maister-package.yaml"), "utf8"),
+    ).toContain("packageName: maister-e2e-design-mcp");
+    expect(
+      readFileSync(join(installed_path, "mcps/design.yaml"), "utf8"),
+    ).toContain("scope: project");
+  }
+
+  await page.goto(`/projects/${scratch.projectSlug}?tab=mcps`);
+  const scope = page.getByRole("button", {
+    name: new RegExp(`Sharing for ${name} / design`),
+  });
+
+  await expect(scope).toContainText("Use package setting (Entire project)");
+  await scope.click();
+  await page
+    .getByRole("option", { name: "Owning package", exact: true })
+    .click();
+  await expect(
+    page.getByText("MCP sharing saved", { exact: true }),
+  ).toBeVisible();
+  await expect(scope).toContainText("Owning package");
 });

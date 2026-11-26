@@ -133,19 +133,6 @@ describe("loadFlowManifest — capability ref validation (M14 T1.3)", () => {
     });
   });
 
-  it("unknown skill ref → CONFIG when capabilityRefIds is provided", async () => {
-    const path = await writeGraph("graph-unknown-skill.yaml", (m) => {
-      m.nodes[0].settings = { skills: ["aif-implement"] };
-    });
-
-    await expectCapabilityRefError(path, {
-      mcp: [],
-      skill: ["some-other-skill"], // "aif-implement" absent
-      restriction: [],
-      setting: [],
-    });
-  });
-
   it("unknown restriction ref → CONFIG when capabilityRefIds is provided", async () => {
     const path = await writeGraph("graph-unknown-restriction.yaml", (m) => {
       m.nodes[0].settings = { restrictions: ["no-global-installs"] };
@@ -176,7 +163,6 @@ describe("loadFlowManifest — capability ref validation (M14 T1.3)", () => {
     const path = await writeGraph("graph-known-refs.yaml", (m) => {
       m.nodes[0].settings = {
         mcps: ["github"],
-        skills: ["aif-implement"],
         restrictions: ["no-global-installs"],
         settingsProfile: "my-profile",
       };
@@ -200,7 +186,6 @@ describe("loadFlowManifest — capability ref validation (M14 T1.3)", () => {
     const path = await writeGraph("graph-no-ref-check.yaml", (m) => {
       m.nodes[0].settings = {
         mcps: ["ghost-mcp"],
-        skills: ["ghost-skill"],
         restrictions: ["ghost-restriction"],
         settingsProfile: "ghost-profile",
       };
@@ -222,23 +207,26 @@ describe("loadFlowManifest — capability ref validation (M14 T1.3)", () => {
     });
   });
 
-  it("judge node — unknown skills ref → CONFIG (exercises judge branch 919-948)", async () => {
-    // Build a manifest with a judge-typed node that references an unknown skill.
-    // Judge nodes have no settingsProfile — only mcps/skills/restrictions.
-    const path = await writeGraph("graph-judge-unknown-skill.yaml", (m) => {
-      m.nodes.push({
-        id: "judge-quality",
-        type: "judge",
-        action: { prompt: "Assess code quality." },
-        settings: { skills: ["aif-judge-skill"] },
-        transitions: { pass: "done" },
-      });
-      m.nodes[1].transitions = { success: "judge-quality" };
-    });
+  it("judge node — unknown restriction ref → CONFIG (exercises judge branch 919-948)", async () => {
+    // Build a manifest with a judge-typed node that references an unknown restriction.
+    // Judge nodes have no settingsProfile — only mcps/restrictions.
+    const path = await writeGraph(
+      "graph-judge-unknown-restriction.yaml",
+      (m) => {
+        m.nodes.push({
+          id: "judge-quality",
+          type: "judge",
+          action: { prompt: "Assess code quality." },
+          settings: { restrictions: ["judge-safe"] },
+          transitions: { pass: "done" },
+        });
+        m.nodes[1].transitions = { success: "judge-quality" };
+      },
+    );
 
     await expectCapabilityRefError(path, {
       mcp: [],
-      skill: [], // "aif-judge-skill" absent → must throw CONFIG
+      skill: [],
       restriction: [],
       setting: [],
     });
@@ -250,7 +238,7 @@ describe("loadFlowManifest — capability ref validation (M14 T1.3)", () => {
         id: "judge-quality",
         type: "judge",
         action: { prompt: "Assess code quality." },
-        settings: { skills: ["aif-judge-skill"], mcps: ["github"] },
+        settings: { mcps: ["github"] },
         transitions: { pass: "done" },
       });
       m.nodes[1].transitions = { success: "judge-quality" };
@@ -271,7 +259,7 @@ describe("loadFlowManifest — capability ref validation (M14 T1.3)", () => {
   // H-1 (M37, ADR-098): an orchestrator inherits the ai_coding capability shape,
   // so its refs MUST be validated at manifest load exactly like ai_coding. Before
   // the fix, validateNodeSettings + firstUnknownCapabilityRef gated on
-  // `ai_coding || judge` only, so an orchestrator's mcps/skills/settingsProfile
+  // `ai_coding || judge` only, so an orchestrator's mcps/settingsProfile
   // were never checked (and the strict-enforcement refusal was dead code).
   it("orchestrator node — unknown mcp ref → CONFIG (orchestrator cap-ref gate)", async () => {
     const path = await writeGraph("graph-orch-unknown-mcp.yaml", (m) => {

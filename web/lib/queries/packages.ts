@@ -18,7 +18,7 @@ import { readProjectDeclarations } from "@/lib/project-dependencies/read";
 import { requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { loadFlowManifest } from "@/lib/config";
+import { loadRetainedFlowManifest } from "@/lib/config";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 import {
@@ -184,7 +184,7 @@ async function assessPackageCompatibility(
 
   try {
     for (const flow of manifest?.spec?.flows ?? []) {
-      const flowManifest = await loadFlowManifest(
+      const flowManifest = await loadRetainedFlowManifest(
         join(install.installedPath, flow.path, "flow.yaml"),
         {
           errorCode: "CONFIG",
@@ -695,7 +695,7 @@ export async function getStudioPackageFlowGraphs(
 
       if (!real) continue;
 
-      const parsed = await loadFlowManifest(real);
+      const parsed = await loadRetainedFlowManifest(real);
 
       graphs.push({
         flowId: flow.id,

@@ -113,3 +113,7 @@ permission or review requests. See [host pauses](/operations/execution-hosts#whe
 Do not edit the parent repository while a Run owns its worktree. Do not approve
 an action only to clear the inbox. Resolve the underlying decision and verify
 that later evidence corresponds to the resulting code state.
+
+## Questions from a running Flow agent
+
+A Flow agent can ask a question with suggested choices or a custom response. Once its session is checkpointed, open the question in Inbox or Run detail. Both views show the same assignment. Submit one answer. The Run can show that it accepted the answer while the supervisor restores the waiting node. Follow the Run for delivery and the next node result. Other active nodes can continue while the question is open.

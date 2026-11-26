@@ -1,7 +1,13 @@
+import {
+  isMcpDistribution,
+  type McpDistribution,
+} from "../../../runtime/mcp-distribution";
+
 import { referencedEnvNames } from "@/lib/mcp/value-grammar";
 
 export type McpReadinessInput = {
   readonly transport: "stdio" | "sse" | "http";
+  readonly distribution?: McpDistribution;
   readonly command?: string | null;
   readonly url?: string | null;
   readonly env?: Readonly<Record<string, string>> | null;
@@ -78,7 +84,8 @@ export function evaluateMcpReadiness(
   const reasons: string[] = [];
 
   if (row.transport === "stdio") {
-    if (!row.command) reasons.push("missing command");
+    if (!row.command && !isMcpDistribution(row.distribution))
+      reasons.push("missing command");
   } else if (!row.url) {
     reasons.push("missing url");
   }

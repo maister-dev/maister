@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { ExecutionHosts } from "@/lib/execution-host";
+import type {
+  CreateSessionInput,
+  SupervisorDiagnosticsStatus,
+} from "@/lib/execution-host";
 
 import pino from "pino";
 
@@ -12,11 +15,26 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+export async function assertReadOnlySessionCreateEvidence(
+  payload: CreateSessionInput,
+  checkDiagnostics: () => Promise<SupervisorDiagnosticsStatus>,
+): Promise<void> {
+  if (!payload.readOnlySession) return;
+  const adapterId = payload.runner?.adapter ?? payload.executor.agent;
+
+  await assertReadOnlySessionEvidence({
+    checkDiagnostics,
+    adapterId,
+    runnerId: payload.runner?.runnerId ?? adapterId,
+    workspace: "read-only",
+  });
+}
+
 export async function assertReadOnlySessionEvidence(args: {
-  readonly hosts: ExecutionHosts;
+  readonly checkDiagnostics: () => Promise<SupervisorDiagnosticsStatus>;
   readonly adapterId: string;
   readonly runnerId: string;
-  readonly workspace: "none" | "repo_read" | "worktree";
+  readonly workspace: "none" | "repo_read" | "worktree" | "read-only";
 }): Promise<void> {
   if (args.workspace === "worktree") return;
 
@@ -33,7 +51,7 @@ export async function assertReadOnlySessionEvidence(args: {
     "evaluating agent runner read-only-session evidence",
   );
 
-  const diagnostics = await args.hosts.local().diagnostics();
+  const diagnostics = await args.checkDiagnostics();
 
   if (diagnostics.kind !== "ready") {
     log.warn(

@@ -3,6 +3,7 @@
 // in `mcp/src/toolsets.ts`) and the supervisor L1 allow-list. The drift test
 // imports the facade's copy and fails on any difference.
 export const LIBRARIAN_TOOLSET = [
+  "ask_human",
   "project_list",
   "project_get",
   "task_search",

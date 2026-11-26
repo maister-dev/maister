@@ -6,8 +6,14 @@ import type { SessionContentReference } from "./runtime-events";
 
 import { z } from "zod";
 
+import {
+  isMcpDistribution,
+  type McpDistribution,
+} from "../../runtime/mcp-distribution";
 import { COMMAND_KINDS } from "../../runtime/command-kinds";
 import { CLAUDE_NATIVE_MODES } from "../../runtime/claude-native-permissions";
+import { ADDRESSED_PACKAGE_SKILL_SLUG } from "../../runtime/package-skill-tree";
+import { WORKSPACE_INPUT_MAX_FILES } from "../../runtime/workspace-input-policy";
 
 import { NEW_WORK_REFUSALS, type OutboxLimit } from "./host-runtime-errors";
 import { RuntimeEventSequenceSchema } from "./runtime-events";
@@ -248,7 +254,13 @@ function hasAuthorizationHeader(headers: Record<string, string> | undefined) {
 // not a secret — that channel also carries server-GENERATED secrets existing in
 // no process.env (M34, ADR-089: the per-launch ephemeral agent token on the MCP
 // facade entry), same trust channel as executor.env/adapterLaunch.env.
+export const McpDistributionSchema = z.custom<McpDistribution>(
+  isMcpDistribution,
+  "invalid pinned npm MCP distribution",
+);
+
 const mcpServerFields = {
+  distribution: McpDistributionSchema.optional(),
   transport: z.enum(["stdio", "sse", "http"]).default("stdio"),
   command: z.string().min(1).max(1024).optional(),
   args: z.array(launchArgSchema).max(64).optional(),
@@ -260,6 +272,7 @@ const mcpServerFields = {
 
 type McpServerShape = {
   platformOrigin?: "maister_facade";
+  distribution?: McpDistribution;
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
@@ -279,7 +292,7 @@ function refineMcpServerFields(
   const remote = value.transport === "sse" || value.transport === "http";
 
   if (!remote) {
-    if (!value.command && value.platformOrigin !== "maister_facade") {
+    if (!value.command && !value.distribution && value.platformOrigin !== "maister_facade") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "stdio MCP server requires a command",
@@ -305,7 +318,7 @@ function refineMcpServerFields(
       path: ["url"],
     });
   }
-  for (const field of ["command", "args", "env"] as const) {
+  for (const field of ["command", "args", "env", "distribution"] as const) {
     if (value[field] === undefined) continue;
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -474,6 +487,32 @@ export const StartSessionRequestSchema = z
       .min(1)
       .max(128)
       .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("stepId")),
+    packageSkillView: z
+      .object({
+        skillsDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        settingsDigest: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    addressedPackageSkills: z
+      .array(
+        z
+          .object({
+            slug: z.string().max(128).regex(ADDRESSED_PACKAGE_SKILL_SLUG),
+            treeDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .strict(),
+      )
+      .max(WORKSPACE_INPUT_MAX_FILES)
+      .refine(
+        (skills) =>
+          new Set(skills.map(({ slug }) => slug)).size === skills.length,
+        "addressed package skill slugs must be unique",
+      )
+      .optional(),
     nodeAttemptId: z
       .string()
       .min(1)
@@ -547,7 +586,12 @@ export const StartSessionRequestSchema = z
     // present only for a session enforcing strict tools/mcps.
     enforcementProfile: SessionEnforcementProfileSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ packageSkillView, addressedPackageSkills }) =>
+      packageSkillView === undefined || addressedPackageSkills === undefined,
+    "legacy and addressed package skill views are mutually exclusive",
+  );
 
 // --- ADR-166: execution-host contract (envelope, fences, adoption, receipts) ---
 
@@ -804,6 +848,11 @@ export const REASON_TOKENS = [
   "steer_unsupported",
   "steer_no_active_turn",
   "steer_timeout",
+  "mcp_distribution_unsupported",
+  "mcp_distribution_runtime",
+  "mcp_distribution_untrusted",
+  "mcp_distribution_integrity",
+  "package_skill_view_integrity",
   "context_exhausted",
   "max_output_tokens",
 ] as const;
@@ -828,6 +877,7 @@ export type WorkspaceRule = (typeof WORKSPACE_RULES)[number];
 
 export type SupervisorErrorDetails = {
   reason?: ReasonToken;
+  artifactDigest?: string;
   outputFailure?:
     | "producer_retained_limit"
     | "producer_chunk_limit"

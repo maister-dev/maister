@@ -43,10 +43,7 @@ import {
   getSpecialistAssignmentInput,
 } from "@/lib/specialist-assignments/store";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
-import {
-  installPackageRevision,
-  trustPackageRevision,
-} from "@/lib/packages/attach";
+import { installPackageRevision } from "@/lib/packages/attach";
 import { git, initRepo } from "@/test-support/git-fixture";
 import {
   startMainPostgresTestDbUpTo,
@@ -146,10 +143,15 @@ beforeAll(async () => {
     db: database.db,
   });
 
-  await trustPackageRevision({
-    packageInstallId: installed.id,
-    db: database.db,
-  });
+  // The predecessor stores trust on the package and its Flow directly.
+  await database.pool.query(
+    "UPDATE package_installs SET trust_status='trusted' WHERE id=$1",
+    [installed.id],
+  );
+  await database.pool.query(
+    "UPDATE flows SET trust_status='trusted' WHERE package_install_id=$1",
+    [installed.id],
+  );
   const pin = (
     await database.pool.query<{
       installed_path: string;
@@ -172,6 +174,10 @@ beforeAll(async () => {
       [pin.resolved_revision],
     )
   ).rows[0]!;
+  await database.pool.query(
+    "UPDATE flow_revisions SET exec_trust='trusted' WHERE id=$1",
+    [flow.id],
+  );
   const specialist = await createCompanySpecialistBinding(
     database.db,
     requesterId,

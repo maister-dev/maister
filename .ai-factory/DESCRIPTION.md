@@ -86,11 +86,12 @@ For the full vision, product model, architecture, and roadmap see
   registered), per-project + supervisor-aware reconciliation on Next.js
   startup, GC of `Abandoned/Done` worktrees + checkpointed sessions older
   than 7d.
-- **ACP-driven agent execution**: `supervisor/` daemon (separate Node
-  process, loopback HTTP+SSE IPC on the supported single host) owns ACP
-  sessions and is addressed as a registered execution host. Repository and
-  worktree material remains local until Stage C; Stage B runtime events and
-  objects cross only durable, path-free contracts (ADR-166/167).
+- **ACP-driven agent execution**: the separate `supervisor/` Node daemon
+  owns ACP sessions. Web uses loopback by default and can route assignments
+  to pinned supervisor endpoints through private ingress or an authenticated
+  tunnel. The selected supervisor prepares its checkout from a configured
+  repository identity and owns the workspace. Runtime events and objects use
+  durable, path-free contracts (ADR-166/167).
   One agent process per session. Spawned on Launch; permission HITL is
   resolved live. Checkpoint/idle resume is implemented.
 - **Hybrid HITL**: ACP `session/request_permission` for binary approve/deny
@@ -143,8 +144,8 @@ CHECKPOINT`). UI branches on `code`, never on string matching.
 |                   | checkpoint+respawn via the ACP `session/resume` call implemented. |
 | Model routing     | Anthropic-compatible providers configured through runner fields   |
 |                   | and supervisor environment references.                            |
-| Web ↔ supervisor | Loopback HTTP + SSE on ONE host through the ADR-166/167 execution-host contracts; no web runtime-data mount |
-|                   | Repository/worktree placement remains local until Stage C; remote trust/relay remains Stage D             |
+| Web ↔ supervisor | HTTP and SSE through the ADR-166/167 execution-host contracts. Loopback by default, with private pinned endpoint routing for remote assignments. |
+|                   | Stage C places checkouts and workspaces on the selected supervisor. Managed trust and relay remain Stage D. |
 | Flow plugins      | git repos pinned by tag; installed to                             |
 |                   | `~/.maister/flows/<id>@<tag>/` and symlinked per project          |
 | Git workspaces    | Thin wrapper around `git worktree add/remove/list`                |
@@ -174,10 +175,10 @@ MAIster is split into two Node processes:
 - **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
   agent process (`claude`, `codex`) per active session, heartbeat
   watchdog, checkpoint + respawn via the ACP `session/resume` call, canonical
-  usage events, durable event outbox, and private runtime objects. HTTP+SSE
-  runs over loopback in the supported single-host deployment. Repository and
-  worktree placement stays local until Stage C; the web tier does not mount
-  supervisor runtime data.
+  usage events, durable event outbox, and private runtime objects. The
+  assignment identifies the execution host for sessions and selected MCP
+  servers. Web consumes events and objects through the execution-host
+  protocol. [Host topology and placement](ARCHITECTURE.md#layer--module-communication)
 
 Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
 §1-8 for the canonical statement):

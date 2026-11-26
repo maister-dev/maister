@@ -51,7 +51,6 @@ import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
 import { prepareCompanyFlowWorkspace } from "../company-flow-workspace";
 import { resolveFlowBoundAgent } from "../flow-binding";
 import { resolveCompanyFlowNodeEnforcement } from "../company-flow-enforcement";
-
 import { companyAgentWorkdirPath } from "../workspace-paths";
 import { assertCompanyRunReadAccess } from "../company-run-read-access";
 import {
@@ -183,10 +182,7 @@ import {
   linkSpecialistAssignmentRunInTransaction,
 } from "@/lib/specialist-assignments/store";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
-import {
-  installPackageRevision,
-  trustPackageRevision,
-} from "@/lib/packages/attach";
+import { installPackageRevision } from "@/lib/packages/attach";
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 import * as engine from "@/lib/flows/engine-version";
 import { git, initRepo } from "@/test-support/git-fixture";
@@ -540,9 +536,12 @@ beforeAll(async () => {
     db: database.db,
   });
 
-  await trustPackageRevision({
-    packageInstallId: installed.id,
-    db: database.db,
+  // Record the historical trust decision before project dependency declarations existed.
+  await database.db.transaction(async (tx) => {
+    await tx.execute(sql`UPDATE package_installs SET trust_status = 'trusted' WHERE id = ${installed.id}`);
+    await tx.execute(sql`UPDATE flow_revisions f SET exec_trust = 'trusted'
+      FROM package_installs i WHERE i.id = ${installed.id} AND f.resolved_revision = i.resolved_revision
+      AND f.flow_ref_id IN (SELECT jsonb_array_elements(i.manifest #> '{spec,flows}') ->> 'id')`);
   });
   const pin = (
     await database.pool.query<{
@@ -895,6 +894,7 @@ async function seedRetainedStandalone(): Promise<void> {
     retainedRunId,
   ]);
   const {
+    projectAgentProfile: _newProjectAgentProfile,
     companyCancellationIntent: _newCancellationColumn,
     agentMemoryHashFormat: _newMemoryHashFormat,
     flowPublicationGrant: _newPublicationColumn,

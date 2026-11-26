@@ -21,6 +21,8 @@ import type { EvidenceGraph } from "@/lib/queries/evidence-graph";
 import type { DirtySummary } from "@/lib/runs/dirty-resolution";
 import type { DeliveryPolicy } from "@/lib/runs/delivery-policy";
 
+import { publicCapabilitySet } from "@/lib/capabilities/package-delivery";
+
 export type FlowResultDegradationCode =
   "dirty-summary-unavailable" | "review-diff-fallback";
 
@@ -498,7 +500,9 @@ export function buildFlowRunResultDto(
     reviewGate: input.reviewGate,
     capabilities: {
       materializedNodes: [...input.capabilityNodes],
-      resolvedSet: input.resolvedCapabilitySet,
+      resolvedSet: input.resolvedCapabilitySet
+        ? publicCapabilitySet(input.resolvedCapabilitySet)
+        : null,
     },
     degradations: uniqueDegradations(input.degradations, input.review),
   };

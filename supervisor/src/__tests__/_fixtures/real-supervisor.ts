@@ -9,8 +9,9 @@
 // typecheck. The packages cannot share the module; they share the question.
 import type { ChildProcess } from "node:child_process";
 
-import { execFile, spawn } from "node:child_process";
-import { openSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { closeSync, openSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -24,13 +25,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  retryFixturePortAllocation,
+  startOwnedFixture,
+} from "../../../../web/test-support/owned-fixture";
 import { captureSupervisorProcessGroups } from "../../../../web/test-support/capture-supervisor-process-groups";
 import {
   assertInvocationGroupEmpty,
   createInvocation,
   fixtureProcessEnvironment,
   invocationFromEnvironment,
-  registerProcess,
   registerRoot,
   releaseInvocation,
   signalInvocationGroup,
@@ -41,7 +45,6 @@ const SUPERVISOR_DIR = path.resolve(HERE, "../../..");
 const SUPERVISOR_MAIN = path.join(SUPERVISOR_DIR, "src", "main.ts");
 const FIXTURES_DIR = path.join(SUPERVISOR_DIR, "test", "fixtures");
 const TSX_LOADER = createRequire(import.meta.url).resolve("tsx");
-const ORPHAN_GRACE_MS = 3_000;
 
 export type RealSupervisorOptions = {
   fixture?: string;
@@ -79,37 +82,12 @@ function freePort(): Promise<number> {
   });
 }
 
-function groupMembers(pgid: number): Promise<number[]> {
-  return new Promise((resolve) => {
-    execFile("pgrep", ["-g", String(pgid)], (err, stdout) => {
-      if (err) {
-        resolve([]);
-
-        return;
-      }
-      resolve(
-        stdout
-          .split("\n")
-          .map((line) => Number.parseInt(line.trim(), 10))
-          .filter((pid) => Number.isFinite(pid)),
-      );
-    });
-  });
-}
-
-function signalGroup(pgid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pgid, signal);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
-  }
-}
-
 async function waitForHealth(
   url: string,
   exited: Promise<number | null>,
   timeoutMs: number,
-): Promise<void> {
+  hostKey: string,
+): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let gone = false;
 
@@ -119,7 +97,21 @@ async function waitForHealth(
   while (Date.now() < deadline) {
     if (gone) throw new Error(`supervisor exited before /health (${url})`);
     try {
-      if ((await fetch(`${url}/health`)).ok) return;
+      const response = await fetch(`${url}/health`, {
+        signal: AbortSignal.timeout(2_000),
+      });
+
+      if (response.ok) {
+        const health = (await response.json()) as {
+          host?: { hostKey?: string; bootId?: string };
+        };
+
+        if (
+          health.host?.hostKey === hostKey &&
+          typeof health.host.bootId === "string"
+        )
+          return health.host.bootId;
+      }
     } catch {
       /* not up yet */
     }
@@ -151,12 +143,19 @@ async function writeAdapterWrapper(
 export async function startRealSupervisor(
   options: RealSupervisorOptions = {},
 ): Promise<RealSupervisor> {
+  return retryFixturePortAllocation(() => startRealSupervisorAttempt(options));
+}
+
+async function startRealSupervisorAttempt(
+  options: RealSupervisorOptions,
+): Promise<RealSupervisor> {
   const runtimeRoot = await realpath(
     await mkdtemp(path.join(tmpdir(), "sup-rt-")),
   );
   const inheritedInvocation = invocationFromEnvironment();
   const invocation =
-    inheritedInvocation ?? (await createInvocation(runtimeRoot));
+    inheritedInvocation ??
+    (await createInvocation(path.join(tmpdir(), "maister-process-ledgers")));
 
   await registerRoot(invocation, runtimeRoot, "supervisor");
   const port = await freePort();
@@ -166,6 +165,7 @@ export async function startRealSupervisor(
   const fixturePath = path.isAbsolute(fixture)
     ? fixture
     : path.join(FIXTURES_DIR, fixture);
+  const hostKey = randomUUID();
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     NODE_ENV: "production",
@@ -187,10 +187,10 @@ export async function startRealSupervisor(
     MAISTER_SHUTDOWN_GRACE_MS: "1000",
     MAISTER_KILL_GRACE_MS: "500",
     ...options.env,
+    MAISTER_EXECUTION_HOST_KEY: hostKey,
     ...(await fixtureProcessEnvironment(invocation)),
   };
 
-  delete env.MAISTER_EXECUTION_HOST_KEY;
   delete env.VITEST;
   delete env.VITEST_POOL_ID;
   delete env.VITEST_WORKER_ID;
@@ -208,32 +208,37 @@ export async function startRealSupervisor(
       detached: true,
     },
   );
-  const pid = child.pid ?? -1;
-  const exited = new Promise<number | null>((resolve) => {
-    child.once("exit", (code) => resolve(code));
+
+  closeSync(logFd);
+
+  const owned = await startOwnedFixture({
+    invocation,
+    child,
+    role: "supervisor",
+    root: runtimeRoot,
+    logFile,
+    bootId: `starting:${child.pid ?? -1}`,
+    killGraceMs: 10_000,
+    ready: (exited) => waitForHealth(url, exited, 60_000, hostKey),
+  }).catch(async (error: unknown) => {
+    if (!inheritedInvocation) {
+      const failures = await releaseInvocation(
+        invocation,
+        "Supervisor startup",
+      );
+
+      if (failures.length)
+        throw new AggregateError(
+          [error, ...failures],
+          "Supervisor fixture cleanup failed",
+        );
+    }
+    throw error;
   });
+  const { pid, exited } = owned;
   const leaderGone = () => child.exitCode !== null || child.signalCode !== null;
   const sessionGroups = new Set<number>();
   let invocationReleased = false;
-
-  try {
-    await registerProcess(
-      invocation,
-      {
-        role: "fixture",
-        caseName: "supervisor",
-        rootRole: "supervisor",
-        root: runtimeRoot,
-        bootId: `starting:${pid}`,
-        logFile,
-      },
-      pid,
-    );
-    await waitForHealth(url, exited, 60_000);
-  } catch (err) {
-    if (pid > 0) signalGroup(pid, "SIGKILL");
-    throw err;
-  }
 
   const captureSessionGroups = async (): Promise<void> => {
     if (leaderGone()) return;
@@ -242,7 +247,7 @@ export async function startRealSupervisor(
       url,
       supervisorPid: pid,
       runtimeRoot,
-      bootId: `supervisor:${pid}`,
+      bootId: owned.bootId,
       logFile,
       caseName: "supervisor-session",
     });
@@ -251,43 +256,34 @@ export async function startRealSupervisor(
   };
 
   const kill = async (signal: NodeJS.Signals = "SIGKILL") => {
-    await captureSessionGroups();
-    if (!leaderGone()) {
-      signalGroup(pid, signal);
-      await Promise.race([
-        exited,
-        new Promise<void>((r) => setTimeout(r, 10_000)),
-      ]);
-      if (!leaderGone()) {
-        signalGroup(pid, "SIGKILL");
-        await exited;
-      }
-    }
-    const deadline = Date.now() + ORPHAN_GRACE_MS;
-    let survivors = await groupMembers(pid);
+    const failures: unknown[] = [];
 
-    while (survivors.length > 0 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 100));
-      survivors = await groupMembers(pid);
+    try {
+      await captureSessionGroups();
+    } catch (error) {
+      failures.push(error);
     }
-    if (survivors.length > 0) {
-      signalGroup(pid, "SIGKILL");
-      throw new Error(`orphans survived kill: ${survivors.join(", ")}`);
+    try {
+      await owned.kill(signal);
+    } catch (error) {
+      failures.push(error);
     }
     for (const group of sessionGroups) {
-      await signalInvocationGroup(invocation, group, "SIGKILL");
-      await assertInvocationGroupEmpty(invocation, group);
+      try {
+        await signalInvocationGroup(invocation, group, "SIGKILL");
+        await assertInvocationGroupEmpty(invocation, group);
+      } catch (error) {
+        failures.push(error);
+      }
     }
     if (!inheritedInvocation && !invocationReleased) {
       invocationReleased = true;
-      const failures = await releaseInvocation(
-        invocation,
-        "Supervisor fixture",
+      failures.push(
+        ...(await releaseInvocation(invocation, "Supervisor fixture")),
       );
-
-      if (failures.length)
-        throw new AggregateError(failures, "Supervisor fixture cleanup failed");
     }
+    if (failures.length)
+      throw new AggregateError(failures, "Supervisor fixture cleanup failed");
   };
 
   return {

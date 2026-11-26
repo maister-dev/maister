@@ -57,6 +57,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { pgErrorOf } from "@/lib/db/pg-error";
+import { assertReadOnlySessionCreateEvidence } from "@/lib/agents/runner-readonly-evidence";
 
 export type OwnedSessionOptions = Readonly<{
   assertCommit?: (tx: Db) => Promise<void>;
@@ -421,7 +422,8 @@ async function createOwnedSessionFromIntent(
             : [];
 
         if (
-          ((attempt?.resume?.kind === "permission" ||
+          ((attempt?.resume?.kind === "node_question" ||
+            attempt?.resume?.kind === "permission" ||
             attempt?.resume?.kind === "permission_continue") &&
             attempt.resume.assignmentId === authority.assignmentId) ||
           evaluation?.resume?.assignmentId === authority.assignmentId
@@ -733,10 +735,15 @@ async function createOwnedSessionFromIntent(
         command: current,
         envelope,
         logger,
-        send: () =>
-          transport.createSession(envelope, {
+        send: async () => {
+          await assertReadOnlySessionCreateEvidence(envelope.payload, () =>
+            transport.diagnostics(),
+          );
+
+          return transport.createSession(envelope, {
             timeoutMs: COMMAND_POLICY["session.create"].timeoutMs,
-          }),
+          });
+        },
         onAck: apply,
       });
 

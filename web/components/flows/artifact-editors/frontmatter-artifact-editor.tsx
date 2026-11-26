@@ -1,5 +1,6 @@
 "use client";
 
+import type { AgentPackageChoices } from "@/lib/agents/package-profile-choices";
 import type { ReactElement } from "react";
 
 import { useState } from "react";
@@ -51,6 +52,9 @@ export interface FrontmatterArtifactEditorLabels {
   agentRecommendedCronTz: string;
   agentRecommendedEvents: string;
   agentRecommendedMention: string;
+  agentProfileSkills?: string;
+  agentProfileMcps?: string;
+  agentAllSkills?: string;
   agentCapabilityProfile: string;
   agentCapabilityProfileInvalid: string;
   allowedPaths: string;
@@ -382,6 +386,7 @@ function CapabilityProfileField({
 }
 
 export interface FrontmatterArtifactEditorProps {
+  packageChoices?: AgentPackageChoices;
   content: string;
   onChange: (next: string) => void;
   kind: FrontmatterArtifactKind;
@@ -400,6 +405,7 @@ export interface FrontmatterArtifactEditorProps {
  * package-files editor can dispatch to this component by inferred kind.
  */
 export function FrontmatterArtifactEditor({
+  packageChoices,
   content,
   onChange,
   kind,
@@ -552,6 +558,7 @@ export function FrontmatterArtifactEditor({
             fm={fm}
             kind={kind}
             labels={labels}
+            packageChoices={packageChoices}
             readOnly={readOnly}
           />
         )}
@@ -572,6 +579,7 @@ export function FrontmatterArtifactEditor({
 }
 
 interface SkillAgentFieldsProps {
+  packageChoices?: AgentPackageChoices;
   fm: Record<string, unknown>;
   // `subagent` renders the lenient name/description form (the agent-only block
   // below is gated to `agent_definition`); extra subagent keys are passthrough.
@@ -585,6 +593,7 @@ interface SkillAgentFieldsProps {
 }
 
 function SkillAgentFields({
+  packageChoices,
   fm,
   kind,
   readOnly,
@@ -596,6 +605,21 @@ function SkillAgentFields({
 }: SkillAgentFieldsProps): ReactElement {
   // `recommended` is a nested mapping — edits rewrite the whole object and
   // drop it entirely when every sub-field clears (CLEAR-able round-trip).
+  const [pickerRevision, setPickerRevision] = useState(0);
+  const profile = capabilityProfileSchema.safeParse(
+    fm.capability_profile ?? {},
+  );
+  const editSelection = (
+    field: "mcps" | "skills",
+    values: string[] | undefined,
+  ): void => {
+    if (!profile.success) return;
+    const next = { ...profile.data, [field]: values };
+
+    if (!values) delete next[field];
+    editField("capability_profile", next);
+    setPickerRevision((revision) => revision + 1);
+  };
   const recommended = (fm.recommended ?? {}) as {
     runner?: string;
     cron?: { expr?: string; timezone?: string };
@@ -765,7 +789,45 @@ function SkillAgentFields({
             />
             {labels.agentRecommendedMention}
           </label>
+          {packageChoices &&
+          profile.success &&
+          labels.agentAllSkills &&
+          labels.agentProfileSkills &&
+          labels.agentProfileMcps ? (
+            <fieldset className="grid gap-2" disabled={readOnly}>
+              <label className={labelClass}>
+                <input
+                  checked={profile.data.skills === undefined}
+                  type="checkbox"
+                  onChange={(event) =>
+                    editSelection(
+                      "skills",
+                      event.target.checked ? undefined : [],
+                    )
+                  }
+                />
+                {labels.agentAllSkills}
+              </label>
+              {profile.data.skills !== undefined && (
+                <MultiSelectField
+                  label={labels.agentProfileSkills}
+                  options={packageChoices.skills}
+                  readOnly={readOnly}
+                  values={profile.data.skills}
+                  onValues={(values) => editSelection("skills", values)}
+                />
+              )}
+              <MultiSelectField
+                label={labels.agentProfileMcps}
+                options={packageChoices.mcps}
+                readOnly={readOnly}
+                values={profile.data.mcps ?? []}
+                onValues={(values) => editSelection("mcps", values)}
+              />
+            </fieldset>
+          ) : null}
           <CapabilityProfileField
+            key={pickerRevision}
             invalidLabel={labels.agentCapabilityProfileInvalid}
             label={labels.agentCapabilityProfile}
             readOnly={readOnly}

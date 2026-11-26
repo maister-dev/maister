@@ -1,0 +1,95 @@
+openapi: 3.0.3
+info:
+  title: skills.sh search and exact snapshot discovery used by the Skills CLI
+  version: "1"
+  description: |
+    Excerpt of the public Skills CLI endpoints. Studio searches GitHub-backed
+    listings and uses an exact snapshot to confirm a pasted link or retained
+    catalog identity. Studio reviews the source files from a pinned Git commit.
+externalDocs:
+  url: https://github.com/vercel-labs/skills/blob/main/src/find.ts
+servers:
+  - url: https://skills.sh
+paths:
+  /api/search:
+    get:
+      operationId: searchPublicSkills
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, enum: [30] }
+      responses:
+        "200":
+          description: Skill catalog matches
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillSearchResults"
+        "429":
+          description: Search rate limit reached
+        default:
+          description: Search unavailable or refused
+  /api/download/{owner}/{repo}/{slug}:
+    get:
+      operationId: confirmPublicSkillSnapshot
+      externalDocs:
+        url: https://github.com/vercel-labs/skills/blob/main/src/blob.ts
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema: { type: string }
+        - name: repo
+          in: path
+          required: true
+          schema: { type: string }
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cached skill snapshot used to confirm its declared name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillSnapshot"
+        "404":
+          description: Snapshot unavailable for this identifier
+        "429":
+          description: Snapshot read rate limited
+        default:
+          description: Snapshot read unavailable or refused
+components:
+  schemas:
+    SkillSearchResults:
+      type: object
+      required: [skills]
+      properties:
+        skills:
+          type: array
+          items:
+            type: object
+            required: [id, source, name]
+            properties:
+              id: { type: string }
+              source: { type: string }
+              name: { type: string }
+              skillId: { type: string }
+    SkillSnapshot:
+      type: object
+      required: [files, hash]
+      properties:
+        hash: { type: string, pattern: "^[a-fA-F0-9]{64}$" }
+        files:
+          type: array
+          items:
+            type: object
+            required: [path, contents]
+            properties:
+              path: { type: string }
+              contents: { type: string }

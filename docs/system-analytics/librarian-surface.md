@@ -133,6 +133,8 @@ flowchart LR
 
 ## Expectations
 
+- **ASK-02:** (Implemented) Only the active conversation owner may answer its private question and resume the exact suspended turn once.
+
 - **LUI-01:** The top-nav entry MUST render on every `(app)` route with an accessible name and an indicator of `running | unread | action_required`, and MUST NEVER show a numeric global count, enforced by `librarian-trigger.tsx` in `top-nav.tsx` (Implemented).
 - **LUI-02:** The panel MUST be mounted in `(app)/layout.tsx`, navigation and collapse MUST preserve conversation, draft and scroll, and reload MUST restore messages and pending operations, enforced by `librarian-panel.tsx` (Implemented).
 - **LUI-03:** The panel MUST be docked non-modal at ≥ `xl`, a modal sheet at `md`–`xl` and full screen below `md`, and at 390 px it MUST show no horizontal overflow with Send visible, enforced by the panel's breakpoint layout (Implemented).

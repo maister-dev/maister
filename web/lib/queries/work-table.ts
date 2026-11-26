@@ -30,6 +30,7 @@ import {
   buildFlightProgress,
   type ProgressNodeAttempt,
 } from "@/lib/queries/board-progress";
+import { visibleFlowNodeQuestion } from "@/lib/queries/hitl";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { queryTokensByTaskIds } from "@/lib/runs/cost-rollups";
@@ -247,6 +248,8 @@ export async function getWorkTable(
         and(
           inArray(hitlRequests.runId, latestRunIds),
           isNull(hitlRequests.respondedAt),
+          visibleFlowNodeQuestion(),
+          isNull(hitlRequests.flowAnswerAcceptedAt),
           or(
             inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
             and(

@@ -16,6 +16,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CodeEditor } from "./code-editor";
 
 import {
+  packageProfileChoices,
+  type AgentPackageChoices,
+} from "@/lib/agents/package-profile-choices";
+import {
   type FrontmatterArtifactEditorLabels,
   FrontmatterArtifactEditor,
 } from "@/components/flows/artifact-editors/frontmatter-artifact-editor";
@@ -220,6 +224,7 @@ export function PackageFilesEditor({
                 kindLabels={kindLabels}
                 labels={labels}
                 mcpCatalog={mcpCatalog}
+                packageChoices={packageProfileChoices(effectiveFiles)}
                 onChangeContent={(next) =>
                   updateFiles(
                     replacePackageFileContent(
@@ -320,6 +325,7 @@ function FileTreeNodes({
 }
 
 function SelectedFileEditor({
+  packageChoices,
   disabled,
   file,
   kindLabels,
@@ -329,6 +335,7 @@ function SelectedFileEditor({
   onRemove,
   onRename,
 }: {
+  packageChoices?: AgentPackageChoices;
   disabled: boolean;
   file: AuthoredFlowPackageFile;
   kindLabels: Record<AuthoredFlowPackageFileKind, string>;
@@ -386,6 +393,7 @@ function SelectedFileEditor({
           inferredKind={inferredKind}
           labels={labels}
           mcpCatalog={mcpCatalog}
+          packageChoices={packageChoices}
           onChangeContent={onChangeContent}
         />
       </div>
@@ -394,6 +402,7 @@ function SelectedFileEditor({
 }
 
 export function ContentEditor({
+  packageChoices,
   disabled,
   file,
   inferredKind,
@@ -401,6 +410,7 @@ export function ContentEditor({
   mcpCatalog,
   onChangeContent,
 }: {
+  packageChoices?: AgentPackageChoices;
   disabled: boolean;
   file: AuthoredFlowPackageFile;
   inferredKind: AuthoredFlowPackageFileKind;
@@ -443,6 +453,7 @@ export function ContentEditor({
         content={file.content}
         kind={inferredKind}
         labels={labels.frontmatter}
+        packageChoices={packageChoices}
         readOnly={disabled}
         onChange={onChangeContent}
       />

@@ -34,8 +34,8 @@ two long-running Node processes:
 - **pre-commit** (one-time `pre-commit install` writes the git hook)
 - **Postgres 16** (required for `pnpm db:migrate` + `pnpm db:seed` and
   integration tests; not required to run `pnpm dev` against a stubbed DB)
-- **Docker** (only for `compose up postgres` and the `testcontainers`
-  integration test suite)
+- **Docker** for the local Postgres service, container-based tests and the
+  optional production supervisor profile.
 - **uv** + **Python 3.12** only when a Flow plugin needs Python tooling.
 - **At least one coding agent authenticated on every supervisor host.** Choose
   Claude Code, Codex, Gemini CLI, OpenCode, or MiMo. The supervisor must run
@@ -166,8 +166,8 @@ options, set `NODE_OPTIONS`, for example
 Turbopack persists its compilation cache and evicts its in-memory copies after
 snapshots; the first request to a page still pays its compilation cost.
 
-Only Postgres is containerized; `web` and `supervisor` run on the host (they
-spawn agent CLIs and operate on host git repos — see ADR-023). Both read the
+In the default local setup, Postgres runs in Docker. Web and the local
+supervisor run on the host and share Git workspaces (ADR-023). Both read the
 same `MAISTER_RUNTIME_ROOT`; the supervisor additionally keeps its
 execution-host state (identity, fences, adopted-workspace handles, command
 receipts — ADR-166) under `<runtimeRoot>/.maister/execution-host/`,
@@ -214,6 +214,7 @@ test:integration:ab # in-process web A/B acceptance with real supervisor/Postgre
                       # optional --shard i/n; CI uses 1/2 and 2/2 as disjoint halves
 test:integration:isolation # serial production boot, real sandbox driver, owned roots/processes
 test:e2e           # Playwright (authed UI specs — see note below)
+test:e2e:studio-catalog # production Web, supervisor, test ACP peer and local MCP fixtures
 db:generate        # generate a Drizzle migration from lib/db/schema.ts
 db:migrate         # apply MAIN-lineage migrations against $DB_URL
 db:migrate:brain   # apply the Project-Brain lineage (brain_* + pgvector); AFTER
@@ -263,6 +264,15 @@ maister-web test:e2e` (or `cd web && pnpm test:e2e`) creates one disposable
 > return. If a prior run
 > left a prior E2E process running, stop that process and re-run; the wrapper
 > owns a new database for every invocation.
+
+**Workspace contracts (from the repo root):**
+
+```bash
+pnpm validate:studio-catalog-coverage # check Studio catalog requirement and test traceability
+```
+
+The coverage check also runs in `pnpm validate:contracts`. The Studio browser
+suite uses disposable PostgreSQL and requires Docker and Playwright Chromium.
 
 **Supervisor (`pnpm --filter @maister/supervisor …`):**
 
@@ -647,13 +657,16 @@ mAIster/
   `<MAISTER_WORKTREES_ROOT>/.config-persistence` on durable host storage,
   owned by the web service UID and outside project checkouts. Save/recovery
   refuses unknown private content; inspect a retained cleanup receipt before
-  removing files. The supported compose setup runs only PostgreSQL in Docker;
-  web configuration persistence uses the host worktree root, without a new mount.
+  removing files. Web configuration persistence uses its host worktree root.
 - **Moving `MAISTER_WORKTREES_ROOT` without `MAISTER_WORKSPACE_ROOTS`**
   (ADR-166) — the supervisor only adopts worktrees under its
   configured roots; a moved web root that is not mirrored fails every launch
   at adoption with `PRECONDITION workspace_rejected`. Mirror both in
   `supervisor/.env`.
+- **Using a separate supervisor host** — configure each host key, private ingress,
+  permitted workspace roots, approved Git sources and Git credentials. The selected
+  supervisor prepares and owns the workspace. Configure the Web origin and reviewed
+  npm MCP approvals on that host. [Assigned supervisor MCPs](configuration.md#assigned-supervisor-mcps)
 - **Copying `.maister/execution-host/` between machines** (ADR-166) — a
   `MAISTER_EXECUTION_HOST_KEY` pin that differs from the copied
   `state.sqlite` refuses boot. Unset the pin or wipe the directory; never

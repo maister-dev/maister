@@ -19,6 +19,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { EXECUTION_HOST_KEY_HEADER } from "../../../runtime/execution-host-address";
+import { packageSkillTreeDigest } from "../../../runtime/package-skill-tree";
 import { WORKSPACE_CONTEXT_INPUT } from "../../../runtime/workspace-context-input";
 import { WORKSPACE_TEMPLATE_CONTEXT_NAME, workspaceEvidenceDigest } from "../../../runtime/workspace-prepare";
 import type {
@@ -147,6 +148,27 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     "capability_instructions",
     bytes,
   );
+  const selectedPath = "bundles/2/skills/pinned-skill/SKILL.md";
+  const selectedCompanionPath = "bundles/2/skills/pinned-skill/references/companion.md";
+  const privateSkillPath = "bundles/2/skills/private-skill/SKILL.md";
+  const selected = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    "# selected instructions",
+  );
+  const companion = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    "selected companion",
+  );
+  const privateSkill = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    "# unrelated skill",
+  );
   const context = await sealInput(
     host,
     prepared.owner,
@@ -251,6 +273,9 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
       workspaceInputDigest: inputDigest,
       files: [
         { path: skillPath, ...sealed },
+        { path: selectedPath, ...selected },
+        { path: selectedCompanionPath, ...companion },
+        { path: privateSkillPath, ...privateSkill },
         { path: WORKSPACE_CONTEXT_INPUT, ...context },
         { path: "workload-declarations.json", ...workload },
         { path: "flow/setup.sh", ...setup },
@@ -269,7 +294,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     payload: {
       generation,
       manifestDigest: manifest.sha256,
-      objects: [manifest, sealed, context, workload, setup],
+      objects: [manifest, sealed, selected, companion, privateSkill, context, workload, setup],
     },
   };
   const route = `/v1/workspaces/${handle}/materialization`;
@@ -282,6 +307,9 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
       objects: [
         manifest,
         { ...sealed, sha256: "0".repeat(64) },
+        selected,
+        companion,
+        privateSkill,
         context,
         workload,
         setup,
@@ -439,6 +467,68 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
   );
   expect(prompt.status).toBe(200);
   expect(await readFile(recordedPrompt, "utf8")).toContain(skillPath);
+  const selectedRoot = join(workspace.runDir, "inputs", manifest.sha256, "bundles", "2", "skills", "pinned-skill");
+  const selection = {
+    slug: "pinned-skill",
+    treeDigest: await packageSkillTreeDigest(selectedRoot),
+  };
+  const rejectedSelection = await postJson(
+    host.url + "/sessions",
+    envelope("session.create", prepared.owner, createBody(handle, {
+      addressedPackageSkills: [{ ...selection, treeDigest: "0".repeat(64) }],
+    })),
+  );
+  expect(rejectedSelection).toMatchObject({
+    status: 409,
+    body: {
+      details: {
+        reason: "package_skill_view_integrity",
+        sessionCreateQuiescence: { version: 1, process: "not_started" },
+      },
+    },
+  });
+  const scopedRecord = join(root, "scoped-newsession-record.json");
+  const scopedPromptRecord = join(root, "scoped-prompt-record.json");
+
+  for (const addressedPackageSkills of [[selection], []]) {
+    const scoped = await postJson(
+      host.url + "/sessions",
+      envelope("session.create", prepared.owner, createBody(handle, {
+        stepId: addressedPackageSkills.length ? "scoped" : "empty",
+        addressedPackageSkills,
+        executor: {
+          agent: "claude",
+          model: "claude-sonnet-4-6",
+          env: {
+            MOCK_ACP_NEWSESSION_RECORD_PATH: scopedRecord,
+            MOCK_ACP_PROMPT_RECORD_PATH: scopedPromptRecord,
+            MOCK_ACP_RECORD_PACKAGE_SKILLS: "1",
+          },
+        },
+      })),
+    );
+    expect(scoped.status).toBe(201);
+    expect(JSON.parse(await readFile(scopedRecord, "utf8")).packageSkills).toEqual(
+      addressedPackageSkills.length
+        ? [{ slug: "pinned-skill", companion: "selected companion" }]
+        : [],
+    );
+    const scopedPrompt = await completePrompt(
+      host,
+      String(scoped.body.sessionId),
+      envelope("session.prompt", prepared.owner, {
+        stepId: addressedPackageSkills.length ? "scoped" : "empty",
+        prompt: "Use the selected package scope.",
+      }),
+    );
+    expect(scopedPrompt.status).toBe(200);
+    const recorded = await readFile(scopedPromptRecord, "utf8");
+    if (addressedPackageSkills.length) expect(recorded).toContain(selectedPath);
+    else expect(recorded).not.toContain("## Packaged skills");
+    expect(recorded).not.toContain(skillPath);
+    expect(recorded).not.toContain(privateSkillPath);
+  }
+
   const checkCommandId = randomUUID();
   const check = await addressedRequest(
     host,

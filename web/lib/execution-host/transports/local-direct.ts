@@ -146,6 +146,9 @@ export function createLocalDirectTransport(
   }
 
   return {
+    prepareMcp(envelope, opts) {
+      return call(wire.prepareMcpEnveloped, envelope, opts);
+    },
     async health(opts) {
       return toHostHealth(
         await call(wire.checkSupervisorHealth, {

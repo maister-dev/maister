@@ -17,6 +17,8 @@ import {
 } from "./protocol";
 
 import * as schema from "@/lib/db/schema";
+import { isMaisterError } from "@/lib/errors";
+import { withWorkingDirLock } from "@/lib/local-packages/lock";
 import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 
 type Db = any;
@@ -137,27 +139,59 @@ async function applyJournalledAction(args: {
   };
 }): Promise<FlowActionResultPayload | null> {
   if (args.intent.state !== "pending") return null;
-  const applyResult = await validateAndApplyFlowAssistantAction({
-    localPackage: args.localPackage,
-    runId: args.runId,
-    action: args.intent.action as never,
-    assertCanApply: args.assertCanApply,
-  });
-  const settled = await settleAction({
-    db: args.db,
-    id: args.intent.id,
-    state: applyResult.ok ? "applied" : "rejected",
-    result: applyResult.result,
-  });
 
-  if (!settled) return null;
-  await insertActionResultMessage({
-    db: args.db,
-    runId: args.runId,
-    result: applyResult.result,
-  });
+  try {
+    return await withWorkingDirLock(
+      args.localPackage.id,
+      async () => {
+        const [current] = await args.db
+          .select({ state: flowAssistantActions.state })
+          .from(flowAssistantActions)
+          .where(eq(flowAssistantActions.id, args.intent.id));
 
-  return applyResult.result;
+        if (current?.state !== "pending") return null;
+        const applyResult = await validateAndApplyFlowAssistantAction({
+          localPackage: args.localPackage,
+          runId: args.runId,
+          action: args.intent.action as never,
+          assertCanApply: args.assertCanApply,
+        });
+        const settled = await settleAction({
+          db: args.db,
+          id: args.intent.id,
+          state: applyResult.ok ? "applied" : "rejected",
+          result: applyResult.result,
+        });
+
+        if (!settled) return null;
+        await insertActionResultMessage({
+          db: args.db,
+          runId: args.runId,
+          result: applyResult.result,
+        });
+
+        return applyResult.result;
+      },
+      args.db,
+    );
+  } catch (error) {
+    if (
+      !isMaisterError(error) ||
+      error.code !== "CONFLICT" ||
+      error.details?.reason !== "operation_in_progress"
+    )
+      throw error;
+    log.info(
+      {
+        localPackageId: args.localPackage.id,
+        runId: args.runId,
+        actionId: args.intent.id,
+      },
+      "Flow Assistant action deferred while the package is being written",
+    );
+
+    return null;
+  }
 }
 
 /** CAS out of `pending`; a competing settlement wins and this caller yields. */

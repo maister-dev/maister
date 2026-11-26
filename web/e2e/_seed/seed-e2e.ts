@@ -864,9 +864,8 @@ const M11C_VISIBLE_REVIEW_SCHEMA = {
 
 // --- M11c fixture B: strict-enforcement REFUSAL at launch -------------------
 // A launchable Backlog task whose enabled flow revision pins an ai_coding
-// `implement` node declaring `enforcement.skills: "strict"`. ADR-130 flipped
-// tools/mcps/hooks to `enforced` but `skills` stays `instructed` (no tool-identity
-// seam mechanism), so no agent can strictly enforce `skills` and POST /api/runs
+// `implement` node requiring strict restrictions. Restrictions are instructed
+// on every supported agent, so POST /api/runs
 // refuses with CONFIG (400) at the settings-enforcement gate — BEFORE any
 // worktree/run/workspace is created. The flow row is Enabled + trusted and points
 // at a flow_revisions row carrying the strict manifest (the launch path resolves
@@ -885,9 +884,7 @@ const M11C_REFUSE_MANIFEST = {
       type: "ai_coding",
       action: { prompt: "/aif-implement {{ task.prompt }}" },
       transitions: { success: "done" },
-      // enforcement-only (no data field) → no capability-ref check; skills strict
-      // → refused at the static gate (CONFIG) before the async evidence gate.
-      settings: { enforcement: { skills: "strict" } },
+      settings: { enforcement: { restrictions: "strict" } },
     },
   ],
 };
@@ -3851,7 +3848,7 @@ async function seedM11cRefuseFixture(
     projectSlug: M11C_REFUSE_SLUG,
     taskId: ids.task,
     nodeId: M11C_REFUSE_NODE,
-    refusedClass: "skills",
+    refusedClass: "restrictions",
   };
 }
 
@@ -6423,7 +6420,6 @@ const M23_MANIFEST = {
       id: "implement",
       type: "ai_coding",
       action: { prompt: "implement {{ task.prompt }}" },
-      settings: { skills: ["aif-implement"] },
       transitions: { success: M23_NODE_ID },
     },
     {

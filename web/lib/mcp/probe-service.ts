@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { McpDistribution } from "../../../runtime/mcp-distribution";
 import type {
   SupervisorMcpProbeRequest,
   SupervisorMcpProbeResult,
@@ -9,9 +10,10 @@ import type { BindingTargetKind } from "@/lib/mcp/binding-service";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
+import { mcpTransportFromMaterial } from "@/lib/capabilities/agent-map";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
-import { executionHosts } from "@/lib/execution-host";
+import { mcpAdminForProject } from "@/lib/mcp/readiness-host";
 
 // ADR-129 (W-F): resolve a probe target's NAMES-only config + enforce the D4
 // web-side PLATFORM trust gate (an untrusted-source platform stdio probe is
@@ -126,17 +128,10 @@ export async function resolveProbeTarget(
     }
 
     return {
-      request: {
-        transport: row.transport,
-        command: row.command ?? undefined,
-        args: row.args ?? [],
-        env: row.env ?? {},
-        url: row.url ?? undefined,
-        headers: row.headers ?? {},
-        ...(row.bearer_token_env
-          ? { bearerTokenEnv: row.bearer_token_env }
-          : {}),
-      },
+      request: mcpTransportFromMaterial(targetId, {
+        ...row,
+        bearerTokenEnv: row.bearer_token_env,
+      }),
       cache: { kind: "platform", id: targetId },
     };
   }
@@ -151,6 +146,7 @@ export async function resolveProbeTarget(
       url?: string | null;
       headers?: Record<string, string>;
       bearerTokenEnv?: string | null;
+      distribution?: McpDistribution;
       requirement?: boolean;
     } | null;
   }>(
@@ -182,15 +178,7 @@ export async function resolveProbeTarget(
   // a straight read — the pre-ADR-179 dual read over the name-list field and
   // the map is gone.
   return {
-    request: {
-      transport: m.transport,
-      command: m.command ?? undefined,
-      args: m.args ?? [],
-      env: m.env ?? {},
-      url: m.url ?? undefined,
-      headers: m.headers ?? {},
-      ...(m.bearerTokenEnv ? { bearerTokenEnv: m.bearerTokenEnv } : {}),
-    },
+    request: mcpTransportFromMaterial(targetId, m),
     cache: { kind: "capability", id: targetId },
   };
 }
@@ -235,8 +223,8 @@ export async function probeAndCache(
   injected?: ProbeDb,
   supervisorProbe: (
     req: SupervisorMcpProbeRequest,
-  ) => Promise<SupervisorMcpProbeResult> = (req) =>
-    executionHosts.local().probeMcp(req),
+  ) => Promise<SupervisorMcpProbeResult> = async (req) =>
+    (await mcpAdminForProject(projectId)).probeMcp(req),
 ): Promise<SupervisorMcpProbeResult> {
   const database = db(injected);
   const { request, cache } = await resolveProbeTarget(

@@ -11,8 +11,8 @@
 //
 // The shipped definition is read from the maister-repo fixture (byte-identical
 // to the maister-plugins core package), so the test needs no sibling repo.
-// tryStartRun is stubbed: no supervisor session spawns; assertions are on the
-// persisted run row + the built prompt.
+// Allocated starts are deferred so the test can inspect the persisted run
+// and built prompt before supervisor dispatch.
 
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -45,14 +45,9 @@ import {
 
 const schema = schemaModule as unknown as Record<string, any>;
 
-vi.mock("@/lib/scheduler", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
-
-  return {
-    ...actual,
-    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
-  };
-});
+vi.mock("@/lib/scheduler/start-allocated-run", () => ({
+  startAllocatedRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
+}));
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
@@ -343,7 +338,7 @@ describe("core package register -> attach -> launch (T5.2)", () => {
     });
 
     if ("deduped" in result) throw new Error("unexpected dedup");
-    expect(result.status).toBe("Pending"); // tryStartRun stubbed -> queued
+    expect(result.status).toBe("Pending");
 
     // The snapshot is the resolved effective config (instance over default).
     const runConfig = (

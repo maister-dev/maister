@@ -2787,6 +2787,62 @@
       "when": 1795710420560,
       "tag": "0401_stage_c_permanent_host_loss",
       "breakpoints": true
+    },
+    {
+      "idx": 402,
+      "version": "7",
+      "when": 1795713824127,
+      "tag": "0402_package_mcp_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 403,
+      "version": "7",
+      "when": 1795713876396,
+      "tag": "0403_project_agent_instance_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 404,
+      "version": "7",
+      "when": 1795713974482,
+      "tag": "0404_assigned_host_mcp_prepare",
+      "breakpoints": true
+    },
+    {
+      "idx": 405,
+      "version": "7",
+      "when": 1795714020089,
+      "tag": "0405_librarian_private_questions",
+      "breakpoints": true
+    },
+    {
+      "idx": 406,
+      "version": "7",
+      "when": 1795714073381,
+      "tag": "0406_flow_node_questions",
+      "breakpoints": true
+    },
+    {
+      "idx": 407,
+      "version": "7",
+      "when": 1795714420532,
+      "tag": "0407_flow_node_question_closure",
+      "breakpoints": true
+    },
+    {
+      "idx": 408,
+      "version": "7",
+      "when": 1795714510842,
+      "tag": "0408_package_mcp_scope_ref_shape",
+      "breakpoints": true
+    },
+    {
+      "idx": 409,
+      "version": "7",
+      "when": 1795714815747,
+      "tag": "0409_flow_question_prompt_notifications",
+      "breakpoints": true
     }
   ]
 }

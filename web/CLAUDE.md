@@ -189,6 +189,7 @@ pnpm lint     # eslint --fix
 pnpm test:integration:ab        # in-process A/B acceptance, real supervisor/Postgres
 pnpm test:integration:ab --shard 1/2 # first explicit web half; 2/2 runs the complement
 pnpm test:integration:isolation # serial production boot, real sandbox driver, invocation cleanup
+pnpm test:e2e:studio-catalog   # production Web and supervisor with local ACP/MCP fixtures
 pnpm install-package          # ADR-088: install a multi-flow package (all flows + bundle)
 pnpm tasks:backfill-sources   # ADR-206: bind legacy GitHub intake markers (dry-run; --apply)
 pnpm tasks:reconcile-merged   # ADR-207: complete tasks whose PR merged before run.pr_merged (dry-run; --apply)
@@ -201,6 +202,9 @@ pnpm install-authored-flow-package # bridge export as untrusted installed packag
 `pnpm typecheck` runs `tsc --noEmit` (`noEmit: true` in tsconfig).
 The web A/B runner accepts `--shard i/n`; CI uses `1/2` and `2/2` as complete,
 disjoint file lists. The isolation runner does not accept this flag.
+`pnpm -w validate:studio-catalog-coverage` checks Studio catalog requirements
+against the plan and acceptance tests. The workspace `validate:contracts`
+script includes this check.
 
 The test-only `MAISTER_TEST_ISOLATION` selector is owned by
 `test-support/process-isolation.ts`; its platform/capability and implemented Linux

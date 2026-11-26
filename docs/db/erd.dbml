@@ -506,13 +506,25 @@ table agent_project_links {
   memory_write_policy text [not null, default: 'auto']
   cross_project_reach boolean [not null, default: false]
   context_repos jsonb
+  prompt_override text
   schedules_revision integer [not null, default: 1]
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
     (agent_id, project_id) [name: 'agent_project_links_agent_project_uq', unique]
     project_id [name: 'agent_project_links_project_idx']
+
+  }
+}
+
+table agent_project_mcp_additions {
+  link_id text [not null]
+  ref_id text [not null]
+
+  indexes {
+    (link_id, ref_id) [pk]
 
   }
 }
@@ -2151,6 +2163,11 @@ table hitl_requests {
   prompt text [not null]
   task_id text
   specialist_assignment_id text
+  flow_node_attempt_id text
+  flow_request_key text
+  flow_answer_accepted_at "timestamp with time zone"
+  flow_answer_user_id text
+  flow_reconciled_at "timestamp with time zone"
   specialist_input_revision integer
   specialist_answer_input_revision integer
   specialist_answer jsonb
@@ -2175,6 +2192,9 @@ table hitl_requests {
 
   indexes {
     run_id [name: 'hitl_requests_run_idx']
+
+    (flow_node_attempt_id, schema) [name: 'hitl_flow_question_turn_uq', unique]
+
 
 
 
@@ -2237,6 +2257,11 @@ table librarian_cards {
   status text [not null]
   target jsonb [not null]
   target_revision text
+  question_turn_id text
+  question_key text
+  question_checkpoint_at "timestamp with time zone"
+  question_answer jsonb
+  question_delivered_at "timestamp with time zone"
   payload jsonb [not null]
   effect_context jsonb
   payload_digest text [not null]
@@ -2246,6 +2271,10 @@ table librarian_cards {
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
+    (question_turn_id, question_key) [name: 'librarian_cards_question_key_uq', unique]
+    question_turn_id [name: 'librarian_cards_pending_question_uq', unique]
+
     (conversation_id, created_at, id) [name: 'librarian_cards_history_idx']
     conversation_id [name: 'librarian_cards_pending_idx']
 
@@ -2465,6 +2494,7 @@ table librarian_turns {
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+    (id, conversation_id, segment_id) [name: 'librarian_turns_owner_uq', unique]
     conversation_id [name: 'librarian_turns_one_active_uq', unique]
     segment_id [name: 'librarian_turns_one_summary_uq', unique]
     (conversation_id, status) [name: 'librarian_turns_conversation_status_idx']
@@ -2964,10 +2994,23 @@ table project_package_attachments {
   package_install_id text [not null]
   package_name text [not null]
   attached_at "timestamp with time zone" [not null, default: `now()`]
+  scope_revision integer [not null, default: 1]
 
   indexes {
     (project_id, id) [name: 'project_package_attachments_owner_id_uq', unique]
     (project_id, package_name) [name: 'project_package_attachments_project_name_uq', unique]
+  }
+}
+
+table project_package_mcp_scope_overrides {
+  attachment_id text [not null]
+  ref_id text [not null]
+  scope text [not null]
+
+  indexes {
+    (attachment_id, ref_id) [pk]
+
+
   }
 }
 
@@ -3603,6 +3646,7 @@ table runs {
   activity_sort_at "timestamp with time zone"
   activity_timestamp_provenance text
   knowledge_access jsonb
+  project_agent_profile jsonb
   agent_activity_snapshot jsonb
   agent_kind text
   operational_integrity_baseline jsonb
@@ -5473,6 +5517,8 @@ ref agent_project_links_project_id_projects_id_fk: agent_project_links.project_i
 
 ref agent_project_links_runner_override_id_platform_acp_runners_id_fk: agent_project_links.runner_override_id > platform_acp_runners.id [delete: set null, update: no action]
 
+ref agent_project_mcp_additions_link_id_agent_project_links_id_fk: agent_project_mcp_additions.link_id > agent_project_links.id [delete: cascade, update: no action]
+
 ref agent_retry_intents_company_id_companies_id_fk: agent_retry_intents.company_id > companies.id [delete: restrict, update: no action]
 
 ref agent_retry_intents_project_id_projects_id_fk: agent_retry_intents.project_id > projects.id [delete: cascade, update: no action]
@@ -5829,9 +5875,13 @@ ref hitl_requests_task_id_tasks_id_fk: hitl_requests.task_id > tasks.id [delete:
 
 ref hitl_requests_specialist_assignment_id_specialist_assignments_id_fk: hitl_requests.specialist_assignment_id > specialist_assignments.id [delete: restrict, update: no action]
 
+ref hitl_requests_flow_answer_user_id_users_id_fk: hitl_requests.flow_answer_user_id > users.id [delete: restrict, update: no action]
+
 ref hitl_requests_parent_hitl_request_id_hitl_requests_id_fk: hitl_requests.parent_hitl_request_id > hitl_requests.id [delete: cascade, update: no action]
 
 ref hitl_requests_source_artifact_id_artifact_instances_id_fk: hitl_requests.source_artifact_id > artifact_instances.id [delete: cascade, update: no action]
+
+ref hitl_flow_question_owner_fk: hitl_requests.(run_id, flow_node_attempt_id) > node_attempts.(run_id, id) [delete: cascade, update: no action]
 
 ref hitl_specialist_input_fk: hitl_requests.(specialist_assignment_id, specialist_input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
@@ -5852,6 +5902,8 @@ ref librarian_cards_conversation_id_librarian_conversations_id_fk: librarian_car
 ref librarian_cards_segment_id_librarian_segments_id_fk: librarian_cards.segment_id > librarian_segments.id [delete: no action, update: no action]
 
 ref librarian_cards_message_id_librarian_messages_id_fk: librarian_cards.message_id > librarian_messages.id [delete: set null, update: no action]
+
+ref librarian_cards_question_owner_fk: librarian_cards.(question_turn_id, conversation_id, segment_id) > librarian_turns.(id, conversation_id, segment_id) [delete: cascade, update: no action]
 
 ref librarian_context_snapshots_turn_id_librarian_turns_id_fk: librarian_context_snapshots.turn_id > librarian_turns.id [delete: cascade, update: no action]
 
@@ -5974,6 +6026,8 @@ ref project_members_user_id_users_id_fk: project_members.user_id > users.id [del
 ref project_package_attachments_project_id_projects_id_fk: project_package_attachments.project_id > projects.id [delete: cascade, update: no action]
 
 ref project_package_attachments_package_install_id_package_installs_id_fk: project_package_attachments.package_install_id > package_installs.id [delete: restrict, update: no action]
+
+ref project_package_mcp_scope_overrides_attachment_id_project_package_attachments_id_fk: project_package_mcp_scope_overrides.attachment_id > project_package_attachments.id [delete: cascade, update: no action]
 
 ref project_tokens_project_id_projects_id_fk: project_tokens.project_id > projects.id [delete: cascade, update: no action]
 

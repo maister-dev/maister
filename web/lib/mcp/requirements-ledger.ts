@@ -13,7 +13,7 @@ export type RequirementSource =
       required: string[];
       additional: string[];
     }
-  | { kind: "agent"; agentId: string; refs: string[] };
+  | { kind: "agent"; agentId: string; refs: string[]; additional?: string[] };
 
 export type DeclaredRef = {
   refId: string;
@@ -72,6 +72,8 @@ export function deriveDeclaredRefs(
         add(ref, true, `package:${source.packageName}`);
     } else if (source.kind === "agent") {
       for (const ref of source.refs) add(ref, true, `agent:${source.agentId}`);
+      for (const ref of source.additional ?? [])
+        add(ref, false, `agent:${source.agentId}`);
     } else {
       for (const ref of source.required)
         add(ref, true, `flow:${source.flowRefId}`);

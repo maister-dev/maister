@@ -29,6 +29,8 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { LibrarianQuestion } from "./librarian-question";
+
 import { useLibrarian } from "@/components/librarian/librarian-provider";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 import { LibrarianMemoryDialog } from "@/components/librarian/librarian-memory-dialog";
@@ -53,7 +55,8 @@ const STICK_THRESHOLD_PX = 32;
 const PAGE_LIMIT = 50;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type SendBlock = "disabled" | "no_runner" | "resetting" | "empty" | "sending";
+type SendBlock =
+  "disabled" | "no_runner" | "resetting" | "question" | "empty" | "sending";
 
 type RefusalBody = { code?: string; details?: { reason?: string } } | null;
 
@@ -102,7 +105,10 @@ export function refusalKey(body: RefusalBody): string {
     case "BUDGET_EXCEEDED":
       return "errorBudget";
     case "CONFLICT":
-      return reason === "reset_in_progress" ? "errorResetting" : "errorSend";
+      if (reason === "reset_in_progress") return "errorResetting";
+      if (reason === "question_awaiting_answer") return "sendBlocked_question";
+
+      return "errorSend";
     case "PRECONDITION":
       return reason === "not_found" ? "errorSubjectNotFound" : "errorSend";
     default:
@@ -115,9 +121,10 @@ function sendBlockOf(
   draft: string,
   sending: boolean,
 ): SendBlock | null {
+  if (view && view.conversation.resetState !== "none") return "resetting";
+  if (view?.activeTurn?.status === "awaiting_answer") return "question";
   if (view?.availability.state === "disabled") return "disabled";
   if (view && view.availability.state !== "ready") return "no_runner";
-  if (view && view.conversation.resetState !== "none") return "resetting";
   if (sending) return "sending";
   if (!draft.trim()) return "empty";
 
@@ -128,6 +135,7 @@ function systemText(
   t: ReturnType<typeof useTranslations>,
   body: string | null,
 ): string {
+  if (body === "private_answer_queued") return t("questionAccepted");
   if (body === "turn_stopped") return t("systemTurnStopped");
   if (body?.startsWith("turn_failed:")) {
     const reason = body.slice("turn_failed:".length);
@@ -423,6 +431,13 @@ function LibrarianPanelBody(): ReactElement {
           createdAt: message.createdAt,
         })),
     [messages, t],
+  );
+  const questions = useMemo(
+    () =>
+      new Map(
+        messages.filter((m) => m.card && !m.masked).map((m) => [m.id, m.card]),
+      ),
+    [messages],
   );
   const updatesById = useMemo(
     () =>
@@ -883,6 +898,15 @@ function LibrarianPanelBody(): ReactElement {
                   );
                 }}
                 renderCustomMessage={(messageId) => {
+                  const question = questions.get(messageId);
+
+                  if (question)
+                    return (
+                      <LibrarianQuestion
+                        card={question}
+                        onSubmitted={refresh}
+                      />
+                    );
                   const update = updatesById.get(messageId)?.update;
 
                   return update ? (

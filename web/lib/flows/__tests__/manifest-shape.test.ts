@@ -7,6 +7,7 @@ import {
 } from "@/lib/flows/engine-version";
 import {
   classifyStoredFlowManifest,
+  classifyFlowForCut,
   getFlowManifestIncompatibility,
   parseExecutableStoredFlowManifest,
   parseGraphOnlyFlowManifest,
@@ -35,6 +36,26 @@ function issueMessages(value: unknown): string[] {
 }
 
 describe("graph-only manifest shape contract", () => {
+  it.each([{ skills: ["review"] }, { enforcement: { skills: "strict" } }])(
+    "IT-CAP-01 rejects retired skill settings for new Flows but retains the pinned revision: %o",
+    (settings) => {
+      const value = { ...baseManifest, nodes: [{ ...validNode, settings }] };
+
+      const pinnedBytes = JSON.stringify(value);
+
+      expect(flowYamlV1Schema.safeParse(value).success).toBe(false);
+      expect(classifyFlowForCut(value).compatible).toBe(false);
+      expect(classifyStoredFlowManifest(value)).toMatchObject({
+        compatible: true,
+        manifest: { nodes: [{ settings }] },
+      });
+      const draft = { ...value, nodes: [validNode] };
+
+      expect(classifyFlowForCut(draft).compatible).toBe(true);
+      expect(JSON.stringify(value)).toBe(pinnedBytes);
+    },
+  );
+
   it.each([
     [
       "steps only",

@@ -57,7 +57,11 @@ import {
   readableKnowledgeRunIds,
   assertRunsKnowledgeDisclosure,
 } from "@/lib/brain/knowledge-run-disclosure";
-import { isInboxVisibleHitlRow, mapRowsToHitlItems } from "@/lib/queries/hitl";
+import {
+  isInboxVisibleHitlRow,
+  mapRowsToHitlItems,
+  visibleFlowNodeQuestion,
+} from "@/lib/queries/hitl";
 import {
   resolveNodeInterruptMatrices,
   resolveStages,
@@ -1303,6 +1307,8 @@ export interface CrossProjectHitlScope {
   projectIds?: readonly string[];
   /** Explicit project scopes never implicitly widen to company-owned work. */
   companyIds?: readonly string[];
+  /** The decisions queue excludes Flow answers already awaiting delivery. */
+  flowQuestionState?: "awaiting_answer";
 }
 
 export async function getCrossProjectHitlInbox(
@@ -1420,6 +1426,10 @@ export async function getCrossProjectHitlInbox(
           companyScope,
         ),
         isNull(hitlRequests.respondedAt),
+        visibleFlowNodeQuestion(),
+        scope.flowQuestionState === "awaiting_answer"
+          ? isNull(hitlRequests.flowAnswerAcceptedAt)
+          : undefined,
         or(
           inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
           and(

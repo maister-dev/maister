@@ -96,6 +96,14 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
         : {}),
     };
   },
+  "mcp.prepare": (p) =>
+    pickScalars(p, [
+      "refId",
+      "artifactDigest",
+      "registryName",
+      "version",
+      "runtime",
+    ]),
   "workspace.adopt": (p) => ({
     ...pickScalars(p, ["runId", "projectSlug", "kind"]),
     ...(asObject(p.owner).kind === "company"

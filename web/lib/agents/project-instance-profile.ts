@@ -1,0 +1,449 @@
+import "server-only";
+
+import type { ParsedAgentDefinition } from "./definition";
+import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { McpConfigOverlay } from "@/lib/db/schema";
+import type { CapabilityCatalogRecord } from "@/lib/capabilities/types";
+
+import { createHash } from "node:crypto";
+
+import { sql } from "drizzle-orm";
+import pino from "pino";
+import { z } from "zod";
+
+import { ADDRESSED_PACKAGE_SKILL_SLUG } from "../../../runtime/package-skill-tree";
+import { WORKSPACE_INPUT_MAX_FILES } from "../../../runtime/workspace-input-policy";
+
+import { resolveEffectiveAgentDefinition } from "./effective";
+
+import {
+  agentMcpTargets,
+  eligibleAgentMcpRecord,
+  matchesAgentMcpTarget,
+  mcpTargetSchema,
+  type AgentMcpTarget,
+} from "@/lib/capabilities/mcp-targets";
+import { withBoundPlatformMcpRecords } from "@/lib/capabilities/bound-platform-mcps";
+import {
+  loadSelectableCapabilities,
+  type McpBindingInput,
+} from "@/lib/capabilities/resolver";
+import {
+  loadProjectMcpBindings,
+  loadProjectMcpOverlays,
+} from "@/lib/mcp/binding-service";
+import {
+  capabilityRefIdSchema,
+  packageManifestMcpSchema,
+} from "@/lib/config.schema";
+import { type Db } from "@/lib/execution-host/db";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import { packageMcpMaterial } from "@/lib/packages/mcp-material";
+import { readPackageMcpScopes } from "@/lib/packages/mcp-scope";
+import { postgresTextSchema } from "@/lib/text-schema";
+
+const log = pino({ name: "project-agent-profile" });
+
+export const promptOverrideSchema = postgresTextSchema
+  .transform((value) => value.replace(/\r\n?/g, "\n"))
+  .pipe(
+    z
+      .string()
+      .max(65536)
+      .refine((value) => value.trim().length > 0),
+  );
+
+export const additionalMcpRefsSchema = z
+  .array(capabilityRefIdSchema)
+  .max(64)
+  .refine(
+    (refs) => new Set(refs).size === refs.length,
+    "MCP references must be unique",
+  );
+
+const linkProfileSchema = z.object({
+  revision: z.number().int().positive(),
+  promptOverride: promptOverrideSchema.nullable(),
+  additionalMcpRefs: additionalMcpRefsSchema,
+});
+
+export type ProjectAgentProfile = z.infer<typeof linkProfileSchema>;
+
+export const projectAgentProfileSnapshotSchema = z
+  .object({
+    version: z.literal(1),
+    agentId: z.string().min(1),
+    projectId: z.string().min(1),
+    packageInstallId: z.string().min(1),
+    prompt: postgresTextSchema,
+    promptSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    promptOrigin: z.enum(["package", "project"]),
+    packageMcpRefs: z.array(capabilityRefIdSchema),
+    addressedPackageSkills: z
+      .array(
+        z
+          .object({
+            slug: z.string().max(128).regex(ADDRESSED_PACKAGE_SKILL_SLUG),
+            treeDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .strict(),
+      )
+      .max(WORKSPACE_INPUT_MAX_FILES)
+      .optional(),
+    mcpTargets: z.array(mcpTargetSchema),
+    additionalMcpRefs: additionalMcpRefsSchema,
+    sharedMcps: z.array(
+      z
+        .object({
+          refId: capabilityRefIdSchema,
+          installId: z.string().min(1),
+          attachmentId: z.string().min(1),
+        })
+        .strict(),
+    ),
+    linkRevision: z.number().int().positive(),
+  })
+  .strict()
+  .refine(
+    (snapshot) =>
+      snapshot.promptSha256 ===
+      createHash("sha256").update(snapshot.prompt).digest("hex"),
+    "Persona digest mismatch",
+  );
+
+export type ProjectAgentProfileSnapshot = z.infer<
+  typeof projectAgentProfileSnapshotSchema
+>;
+
+export async function readProjectAgentProfile(
+  db: SqlTransaction,
+  projectId: string,
+  agentId: string,
+): Promise<ProjectAgentProfile | null> {
+  const result = await db.execute(sql`
+    SELECT l.schedules_revision AS revision, l.prompt_override AS "promptOverride",
+           ARRAY(SELECT a.ref_id FROM agent_project_mcp_additions a
+                 WHERE a.link_id = l.id ORDER BY a.ref_id) AS "additionalMcpRefs"
+    FROM agent_project_links l WHERE l.project_id = ${projectId} AND l.agent_id = ${agentId}
+  `);
+
+  if (!result.rows[0]) return null;
+  const profile = linkProfileSchema.safeParse(result.rows[0]);
+
+  if (!profile.success)
+    throw new MaisterError("CONFIG", "Invalid stored agent instance profile");
+
+  return profile.data;
+}
+
+/** Call only after repository-file read authorization. Package adoption can change divergence without a link edit. */
+export async function readDivergentAgentIds(
+  db: Db,
+  projectId: string,
+  visibleIds: readonly string[],
+): Promise<Set<string>> {
+  if (!visibleIds.length) return new Set();
+  const { rows } =
+    await db.execute(sql`SELECT agent_id,prompt_override FROM agent_project_links
+    WHERE project_id=${projectId} AND prompt_override IS NOT NULL AND agent_id IN (${sql.join(
+      visibleIds.map((id) => sql`${id}`),
+      sql`, `,
+    )})`);
+  const diverged = new Set<string>();
+
+  for (const row of rows) {
+    const { agent_id: agentId, prompt_override: prompt } = z
+      .object({ agent_id: z.string(), prompt_override: promptOverrideSchema })
+      .parse(row);
+
+    try {
+      const effective = await resolveEffectiveAgentDefinition(
+        { projectId, agentId },
+        db,
+      );
+
+      if (effective.parsed.prompt.replace(/\r\n?/g, "\n") !== prompt)
+        diverged.add(agentId);
+    } catch (error) {
+      if (
+        !isMaisterError(error) ||
+        !["PRECONDITION", "CONFIG"].includes(error.code)
+      )
+        throw error;
+    }
+  }
+
+  return diverged;
+}
+
+export function applyProjectAgentProfile(
+  definition: ParsedAgentDefinition,
+  profile: ProjectAgentProfile | null,
+): {
+  prompt: string;
+  mcpRefs: string[];
+} {
+  return {
+    prompt: profile?.promptOverride ?? definition.prompt,
+    mcpRefs: [
+      ...new Set([
+        ...(definition.capabilityProfile?.mcps ?? []),
+        ...(profile?.additionalMcpRefs ?? []),
+      ]),
+    ],
+  };
+}
+
+/** A package-owned target must still be supplied by an installed, trusted release attached to this project. */
+const trustedAgentMcpOwner = sql`(c.source <> 'flow-package' OR c.material->>'packageInstallId' IS NULL OR EXISTS (
+  SELECT 1 FROM project_package_attachments a JOIN package_installs i ON i.id=a.package_install_id
+  WHERE a.project_id=c.project_id AND i.id=c.material->>'packageInstallId'
+    AND i.package_status='Installed' AND i.trust_status IN ('trusted','trusted_by_policy')
+))`;
+
+export async function availableAgentMcpCatalog(
+  db: SqlTransaction,
+  projectId: string,
+): Promise<CapabilityCatalogRecord[]> {
+  const [catalog, eligible] = await Promise.all([
+    loadSelectableCapabilities(projectId, db),
+    db.execute(sql`
+    SELECT c.id FROM capability_records c WHERE c.project_id=${projectId} AND c.kind='mcp' AND ${trustedAgentMcpOwner}
+    `),
+  ]);
+  const allowed = new Set(eligible.rows.map((row) => row.id));
+
+  return withBoundPlatformMcpRecords(
+    db,
+    projectId,
+    catalog.filter((row) => row.kind === "mcp" && allowed.has(row.id)),
+  );
+}
+
+/** A package adoption can replace the projection ID and material while the original release stays authorized. */
+export async function resolveRetainedAgentMcpCatalog(input: {
+  db: SqlTransaction;
+  projectId: string;
+  refs: readonly string[];
+  targets: readonly AgentMcpTarget[];
+  bindings: readonly McpBindingInput[];
+  overlays: ReadonlyMap<string, McpConfigOverlay>;
+}): Promise<{ catalog: CapabilityCatalogRecord[]; selectedMcpIds: string[] }> {
+  const { db, projectId, refs, targets, bindings, overlays } = input;
+  const catalog = await availableAgentMcpCatalog(db, projectId);
+  const retainedByRef = new Map(
+    targets.map((target) => [target.refId, target]),
+  );
+  const bindingByRef = new Map(
+    bindings.map((binding) => [binding.refId, binding]),
+  );
+  const selected = new Set(
+    agentMcpTargets(refs, catalog, bindings, overlays)
+      .filter((target) =>
+        matchesAgentMcpTarget(
+          retainedByRef.get(target.refId),
+          target,
+          bindingByRef.get(target.refId),
+        ),
+      )
+      .map((target) => target.refId),
+  );
+  const drifted = targets.flatMap((target) => {
+    const { refId, revision } = target;
+
+    if (
+      target.source !== "flow-package" ||
+      !revision ||
+      !refs.includes(refId) ||
+      selected.has(refId)
+    )
+      return [];
+    const binding = bindingByRef.get(refId);
+    const current = eligibleAgentMcpRecord(refId, catalog, binding);
+    const installId = current?.material.packageInstallId;
+
+    if (current?.source !== "flow-package" || typeof installId !== "string")
+      return [];
+    if (current.id === target.recordId && current.revision === revision)
+      return [];
+
+    return [{ target, current, installId, revision, binding }];
+  });
+
+  if (!drifted.length) return { catalog, selectedMcpIds: [...selected] };
+  const { rows } = await db.execute(sql`
+    SELECT a.package_install_id AS "currentId", retained.id, retained.resolved_revision AS revision,
+      retained.manifest->'spec'->'mcps' AS mcps
+    FROM project_package_attachments a
+    JOIN package_installs active ON active.id=a.package_install_id
+    JOIN package_installs retained ON retained.name=a.package_name
+    WHERE a.project_id=${projectId}
+      AND a.package_install_id=ANY(${sql.param(drifted.map(({ installId }) => installId))}::text[])
+      AND retained.resolved_revision=ANY(${sql.param(drifted.map(({ revision }) => revision))}::text[])
+      AND active.package_status='Installed' AND active.trust_status IN ('trusted','trusted_by_policy')
+      AND retained.package_status='Installed' AND retained.trust_status IN ('trusted','trusted_by_policy')
+  `);
+  const restored = new Map<string, CapabilityCatalogRecord>();
+
+  for (const { target, current, installId, revision, binding } of drifted) {
+    for (const row of rows) {
+      if (
+        row.currentId !== installId ||
+        row.revision !== revision ||
+        typeof row.id !== "string" ||
+        !Array.isArray(row.mcps)
+      )
+        continue;
+      const mcp = row.mcps
+        .map((entry) => packageManifestMcpSchema.parse(entry))
+        .find((entry) => entry.id === target.refId);
+
+      if (!mcp?.transport) continue;
+      const candidate = {
+        ...current,
+        revision,
+        material: packageMcpMaterial(mcp, row.id),
+      };
+      const [proof] = agentMcpTargets(
+        [target.refId],
+        [candidate],
+        bindings,
+        overlays,
+      );
+
+      if (
+        !proof ||
+        !matchesAgentMcpTarget(
+          { ...target, recordId: current.id },
+          proof,
+          binding,
+        )
+      )
+        continue;
+      restored.set(current.id, candidate);
+      selected.add(target.refId);
+      log.debug(
+        {
+          projectId,
+          refId: target.refId,
+          retainedInstallId: row.id,
+          activeInstallId: installId,
+          revision,
+        },
+        "Restored retained agent MCP after package projection change",
+      );
+      break;
+    }
+  }
+
+  return {
+    catalog: catalog.map((record) => restored.get(record.id) ?? record),
+    selectedMcpIds: [...selected].sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+/** Connected means a live project/package capability or the active target of this project's binding. */
+export async function connectedAgentMcpRefs(
+  db: SqlTransaction,
+  projectId: string,
+): Promise<string[]> {
+  const [catalog, bindings] = await Promise.all([
+    availableAgentMcpCatalog(db, projectId),
+    loadProjectMcpBindings(projectId, db),
+  ]);
+
+  return [...new Set(catalog.map((row) => row.capabilityRefId))]
+    .filter((ref) => {
+      const binding = bindings.find((row) => row.refId === ref);
+      const record = eligibleAgentMcpRecord(ref, catalog, binding);
+
+      return !!record && (record.source !== "platform" || !!binding);
+    })
+    .map((ref) => capabilityRefIdSchema.parse(ref))
+    .sort();
+}
+
+/** Capture the same attachment and link generation under which admission commits. */
+export async function captureProjectAgentProfile(
+  tx: SqlTransaction,
+  input: {
+    projectId: string;
+    agentId: string;
+    packageName: string;
+    packageInstallId: string;
+    definition: ParsedAgentDefinition;
+  },
+): Promise<ProjectAgentProfileSnapshot> {
+  const { projectId, agentId, packageInstallId, definition } = input;
+  const { rows } = await tx.execute(sql`
+    SELECT l.id FROM project_package_attachments a
+      JOIN agent_project_links l ON l.project_id = a.project_id
+    WHERE a.project_id = ${projectId} AND a.package_name = ${input.packageName}
+      AND a.package_install_id = ${packageInstallId} AND l.agent_id = ${agentId} AND l.enabled
+    FOR SHARE OF a, l
+  `);
+  const profile = rows.length
+    ? await readProjectAgentProfile(tx, projectId, agentId)
+    : null;
+
+  if (!profile)
+    throw new MaisterError(
+      "CONFLICT",
+      "Agent attachment changed during launch",
+    );
+  const sharedMcps = (await readPackageMcpScopes(tx, projectId))
+    .filter((row) => row.sharedWithAgents)
+    .map(({ refId, installId, attachmentId }) => ({
+      refId,
+      installId,
+      attachmentId,
+    }));
+  const profileRefs = applyProjectAgentProfile(definition, profile);
+  const refs = [...profileRefs.mcpRefs, ...sharedMcps.map((row) => row.refId)];
+  const mcpTargets = refs.length
+    ? agentMcpTargets(
+        refs,
+        ...(await Promise.all([
+          availableAgentMcpCatalog(tx, projectId),
+          loadProjectMcpBindings(projectId, tx),
+          loadProjectMcpOverlays(projectId, tx),
+        ])),
+      )
+    : [];
+
+  return {
+    version: 1,
+    projectId,
+    agentId,
+    packageInstallId,
+    prompt: profileRefs.prompt,
+    promptSha256: createHash("sha256").update(profileRefs.prompt).digest("hex"),
+    mcpTargets,
+    promptOrigin: profile.promptOverride === null ? "package" : "project",
+    packageMcpRefs: definition.capabilityProfile?.mcps ?? [],
+    additionalMcpRefs: profile.additionalMcpRefs,
+    sharedMcps,
+    linkRevision: profile.revision,
+  };
+}
+
+export function retainedProjectAgentProfile(
+  value: unknown,
+  owner: { projectId: string; agentId: string; packageInstallId: string },
+): ProjectAgentProfileSnapshot | null {
+  if (value == null) return null;
+  const result = projectAgentProfileSnapshotSchema.safeParse(value);
+
+  if (
+    !result.success ||
+    result.data.projectId !== owner.projectId ||
+    result.data.agentId !== owner.agentId ||
+    result.data.packageInstallId !== owner.packageInstallId
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "Project agent profile does not match the captured launch owner",
+    );
+
+  return result.data;
+}

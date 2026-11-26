@@ -23,6 +23,7 @@ import {
   librarianTurns,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import {
   admitNextLibrarianTurn,
   submitOwnerMessage,
@@ -43,7 +44,10 @@ import { admitLibrarianOperation } from "@/lib/librarian/operations";
 import * as librarianRuntime from "@/lib/librarian/runtime";
 import { updateLibrarianSettings } from "@/lib/librarian/settings";
 import { queueLibrarianSummary } from "@/lib/librarian/summary";
-import { librarianMessageDtos } from "@/lib/librarian/view";
+import {
+  getLibrarianWorkView,
+  librarianMessageDtos,
+} from "@/lib/librarian/view";
 import {
   runLibrarianTurnSweep,
   stopLibrarianTurn,
@@ -239,7 +243,11 @@ afterAll(async () => {
 
 // A failed assertion must not leave its successor using the next fake host state.
 afterEach(async () => {
-  await settle();
+  try {
+    await settle();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 }, 30_000);
 
 beforeEach(async () => {
@@ -294,14 +302,57 @@ describe("IT-LCV-04 part 3: a turn round-trips through its own prompt owner", ()
     expect(prompts.at(-1)).toContain("what is on my plate?");
   });
 
-  it("IT-LAU-11 (send site): the session is MCP-only, auto-approved, never readOnlySession", async () => {
+  it("commits terminal turn evidence before an unavailable host prevents successor admission", async () => {
     const ownerId = await seedActiveUser(db);
+    const gate = gatedPrompt();
+    const sent = await send(ownerId, "hold this turn");
+    const turnId = sent.turn!.id;
+
+    await gate.entered;
+    try {
+      fake.setHealth({
+        kind: "unavailable",
+        reason: "network",
+        message: "fixture supervisor is unavailable",
+      });
+      resetResolverForTests();
+
+      await expect(
+        librarianRuntime.endLibrarianTurn(db as unknown as Db, turnId, {
+          status: "failed",
+          reason: "deadline",
+        }),
+      ).resolves.toBe(true);
+      expect((await turnRow(turnId)).status).toBe("failed");
+      expect(await tokenRevoked(turnId)).toBe(true);
+      expect((await conversationState(ownerId)).run_status).toBe(
+        "NeedsInputIdle",
+      );
+    } finally {
+      fake.setHealth(null);
+      try {
+        await fakeExecutionHosts(db, { fake });
+      } finally {
+        gate.release();
+      }
+    }
+  });
+
+  it("IT-LAU-11 (send site): the session is MCP-only, auto-approved, never readOnlySession", async () => {
+    vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", "/fixtures/local-maister-mcp");
+    const ownerId = await seedActiveUser(db);
+
+    const before = creates().length;
 
     await send(ownerId, "hello");
     await settle();
-    const payload = creates().at(-1)!;
+    const payloads = creates().slice(before);
+
+    expect(payloads).toHaveLength(1);
+    const [payload] = payloads;
     const servers = payload.mcpServers as {
       name: string;
+      command: string;
       env: Record<string, string>;
     }[];
 
@@ -318,6 +369,7 @@ describe("IT-LCV-04 part 3: a turn round-trips through its own prompt owner", ()
     ).toContain("mcp__maister__task_search");
     expect(servers).toHaveLength(1);
     expect(servers[0].name).toBe("maister");
+    expect(servers[0].command).toBe("/fixtures/local-maister-mcp");
     expect(servers[0].env.MAISTER_MCP_TOOLSET).toBe("librarian");
     expect(servers[0].env.MAISTER_PROJECT_TOKEN).toMatch(/\S/);
   });
@@ -1119,5 +1171,299 @@ describe("Deferred release: a failure after the prompt is issued cancels it firs
     expect((await conversationState(ownerId)).run_status).toBe(
       "NeedsInputIdle",
     );
+  });
+});
+
+describe("IT-ASK-02 private questions survive a suspended turn", () => {
+  it("requires the answer controls while parked and lets the owner stop the turn", async () => {
+    const { openPrivateQuestion, answerPrivateQuestion } =
+      await import("@/lib/librarian/questions");
+    const owner = await seedActiveUser(db);
+    const gate = gatedPrompt();
+    const sent = await send(owner, "Plan checkout");
+    const turnId = sent.turn!.id;
+    let questionId: string;
+
+    await gate.entered;
+    try {
+      const [current] = await db
+        .select({ tokenId: librarianTurns.tokenId })
+        .from(librarianTurns)
+        .where(eq(librarianTurns.id, turnId));
+
+      ({ questionId } = await openPrivateQuestion(
+        current.tokenId!,
+        {
+          requestKey: "variant",
+          question: "Which checkout variant?",
+          schema: {
+            schemaVersion: 1,
+            fields: [{ name: "variant", type: "string", required: true }],
+          },
+        },
+        db as unknown as Db,
+      ));
+    } finally {
+      gate.release();
+    }
+    await settle();
+    expect(
+      await getLibrarianWorkView(owner, db as unknown as Db),
+    ).toMatchObject({
+      activeTurn: { id: turnId, status: "awaiting_answer" },
+      queuedMessages: [],
+    });
+    await expect(send(owner, "Use mobile")).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "question_awaiting_answer" },
+    });
+    expect(await stopLibrarianTurn(owner, db as unknown as Db)).toEqual({
+      turnId,
+    });
+    expect((await turnRow(turnId)).status).toBe("stopped");
+    expect((await conversationState(owner)).run_status).toBe("NeedsInputIdle");
+    await expect(
+      answerPrivateQuestion(
+        owner,
+        questionId,
+        { variant: "mobile" },
+        db as unknown as Db,
+      ),
+    ).rejects.toMatchObject({ details: { reason: "question_closed" } });
+  });
+
+  it("a segment reset closes an undelivered question without creating any project work", async () => {
+    const { openPrivateQuestion, answerPrivateQuestion } =
+      await import("@/lib/librarian/questions");
+    const { requestLibrarianReset } = await import("@/lib/librarian/reset");
+    const ownerId = await seedActiveUser(db);
+    const gate = gatedPrompt();
+    const projectWorkCounts = async () =>
+      rows(
+        await db.execute(sql`
+      SELECT (SELECT count(*) FROM assignments) AS assignments,
+        (SELECT count(*) FROM tasks) AS tasks,
+        (SELECT count(*) FROM hitl_requests) AS requests`),
+      );
+    const before = await projectWorkCounts();
+    const { turn } = await send(ownerId, "Design a second journey");
+
+    await gate.entered;
+    let questionId: string;
+
+    try {
+      const [current] = await db
+        .select()
+        .from(librarianTurns)
+        .where(eq(librarianTurns.id, turn!.id));
+
+      ({ questionId } = await openPrivateQuestion(
+        current.tokenId!,
+        {
+          requestKey: "which",
+          question: "Which screen?",
+          schema: {
+            schemaVersion: 1,
+            fields: [{ name: "screen", type: "string", required: true }],
+          },
+        },
+        db as unknown as Db,
+      ));
+    } finally {
+      gate.release();
+    }
+    await settle();
+    expect(await requestLibrarianReset(ownerId, db as unknown as Db)).toBe(
+      "none",
+    );
+    await expect(
+      answerPrivateQuestion(
+        ownerId,
+        questionId,
+        { screen: "old" },
+        db as unknown as Db,
+      ),
+    ).rejects.toMatchObject({ details: { reason: "question_closed" } });
+    expect(await projectWorkCounts()).toEqual(before);
+  });
+
+  it("parks a question, accepts one answer and resumes the same turn under a fresh worker", async () => {
+    const { openPrivateQuestion, answerPrivateQuestion } =
+      await import("@/lib/librarian/questions");
+    const owner = await seedActiveUser(db);
+    const stranger = await seedActiveUser(db);
+    const gate = gatedPrompt();
+    const sent = await send(owner, "Design the customer journey.");
+    const turnId = sent.turn!.id;
+    const request = {
+      requestKey: "choose",
+      question: "Which page?",
+      schema: {
+        schemaVersion: 1 as const,
+        fields: [
+          {
+            name: "page",
+            type: "string" as const,
+            required: true,
+            options: ["Cart"],
+          },
+        ],
+      },
+    };
+
+    await gate.entered;
+    const [original] = rows<{ assignment_id: string }>(
+      await db.execute(
+        sql`SELECT r.execution_assignment_id AS assignment_id FROM runs r JOIN librarian_conversations c ON c.run_id=r.id WHERE c.id=${sent.message.conversationId}`,
+      ),
+    );
+    let id: string;
+
+    try {
+      const [turn] = await db
+        .select()
+        .from(librarianTurns)
+        .where(eq(librarianTurns.id, turnId));
+      const { POST } =
+        await import("@/app/api/v1/ext/librarian/human-asks/route");
+      const servers = creates().at(-1)!.mcpServers as {
+        env: Record<string, string>;
+      }[];
+      const token = servers[0].env.MAISTER_PROJECT_TOKEN;
+      const invoke = (bearer: string, body: unknown) =>
+        POST(
+          new Request("http://localhost/api/v1/ext/librarian/human-asks", {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${bearer}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(body),
+          }),
+        );
+
+      expect((await invoke("invalid", request)).status).toBe(401);
+      expect((await invoke(token, { ...request, turnId })).status).toBe(422);
+      expect(
+        (await invoke(token, { ...request, question: "q".repeat(65536) }))
+          .status,
+      ).toBe(413);
+      const response = await invoke(token, request);
+
+      expect(response.status).toBe(202);
+      const opened = await response.json();
+
+      expect(opened.state).toBe("checkpoint_pending");
+      id = opened.questionId;
+      expect(
+        await openPrivateQuestion(turn.tokenId!, request, db as unknown as Db),
+      ).toEqual(opened);
+      await expect(
+        openPrivateQuestion(
+          turn.tokenId!,
+          { ...request, question: "Changed?" },
+          db as unknown as Db,
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      await db.execute(
+        sql`UPDATE project_tokens SET expires_at=now()-interval '1 second' WHERE id=${turn.tokenId}`,
+      );
+      expect(
+        (await invoke(token, { ...request, requestKey: "expired" })).status,
+      ).toBe(401);
+    } finally {
+      gate.release();
+    }
+    await settle();
+    expect((await turnRow(turnId)).status).toBe("awaiting_answer");
+    await expect(
+      answerPrivateQuestion(
+        stranger,
+        id,
+        { page: "custom" },
+        db as unknown as Db,
+      ),
+    ).rejects.toMatchObject({ details: { reason: "not_found" } });
+    await expect(
+      answerPrivateQuestion(owner, id, {}, db as unknown as Db),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    const accepted = await answerPrivateQuestion(
+      owner,
+      id,
+      { page: "custom" },
+      db as unknown as Db,
+    );
+
+    expect(accepted.state).toBe("accepted");
+    expect(
+      await answerPrivateQuestion(
+        owner,
+        id,
+        { page: "custom" },
+        db as unknown as Db,
+      ),
+    ).toEqual(accepted);
+    await expect(
+      answerPrivateQuestion(owner, id, { page: "other" }, db as unknown as Db),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    await admitNextLibrarianTurn(sent.message.conversationId, {
+      db: db as unknown as Db,
+      start: (turnId) =>
+        librarianRuntime.startLibrarianTurn(turnId, {
+          db: db as unknown as Db,
+          hosts: {
+            ...hosts,
+            executionFor: async () => {
+              throw new MaisterError("EXECUTOR_UNAVAILABLE", "Host offline");
+            },
+          },
+        }),
+    });
+    await settle();
+    expect((await turnRow(turnId)).status).toBe("queued");
+    expect((await conversationState(owner)).run_status).toBe("NeedsInputIdle");
+    expect(
+      await answerPrivateQuestion(
+        owner,
+        id,
+        { page: "custom" },
+        db as unknown as Db,
+      ),
+    ).toEqual(accepted);
+    const resumed = gatedPrompt();
+
+    await admitNextLibrarianTurn(sent.message.conversationId, {
+      db: db as unknown as Db,
+      start,
+    });
+    await resumed.entered;
+    try {
+      expect(
+        await librarianRuntime.endLibrarianTurn(
+          db as unknown as Db,
+          turnId,
+          { status: "failed", reason: "deadline" },
+          ["running"],
+          original.assignment_id,
+        ),
+      ).toBe(false);
+      expect((await turnRow(turnId)).status).toBe("running");
+    } finally {
+      resumed.release();
+    }
+    await settle();
+    expect((await turnRow(turnId)).status).toBe("completed");
+    expect(
+      prompts.filter((prompt) => prompt.includes('"page":"custom"')),
+    ).toHaveLength(1);
+    expect(
+      await answerPrivateQuestion(
+        owner,
+        id,
+        { page: "custom" },
+        db as unknown as Db,
+      ),
+    ).toMatchObject({ state: "delivered" });
   });
 });

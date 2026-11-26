@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { SqlTransaction } from "@/lib/db/sql-types";
+
 import { randomUUID } from "node:crypto";
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -10,7 +12,7 @@ import {
   resolveRunner,
   type RunnerCatalogEntry,
 } from "@/lib/acp-runners/resolve";
-import { loadSelectableCapabilities } from "@/lib/capabilities/resolver";
+import { loadScratchCapabilityCatalog } from "@/lib/capabilities/scratch-catalog";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -30,7 +32,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-type Db = {
+type Db = SqlTransaction & {
   select: any;
 };
 
@@ -207,7 +209,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    const [branchRows, runnerRows, runtimeRows, capabilities] =
+    const [branchRows, runnerRows, runtimeRows, { catalog: capabilities }] =
       await Promise.all([
         listBranches(project.repoPath, { includeRemotes: true }),
         db.select().from(platformAcpRunners),
@@ -215,7 +217,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           .select()
           .from(platformRuntimeSettings)
           .where(eq(platformRuntimeSettings.id, "singleton")),
-        loadSelectableCapabilities(project.id, db),
+        loadScratchCapabilityCatalog(project.id, db),
       ]);
     const defaultScratchBranch = deriveScratchBranchName({
       branchPrefix: project.branchPrefix,
@@ -303,9 +305,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         restrictions: capabilities
           .filter((record) => record.kind === "restriction")
           .map(capabilityOption),
-        defaultSelectedMcpIds: mcps
-          .filter((record) => record.selectedByDefault)
-          .map((record) => record.capabilityRefId),
+        defaultSelectedMcpIds: [
+          ...new Set(
+            mcps
+              .filter((record) => record.selectedByDefault)
+              .map((record) => record.capabilityRefId),
+          ),
+        ],
       },
     });
   } catch (err) {

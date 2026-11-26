@@ -7,7 +7,6 @@ import {
   buildMcpOptions,
   buildRunnerGroup,
   buildSchemaOptions,
-  buildSkillOptions,
   deriveSchemaFileName,
   resolveFreeTextSourceKind,
   schemaFilePathToRef,
@@ -146,20 +145,6 @@ describe("reference source helpers", () => {
       agent: "delivery-kit:triager",
       runner: undefined,
     });
-  });
-
-  it("builds skill options from skills/<slug>/SKILL.md files, sorted", () => {
-    expect(
-      buildSkillOptions([
-        packageFile("skills/review/SKILL.md"),
-        packageFile("skills/aif-plan/SKILL.md"),
-        packageFile("skills/aif-plan/references/x.md"),
-        packageFile("flows/bugfix/flow.yaml"),
-      ]),
-    ).toEqual([
-      { value: "aif-plan", label: "aif-plan" },
-      { value: "review", label: "review" },
-    ]);
   });
 
   it("builds mcp options from the catalog ids, sorted", () => {

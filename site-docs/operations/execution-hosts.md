@@ -1,6 +1,6 @@
 ---
 title: "Execution hosts"
-description: "Understand the current single-host supervisor boundary and the safe path toward multiple execution hosts."
+description: "Configure an assigned supervisor, its MCP cache and the route back to Web."
 ---
 
 An execution host is the supervisor boundary that owns ACP sessions, agent
@@ -10,11 +10,10 @@ path as ownership.
 
 ## Current topology
 
-The supported topology has one active trusted local execution host and loopback
-HTTP. Web and supervisor still share repository and worktree storage. Runtime
-events and artifact content cross the host API instead of requiring Web to read
-the supervisor's private runtime files. Placement across multiple simultaneous
-hosts and mid-turn migration are not supported.
+A default installation runs Web and one trusted supervisor on the same host.
+Operators can also map a supervisor key to a private remote endpoint. Web
+sends commands to the host recorded in the Run assignment. Each host needs
+the workspace and repository storage required by the Runs it accepts.
 
 The host contract already provides:
 
@@ -77,11 +76,16 @@ do not clear supervisor state to repair a stalled stream. Use the reported
 recovery action and retain diagnostics as described in
 [Troubleshooting](/operations/troubleshooting).
 
-## Path to multiple supervisors
+## Route a Run to a remote supervisor
 
-These boundaries are the prerequisite for a future pool of supervisor hosts.
-That stage must add remote transport, placement policy, host visibility, and
-attempt-boundary recovery without weakening fencing or evidence ownership.
+1. Give each supervisor a stable `MAISTER_EXECUTION_HOST_KEY` and private persistent state. Record its key from `GET /health`. Configure `MAISTER_WORKSPACE_REPOSITORIES` with the approved project sources and give the supervisor Git access. It prepares its own checkout and workspace.
+2. On Web, set `MAISTER_SUPERVISOR_URL` and `MAISTER_SELECTED_EXECUTION_HOST_KEY` for the primary supervisor. Use `MAISTER_ADDITIONAL_EXECUTION_HOSTS` for an additional trusted endpoint. Protect the listener on a private network or behind an authenticated tunnel. The board can select a supervisor eligible for that project.
+3. On Web and each supervisor running the addressed MAIster MCP facade, set the same reachable `MAISTER_API_BASE_URL`. The supervisor uses its local facade executable for scoped operations such as asking a human. Keep the original supervisor state and workspace for checkpoint continuation.
 
-Until that stage ships, deploy one supervisor per MAIster control plane and
-follow the [single-host deployment guide](/operations/deployment).
+Runner evidence for strict tools and MCPs and for read-only execution is checked on the selected supervisor when required. Versioned Flow sessions open private adapter configuration directories. For Claude, the supervisor links the operator-managed `.credentials.json`; the user's settings, memory, plugins and skills are outside that directory. Put required skills in packages and configure execution credentials on every eligible host.
+
+## Prepare the selected MCP servers
+
+HTTP MCP connections originate on the assigned workload. Check its DNS, egress and server-specific environment bindings. For npm/stdio, review the exact distribution in Studio and copy the descriptor SHA-256 from the preview to `MAISTER_MCP_ALLOWED_DIGESTS` on each eligible host. Keep `MAISTER_MCP_CACHE_DIR` on persistent, host-owned storage writable by the supervisor. The host validates the exact tarball and executable on first use and rechecks cached bytes and approval on reuse. A fresh host needs the registry connection for its first install.
+
+If preparation fails, inspect the host key, assignment epoch, command ID and digest in the supervisor receipt. Check the configured source, supported runtime and host approval before retrying. Bind per-server secrets via `env:MAISTER_MCP_SECRET_<NAME>` on the selected MCP. See [package sources and versions](/guides/package-sources-and-versions) for the import and adoption workflow.

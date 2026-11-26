@@ -59,6 +59,7 @@ import {
   ABANDONABLE_STATUSES,
   markAbandoned,
 } from "@/lib/runs/state-transitions";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
 import {
   gcArchivePush,
@@ -3021,6 +3022,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           status: args.nextRunStatus,
           currentStepId: null,
           endedAt: args.removedAt,
+          resumeRequestedAt: null,
         })
         .where(eq(runs.id, args.runId))
         .returning({
@@ -3038,6 +3040,9 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           `run not found while updating drop status: ${args.runId}`,
         );
       }
+
+      if (updatedRunRows[0].runKind === "flow")
+        await closeFlowNodeQuestions(tx, args.runId, "workbench removed");
 
       if (args.runKind === "scratch") {
         const scratchRows = await tx
@@ -3172,6 +3177,7 @@ export async function recordProjectRunStopped(
     const { closeConditionWaitsForRun } = await import("@/lib/waits/close");
 
     await closeConditionWaitsForRun(tx, args.runId, "run_stopped");
+    await closeFlowNodeQuestions(tx, args.runId, args.reason);
   }
   await releaseAssignmentForRun(
     tx as unknown as ExecutionDb,

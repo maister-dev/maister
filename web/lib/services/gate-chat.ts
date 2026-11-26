@@ -627,7 +627,7 @@ export async function recoverExpiredGateChatTurns(args: {
     if (!claim) continue;
 
     try {
-      const records = await hosts.local().listSessionsForRun(claim.runId);
+      const records = await hosts.inventoryForRun(claim.runId);
       const liveSession = records.find((session) => session.status === "live");
 
       // D2: reconcile this turn's own command evidence BEFORE treating an

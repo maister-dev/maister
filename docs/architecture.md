@@ -21,9 +21,9 @@ for the exact boundaries. GC remains designed.
 
 ## C4 Context — system and its world
 
-The control plane MAIster runs on a single host, talks to a relational
-database, spawns coding-agent CLIs as subprocesses, and routes their
-LLM calls to one of several providers.
+The MAIster control plane talks to a relational database and assigns Runs to
+a supervisor. The assigned supervisor spawns coding-agent CLIs, which connect
+to their configured inference providers.
 
 ```mermaid
 C4Context

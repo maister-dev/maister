@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 
 import { MaisterError } from "@/lib/errors";
+import * as librarianAdmission from "@/lib/librarian/admission";
 import { submitOwnerMessage } from "@/lib/librarian/admission";
 import { cardTarget, proposeLibrarianCard } from "@/lib/librarian/cards";
 import {
@@ -137,6 +138,78 @@ afterAll(async () => {
   } finally {
     vi.restoreAllMocks();
     await database?.stop();
+  }
+});
+
+it("acknowledges a durable private answer when post-commit host admission fails", async () => {
+  const owner = await seedActiveUser(db);
+  const sent = await sendAs(owner, "Prototype a customer journey");
+  const card = randomUUID();
+  const turnId = sent.turn!.id;
+  const answer = { page: "checkout" };
+
+  await database.pool.query(
+    "UPDATE librarian_turns SET status='awaiting_answer' WHERE id=$1",
+    [turnId],
+  );
+  await database.pool.query(
+    `INSERT INTO librarian_cards
+       (id, conversation_id, segment_id, kind, status, target, payload,
+        payload_digest, requires_owner, expires_at, question_turn_id,
+        question_key, question_checkpoint_at)
+     VALUES ($1, $2, $3, 'question', 'pending', '{}', $4,
+             'test', true, now() + interval '1 day', $5, 'page', now())`,
+    [
+      card,
+      sent.message.conversationId,
+      sent.message.segmentId,
+      {
+        requestKey: "page",
+        question: "Which page?",
+        schema: {
+          schemaVersion: 1,
+          fields: [{ name: "page", type: "string", required: true }],
+        },
+      },
+      turnId,
+    ],
+  );
+  session = { id: owner, role: "member" };
+  const { POST } =
+    await import("@/app/api/librarian/cards/[cardId]/answer/route");
+  const admission = vi
+    .spyOn(librarianAdmission, "admitNextLibrarianTurn")
+    .mockRejectedValue(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "Host offline"),
+    );
+  const submit = () =>
+    POST(json(`/api/librarian/cards/${card}/answer`, "POST", { answer }), {
+      params: Promise.resolve({ cardId: card }),
+    });
+
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await submit();
+
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({
+        questionId: card,
+        state: "accepted",
+      });
+    }
+    expect(
+      (
+        await database.pool.query(
+          `SELECT c.question_answer, t.status, count(m.id)::int AS receipts
+         FROM librarian_cards c JOIN librarian_turns t ON t.id = c.question_turn_id
+         JOIN librarian_messages m ON m.card_id = c.id AND m.body = 'private_answer_queued'
+         WHERE c.id = $1 GROUP BY c.id, t.id`,
+          [card],
+        )
+      ).rows,
+    ).toEqual([{ question_answer: answer, status: "queued", receipts: 1 }]);
+  } finally {
+    admission.mockRestore();
   }
 });
 

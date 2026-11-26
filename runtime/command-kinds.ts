@@ -22,6 +22,7 @@ export const COMMAND_KINDS = [
   "runtime_object.reserve",
   "runtime_object.upload",
   "runtime_object.delete",
+  "mcp.prepare",
   "stand.dispatch",
 ] as const;
 

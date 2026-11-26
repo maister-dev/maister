@@ -37,6 +37,24 @@ function expectConfig(fn: () => unknown, match: RegExp): void {
 }
 
 describe("parseAgentDefinition", () => {
+  it("round-trips omitted, explicit empty and selected package skill inventories", () => {
+    for (const skills of [undefined, [], ["frontend-design"]]) {
+      const source =
+        skills === undefined
+          ? VALID
+          : VALID.replace(
+              "  mcps: []",
+              "  mcps: []\n  skills: " + JSON.stringify(skills),
+            );
+      const parsed = parseAgentDefinition("design:prototype", source);
+
+      expect(parsed.capabilityProfile?.skills).toEqual(skills);
+      expect(
+        parseAgentDefinition(parsed.id, renderAgentDefinition(parsed)),
+      ).toEqual(parsed);
+    }
+  });
+
   it("IT-OPA-01 preserves code defaults and round-trips explicit operational completion", () => {
     expect(parseAgentDefinition("core:scan", VALID)).toMatchObject({
       kind: "code_delivery",

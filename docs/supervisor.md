@@ -1316,6 +1316,21 @@ their original digest with null v2 metadata; reopen never fabricates missing
 request or sequence identity. The public receipt v2 response and immutable
 command-output manifest remain under implementation.
 
+### Assigned-host MCP preparation (Implemented)
+
+The assigned workload connects directly to selected HTTP MCP endpoints.
+`POST /mcp/prepare` prepares an approved, pinned npm distribution under
+the current assignment fence and returns a host receipt. A later session
+start verifies the local cache before running the selected executable.
+An operator probe uses the probed supervisor's own runtime and credentials.
+On addressed assignments, the supervisor resolves its own MAIster facade
+and connects to the configured Web origin with a scoped execution token.
+Legacy adopted workspaces use the local facade command.
+
+[API contract](api/supervisor.openapi.yaml) ·
+[Placement and qualification](system-analytics/execution-hosts.md#mcp-placement-implemented) ·
+[Operator settings](configuration.md#assigned-supervisor-mcps)
+
 ## Module layout
 
 ```

@@ -49,6 +49,7 @@ let projectId: string;
 let executorId: string;
 let flowId: string;
 let ownerUserId: string;
+let placementHost: Awaited<ReturnType<typeof fakeExecutionHosts>>["host"];
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -57,7 +58,7 @@ beforeAll(async () => {
   db = testDatabase.db;
   // ADR-166: the claim transitions mint their epoch on the local host — a fake
   // host backs every implicit resolution in this process.
-  await fakeExecutionHosts(db);
+  ({ host: placementHost } = await fakeExecutionHosts(db));
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -677,7 +678,9 @@ describe("state-transitions — execution-assignment placement (ADR-166)", () =>
     });
 
     const claim = await db.transaction((tx) =>
-      claimAgentIdleResumeInTransaction(tx, runId),
+      claimAgentIdleResumeInTransaction(tx, runId, {
+        placement: { host: placementHost },
+      }),
     );
 
     expect(claim.ok).toBe(true);
@@ -702,7 +705,9 @@ describe("state-transitions — execution-assignment placement (ADR-166)", () =>
     const runId = await seedRun("Running");
 
     const claim = await db.transaction((tx) =>
-      claimAgentIdleResumeInTransaction(tx, runId),
+      claimAgentIdleResumeInTransaction(tx, runId, {
+        placement: { host: placementHost },
+      }),
     );
 
     expect(claim.ok).toBe(false);

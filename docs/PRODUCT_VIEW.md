@@ -114,7 +114,7 @@ Project -> Flow package -> Task / Evaluation Study / Scratch run -> External ope
 | Start a scratch workspace | Open a conversation-like coding-agent session for exploratory work without creating a task board card. |
 | Coordinate work across projects | Ask the personal librarian to find, prepare, launch, and follow up on visible work, with explicit confirmation for human-only actions. |
 | Pick the right branch | Choose the base branch and target branch so work can happen on `main`, `develop`, release branches, or any engineer-selected branch. |
-| Constrain node capabilities | See and edit what each AI or human node is allowed to use: agents, MCP servers, tools, skills, roles, restrictions, and rework paths. |
+| Constrain node capabilities | See and edit what each AI or human node is allowed to use: agents, MCP servers, tools, roles, restrictions, and rework paths. |
 | Reach agreement on risky plans | Run several read-only draft agents through an engine-owned consensus node, see why they agree or disagree, and resolve unresolved disagreements through HITL. |
 | Trust what an AI session can touch | Know which skills, MCPs, tools, settings, env profiles, and restrictions were materialized, enforced, instructed, refused, and cleaned up for a node or long-living session. |
 | Inspect readiness evidence | See which artifacts prove the run is ready, which are stale, and which node or human decision produced them. |
@@ -173,7 +173,7 @@ Project -> Flow package -> Task / Evaluation Study / Scratch run -> External ope
   blocks unauthorized actions; assignment roles additionally explain ownership
   and audit.
 - Scoped capability materialization is required for AI-node safety: node/session
-  settings reference named MCPs, tools, skills, agent settings, env profiles,
+  settings reference named MCPs, tools, agent settings, env profiles,
   and restrictions; the runner materializes only those capabilities for the
   one-node session or long-living session, snapshots what was
   enforced/instructed/unsupported/refused, then removes or restores them after
@@ -300,6 +300,10 @@ strong workload isolation, attention routing, and enterprise identity.
    - Flow designer UI *(Implemented — Flow Studio visual editor, M27/M35/M39;
      see `system-analytics/flow-studio.md`)* on top of the graph/runtime
      foundation, without turning MAIster into a generic workflow builder.
+   - Reviewed package skill and MCP imports from approved public sources,
+     per-session delivery for Flow and project agents, and human questions in
+     the project Inbox or private librarian conversation *(Implemented —
+     ADR-220/221/222/223)*.
    - Writable competing-code consensus drafts only after the implemented
      read-only M41 consensus proves demand in qualified core processes.
    - Deeper Gemini/OpenCode/MiMo ACP proof for permissions, MCP, model switching,

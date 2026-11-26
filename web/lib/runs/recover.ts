@@ -260,7 +260,7 @@ async function admitFlowRecovery(
     placementHost = await localHost({ db, transport: hosts.transport });
     if (source) {
       if (
-        (await hosts.local().listSessionsForRun(runId)).some(
+        (await hosts.inventoryForRun(runId)).some(
           (record) => record.status === "live",
         )
       )

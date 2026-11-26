@@ -207,7 +207,7 @@ function workRows(
            c.target_revision, c.expires_at
       FROM librarian_cards c
       LEFT JOIN librarian_messages m ON m.id = c.message_id AND m.conversation_id = c.conversation_id AND m.segment_id = c.segment_id
-     WHERE c.conversation_id = ${conversationId}
+     WHERE c.conversation_id = ${conversationId} AND c.kind <> 'question'
        AND NOT EXISTS (
          SELECT 1 FROM librarian_operations o WHERE o.conversation_id = c.conversation_id AND o.segment_id = c.segment_id
            AND o.idempotency_key = 'card:' || c.id

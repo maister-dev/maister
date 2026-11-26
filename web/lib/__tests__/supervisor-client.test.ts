@@ -16,6 +16,8 @@ vi.mock("undici", async (importOriginal) => {
   return { ...actual, fetch: vi.fn() };
 });
 
+import { EXECUTION_HOST_KEY_HEADER } from "../../../runtime/execution-host-address";
+
 import {
   checkSupervisorDiagnostics,
   checkSupervisorHealth,
@@ -24,6 +26,7 @@ import {
   listSessions,
   resolveModelSuggestions,
   streamSession,
+  withPinnedSupervisorEndpoint,
   type SupervisorEvent,
   type SupervisorModelCatalogDraft,
 } from "@/lib/supervisor-client";
@@ -228,6 +231,36 @@ describe("createSessionEnveloped", () => {
       code: "EXECUTOR_UNAVAILABLE",
     });
   });
+});
+
+it("pins session creation to the selected host identity and rejects redirects", async () => {
+  const endpoint = {
+    url: "https://supervisor.example.invalid",
+    hostKey: "supervisor-secondary",
+  };
+
+  mockOnce(
+    new Response(
+      JSON.stringify({ sessionId: "s1", pid: 4242, acpSessionId: "a1" }),
+      { status: 201 },
+    ),
+  );
+
+  await expect(
+    withPinnedSupervisorEndpoint(endpoint, () =>
+      createSessionEnveloped(validEnvelope, { timeoutMs: 60_000 }),
+    ),
+  ).resolves.toMatchObject({ sessionId: "s1" });
+  expect(fetchSpy).toHaveBeenCalledWith(
+    endpoint.url + "/sessions",
+    expect.objectContaining({
+      headers: expect.objectContaining({
+        [EXECUTION_HOST_KEY_HEADER]: endpoint.hostKey,
+      }),
+      redirect: "error",
+      signal: expect.any(AbortSignal),
+    }),
+  );
 });
 
 describe("listSessions", () => {

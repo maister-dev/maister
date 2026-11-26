@@ -65,6 +65,7 @@ function baseProps(
 ): Record<string, unknown> {
   return {
     packageId: "pkg1",
+    sessionId: "session-1",
     name: "my-pkg",
     bom,
     fileCount: 1,

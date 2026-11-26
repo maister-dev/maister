@@ -409,17 +409,18 @@ sequenceDiagram
 
 ### (f) Per-node flow binding (Implemented)
 
-`agent: <id>` on an `ai_coding` node (engine ≥ 1.5.0) resolves the catalog profile
-at compile/launch; execution stays inside the flow run's session — no separate
-agent-run row. (Distinct from (c): there the AGENT declares its own flow; here a
-flow NODE binds one agent for that node.)
+`settings.agent` on an `ai_coding` node (engine ≥ 1.5.0) selects a
+package-qualified agent. The Flow Run owns the node attempt. A session-mode
+binding opens a logical ACP session and capability home specific to this
+node. Its persona and capability selection come from the Run’s captured
+package and project-agent profile. [Node settings and discovery](../flow-dsl.md#node-agent-binding-implemented)
 
 ```mermaid
 flowchart TD
     N[node settings agent: id] --> V{compile validation<br/>agent exists AND triggers includes flow?}
     V -- no --> C[CONFIG at save/launch]
     V -- yes --> M{mode}
-    M -- session --> S[substitute profile — agent body = system prompt,<br/>node prompt = task block, settings merged, node wins]
+    M -- session --> S[Private node session with effective persona,<br/>node task prompt and selected capabilities]
     M -- subagent --> K{runner capability_agent = claude?}
     K -- no --> EU[EXECUTOR_UNAVAILABLE before spawn]
     K -- yes --> W[lease-owned materialize .claude/agents/name.md into worktree]
@@ -624,7 +625,18 @@ The [specialist runtime contract](specialist-runtime.md) owns implemented compan
 
 The reviewed company binding grants explicit installation reach as described in the [specialist runtime contract](specialist-runtime.md#installation-agent-authority-implemented--adr-211). It resolves a separate installation vault using the [agent memory contract](agent-memory.md).
 
+### Project agent persona and MCP additions (Implemented)
+
+| Operation | Authority and enforcement | Observable result |
+| --- | --- | --- |
+| Inspect adopted persona | `getAgentDefinitionView` requires repository-file read permission and resolves the attached package pin. | Readers receive the effective and adopted package text. A difference after line-ending normalization exposes the accessible divergence icon, tooltip and read-only diff. |
+| Save or restore persona | The project-link PATCH requires `editSettings` and `readRepoFiles`. `updateAgentLink` checks `expectedInstallId` under the attachment lock and compares `schedulesRevision` in the link update. | A nonblank override is stored with normalized line endings. `promptOverride: null` restores use of the package text. A stale adoption pin or link revision returns `409 CONFLICT` and rolls back the write. |
+| Save MCP additions | The same PATCH atomically replaces the link's `additionalMcpRefs` after `connectedAgentMcpRefs` validates their current project catalog and bindings. | The saved list contains unique logical refs. An enabled trusted platform target selected by the project's binding can satisfy the package requirement using its same canonical ref. Clearing the additions leaves inherited package declarations and shared project refs in the effective selection. |
+| Launch or retry | `captureProjectAgentProfile` records the exact pin, prompt digest and origin, link revision and selected refs when a standalone manual or triggered launch or a session-bound Flow node consumes the profile. | New launches see the effective saved profile. Existing Runs and retries read their frozen witnesses. Dispatch and resume still check current binding authority, trust and runner support. |
+
 ## Expectations
+
+- **CAP-05:** (Implemented) The project-link PATCH must update only the addressed instance after the permission and revision checks above, with `IT-CAP-05` verifying stale-write rejection, isolated persistence and exact execution inputs and `E2E-CAP-05` verifying keyboard use, diff, save and restore in both locales.
 
 - Identity MUST be package-qualified `<packageName>:<stem>` (packageName =
   `package_installs.name`); registration MUST scan
@@ -691,13 +703,14 @@ The reviewed company binding grants explicit installation reach as described in 
   `runs` writes after the terminal flip; agent tokens MUST stay per-launch
   ephemeral with the fixed scope set and the `{type:'agent', id}` actor, never
   logged/streamed/client-visible.
-- A standalone package-agent run MUST materialize every skill-kind capability
-  from the providing pinned package install's manifest capability roots. Claude
+- A standalone package-agent Run MUST resolve skills from its pinned providing package.
+  Omitting `capability_profile.skills` selects the whole bundle. An explicit list
+  selects exactly those skill slugs, including zero for an empty list. Claude
   runs MUST also materialize capability-local subagents from those roots into
   `.claude/agents/`; non-Claude runs MUST omit subagents. User-owned same-name
   skill or subagent entries MUST be preserved.
-- `capability_profile` frontmatter MUST be strict `{ mcps?: string[] }`; unknown
-  keys such as `skills`, `mcp_servers`, or `restrictions` MUST be reported as
+- `capability_profile` frontmatter MUST be strict `{ skills?: string[], mcps?: string[] }`; unknown
+  keys such as `mcp_servers` or `restrictions` MUST be reported as
   `MaisterError("CONFIG")` during registration/resync and no invalid row may be
   written.
 - Studio draft save MUST preserve invalid `capability_profile` text/value in the
@@ -715,15 +728,16 @@ The reviewed company binding grants explicit installation reach as described in 
   diagnostic `agent definition could not be read or indexed`; raw paths and
   error details remain structured server logs.
 - **(ADR-130)** The adapter-agnostic `capability_guard` seam enforces strict
-  `tools`/`mcps` for **flow `ai_coding`/`judge`/`orchestrator` nodes** (Implemented:
-  derived `enforcementProfile` delivered on `StartSessionRequest`, evidence-gated,
-  out-of-profile call denied at the seam). **Standalone platform-agent launches and
-  flow-node `settings.agent` bindings do NOT yet derive/deliver the profile
-  (follow-up)** — the seam supports it (the interceptor is agent-agnostic), but the
-  agent launch path (`launch.ts`) is not wired to `deriveSessionEnforcementProfile`
-  in this milestone. The agent `capability_profile` frontmatter (`{ mcps?: string[] }`)
-  is the intended MCP-server allow-set source when that wiring lands; see
-  [`guardrail-hooks.md`](guardrail-hooks.md) + [`flow-settings.md`](flow-settings.md).
+  `tools`/`mcps` for **Flow `ai_coding`/`judge`/`orchestrator` nodes**, including
+  eligible `settings.agent` session bindings. `StartSessionRequest` carries the
+  evidence-gated `enforcementProfile` derived from node enforcement intent and
+  the effective MCP server inventory. The pinned package agent supplies the
+  persona, unless the captured project link overrides it. The session resolver
+  applies the agent's skill selection and MCP declaration and the node's own
+  MCP settings. Standalone project agents use their admitted effective
+  capability profile and their own workspace/risk policy. See
+  [session capability delivery](capabilities.md#project-run-capability-inventory),
+  [guardrail hooks](guardrail-hooks.md) and [Flow settings](flow-settings.md).
 - An agent token minted for project A MUST reach project B only when an ENABLED
   `agent_project_links` row for that agent exists in B with
   `cross_project_reach = true`. *(Implemented — ADR-156.)*
@@ -769,7 +783,7 @@ The reviewed company binding grants explicit installation reach as described in 
 - **Pinned package skill record points at a missing member-root file** →
   `MaisterError("CONFIG")` with `agentId`, `packageInstallId`, and
   `capabilityRefId`; no partial materialization.
-- **Legacy `capability_profile` keys (`skills`, `mcp_servers`, `restrictions`)**
+- **Unsupported `capability_profile` keys (such as `mcp_servers` or `restrictions`)**
   → invalid-definition reporting during registration/resync; no invalid `agents`
   row is written.
 - **Budget breach with `onBudgetBreach='terminate_restorable'`** → the run lands in

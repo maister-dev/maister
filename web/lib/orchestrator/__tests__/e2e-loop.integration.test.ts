@@ -18,8 +18,8 @@
 // served there.
 //
 // The loop is multi-step async (runFlow + scheduler + the resume consumer). It
-// is driven deterministically: children are seeded Pending (tryStartRun forced
-// off, as in the delegate suite) so the orchestrator parks BEFORE any child
+// is driven deterministically: child admission leaves them Pending so the
+// orchestrator parks BEFORE any child
 // finishes; the test then promotes the children, then dispatches the
 // child-terminal domain events through the REAL dispatcher into the REAL
 // orchestrator_resume consumer (its resumeFlow injected as the REAL runFlow,
@@ -85,18 +85,12 @@ let pool: Pool;
 let db: NodePgDatabase;
 
 // getDb() → the testcontainer for every engine path (runner, launch, scheduler,
-// finalize, the resume consumer). tryStartRun is forced OFF so a delegated child
-// stays Pending at INSERT (the orchestrator parks before any child runs); the
-// test then promotes children explicitly via promoteNextPending.
+// finalize, the resume consumer). Starting allocated children is deferred
+// until the orchestrator parks, then the test promotes them via the scheduler.
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-vi.mock("@/lib/scheduler", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
-
-  return {
-    ...actual,
-    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
-  };
-});
+vi.mock("@/lib/scheduler/start-allocated-run", () => ({
+  startAllocatedRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
+}));
 
 // Lazily imported AFTER the mocks install (so the engine sees the test db).
 let startTestSupervisor: typeof import("@/e2e/_seed/test-supervisor").startTestSupervisor;
@@ -544,7 +538,7 @@ describe("M37 orchestrator full loop through the real supervisor-client wire", (
     expect(facade?.env?.MAISTER_PROJECT_TOKEN).toBeTruthy();
 
     // Two child agent runs exist with the parent + root linkage, still Pending
-    // (tryStartRun forced off), and the orchestrator released its slot at park.
+    // while the orchestrator has released its slot at park.
     const children = await childRunIds(runId);
 
     expect(children).toHaveLength(2);

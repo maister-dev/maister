@@ -7,7 +7,7 @@ import { stringify as stringifyYaml } from "yaml";
 
 import { unifiedLineDiff } from "@/lib/flows/editor/text-diff";
 import { compileManifest } from "@/lib/flows/graph/compile";
-import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
+import { parseRetainedGraphShape } from "@/lib/flows/manifest-parser";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 
@@ -39,13 +39,13 @@ export function buildAuthoredFlowDiff(
   storedPublishedManifest: unknown | null,
   draftVersion: number,
 ): AuthoredFlowDiff {
-  const draftManifest = parseGraphOnlyFlowManifest(storedDraftManifest, {
+  const draftManifest = parseRetainedGraphShape(storedDraftManifest, {
     code: "CONFIG",
     surface: "authored-flow-diff-draft",
     manifestLabel: "authored draft flow manifest",
   });
   const publishedManifest = storedPublishedManifest
-    ? parseGraphOnlyFlowManifest(storedPublishedManifest, {
+    ? parseRetainedGraphShape(storedPublishedManifest, {
         code: "CONFIG",
         surface: "authored-flow-diff-published",
         manifestLabel: "published flow manifest",

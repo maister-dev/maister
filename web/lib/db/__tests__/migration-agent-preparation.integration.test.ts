@@ -66,7 +66,7 @@ it("DB01 populated upgrade and journal replay preserve historical run bytes with
   expect(
     (
       await database.pool.query(
-        "SELECT to_jsonb(r)-ARRAY['task_launch_intent_id','knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent','agent_memory_hash_format','flow_publication_grant','autonomous_completion_grant'] AS value FROM runs r WHERE id=$1",
+        "SELECT to_jsonb(r)-ARRAY['task_launch_intent_id','knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent','agent_memory_hash_format','flow_publication_grant','autonomous_completion_grant','project_agent_profile'] AS value FROM runs r WHERE id=$1",
         [runId],
       )
     ).rows[0].value,
@@ -74,7 +74,7 @@ it("DB01 populated upgrade and journal replay preserve historical run bytes with
   expect(
     (
       await database.pool.query(
-        "SELECT task_launch_intent_id,knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent,agent_memory_hash_format,flow_publication_grant,autonomous_completion_grant FROM runs WHERE id=$1",
+        "SELECT task_launch_intent_id,knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent,agent_memory_hash_format,flow_publication_grant,autonomous_completion_grant,project_agent_profile FROM runs WHERE id=$1",
         [runId],
       )
     ).rows[0],
@@ -87,6 +87,7 @@ it("DB01 populated upgrade and journal replay preserve historical run bytes with
     agent_memory_hash_format: null,
     flow_publication_grant: null,
     autonomous_completion_grant: null,
+    project_agent_profile: null,
   });
   expect(
     (

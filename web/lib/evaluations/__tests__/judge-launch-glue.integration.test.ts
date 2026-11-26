@@ -23,17 +23,16 @@ let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof fullSchema>;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-// The supervisor/ACP boundary: force tryStartRun to NOT promote, so the run row
-// stays a stable Pending and the agent-session spawn microtask (the only
-// supervisor touchpoint on this path) never fires. Everything below the seam —
-// launchAgentRun's run insert, the crash-safe runId contract, and the real
-// issueJudgeAttemptToken mint — runs for real against Testcontainers.
+// Defer scheduled and immediate starts so the test can inspect Pending
+// reservations and their attempt-bound tokens before supervisor dispatch.
+vi.mock("@/lib/scheduler/start-allocated-run", () => ({
+  startAllocatedRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
+}));
 vi.mock("@/lib/scheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/scheduler")>();
 
   return {
     ...actual,
-    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
     promoteNextPending: vi.fn(async () => null),
   };
 });

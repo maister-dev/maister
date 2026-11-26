@@ -22,6 +22,7 @@ import {
   declareCurrentTestDatabaseWriter,
   startMainPostgresTestDbUpTo,
 } from "@/test-support/pg-container";
+import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 
 it("upgrades a populated predecessor while preserving old attempt and transcript evidence", async () => {
   const db = await startMainPostgresTestDbUpTo(
@@ -201,6 +202,7 @@ it("continues 0358 inline compactions with escaped IDs in their original markers
     const assignmentId = randomUUID();
     const hostSessionId = randomUUID();
     const streamId = randomUUID();
+    const streamRowId = randomUUID();
     const projectors = [
       canonicalContextProjector,
       canonicalTranscriptProjector,
@@ -223,10 +225,16 @@ it("continues 0358 inline compactions with escaped IDs in their original markers
        VALUES($1,$2,$3,1,'active','launch')`,
       [assignmentId, runId, hostId],
     );
-    await pool.query("UPDATE runs SET execution_assignment_id=$1 WHERE id=$2", [
-      assignmentId,
-      runId,
-    ]);
+    await pool.query(
+      "UPDATE runs SET execution_assignment_id=$1,next_execution_event_sequence=$3 WHERE id=$2",
+      [assignmentId, runId, entries.length],
+    );
+    await pool.query(
+      `INSERT INTO execution_event_streams(
+         id,execution_host_id,stream_id,state,last_received_sequence,last_contiguous_sequence,last_boot_id
+       ) VALUES($1,$2,$3,'active',$4,$4,$5)`,
+      [streamRowId, hostId, streamId, entries.length - 1, hostBootId],
+    );
     const ingest = async (
       sequence: number,
       update: Record<string, unknown>,
@@ -268,13 +276,39 @@ it("continues 0358 inline compactions with escaped IDs in their original markers
     // Reproduce the 0358 projector output. It used the canonical JSONB
     // representation of the adapter ID directly as its storage identity.
     for (const [index, entry] of entries.entries()) {
-      const start = await ingest(index, {
-        sessionUpdate: "compaction_update",
-        compactionId: entry.adapterId,
-        status: "in_progress",
+      const start = String(index);
+      const payload = JSON.stringify({
+        update: {
+          sessionUpdate: "compaction_update",
+          compactionId: entry.oldId,
+          status: "in_progress",
+        },
       });
+      const payloadHash = createHash("sha256").update(payload).digest("hex");
       const oldIdHash = createHash("sha256").update(entry.oldId).digest("hex");
 
+      await pool.query(
+        `INSERT INTO execution_events(
+           id,source,run_id,execution_host_id,event_stream_id,host_sequence,
+           execution_assignment_id,assignment_epoch,host_boot_id,host_session_id,
+           envelope_version,event_type,payload_schema,payload,payload_sha256,payload_bytes,
+           occurred_at,run_sequence,ingest_disposition
+         ) VALUES($1,'host',$2,$3,$4,$5,$6,1,$7,$8,1,'session.update',
+                  'maister.session.update.v1',$9,$10,$11,now(),$5,'accepted')`,
+        [
+          randomUUID(),
+          runId,
+          hostId,
+          streamRowId,
+          start,
+          assignmentId,
+          hostBootId,
+          hostSessionId,
+          payload,
+          payloadHash,
+          Buffer.byteLength(payload),
+        ],
+      );
       starts.push(start);
       await pool.query(
         `INSERT INTO run_context_compactions(
@@ -313,7 +347,7 @@ it("continues 0358 inline compactions with escaped IDs in their original markers
       ],
     );
 
-    await applyMainMigration(db, "0359_acp_context_projection_state");
+    await upgradeMainTestDb(database, "0358_acp_context");
 
     const firstId = entries[0]!.adapterId;
 

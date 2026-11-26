@@ -1,6 +1,6 @@
 import "server-only";
 
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
@@ -155,6 +155,12 @@ export async function POST(
       { kind: "user", userId: sessionUser.id, label },
       {
         db,
+        wakeFlowQueue: () =>
+          after(async () => {
+            const { promoteNextPending } = await import("@/lib/scheduler");
+
+            await promoteNextPending({ db, pool: "flow" });
+          }),
         ...(isRestart
           ? { restartPrincipal: await interactiveTaskLaunchPrincipal() }
           : {}),

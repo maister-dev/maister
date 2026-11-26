@@ -25,24 +25,29 @@ import { EXECUTION_HOST_KEY_HEADER } from "../../../../runtime/execution-host-ad
 
 import * as fullSchema from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { createExecutionHosts } from "@/lib/execution-host";
 import {
   mintAssignment,
   releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
-import { createExecutionHosts } from "@/lib/execution-host/client";
 import { listCommandsForRun } from "@/lib/execution-host/commands";
 import {
+  ensureAdditionalExecutionHost,
   ensureLocalExecutionHost,
   resetRegistrarStateForTests,
 } from "@/lib/execution-host/registrar";
 import {
   hostForAssignment,
+  hostForSelection,
   localHost,
   primeResolverForTests,
   resetResolverForTests,
 } from "@/lib/execution-host/resolver";
+import { configuredAdditionalExecutionEndpoints } from "@/lib/execution-host/selected-endpoint";
+import { transportForExecutionHost } from "@/lib/execution-host/default-transport";
 import { resetRuntimeEventConsumersForTests } from "@/lib/execution-host/events/consumer";
 import { runReconcileSweep } from "@/lib/reconcile";
+import { assertCapabilityGuardEvidence } from "@/lib/flows/enforcement-evidence";
 import { seedProject, seedRun } from "@/test-support/execution-host-seed";
 import { createFakeExecutionHost } from "@/test-support/fake-execution-host";
 import {
@@ -131,6 +136,28 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string) {
       ),
     ),
   ]);
+}
+
+async function remoteReadiness(hostId: string): Promise<
+  | {
+      readiness: string;
+      readinessReason: string | null;
+      updatedAt: Date;
+      lastSeenAt: Date | null;
+    }
+  | undefined
+> {
+  return (
+    await db
+      .select({
+        readiness: fullSchema.executionHosts.readiness,
+        readinessReason: fullSchema.executionHosts.readinessReason,
+        updatedAt: fullSchema.executionHosts.updatedAt,
+        lastSeenAt: fullSchema.executionHosts.lastSeenAt,
+      })
+      .from(fullSchema.executionHosts)
+      .where(eq(fullSchema.executionHosts.id, hostId))
+  )[0];
 }
 
 beforeAll(async () => {
@@ -812,3 +839,172 @@ describe("registrar (real supervisor)", () => {
     );
   }, 60_000);
 });
+
+it("publishes a pinned remote supervisor outage and re-observes a restart on the same host", async () => {
+  const hostKey = "registrar-remote-readiness";
+  let remote = await startRealSupervisor({
+    env: {
+      MAISTER_EXECUTION_HOST_KEY: hostKey,
+      MAISTER_WORKSPACE_DIRECTORIES: '{"qualification":"/tmp"}',
+    },
+  });
+
+  try {
+    const endpoint = {
+      hostKey,
+      url: remote.url,
+      displayName: "Readiness peer",
+    };
+    const ready = await ensureAdditionalExecutionHost(endpoint, { db });
+
+    expect(ready).toMatchObject({ status: "registered" });
+    if (ready.status !== "registered")
+      throw new Error("Peer was not registered");
+    expect(ready.host.readiness).toBe("ready");
+    await remote.stop();
+    await expect(
+      ensureAdditionalExecutionHost(endpoint, { db }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "network",
+    });
+    const outage = await remoteReadiness(ready.host.id);
+
+    expect(outage).toMatchObject({
+      readiness: "unavailable",
+      readinessReason: "network",
+      lastSeenAt: ready.host.lastSeenAt,
+    });
+    if (!outage) throw new Error("Peer outage was not recorded");
+    const nextObservation = () => new Date(outage.updatedAt.getTime() + 31_000);
+    await expect(
+      ensureAdditionalExecutionHost(endpoint, { db, now: nextObservation }),
+    ).resolves.toMatchObject({ status: "unavailable", reason: "network" });
+    const refreshed = await remoteReadiness(ready.host.id);
+
+    expect(refreshed?.updatedAt.getTime()).toBe(nextObservation().getTime());
+    expect(refreshed?.lastSeenAt).toEqual(ready.host.lastSeenAt);
+    remote = await startRealSupervisor(remote.options);
+    const restored = await ensureAdditionalExecutionHost(
+      { ...endpoint, url: remote.url },
+      { db, now: nextObservation },
+    );
+
+    expect(restored).toMatchObject({ status: "registered", restarted: true });
+    if (restored.status !== "registered")
+      throw new Error("Peer did not re-register");
+    expect(restored.host.id).toBe(ready.host.id);
+    expect(restored.host.lastBootId).not.toBe(ready.host.lastBootId);
+    expect(await remoteReadiness(ready.host.id)).toMatchObject({
+      readiness: "ready",
+      readinessReason: null,
+    });
+  } finally {
+    vi.unstubAllEnvs();
+    await remote.kill();
+  }
+}, 120_000);
+
+it("refuses missing smoke evidence on the selected and retained remote supervisor", async () => {
+  const hostKey = "registrar-remote-smoke";
+  const remote = await startRealSupervisor({
+    env: {
+      MAISTER_EXECUTION_HOST_KEY: hostKey,
+      MAISTER_WORKSPACE_DIRECTORIES: '{"qualification":"/tmp"}',
+    },
+  });
+
+  try {
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://127.0.0.1:1");
+    vi.stubEnv(
+      "MAISTER_SELECTED_EXECUTION_HOST_KEY",
+      "registrar-default-smoke",
+    );
+    vi.stubEnv(
+      "MAISTER_ADDITIONAL_EXECUTION_HOSTS",
+      JSON.stringify([{ hostKey, url: remote.url, displayName: "Smoke peer" }]),
+    );
+    const registered = await ensureAdditionalExecutionHost(
+      configuredAdditionalExecutionEndpoints()[0],
+      { db },
+    );
+    if (registered.status !== "registered")
+      throw new Error("Peer was not registered");
+    const local = createFakeExecutionHost();
+    const placement = await hostForSelection(db, registered.host.id);
+    const diagnostics = transportForExecutionHost(
+      placement,
+      local.transport,
+    ).diagnostics;
+    const observed = await diagnostics();
+
+    if (observed.kind !== "ready") throw new Error(observed.message);
+    local.setDiagnostics({
+      ...observed,
+      diagnostics: {
+        ...observed.diagnostics,
+        adapters: observed.diagnostics.adapters.map((adapter) => ({
+          ...adapter,
+          smoke: {
+            ...adapter.smoke,
+            status: "ok",
+            capabilityEnforcement: {
+              ...adapter.smoke.capabilityEnforcement,
+              status: "ok",
+            },
+            readOnlySession: {
+              ...adapter.smoke.readOnlySession,
+              status: "ok",
+              staleReason: null,
+            },
+          },
+        })),
+      },
+    });
+    expect(placement.hostKey).toBe(hostKey);
+
+    await expect(
+      assertCapabilityGuardEvidence({
+        agent: "claude",
+        permissionPolicy: "default",
+        checkDiagnostics: diagnostics,
+      }),
+    ).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      message: expect.stringContaining("capabilityEnforcement smoke"),
+    });
+
+    const runId = await seedRun(testDatabase.db, {
+      projectId,
+      status: "Running",
+    });
+    const assignment = await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, {
+        runId,
+        hostId: placement.id,
+        reason: "launch",
+      }),
+    );
+
+    const bound = await createExecutionHosts({
+      db,
+      transport: local.transport,
+    }).forAssignment({ id: assignment.id });
+
+    expect(bound.host.id).toBe(placement.id);
+    await expect(
+      bound.createSession({
+        stepId: "agent",
+        executor: { agent: "gemini", model: "gemini-test" },
+        readOnlySession: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      message: expect.stringContaining("read-only-session smoke"),
+    });
+    expect(local.callsOf("diagnostics")).toHaveLength(0);
+  } finally {
+    vi.unstubAllEnvs();
+    await remote.kill();
+  }
+}, 120_000);

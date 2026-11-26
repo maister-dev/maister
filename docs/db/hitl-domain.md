@@ -344,3 +344,20 @@ are queried by `(parent_hitl_request_id, created_at)` and are system-closed when
 the parent starts ordinary rework. A child response accepts exactly one
 top-level `optionId`; extra fields are rejected before the stored response can
 change.
+
+## Package and agent delivery
+
+An ordinary Flow question belongs to its exact Run, attempt, turn and epoch.
+Migration `0406` adds the composite FK `(run_id, flow_node_attempt_id)` to
+`node_attempts(run_id, id)` with `ON DELETE CASCADE`. A partial unique index
+on `(flow_node_attempt_id, schema.flowQuestion.promptOrdinal)` limits the
+attempt to one question per turn. `flow_request_key` and the query's prompt
+owner and token witnesses admit exact replay. `flow_answer_accepted_at` and
+`flow_answer_user_id` record the authorized answer. The user FK uses
+`ON DELETE RESTRICT`. `responded_at` records delivery proved by the successor
+prompt and `flow_reconciled_at` timestamps background recovery attempts. `0407`
+allows an undelivered question to close with `superseded_at` and empty
+successor fields. The closing transaction also system-closes any active
+assignment. See the [detailed row contract](../database-schema.md#hitl_requests).
+
+Migration `0409` adds cross-process notifications for committed prompt, incarnation and question ownership changes. It does not add a persisted question field.

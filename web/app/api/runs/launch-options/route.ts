@@ -5,8 +5,9 @@ import { transportForSelectedHostId } from "@/lib/execution-host/default-transpo
 import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
 import type { CapabilityRefIdSets } from "@/lib/config";
+import type { PackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
@@ -53,6 +54,7 @@ import {
 } from "@/lib/acp-runners/resolve";
 import { getDb } from "@/lib/db/client";
 import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
+import { preparePackageDeliveryCapture } from "@/lib/capabilities/capture-package-delivery";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
@@ -90,6 +92,7 @@ import {
   composeTaskLaunchSettingsToken,
   draftLaunchSettingsMetadataToken,
   launchRefusal,
+  prepareTaskLaunchPreviewPackageDelivery,
   taskLaunchSettingsMetadataToken,
 } from "@/lib/tasks/launch-resolution";
 
@@ -357,8 +360,36 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (!parsed.success)
       throw launchRefusal("launch_request_invalid", "CONFIG");
     const db = getDb() as Db;
+    const [target] = await db
+      .select({ projectId: tasks.projectId })
+      .from(tasks)
+      .innerJoin(projects, eq(tasks.projectId, projects.id))
+      .where(
+        and(eq(tasks.id, parsed.data.taskId), isNull(projects.archivedAt)),
+      );
+
+    if (!target) throw launchRefusal("launch_task_missing", "PRECONDITION");
+    await requireProjectActionForUser(
+      user.id,
+      target.projectId,
+      parsed.data.flowRunnerDraft?.slots ? "editSettings" : "launchRun",
+    );
+    const packageDelivery = preparePackageDeliveryCapture();
+
+    await prepareTaskLaunchPreviewPackageDelivery(
+      db,
+      target.projectId,
+      parsed.data,
+      packageDelivery.prepare,
+    );
     const snapshot = await db.transaction(
-      (tx) => readLaunchOptions(tx, user, parsed.data, "interactive"),
+      (tx) =>
+        readLaunchOptions(
+          tx,
+          user,
+          parsed.data,
+          packageDelivery.recheckPreview,
+        ),
       { isolationLevel: "repeatable read", accessMode: "read only" },
     );
 
@@ -380,7 +411,7 @@ async function readLaunchOptions(
   client: Db,
   user: Awaited<ReturnType<typeof requireActiveSession>>,
   selection: Partial<TaskLaunchRequest> & { taskId: string; branchCursor?: string },
-  surface?: "interactive",
+  previewPackageDelivery?: PackageDeliveryCapture,
 ) {
   const db = client as any;
   const taskRows = await db
@@ -407,7 +438,7 @@ async function readLaunchOptions(
   }
 
   const authorization =
-    surface === "interactive"
+    previewPackageDelivery
       ? await requireProjectActionForUser(
           user.id,
           project.id,
@@ -551,10 +582,9 @@ async function readLaunchOptions(
 
   if (draft && draft.flowRevisionId !== revision?.id)
     throw launchRefusal("launch_settings_changed");
-  const runnerCatalog: RunnerCatalogEntry[] =
-    surface === "interactive"
-      ? await loadRunnerCatalog(client)
-      : runnerRows.map(runnerCatalogEntry);
+  const runnerCatalog: RunnerCatalogEntry[] = previewPackageDelivery
+    ? await loadRunnerCatalog(client)
+    : runnerRows.map(runnerCatalogEntry);
   const defaultChain = {
     projectFlow: {
       defaultRunnerId: runnerBinding?.defaultRunnerId ?? null,
@@ -753,23 +783,23 @@ async function readLaunchOptions(
   // have a newer cut and/or uncut Studio edits — the launch dialog's
   // keep/adopt/cut_and_adopt choices. Empty for projects with no such packages
   // (no git calls), so this is free for the common case.
-  const previewFence =
-    surface === "interactive"
-      ? {
-          metadataToken: await taskLaunchSettingsMetadataToken(
-            client,
-            task.id,
-            selection,
-          ),
-          revision: revision
-            ? {
-                id: revision.id,
-                manifestDigest: revision.manifestDigest,
-                installedPath: revision.installedPath,
-              }
-            : null,
-        }
-      : null;
+  const previewFence = previewPackageDelivery
+    ? {
+        metadataToken: await taskLaunchSettingsMetadataToken(
+          client,
+          task.id,
+          selection,
+          previewPackageDelivery,
+        ),
+        revision: revision
+          ? {
+              id: revision.id,
+              manifestDigest: revision.manifestDigest,
+              installedPath: revision.installedPath,
+            }
+          : null,
+      }
+    : null;
 
   if (previewFence && draft && runnerInspection) {
     previewFence.metadataToken = draftLaunchSettingsMetadataToken(

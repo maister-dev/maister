@@ -11,7 +11,10 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { GET as getCollection } from "@/app/api/projects/[slug]/agents/route";
-import { GET as getDetail } from "@/app/api/projects/[slug]/agents/[agentId]/route";
+import {
+  GET as getDetail,
+  PATCH as patchDetail,
+} from "@/app/api/projects/[slug]/agents/[agentId]/route";
 import { GET as getAttempts } from "@/app/api/projects/[slug]/agents/[agentId]/attempts/route";
 import { GET as getHistory } from "@/app/api/projects/[slug]/agents/[agentId]/runs/route";
 import { GET as getIncidents } from "@/app/api/projects/[slug]/agents/[agentId]/incidents/route";
@@ -240,6 +243,46 @@ it("IT-UX-07 enforces live database grants, shows pinned definitions only, and r
     configuration: { greeting: "instance" },
   });
   expect(JSON.stringify(definitionValue)).not.toContain(installPath);
+  const saveProfile = () =>
+    patchDetail(
+      new NextRequest("http://localhost/api/agent-activity", {
+        method: "PATCH",
+        body: JSON.stringify({
+          promptOverride: "Project-only role",
+          expectedInstallId: install,
+          schedulesRevision: 1,
+        }),
+      }),
+      params,
+    );
+
+  expect((await saveProfile()).status).toBe(403);
+  await database.pool.query(
+    "UPDATE project_members SET role='admin' WHERE project_id=$1 AND user_id=$2",
+    [projectId, member],
+  );
+  expect((await saveProfile()).status).toBe(200);
+  expect((await saveProfile()).status).toBe(409);
+  await database.pool.query(
+    "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+    [projectId, member],
+  );
+  const readOnly = await (await getDefinition(request, params)).json();
+
+  expect(readOnly).toMatchObject({
+    prompt: "Project-only role",
+    instance: {
+      packagePrompt: "PINNED PROMPT\n",
+      diverged: true,
+      connectedMcpRefs: [],
+    },
+  });
+  actingUserId = viewer;
+  expect((await getDefinition(request, params)).status).toBe(403);
+  expect(
+    JSON.stringify(await (await getDetail(request, params)).json()),
+  ).not.toContain("Project-only role");
+  actingUserId = member;
   await database.pool.query(
     "UPDATE package_installs SET trust_status='untrusted' WHERE id=$1",
     [install],

@@ -30,6 +30,7 @@ import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import {
   emitDomainEvent,
@@ -45,9 +46,11 @@ import { isMaisterErrorCode } from "@/lib/errors-core";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { EXECUTION_HOST_PERMANENTLY_LOST } from "@/lib/execution-host/types";
+import { resolveRunPlacementHost } from "@/lib/execution-host/resolver";
 import { closeConditionWaitsForRun } from "@/lib/waits/close";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { authorizeFlowNodeAnswerResume } from "@/lib/services/flow-node-answer";
 import { authorizeAssignmentQuestionNodeResume } from "@/lib/specialist-assignments/flow-question";
 import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
 import {
@@ -183,8 +186,8 @@ export type StateTransitionOptions = {
   expectedCoordinator?: { nodeId: string; nodeAttemptId: string };
   recordSuccessAudit?: (db: Db) => Promise<void>;
   // ADR-166 D3: a claim transition that starts a new driver generation mints
-  // its epoch inside the CAS tx. A caller that already resolved the local host
-  // (launch-style) passes it; otherwise the memoized local host resolves here.
+  // its epoch inside the CAS tx. A caller that owns an outer transaction
+  // passes an already resolved host.
   placement?: {
     host?: ExecutionHost;
     transport?: ExecutionHostTransport;
@@ -198,13 +201,13 @@ async function mintForClaim(
   tx: Db,
   runId: string,
   reason: PlacementReason,
+  host: ExecutionHost,
   opts: StateTransitionOptions,
 ): Promise<ExecutionAssignment> {
   return mintPlacement(tx, {
     runId,
     reason: opts.placement?.reason ?? reason,
-    host: opts.placement?.host,
-    transport: opts.placement?.transport,
+    host,
   });
 }
 
@@ -314,6 +317,11 @@ export async function markResumed(
   } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
+  const host =
+    opts.placement?.host ??
+    (await resolveRunPlacementHost(db, runId, {
+      transport: opts.placement?.transport,
+    }));
 
   return await (db as { transaction: any }).transaction(
     async (tx: Db): Promise<StateTransitionResult> => {
@@ -343,7 +351,7 @@ export async function markResumed(
           runId,
           opts.undeliveredPermission,
         );
-      const assignment = await mintForClaim(tx, runId, "resume", opts);
+      const assignment = await mintForClaim(tx, runId, "resume", host, opts);
 
       if (assignment) {
         if (opts.permissionResult?.kind === "interrupted") {
@@ -375,6 +383,7 @@ export async function markResumed(
           await authorizeNodePermissionResume(tx, assignment);
           await authorizeNodeInterruptResume(tx, assignment);
           await authorizeAssignmentQuestionNodeResume(tx, assignment);
+          await authorizeFlowNodeAnswerResume(tx, assignment);
         }
       }
       await opts.recordSuccessAudit?.(tx);
@@ -399,7 +408,11 @@ export async function markResumed(
 export async function claimAgentIdleResumeInTransaction(
   tx: Db,
   runId: string,
-  opts: Pick<StateTransitionOptions, "placement" | "recordSuccessAudit"> = {},
+  opts: Pick<StateTransitionOptions, "recordSuccessAudit"> & {
+    placement: NonNullable<StateTransitionOptions["placement"]> & {
+      host: ExecutionHost;
+    };
+  },
 ): Promise<StateTransitionResult> {
   await tx
     .select({ id: runs.id })
@@ -442,7 +455,13 @@ export async function claimAgentIdleResumeInTransaction(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
-  const assignment = await mintForClaim(tx, runId, "resume", opts);
+  const assignment = await mintForClaim(
+    tx,
+    runId,
+    "resume",
+    opts.placement.host,
+    opts,
+  );
 
   await authorizeAgentPermissionResume(tx, assignment);
   await admitCompletedAgentResume(tx, assignment);
@@ -514,6 +533,11 @@ export async function markResumedFromWait(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
+  const host =
+    opts.placement?.host ??
+    (await resolveRunPlacementHost(db, runId, {
+      transport: opts.placement?.transport,
+    }));
 
   return await (db as { transaction: any }).transaction(
     async (tx: Db): Promise<StateTransitionResult> => {
@@ -663,7 +687,13 @@ export async function markResumedFromWait(
       }
 
       // The woken coordinator is a new driver generation (ADR-166 D3).
-      const assignment = await mintForClaim(tx, runId, "wait_resume", opts);
+      const assignment = await mintForClaim(
+        tx,
+        runId,
+        "wait_resume",
+        host,
+        opts,
+      );
 
       await authorizeOrchestratorActionResume(tx, assignment);
       await opts.recordSuccessAudit?.(tx);
@@ -1078,7 +1108,7 @@ export async function failResumedRun(
   const failed: boolean = await db.transaction(async (tx: Db) => {
     const rows = await tx
       .update(runs)
-      .set({ status: "Failed", endedAt: new Date() })
+      .set({ status: "Failed", endedAt: new Date(), resumeRequestedAt: null })
       .where(
         and(
           eq(runs.id, runId),
@@ -1096,6 +1126,8 @@ export async function failResumedRun(
 
     if (rows.length === 0) return false;
 
+    if (rows[0].runKind === "flow")
+      await closeFlowNodeQuestions(tx, runId, "run failed during resume");
     await releaseAssignmentForRun(tx, runId, "failed");
 
     await emitWebhookEvent({
@@ -1236,6 +1268,11 @@ export async function markReturnedToRunning(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
+  const host =
+    opts.placement?.host ??
+    (await resolveRunPlacementHost(db, runId, {
+      transport: opts.placement?.transport,
+    }));
   const returned: ExecutionAssignment | null = await db.transaction(
     async (tx: Db) => {
       const rows = await tx
@@ -1247,7 +1284,7 @@ export async function markReturnedToRunning(
       if (rows.length === 0) return null;
 
       // The returned run is re-driven by a new generation (ADR-166 D3).
-      return mintForClaim(tx, runId, "rework_return", opts);
+      return mintForClaim(tx, runId, "rework_return", host, opts);
     },
   );
 
@@ -1342,7 +1379,7 @@ export async function abandonRunInTransaction(
   const hostLost = cause?.reason === EXECUTION_HOST_PERMANENTLY_LOST;
   const rows = await tx
     .update(runs)
-    .set({ status: "Abandoned", endedAt })
+    .set({ status: "Abandoned", endedAt, resumeRequestedAt: null })
     .where(
       and(eq(runs.id, runId), inArray(runs.status,
         hostLost ? [...ABANDONABLE_STATUSES, "HumanWorking"] : [...ABANDONABLE_STATUSES])),
@@ -1358,8 +1395,10 @@ export async function abandonRunInTransaction(
 
   if (rows.length === 0) return false;
 
-  if (rows[0].projectId && rows[0].runKind === "flow")
+  if (rows[0].projectId && rows[0].runKind === "flow") {
     await closeConditionWaitsForRun(tx, runId, "run_abandoned");
+    await closeFlowNodeQuestions(tx, runId, "run abandoned");
+  }
   if (!hostLost) {
     await releaseSyncClaimOnTerminal(tx, runId, "CRASH");
     await releaseAssignmentForRun(tx, runId, "abandoned");
@@ -1471,7 +1510,7 @@ export async function crashResumedRun(
     if (current && (await currentBudgetTermination(tx, current))) return false;
     const rows = await tx
       .update(runs)
-      .set({ status: "Crashed", endedAt: new Date() })
+      .set({ status: "Crashed", endedAt: new Date(), resumeRequestedAt: null })
       .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
       .returning({
         id: runs.id,
@@ -1484,6 +1523,8 @@ export async function crashResumedRun(
 
     if (rows.length === 0) return false;
 
+    if (rows[0].runKind === "flow")
+      await closeFlowNodeQuestions(tx, runId, "resumed run crashed");
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
     await releaseAssignmentForRun(tx, runId, "crashed");
 
@@ -1611,6 +1652,7 @@ export async function crashRunningRun(
         endedAt: new Date(),
         resumeTargetStepId: sql`${runs.currentStepId}`,
         currentStepId: null,
+        resumeRequestedAt: null,
         resumeStartedAt: null,
       })
       .where(and(eq(runs.id, runId), inArray(runs.status, fromStatuses)))
@@ -1639,9 +1681,15 @@ export async function crashRunningRun(
         response: closedAnswerResponse("session_ended", closedAt),
       })
       .where(
-        and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
+        and(
+          eq(hitlRequests.runId, runId),
+          isNull(hitlRequests.respondedAt),
+          isNull(hitlRequests.flowNodeAttemptId),
+        ),
       );
 
+    if (rows[0].runKind === "flow")
+      await closeFlowNodeQuestions(tx, runId, "run crashed");
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
     await releaseAssignmentForRun(tx, runId, "crashed");
 
@@ -1745,6 +1793,8 @@ export async function crashWaitingOnChildren(
 
     if (rows.length === 0) return false;
 
+    if (rows[0].runKind === "flow")
+      await closeFlowNodeQuestions(tx, runId, "waiting run crashed");
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
     await releaseAssignmentForRun(tx, runId, "crashed");
 

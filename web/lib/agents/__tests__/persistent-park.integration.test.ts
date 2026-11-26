@@ -24,13 +24,13 @@ import {
   describe,
   expect,
   it,
-  type Mock,
   vi,
 } from "vitest";
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { countLiveRuns } from "@/lib/scheduler";
 import {
   fakeAgentExecution,
   fakeExecutionHosts,
@@ -50,20 +50,6 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 let consumeAgentSession: typeof ConsumeFn;
 let parkPersistentAgent: typeof ParkFn;
-let releaseSlotSpy: Mock<(args: unknown) => Promise<{ promotedRunId: null }>>;
-
-vi.mock("@/lib/scheduler", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
-
-  releaseSlotSpy = vi.fn(async () => ({ promotedRunId: null }));
-
-  return {
-    ...actual,
-    releaseSlotOnIdle: (args: { runId: string; db?: unknown }) =>
-      releaseSlotSpy(args),
-    promoteNextPending: vi.fn(async () => ({ promotedRunId: null })),
-  };
-});
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -87,7 +73,6 @@ let executorId: string;
 afterEach(async () => {
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "projects"`);
-  releaseSlotSpy?.mockClear();
 });
 
 async function seedProject(): Promise<void> {
@@ -193,6 +178,7 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
     await seedProject();
     const runId = await seedRunningAgent(true);
 
+    await expect(countLiveRuns(db, "agent")).resolves.toBe(1);
     await consumeAgentSession({
       db,
       execution: await fakeApi(runId, cleanExit(`sup-${runId}`)),
@@ -205,7 +191,7 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
     expect(run.status).toBe("NeedsInputIdle");
     expect(run.acpSessionId).toBe("acp-keep-me");
     expect(run.checkpointAt).not.toBeNull();
-    expect(releaseSlotSpy).toHaveBeenCalledTimes(1);
+    await expect(countLiveRuns(db, "agent")).resolves.toBe(0);
   });
 
   it("a non-persistent agent with the same exit finalizes Done, acp_session_id nulled", async () => {
@@ -223,8 +209,6 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
 
     expect(run.status).toBe("Done");
     expect(run.acpSessionId).toBeNull();
-    // The clean-Done path never routes through releaseSlotOnIdle.
-    expect(releaseSlotSpy).not.toHaveBeenCalled();
   });
 
   // ADR-166 E-EH-11: the host evicted the session for a newer driver
@@ -250,7 +234,7 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
 
     expect(run.status).toBe("Running");
     expect(run.acpSessionId).toBe("acp-keep-me");
-    expect(releaseSlotSpy).not.toHaveBeenCalled();
+    await expect(countLiveRuns(db, "agent")).resolves.toBe(1);
   });
 
   // The parkPersistentAgent CAS guard directly: Running → NeedsInputIdle is

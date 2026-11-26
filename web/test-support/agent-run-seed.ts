@@ -17,11 +17,9 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import {
-  agentProjectLinks,
   agents,
   packageInstalls,
   platformAcpRunners,
-  projectPackageAttachments,
   runSessions,
   workspaces,
 } from "@/lib/db/schema";
@@ -99,12 +97,8 @@ export async function seedAgentRun(
     packageStatus: "Installed",
     trustStatus: "trusted",
   });
-  await db.insert(projectPackageAttachments).values({
-    id: randomUUID(),
-    projectId,
-    packageInstallId: packageId,
-    packageName,
-  });
+  await db.execute(sql`INSERT INTO project_package_attachments (id,project_id,package_install_id,package_name)
+    VALUES (${randomUUID()},${projectId},${packageId},${packageName})`);
   await db.insert(agents).values({
     id: agentId,
     packageName,
@@ -123,9 +117,8 @@ export async function seedAgentRun(
     sourcePath,
     enabled: true,
   });
-  await db
-    .insert(agentProjectLinks)
-    .values({ id: randomUUID(), projectId, agentId });
+  await db.execute(sql`INSERT INTO agent_project_links (id,project_id,agent_id)
+    VALUES (${randomUUID()},${projectId},${agentId})`);
   const runner = testPlatformRunnerRow(runnerId, input.adapter);
   const snapshot = testRunnerSnapshot(runnerId, input.adapter);
 

@@ -710,7 +710,7 @@ export async function runSyncRecoverySweep(
     let records: SupervisorSessionRecord[];
 
     try {
-      records = await hosts.local().listSessionsForRun(attempt.runId);
+      records = await hosts.inventoryForRun(attempt.runId);
     } catch (error) {
       log.warn(
         {

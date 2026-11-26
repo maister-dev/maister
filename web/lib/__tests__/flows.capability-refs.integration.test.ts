@@ -36,8 +36,8 @@ nodes:
     action:
       prompt: "/aif-implement"
     settings:
-      skills:
-        - needed-skill
+      mcps:
+        - needed-mcp
     transitions:
       success: done
 `;
@@ -128,7 +128,7 @@ describe("installFlowPlugin — capability ref validation (M14 T1.4)", () => {
         workspaceRoot,
         capabilityRefIds: {
           mcp: [],
-          skill: [], // "needed-skill" absent → reject
+          skill: [], // "needed-mcp" absent → reject
           restriction: [],
           setting: [],
         },
@@ -139,7 +139,7 @@ describe("installFlowPlugin — capability ref validation (M14 T1.4)", () => {
     }
 
     expect(isMaisterError(caught)).toBe(true);
-    expect((caught as { message: string }).message).toContain("needed-skill");
+    expect((caught as { message: string }).message).toContain("needed-mcp");
   });
 
   it("installs when the ref is present in the supplied capabilityRefIds", async () => {
@@ -151,8 +151,8 @@ describe("installFlowPlugin — capability ref validation (M14 T1.4)", () => {
       flowId: "known-ref-flow",
       workspaceRoot,
       capabilityRefIds: {
-        mcp: [],
-        skill: ["needed-skill"],
+        mcp: ["needed-mcp"],
+        skill: [],
         restriction: [],
         setting: [],
       },

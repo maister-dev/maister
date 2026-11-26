@@ -80,7 +80,7 @@ reference exists here. Rows are upserted with SET/CLEAR semantics during project
 registration (`upsertCapabilitiesFromConfig`).
 
 - `capability_ref_id` — the stable id used in `maister.yaml` capability arrays
-  and in node `settings.mcps[]`, `settings.skills[]`, etc. Unique within
+  and in node `settings.mcps[]` and other registry references. Unique within
   `(project_id, source, kind)`.
 - **(Designed, ADR-129)** `material` (for `kind=mcp`) additionally carries: a
   package **requirement marker** (`origin` distinguishing a requirement from an
@@ -263,3 +263,14 @@ consolidated ERD; see [`erd.md`](erd.md) for the entity block.
 - Source (Implemented): migration `0019_m14_capability_materialization`.
 
 A registered standalone import has a [project dependency declaration](projects-domain.md) before its first materialized capability revision. The capability row owns trust and setup evidence for effective content. See [dependency installation](../system-analytics/project-dependency-installation.md).
+
+## Package and agent delivery
+
+Migration `0402` adds `project_package_attachments.scope_revision`, an integer
+starting at `1`. `project_package_mcp_scope_overrides` stores one sparse row
+per primary key `(attachment_id, ref_id)`. The attachment FK cascades. A
+required `scope` is checked against `package|project`. Migration `0408`
+requires `ref_id` to be a safe path segment of 1–128 characters. The service
+validates that the ref belongs to the attached release. Removing an
+override restores the release default. See the
+[migration sequence](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions).

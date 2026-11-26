@@ -685,7 +685,7 @@ describe("resumeCrashedRun — queued resume via scheduler (Codex F2)", () => {
     workerRunFlow.mockImplementation((id, options) =>
       enter("worker", id, options),
     );
-    const scopedProbe = vi.spyOn(hosts.local(), "listSessionsForRun");
+    const scopedProbe = vi.spyOn(hosts, "inventoryForRun");
     let worker: ReturnType<typeof startFlowContinuationWorker> | undefined;
     let scheduledResume: ReturnType<typeof driveResume> | undefined;
     const previousGrace = process.env.MAISTER_RECONCILE_GRACE_SECONDS;
