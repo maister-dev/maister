@@ -1031,6 +1031,16 @@ and its real HTTP command outcomes are qualified in T04–T05H.
 
 - [x] **T14 · Pilot / G2 (after T12–13).** Qualify the two-host matrix below and reconcile actual wire/schema versions, admin guide, metrics, test topology, deployment and error taxonomy. Validate migration/journal against latest master and reject rollback to a singleton writer while a second host owns work. Document shutdown/drain and coordinated restore. Release the pilot only for configurations matching its evidence. **Checkpoint 4:** two-host placement and recovery.
 
+  **Rebase qualification.** Production source `bfbe1b33c` passed G2 on
+  Linux arm64, Node 24.22.2 and Chrome 158.0.8127.38. Terminal event
+  `600a85ad-71c5-5c33-a91c-c1efa7bc27ea` applied once after reconnect.
+  Coordinated restore recovered both identities and the dirty Review diff.
+  The branch applied all 22 new migrations to a populated PostgreSQL
+  database on master `ce4d7a59e`, preserving its 374 ledger entries.
+  A second migration run made no changes. Web and Supervisor typechecks,
+  199 targeted cases, contracts, ADR links and ERD passed. The browser
+  and build receipts are under `/private/tmp/maister-stage-c-rebased-g2-1mtbs6z5`.
+
   **Final G2 browser receipt.** `83aeeab69` passed
   `--chrome --addressed-two-host` on the same Linux build as G1. Web, A and
   B used UIDs 1001, 1002 and 1003. A and B used private SQLite and Git stores
