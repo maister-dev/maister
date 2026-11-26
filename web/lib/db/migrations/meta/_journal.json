@@ -2703,6 +2703,13 @@
       "when": 1795692242293,
       "tag": "0389_stage-c-addressed-drop",
       "breakpoints": true
+    },
+    {
+      "idx": 390,
+      "version": "7",
+      "when": 1795692242294,
+      "tag": "0390_stage_c_retained_sync_resolver",
+      "breakpoints": true
     }
   ]
 }

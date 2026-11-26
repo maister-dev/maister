@@ -256,7 +256,10 @@ async function registerExecutionHost(
       supervisorVersion: health.version,
       adapters: [],
       ...(selected && dataPlane?.workspaceProtocol
-        ? { workspaceProtocol: dataPlane.workspaceProtocol }
+        ? {
+          workspaceProtocol: dataPlane.workspaceProtocol,
+          ...(dataPlane.workspaceSyncResolver ? { workspaceSyncResolver: dataPlane.workspaceSyncResolver } : {}),
+        }
         : {}),
       dataPlane: dataPlane
         ? {

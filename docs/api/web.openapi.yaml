@@ -9050,12 +9050,15 @@ paths:
         member. Mutually exclusive with promotion and every other lifecycle op
         (double fence).
 
-        An owned checkout on a selected supervisor supports human mechanical
-        merge and rebase onto the approved origin ref. The manager records
-        the exact HEAD and target SHA, then waits for the original host's
-        receipt. An advanced target or a conflict is a typed 409. Explicit
-        resolver and push requests require an execution profile supporting
-        those effects.
+        For an owned checkout on a selected supervisor, the manager pins the
+        original HEAD and approved target SHA. A changed target returns 409.
+        Mechanical conflict reporting returns 200 with repository-relative
+        paths and the original checkout intact. In Review an authorized
+        resolver request returns 202 after the owning supervisor records the
+        prepared conflict and the manager reserves its ACP assignment. The
+        original supervisor verifies the result and any dedicated branch
+        publication under the recorded lease. This requires host capability
+        `workspaceSyncResolver: 1`.
 
         **(ADR-181 — Implemented) Update.** The `status='Review'` arm is replaced
         by the workbench git policy (`update`): every parked status

@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "../db";
 import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 
-import { and, eq, isNull, lte, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 
 import {
   isWorkspaceTerminalPayload,
@@ -221,7 +221,7 @@ async function applyRetainedWorkspaceReceipt(
 
   if (receipt.phase === "rejected") {
     await markFailed(tx, command.id, null, { ...receipt.refusal, eventId: event.id });
-    if (receipt.operationId === "stageCSync")
+    if (receipt.operationId === "stageCSync" && !command.payload.resolver)
       await settleAddressedSyncAttempt(tx, workspace.id, receipt);
 
     return;
@@ -251,11 +251,21 @@ async function applyRetainedWorkspaceReceipt(
       receipt.result.observedTarget !== request.payload.expected.priorTarget)
       throw inconsistent();
     const { publish } = request.payload;
-    const { behind, head, publication, conflictedFiles } = receipt.result;
-    if (conflictedFiles && (request.payload.onConflict !== "report" ||
-      head !== request.payload.expected.head || behind === 0 || publication))
+    const { behind, head, publication, conflictedFiles, resolverPrepared, resolverSettlement } = receipt.result;
+    if (conflictedFiles && (!request.payload.onConflict ||
+      head !== request.payload.expected.head || behind === 0 || publication || resolverSettlement))
       throw inconsistent();
-    if ((!conflictedFiles && Boolean(publish) && behind > 0) !== Boolean(publication) ||
+    if (resolverPrepared && (!conflictedFiles || request.payload.onConflict !== "prepareResolver" ||
+      resolverPrepared.strategy !== request.payload.strategy ||
+      resolverPrepared.targetRef !== request.payload.expected.targetRef ||
+      workspaceEvidenceDigest(resolverPrepared.publish ?? null) !== workspaceEvidenceDigest(publish ?? null)))
+      throw inconsistent();
+    const action = request.payload.resolver?.action;
+    const expectedSettlement = action === "abort" ? "aborted" : action === "verify" ? "verified" : undefined;
+    if (resolverSettlement !== expectedSettlement ||
+      (resolverSettlement === "aborted" && head !== request.payload.expected.head))
+      throw inconsistent();
+    if ((!conflictedFiles && resolverSettlement !== "aborted" && Boolean(publish) && behind > 0) !== Boolean(publication) ||
       (publication && (publication.targetRef !== publish?.targetRef ||
         publication.priorTarget !== publish.priorTarget ||
         publication.observedTarget !== head)))
@@ -271,8 +281,17 @@ async function applyRetainedWorkspaceReceipt(
     ...result, eventId: event.id, outcomeSha256: receipt.outcomeSha256,
   });
   if (!transition.changed) throw inconsistent();
-  if (receipt.operationId === "stageCSync")
+  if (receipt.operationId === "stageCSync") {
+    if (receipt.result.conflictedFiles && (command.payload.resolverIntent || receipt.result.resolverPrepared)) {
+      const [attempt] = await tx.update(runSyncAttempts).set({
+        conflictedFiles: [...receipt.result.conflictedFiles], updatedAt: new Date(),
+      }).where(and(eq(runSyncAttempts.id, owner.claimId), eq(runSyncAttempts.workspaceId, workspace.id),
+        eq(runSyncAttempts.phase, "starting"))).returning({ id: runSyncAttempts.id });
+      if (!attempt) throw inconsistent();
+      return;
+    }
     await settleAddressedSyncAttempt(tx, workspace.id, receipt);
+  }
 }
 
 async function settleAddressedSyncAttempt(
@@ -283,13 +302,15 @@ async function settleAddressedSyncAttempt(
   const { claimId } = receipt.owner;
   const publication = receipt.phase === "completed" ? receipt.result.publication : undefined;
   const conflictedFiles = receipt.phase === "completed" ? receipt.result.conflictedFiles : undefined;
+  const resolverSettlement = receipt.phase === "completed" ? receipt.result.resolverSettlement : undefined;
   const [attempt] = await tx
     .update(runSyncAttempts)
     .set(receipt.phase === "completed"
-      ? { phase: conflictedFiles ? "aborted" : "succeeded", headShaAfter: receipt.result.head,
+      ? { phase: conflictedFiles || resolverSettlement === "aborted" ? "aborted" : "succeeded", headShaAfter: receipt.result.head,
           ...(conflictedFiles ? { conflictedFiles: [...conflictedFiles] } : {}), pushed: !!publication, updatedAt: new Date() }
       : { phase: "failed", errorCode: receipt.refusal.code, errorMessage: receipt.refusal.message, updatedAt: new Date() })
-    .where(and(eq(runSyncAttempts.id, claimId), eq(runSyncAttempts.workspaceId, workspaceId), eq(runSyncAttempts.phase, "starting")))
+    .where(and(eq(runSyncAttempts.id, claimId), eq(runSyncAttempts.workspaceId, workspaceId),
+      resolverSettlement ? inArray(runSyncAttempts.phase, ["starting", "agent_running", "verifying"]) : eq(runSyncAttempts.phase, "starting")))
     .returning({ id: runSyncAttempts.id });
   const [released] = await tx
     .update(workspaces)

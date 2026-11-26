@@ -341,6 +341,7 @@ export const ExecutionHostDataPlaneCapabilitiesSchema = z
   .object({
     dataPlaneVersion: z.literal("execution-host-data-plane.v1"),
     workspaceProtocol: z.tuple([z.literal(1)]).optional(),
+    workspaceSyncResolver: z.literal(1).optional(),
     eventStream: z.boolean(),
     asyncPrompt: z.boolean(),
     runtimeObjects: z.boolean(),

@@ -258,9 +258,12 @@ const syncSchema = publishSchema.extend({
     generation,
     expected: publishSchema.shape.payload.shape.expected,
     strategy: z.enum(["fastForward", "merge", "rebase"]),
-    onConflict: z.literal("report").optional(),
+    onConflict: z.enum(["report", "prepareResolver"]).optional(),
     publish: publishSchema.shape.payload.shape.expected.omit({ head: true, remoteId: true }).optional(),
-  }).strict(),
+    resolver: z.object({ commandId: z.string().uuid(), action: z.enum(["verify", "abort"]) }).strict().optional(),
+  }).strict().refine(({ onConflict, resolver, strategy }) =>
+    (!onConflict || !resolver) &&
+    (strategy !== "fastForward" || (!resolver && onConflict !== "prepareResolver"))),
 });
 const releaseSchema = publishSchema.extend({
   command: publishSchema.shape.command.extend({ kind: z.literal("workspace.release") }),

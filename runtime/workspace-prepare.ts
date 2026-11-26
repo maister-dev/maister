@@ -231,8 +231,9 @@ export type WorkspaceSyncRequest = Readonly<{
     generation: number;
     expected: CheckoutExpectation;
     strategy: "fastForward" | "merge" | "rebase";
-    onConflict?: "report";
+    onConflict?: "report" | "prepareResolver";
     publish?: Readonly<{ targetRef: string; priorTarget: string | null }>;
+    resolver?: Readonly<{ commandId: string; action: "verify" | "abort" }>;
   }>;
 }>;
 
@@ -243,6 +244,13 @@ export type WorkspaceSyncResult = Readonly<{
   observedTarget: string;
   behind: number;
   conflictedFiles?: readonly string[];
+  resolverPrepared?: Readonly<{
+    branch: string;
+    strategy: "merge" | "rebase";
+    targetRef: string;
+    publish?: WorkspaceSyncRequest["payload"]["publish"];
+  }>;
+  resolverSettlement?: "verified" | "aborted";
   publication?: Readonly<{
     targetRef: string;
     priorTarget: string | null;

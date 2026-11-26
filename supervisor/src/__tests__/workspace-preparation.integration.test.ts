@@ -1554,6 +1554,89 @@ it("C-10 syncs an exact retained target and verifies one checkout update after a
   expect(git(repo, "reflog", "show", "--format=%H", "refs/heads/feature")).toBe(`${target}\n${head}`);
 }, 30_000);
 
+it("C-10 prepares one retained resolver conflict across an interrupted host receipt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-resolver-"));
+  roots.push(root);
+  const repo = join(root, "source");
+  git(root, "init", "-b", "main", repo);
+  await writeFile(join(repo, "input.txt"), "base\n");
+  git(repo, "add", "--", "input.txt");
+  git(repo, "commit", "-m", "base");
+  const base = git(repo, "rev-parse", "HEAD");
+  git(repo, "branch", "resolution", base);
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repo }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, {
+    mode: "ownWorktree", repositoryId: "fixture", commit: base, inputDigest: "a".repeat(64),
+  });
+  if (prepared.phase !== "completed") throw new Error("resolver checkout was not prepared");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout) throw new Error("resolver checkout was not retained");
+  await writeFile(join(checkout.realPath, "input.txt"), "reviewed local\n");
+  git(checkout.realPath, "commit", "-am", "reviewed local");
+  const local = git(checkout.realPath, "rev-parse", "HEAD");
+  await writeFile(join(repo, "input.txt"), "approved upstream\n");
+  git(repo, "commit", "-am", "approved upstream");
+  const target = git(repo, "rev-parse", "HEAD");
+  const command = {
+    workspaceProtocol: 1,
+    command: { id: randomUUID(), kind: "workspace.sync", issuedAt: new Date().toISOString() },
+    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle,
+      workspaceGeneration: generation, claimId: randomUUID(), fence: 1 },
+    payload: { generation, expected: { head: local, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget: target },
+      strategy: "merge", onConflict: "prepareResolver",
+      publish: { targetRef: "refs/heads/resolution", priorTarget: base } },
+  };
+  const route = `/v1/workspaces/${handle}/sync`;
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted before the prepared conflict receipt");
+  });
+  expect((await addressedRequest(host, route, command)).status).toBe(202);
+  await vi.waitFor(() => expect(git(checkout.realPath, "rev-parse", "MERGE_HEAD")).toBe(target), { timeout: 5_000 });
+  const conflicted = await readFile(join(checkout.realPath, "input.txt"), "utf8");
+  expect(conflicted).toMatch(/<<<<<<<[\s\S]*reviewed local[\s\S]*approved upstream[\s\S]*>>>>>>>/u);
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect((await addressedRequest(restarted, route, command)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(restarted, command.command.id)).toMatchObject({
+    phase: "completed", result: { generation, head: local, observedTarget: target,
+      conflictedFiles: ["input.txt"] },
+  });
+  expect(await readFile(join(checkout.realPath, "input.txt"), "utf8")).toBe(conflicted);
+  expect(git(repo, "rev-parse", "refs/heads/main")).toBe(target);
+  expect(git(repo, "rev-parse", "refs/heads/resolution")).toBe(base);
+
+  await writeFile(join(checkout.realPath, "input.txt"), "reviewed local\napproved upstream\n");
+  git(checkout.realPath, "add", "--", "input.txt");
+  git(checkout.realPath, "commit", "-m", "Resolve both inputs");
+  const resolution = git(checkout.realPath, "rev-parse", "HEAD");
+  const verification = {
+    ...command,
+    command: { ...command.command, id: randomUUID() },
+    owner: { ...command.owner, fence: 2 },
+    payload: { ...command.payload, onConflict: undefined, resolver: { commandId: command.command.id, action: "verify" } },
+  };
+  vi.spyOn(restarted.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted after the resolved branch updated");
+  });
+  expect((await addressedRequest(restarted, route, verification)).status).toBe(202);
+  await vi.waitFor(() => expect(git(repo, "rev-parse", "refs/heads/resolution")).toBe(resolution), { timeout: 5_000 });
+  await restarted.stop();
+  hosts.splice(hosts.indexOf(restarted), 1);
+  const finalHost = await bootHost({ runtimeRoot: root });
+  hosts.push(finalHost);
+  expect((await addressedRequest(finalHost, route, verification)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(finalHost, verification.command.id)).toMatchObject({
+    phase: "completed",
+    result: { head: resolution, resolverSettlement: "verified", publication: { observedTarget: resolution } },
+  });
+  expect(git(repo, "reflog", "show", "--format=%H", "refs/heads/resolution")).toBe(`${resolution}\n${base}`);
+}, 30_000);
+
 it("C-10 preserves dirty tracked and untracked files before releasing a retained address", async () => {
   const root = await mkdtemp(join(tmpdir(), "stage-c-retained-archive-"));
   roots.push(root);

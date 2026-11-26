@@ -501,7 +501,7 @@ under the held lifecycle claim. A completed Run keeps its `Done` status.
 Repeating the same disposal returns its recorded outcome without another
 release. Conflicting disposal intents refuse.
 
-### Addressed conflict resolver (Designed)
+### Addressed conflict resolver
 
 The conflict resolver keeps three Git effects under the existing Run sync
 claim. The Web manager authorizes the attempt for an eligible Run and pins the
@@ -530,9 +530,16 @@ conflicting paths and leaves the live checkout and publication intact.
    publishes only against the approved lease and verifies the actual ref.
    After a confirmed push, reconciliation applies the retained receipt.
    It cannot restore an earlier checkout over that publication. The same
-   attempt and workspace claim settle together in PostgreSQL. Explicit
-   auto-finalization rechecks current authorization and calls the normal
-   addressed promotion boundary with the verified source and target.
+   attempt and workspace claim settle together in PostgreSQL. Migration 0390
+   requires the exact predecessor and an increasing fence. A prepared conflict
+   holds the workspace until a verified or aborted receipt is applied.
+
+The Review Update action uses this contract for human-requested resolution.
+The reviewed `ai_rebase_merge` strategy retains the approved source and
+target through resolver dispatch. With `autoFinalize`, the manager rechecks
+publication authority and calls the addressed promotion boundary with the
+verified checkout and original target SHA. Flow conflict continuations still
+require integration with their autonomous authority and wait receipts.
 
 Qualification requires a conflict on a real Git remote, one fresh ACP
 resolver, a crash before a prepared reply or before ACP create, and a restart

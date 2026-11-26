@@ -758,6 +758,16 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   publication. The owning integration passed with eight Web and six
   supervisor C-10 cases plus contract and documentation validation.
 
+  Review Update now resolves a conflict on the original supervisor. RED
+  returned 409 for an eligible resolver request. GREEN materialized the
+  pinned merge, ran one owned ACP turn, proved retirement, and verified the
+  result and branch lease. Recovery before ACP reused the prepared claim.
+  An unresolved staged merge restored the original HEAD and public ref.
+  Reviewed rebase promotion also passed with `autoFinalize`: RED refused
+  the addressed strategy and GREEN returned the resolver result and moved
+  Review to Done after the supervisor confirmed the original target lease.
+  An autonomous Flow conflict handoff still needs an addressed witness.
+
   Addressed retention GC now follows the same preservation and release
   receipts. RED found the legacy path probe on a pathless workspace. GREEN
   skipped a future deadline and kept the local reconciler out of the
@@ -1037,7 +1047,9 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Docker's exhausted volume store. It passed with a bounded disposable
   PostgreSQL tmpfs while retaining the original Ryuk lease and ownership
   assertions. The Darwin isolation lane reported 52/53 on a stable revision.
-  Its S1 Web startup timeout passed in a separate fresh-build retry.
+  Its S1 Web startup timeout passed in a separate fresh-build retry. A full
+  rerun at `f28e36dfb` passed 53/53 across seven suites and reported zero
+  invocation leaks.
 
 ### Proposed commit checkpoints
 

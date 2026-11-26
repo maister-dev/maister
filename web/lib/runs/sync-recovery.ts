@@ -1,5 +1,7 @@
 import "server-only";
 
+import { recoverAddressedSyncResolvers } from "@/lib/runs/sync-addressed-resolver";
+
 import { and, desc, eq, notInArray } from "drizzle-orm";
 import pino from "pino";
 
@@ -349,6 +351,9 @@ export async function recoverSyncAttemptOnReconcile(args: {
   const hosts = args.executionHosts ?? createExecutionHosts({ db });
   const { runId } = args;
 
+  if (await recoverAddressedSyncResolvers(db, hosts, runId))
+    return { window: args.liveSessionId ? "w2" : "w3", outcome: "noop" };
+
   const attempt = await loadActiveAttempt(db, runId);
 
   if (!attempt) {
@@ -689,13 +694,14 @@ export async function runSyncRecoverySweep(
   const now = opts.now ?? (() => new Date());
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
 
+  const cutoffMs = now().getTime() - SYNC_ATTEMPT_MAX_MINUTES * 60_000;
+  const addressed = await recoverAddressedSyncResolvers(db, hosts, undefined, new Date(cutoffMs));
   const candidates = await loadSweepCandidates(db);
 
   if (candidates.length === 0) {
-    return { candidates: 0, orphanOperationsAborted: 0, durationCapKilled: 0 };
+    return { candidates: addressed, orphanOperationsAborted: 0, durationCapKilled: 0 };
   }
 
-  const cutoffMs = now().getTime() - SYNC_ATTEMPT_MAX_MINUTES * 60_000;
   let orphanOperationsAborted = 0;
   let durationCapKilled = 0;
 
@@ -934,7 +940,7 @@ export async function runSyncRecoverySweep(
   }
 
   const summary = {
-    candidates: candidates.length,
+    candidates: candidates.length + addressed,
     orphanOperationsAborted,
     durationCapKilled,
   };

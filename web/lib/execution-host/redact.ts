@@ -70,7 +70,7 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
   "workspace.restore": (payload) => pickScalars(payload, ["generation", "checkpointId", "policy"]),
   "workspace.preserve": (payload) => pickScalars(payload, ["generation", "claimId", "fence", "disposition", "quiescenceId"]),
   "workspace.sync": (payload) => ({
-    ...pickScalars(payload, ["generation", "claimId", "fence", "strategy", "onConflict"]),
+    ...pickScalars(payload, ["generation", "claimId", "fence", "strategy", "onConflict", "resolverProbeId"]),
     expected: pickScalars(asObject(payload.expected), ["head", "remoteId", "targetRef", "priorTarget"]),
     ...(payload.publish === undefined ? {} : {
       publish: {
@@ -78,6 +78,8 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
         ...(asObject(payload.publish).priorTarget === null ? { priorTarget: null } : {}),
       },
     }),
+    ...(payload.resolver === undefined ? {} : { resolver: pickScalars(asObject(payload.resolver), ["commandId", "action"]) }),
+    ...(payload.resolverIntent === undefined ? {} : { resolverIntent: { runnerId: pickScalars(asObject(payload.resolverIntent), ["runnerId"]).runnerId ?? null } }),
   }),
   "workspace.publish": (payload) => {
     const expected = asObject(payload.expected);

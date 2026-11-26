@@ -1206,9 +1206,30 @@ async function promoteWorkspaceRun(
   }
 
   if (claim.addressedCommand || claim.resolvedMode === "publish_branch") {
-    const delivery = claim.addressedCommand
-      ? await publishAddressedDelivery(db, claim, claim.addressedCommand)
-      : await publishWorkspaceDelivery({ runId, db, claim });
+    let delivery: WorkspaceDelivery;
+    try {
+      delivery = claim.addressedCommand
+        ? await publishAddressedDelivery(db, claim, claim.addressedCommand)
+        : await publishWorkspaceDelivery({ runId, db, claim });
+    } catch (error) {
+      if (!claim.addressedCommand || claim.resolvedMode !== "ai_rebase_merge" ||
+        !isMaisterError(error) || error.details?.reason !== "sync_conflict")
+        throw error;
+      const command = await getCommand(db, claim.addressedCommand);
+      const pinned = RetainedWorkspacePublishSchema.parse(command?.payload).expected;
+      if (!pinned.priorTarget) throw error;
+      const { syncRunTarget } = await import("@/lib/runs/sync-target");
+      const result = await syncRunTarget({
+        db, runId, strategy: "rebase", agent: true, push: false,
+        actor: syncActorForPromotion(ctx, input),
+        autoFinalize: input.autoFinalize,
+        approvedPromotion: {
+          head: pinned.head, targetBranch: claim.resolvedTarget, targetSha: pinned.priorTarget,
+        },
+      });
+      if (result.outcome !== "agent_launched") throw error;
+      return { ok: true, mode: "ai_rebase_merge", pullRequestUrl: null, resolverLaunched: true };
+    }
 
     return finalizeWorkspaceDelivery({
       runId,
@@ -1892,7 +1913,7 @@ async function reserveAddressedPromotion(
   const publishesSource = branchDelivery || pullRequest;
   const integration = policy.strategy === "merge"
     ? "merge"
-    : policy.strategy === "rebase_merge" ? "rebase" : undefined;
+    : policy.strategy === "rebase_merge" || policy.strategy === "ai_rebase_merge" ? "rebase" : undefined;
   if (
     (branchDelivery
       ? run.deliveryPolicySnapshot?.strategy !== "publish_branch"

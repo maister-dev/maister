@@ -29,12 +29,15 @@ import {
   localPullRequestUrl,
 } from "../../../../supervisor/test/fixtures/local-pr-provider";
 
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { closeDb } from "@/lib/db/client";
 import {
   artifactInstances,
   executionAssignments,
   hitlRequests,
   nodeAttempts,
+  platformAcpRunners,
+  projects,
   runs,
   runSyncAttempts,
   runSessions,
@@ -48,7 +51,12 @@ import {
   addProjectMember,
   seedActiveUser,
 } from "@/test-support/librarian-seed";
-import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import {
+  applyMainMigration,
+  declareCurrentTestDatabaseWriter,
+  startMainPostgresTestDb,
+  startMainPostgresTestDbUpTo,
+} from "@/test-support/pg-container";
 import { startRealSupervisor } from "@/test-support/real-supervisor";
 
 import { mintPlacement } from "../placement";
@@ -114,7 +122,7 @@ afterEach(async () => {
     if (result.status === "rejected") throw result.reason;
 });
 
-async function prepareWorkspaceFixture(options?: { usePullRequestProvider: true }) {
+async function prepareWorkspaceFixture(options?: { usePullRequestProvider?: true; fixture?: string; fixtureArgs?: string[]; migrationTip?: string }) {
   const validation = `printf 'validation continued%s' "{{ review_comments ?? '' }}"`;
   root = await mkdtemp(join(tmpdir(), "stage-c-inherited-workspace-"));
   const repository = await initRepo(join(root, "approved-source"));
@@ -125,9 +133,11 @@ async function prepareWorkspaceFixture(options?: { usePullRequestProvider: true 
   const provider = options?.usePullRequestProvider
     ? await installLocalPullRequestProvider(root, repository)
     : null;
-  database = await startMainPostgresTestDb({
-    databaseName: "eh_inherited_workspace",
-  });
+  const databaseOptions = { databaseName: "eh_inherited_workspace" };
+  database = options?.migrationTip
+    ? await startMainPostgresTestDbUpTo(databaseOptions, options.migrationTip)
+    : await startMainPostgresTestDb(databaseOptions);
+  if (options?.migrationTip) await declareCurrentTestDatabaseWriter(database);
   const db = database.db as unknown as Db;
   session.userId = await seedActiveUser(database.db);
   const seeded = await seedGraphRun(
@@ -191,7 +201,8 @@ async function prepareWorkspaceFixture(options?: { usePullRequestProvider: true 
   vi.stubEnv("DB_URL", database.databaseUrl);
   vi.stubEnv("MAISTER_RUNTIME_ROOT", join(root, "manager-runtime"));
   supervisor = await startRealSupervisor({
-    fixture: "mock-acp-adapter-resumable.mjs",
+    fixture: options?.fixture ?? "mock-acp-adapter-resumable.mjs",
+    fixtureArgs: options?.fixtureArgs,
     fixtureAdapters: ["codex"],
     env: {
       MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({
@@ -632,6 +643,154 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
     lifecycleOperationState: "none",
     lifecycleOperationAttemptId: null,
   });
+}, 60_000);
+
+it.each(["route", "recover before prompt", "invalid resolution", "auto-finalize"] as const)(
+  "C-10 %s resolves a retained merge through one owned ACP turn and publishes the verified result",
+  async (entrypoint) => {
+  const { db, host, runId, repository, readWorkspace, supervisor: owningHost } =
+    await prepareWorkspaceFixture({
+      fixture: "mock-acp-resolve-retained-merge.mjs",
+      migrationTip: entrypoint === "recover before prompt" ? "0389_stage-c-addressed-drop" : undefined,
+      fixtureArgs: entrypoint === "invalid resolution" ? ["--leave-staged"]
+        : entrypoint === "auto-finalize" ? ["--rebase"] : undefined,
+    });
+  const initial = await readWorkspace();
+  if (!initial.executionWorkspaceId || !initial.projectId)
+    throw new Error("The resolver fixture has no project checkout");
+  const projectId = initial.projectId;
+  const checkout = privateCheckoutPath(owningHost, initial.executionWorkspaceId);
+  await writeFile(join(checkout, "README.md"), "local change\n");
+  await git(checkout, "add", "--", "README.md");
+  await git(checkout, "commit", "-m", "retained work");
+  const local = await git(checkout, "rev-parse", "HEAD");
+  const publicBranch = "resolver-review";
+  await git(repository, "config", "receive.denyCurrentBranch", "updateInstead");
+  await git(checkout, "push", "origin", `HEAD:refs/heads/${publicBranch}`);
+  await writeFile(join(repository, "README.md"), "upstream change\n");
+  await git(repository, "add", "--", "README.md");
+  await git(repository, "commit", "-m", "advance canonical target");
+  const target = await git(repository, "rev-parse", "HEAD");
+
+  const runnerId = "retained-merge-fixture";
+  await db.insert(platformAcpRunners).values(testPlatformRunnerRow(runnerId, "codex"));
+  await db.transaction(async (tx) => {
+    await tx.update(workspaces).set({ publishedBranch: publicBranch, publishedRemote: "origin", publishedAt: new Date() })
+      .where(eq(workspaces.runId, runId));
+    await tx.update(projects).set({ syncRunnerId: runnerId }).where(eq(projects.id, projectId));
+    await tx.update(runs).set({ status: "Review", reviewEnteredAt: new Date() })
+      .where(eq(runs.id, runId));
+    await releaseAssignmentForRun(tx, runId, "run_terminal");
+  });
+  startCanonicalProjectionWorker();
+
+  if (entrypoint === "recover before prompt") {
+    const previousWorkspace = await readWorkspace();
+    const previousAssignment = await getLatestAssignment(db, runId);
+    const previousCommands = await listCommandsForRun(db, runId);
+    if (!database) throw new Error("The resolver migration fixture has no database");
+    await database.db.transaction((tx) => applyMainMigration(tx, "0390_stage_c_retained_sync_resolver"));
+    expect(await readWorkspace()).toEqual(previousWorkspace);
+    expect(await getLatestAssignment(db, runId)).toEqual(previousAssignment);
+    expect(await listCommandsForRun(db, runId)).toEqual(previousCommands);
+  }
+
+  let attemptId: string;
+  if (entrypoint === "auto-finalize") {
+    const { POST } = await import("@/app/api/runs/[runId]/promote/route");
+    const { readAddressedReviewSource } = await import("@/lib/runs/review-source");
+    const { fingerprint } = await readAddressedReviewSource({ db, workspace: await readWorkspace(), signal: AbortSignal.timeout(15_000) });
+    const response = await POST(
+      new NextRequest(`http://localhost/api/runs/${runId}/promote`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deliveryPolicyOverride: { strategy: "ai_rebase_merge", push: "on_success" },
+          autoFinalize: true, reviewedTargetCommit: target,
+          reviewedSource: { head: local, fingerprint },
+        }),
+      }),
+      { params: Promise.resolve({ runId }) },
+    );
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body).toMatchObject({ mode: "ai_rebase_merge", resolverLaunched: true });
+    const [attempt] = await db.select().from(runSyncAttempts).where(eq(runSyncAttempts.runId, runId));
+    attemptId = attempt.id;
+  } else if (entrypoint !== "recover before prompt") {
+    const { POST } = await import("@/app/api/runs/[runId]/sync/route");
+    const response = await POST(
+      new NextRequest(`http://localhost/api/runs/${runId}/sync`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ strategy: "merge", agent: true, runnerId }),
+      }),
+      { params: Promise.resolve({ runId }) },
+    );
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(202);
+    expect(body).toMatchObject({ outcome: "agent_launched", conflictedFiles: ["README.md"] });
+    attemptId = body.attemptId as string;
+  } else {
+    const { syncRunTarget } = await import("@/lib/runs/sync-target");
+    const { recoverAddressedSyncResolvers } = await import("@/lib/runs/sync-addressed-resolver");
+    const hosts = createExecutionHosts({ db });
+    const before = await syncRunTarget({
+      db, runId, runnerId, strategy: "merge", actor: { type: "user", id: session.userId },
+      executionHosts: hosts, schedule: () => { /* Inject driver loss after admission. */ },
+    });
+    attemptId = before.attemptId;
+    expect(before.outcome).toBe("agent_launched");
+    expect((await listCommandsForRun(db, runId)).filter(({ kind }) => kind === "session.prompt"))
+      .toHaveLength(0);
+    await expect(db.update(workspaces).set({
+      lifecycleOperationState: "none", lifecycleOperationName: null,
+      lifecycleOperationAttemptId: null, lifecycleOperationExpectedRunStatus: null,
+      lifecycleOperationClaimedAt: null, lifecycleOperationLeaseExpiresAt: null,
+    }).where(eq(workspaces.runId, runId))).rejects.toMatchObject({
+      cause: expect.objectContaining({ constraint: "unsettled_workspace_sync" }),
+    });
+    expect(await recoverAddressedSyncResolvers(db, hosts, runId)).toBe(1);
+  }
+
+  await expect.poll(async () => {
+    const [attempt] = await db.select().from(runSyncAttempts)
+      .where(eq(runSyncAttempts.id, attemptId));
+    return attempt;
+  }, { timeout: 25_000 }).toMatchObject(entrypoint === "invalid resolution"
+    ? { phase: "aborted", mode: "agent", pushed: false, errorCode: "CONFLICT" }
+    : { phase: "succeeded", mode: "agent", pushed: entrypoint !== "auto-finalize" });
+
+  const head = await git(checkout, "rev-parse", "HEAD");
+  if (entrypoint === "invalid resolution") {
+    expect(head).toBe(local);
+    expect(await git(checkout, "show", "HEAD:README.md")).toBe("local change");
+  } else if (entrypoint === "auto-finalize") {
+    expect(await git(checkout, "rev-parse", "HEAD^")).toBe(target);
+    expect(await git(checkout, "show", "HEAD:README.md")).toBe("both changes retained");
+    await expect.poll(async () => {
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+      return run.status;
+    }, { timeout: 20_000 }).toBe("Done");
+    expect(await git(repository, "show", "main:README.md")).toBe("both changes retained");
+  } else {
+    expect(await git(checkout, "rev-list", "--parents", "-n", "1", "HEAD"))
+      .toBe(`${head} ${local} ${target}`);
+    expect(await git(checkout, "show", "HEAD:README.md")).toBe("both changes retained");
+  }
+  expect(await git(repository, "rev-parse", `refs/heads/${publicBranch}`)).toBe(entrypoint === "auto-finalize" ? local : head);
+  expect(await git(checkout, "status", "--porcelain")).toBe("");
+  expect(await readWorkspace()).toMatchObject({
+    lifecycleOperationState: "none",
+    executionHostId: host.id,
+    executionWorkspaceId: initial.executionWorkspaceId,
+  });
+  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  expect(run.status).toBe(entrypoint === "auto-finalize" ? "Done" : "Review");
+  const commands = await listCommandsForRun(db, runId);
+  expect(commands.filter(({ kind }) => kind === "session.prompt")).toEqual([
+    expect.objectContaining({ executionHostId: host.id, state: "succeeded" }),
+  ]);
 }, 60_000);
 
 it("C-10 publishes and finalizes a host-owned Run through the normal promotion route", async () => {

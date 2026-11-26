@@ -416,7 +416,15 @@ paths:
       tags: [execution-host]
       operationId: stageCSync
       summary: Sync a retained workspace to its approved Git target
-      description: The original supervisor compares the source HEAD and exact remote tip, prepares a candidate away from the live checkout, and verifies the applied result under the retained workspace fence. An optional lease publishes the candidate to the dedicated branch on the same approved remote. Sync replay verifies the original publication before applying the candidate locally.
+      description: |
+        The original supervisor compares the source HEAD and exact remote tip,
+        prepares a candidate away from the live checkout and applies it under a
+        retained workspace fence. A dedicated branch can be published under a
+        separate lease on the approved remote. A resolver may request conflict
+        preparation when health advertises `workspaceSyncResolver: 1`. The
+        verification or abort command references the completed preparation,
+        original claim, workspace generation and a higher fence. Replay reads the
+        same preparation and publication evidence.
       x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCSyncRequest
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
@@ -4717,6 +4725,10 @@ components:
           maxItems: 1
           items: { type: integer, enum: [1] }
           description: Present for an addressed manager request when approved workspace sources are configured.
+        workspaceSyncResolver:
+          type: integer
+          enum: [1]
+          description: Supports retained Git conflict preparation, verification and abort on this host.
         eventStream: { type: boolean }
         asyncPrompt: { type: boolean }
         runtimeObjects: { type: boolean }

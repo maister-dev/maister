@@ -21,7 +21,8 @@ import { publishedTarget } from "@/lib/workbench-git/publication";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { getAssignmentById } from "@/lib/execution-host/assignments";
 import { insertCommand } from "@/lib/execution-host/commands";
-import { WorkspaceSyncResultSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { RetainedWorkspaceSyncSchema, WorkspaceSyncResultSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { startAddressedSyncResolver } from "@/lib/runs/sync-addressed-resolver";
 import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
 import {
   readAddressedWorkspacePublicationTarget,
@@ -43,7 +44,7 @@ export async function syncAddressedWorkspace(input: {
 }): Promise<SyncRunOutcome> {
   const { db, operation, expectedStatus, strategy, target } = input;
   const { runId, actor } = operation;
-  const reportConflict = !(operation.agent ?? expectedStatus === "Review");
+  const wantsResolver = operation.agent ?? expectedStatus === "Review";
   if (operation.agent === true && expectedStatus !== "Review")
     throw new MaisterError(
       "PRECONDITION",
@@ -53,7 +54,7 @@ export async function syncAddressedWorkspace(input: {
   if (
     actor.type !== "user" ||
     !actor.id ||
-    operation.autoFinalize ||
+    (operation.autoFinalize && !operation.approvedPromotion) ||
     (target.kind === "published" && target.remote !== "origin")
   )
     throw new MaisterError(
@@ -140,12 +141,15 @@ export async function syncAddressedWorkspace(input: {
                     workspace.lifecycleOperationAttemptId ?? "",
                   ),
                   eq(runSyncAttempts.strategy, strategy),
+                  sql`NOT (${executionCommands.payload} ? 'resolverProbeId' OR ${executionCommands.payload} ? 'resolver')`,
                   eq(runSyncAttempts.targetRef, target.label),
                 ),
               )
           : [];
+      const originalIntent = pending && RetainedWorkspaceSyncSchema.parse(pending.command.payload).resolverIntent;
       if (pending && pending.actorId === actor.id &&
-        (pending.command.payload.onConflict === "report") === reportConflict &&
+        Boolean(originalIntent) === wantsResolver &&
+        (!originalIntent || originalIntent.runnerId === (operation.runnerId ?? null)) &&
         (operation.push === undefined || Boolean(pending.command.payload.publish) === operation.push))
         return pending.command;
       throw new MaisterError(
@@ -180,6 +184,12 @@ export async function syncAddressedWorkspace(input: {
         "The approved sync target does not exist",
         { details: { reason: "source_ref_unapproved" } },
       );
+    if (operation.approvedPromotion &&
+      (head !== operation.approvedPromotion.head ||
+       target.branch !== operation.approvedPromotion.targetBranch ||
+       priorTarget !== operation.approvedPromotion.targetSha))
+      throw new MaisterError("CONFLICT", "The approved promotion source or target changed before sync",
+        { details: { reason: "review_source_changed" } });
     let publish: { targetRef: string; priorTarget: string | null } | undefined;
     if (operation.push ?? (workspace.publishedBranch !== null || workspace.prUrl !== null)) {
       await assertNativeProjectPublication(() => tx, { ...run, projectId: run.projectId });
@@ -214,6 +224,7 @@ export async function syncAddressedWorkspace(input: {
       mode: "mechanical",
       actorType: "user",
       actorId: actor.id,
+      autoFinalize: operation.autoFinalize ?? false,
       targetRef: target.label,
       targetSha: priorTarget,
       headShaBefore: head,
@@ -248,7 +259,8 @@ export async function syncAddressedWorkspace(input: {
         fence: await nextRetainedWorkspaceFence(tx, hostId, handle),
         strategy,
         expected: { head, remoteId: run.projectId, targetRef, priorTarget },
-        ...(reportConflict ? { onConflict: "report" } : {}),
+        onConflict: "report",
+        ...(wantsResolver ? { resolverIntent: { runnerId: operation.runnerId ?? null } } : {}),
         ...(publish ? { publish } : {}),
       },
     });
@@ -271,6 +283,9 @@ export async function syncAddressedWorkspace(input: {
       "ACP_PROTOCOL",
       "The retained sync receipt is incomplete",
     );
+
+  const resolver = await startAddressedSyncResolver(db, settled, operation);
+  if (resolver) return resolver;
 
   return {
     attemptId: command.payload.claimId,

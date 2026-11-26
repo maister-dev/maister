@@ -73,8 +73,11 @@ export const RetainedWorkspaceSyncSchema = RetainedWorkspacePublishFields.omit({
   pullRequest: true,
 }).extend({
   strategy: z.enum(["fastForward", "merge", "rebase"]),
-  onConflict: z.literal("report").optional(),
+  onConflict: z.enum(["report", "prepareResolver"]).optional(),
   publish: WorkspacePublishPayloadSchema.shape.expected.omit({ head: true, remoteId: true }).optional(),
+  resolver: z.object({ commandId: z.string().uuid(), action: z.enum(["verify", "abort"]) }).strict().optional(),
+  resolverIntent: z.object({ runnerId: z.string().min(1).max(255).nullable() }).strict().optional(),
+  resolverProbeId: z.string().uuid().optional(),
 });
 const WorkspaceSyncPublicationSchema = RetainedWorkspaceSyncSchema.shape.publish.unwrap().extend({
   observedTarget: gitObject,
@@ -89,6 +92,13 @@ export const WorkspaceSyncResultSchema = z.object({
     .nonempty().max(WORKSPACE_SYNC_CONFLICT_MAX_PATHS)
     .refine((paths) => Buffer.byteLength(JSON.stringify(paths)) <= WORKSPACE_SYNC_CONFLICT_MAX_BYTES)
     .optional(),
+  resolverPrepared: z.object({
+    branch: z.string().refine((ref) => ref === "HEAD" || isWorkspaceSourceRef(ref)),
+    strategy: z.enum(["merge", "rebase"]),
+    targetRef: z.string().refine(isWorkspaceSourceRef),
+    publish: RetainedWorkspaceSyncSchema.shape.publish,
+  }).strict().optional(),
+  resolverSettlement: z.enum(["verified", "aborted"]).optional(),
   publication: WorkspaceSyncPublicationSchema.optional(),
 }).strict();
 export const WorkspacePreservePayloadSchema = z.object({

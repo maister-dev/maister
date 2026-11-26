@@ -652,8 +652,16 @@ definitions:
       strategy:
         enum: [ fastForward, merge, rebase ]
       onConflict:
-        description: Report a known mechanical conflict without changing the checkout or its publication.
-        const: report
+        description: Report a mechanical conflict or prepare the exact pinned conflict for a resolver on the original supervisor.
+        enum: [report, prepareResolver]
+      resolver:
+        description: Settle a previously prepared conflict under the same workspace generation and claim with a higher fence.
+        type: object
+        additionalProperties: false
+        required: [commandId, action]
+        properties:
+          commandId: *a3
+          action: { enum: [verify, abort] }
       publish:
         description: Optional lease for the Run's dedicated branch at the same approved remote.
         type: object
@@ -662,6 +670,19 @@ definitions:
         properties:
           targetRef: { $ref: "#/definitions/GitRef" }
           priorTarget: *a7
+    allOf:
+      - if: { required: [resolver] }
+        then:
+          properties:
+            onConflict: false
+            strategy: { enum: [merge, rebase] }
+      - if:
+          required: [onConflict]
+          properties:
+            onConflict: { const: prepareResolver }
+        then:
+          properties:
+            strategy: { enum: [merge, rebase] }
   PublishPayload:
     type: object
     additionalProperties: false
@@ -872,6 +893,28 @@ definitions:
         minItems: 1
         maxItems: 256
         items: { type: string, minLength: 1, maxLength: 4096 }
+      resolverPrepared:
+        description: The original branch binding and approval preserved before materializing the exact Git conflict.
+        type: object
+        additionalProperties: false
+        required: [branch, strategy, targetRef]
+        properties:
+          branch:
+            anyOf:
+              - const: HEAD
+              - $ref: "#/definitions/GitRef"
+          strategy: { enum: [merge, rebase] }
+          targetRef: { $ref: "#/definitions/GitRef" }
+          publish:
+            type: object
+            additionalProperties: false
+            required: [targetRef, priorTarget]
+            properties:
+              targetRef: { $ref: "#/definitions/GitRef" }
+              priorTarget: *a7
+      resolverSettlement:
+        description: Whether the owning supervisor verified the resolved checkout or restored the original clean checkout.
+        enum: [verified, aborted]
       publication:
         description: Verified resulting public ref when a nontrivial sync requested publication.
         type: object

@@ -104,7 +104,7 @@ function retainedWorkspaceEnvelope(
 export function retainedWorkspaceOperationRequest(command: ExecutionCommand, hostKey: string): WorkspaceRetainedRequest {
   const identity = { id: command.id, issuedAt: command.createdAt.toISOString() };
   if (command.kind === "workspace.sync") {
-    const { claimId, fence, ...payload } = RetainedWorkspaceSyncSchema.parse(command.payload);
+    const { claimId, fence, resolverIntent: _intent, resolverProbeId: _probe, ...payload } = RetainedWorkspaceSyncSchema.parse(command.payload);
     return { ...retainedWorkspaceEnvelope(command, hostKey, { ...payload, claimId, fence }),
       command: { ...identity, kind: command.kind }, payload };
   }

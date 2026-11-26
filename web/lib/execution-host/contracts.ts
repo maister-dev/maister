@@ -59,6 +59,7 @@ export type HostHealth =
 export type ExecutionHostDataPlaneCapabilities = {
   dataPlaneVersion: "execution-host-data-plane.v1";
   workspaceProtocol?: [1];
+  workspaceSyncResolver?: 1;
   eventStream: boolean;
   asyncPrompt: boolean;
   runtimeObjects: boolean;

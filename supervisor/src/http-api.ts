@@ -2012,7 +2012,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
     reply.status(200).send({
       ...capabilities,
-      ...(canPrepare ? { workspaceProtocol: [1] } : {}),
+      ...(canPrepare ? { workspaceProtocol: [1], workspaceSyncResolver: 1 } : {}),
     });
   });
 

@@ -16,6 +16,18 @@ export class WorkspaceCandidateConflict extends SupervisorError {
   }
 }
 
+export async function readWorkspaceConflictPaths(git: readonly string[]): Promise<readonly string[]> {
+  const conflicts = await executeWorkspaceGitBytes([...git, "diff", "-z", "--name-only", "--diff-filter=U"]);
+  if (!conflicts.length) return [];
+  const paths = conflicts.toString("utf8").split("\0").slice(0, -1);
+  if (paths.length > WORKSPACE_SYNC_CONFLICT_MAX_PATHS ||
+    paths.some((path) => path.length > WORKSPACE_SYNC_CONFLICT_MAX_PATH_LENGTH) ||
+    Buffer.byteLength(JSON.stringify(paths)) > WORKSPACE_SYNC_CONFLICT_MAX_BYTES ||
+    !Buffer.from(paths.join("\0") + "\0", "utf8").equals(conflicts))
+    throw syncConflict("sync_conflict", "The conflict report exceeds its supported path or byte limit");
+  return paths;
+}
+
 export function syncConflict(
   reason:
     | "non_fast_forward"
@@ -124,22 +136,8 @@ export async function makeSyncCandidate(
 
       return await executeWorkspaceGit([...isolated, "rev-parse", "HEAD"]);
     } catch (error) {
-      const conflicts = await executeWorkspaceGitBytes([
-        ...isolated,
-        "diff",
-        "-z",
-        "--name-only",
-        "--diff-filter=U",
-      ]);
-      if (conflicts.length) {
-        const paths = conflicts.toString("utf8").split("\0").slice(0, -1);
-        if (paths.length > WORKSPACE_SYNC_CONFLICT_MAX_PATHS ||
-          paths.some((path) => path.length > WORKSPACE_SYNC_CONFLICT_MAX_PATH_LENGTH) ||
-          Buffer.byteLength(JSON.stringify(paths)) > WORKSPACE_SYNC_CONFLICT_MAX_BYTES ||
-          !Buffer.from(paths.join("\0") + "\0", "utf8").equals(conflicts))
-          throw syncConflict("sync_conflict", "The conflict report exceeds its supported path or byte limit");
-        throw new WorkspaceCandidateConflict(paths);
-      }
+      const paths = await readWorkspaceConflictPaths(isolated);
+      if (paths.length) throw new WorkspaceCandidateConflict(paths);
       throw error;
     } finally {
       await executeWorkspaceGit([
