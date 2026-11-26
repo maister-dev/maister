@@ -12130,8 +12130,10 @@ paths:
         an archive failure leaves the run in `Review`, retryable through the
         plain `archive` route — no extra idempotency marker. Body is empty; run
         kind, project, session, and paths are server-derived. Requires
-        `requireProjectAction("recoverRun")` (authorized once for the combined
-        operation).
+        `requireProjectAction("recoverRun")`. For an addressed workspace the
+        original supervisor must prove assignment retirement before preservation
+        and release. An authorized repeat after removal returns the recorded
+        archive with `idempotent: true` and `supervisorStopped: false`.
       operationId: stopArchiveRunWorkbench
       parameters:
         - name: runId
@@ -12178,7 +12180,10 @@ paths:
         durable before the drop, so a drop failure leaves the run in `Review`,
         retryable through the plain `drop` route. Body is empty; run kind,
         project, session, and paths are server-derived. Requires
-        `requireProjectAction("recoverRun")` (authorized once).
+        `requireProjectAction("recoverRun")`. For an addressed workspace the
+        original supervisor must prove assignment retirement before preservation
+        and release. An authorized repeat after removal returns the recorded
+        drop with `idempotent: true` and `supervisorStopped: false`.
       operationId: stopDropRunWorkbench
       parameters:
         - name: runId

@@ -779,6 +779,12 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   checkout once on its supervisor, and returned the original result on
   repeat. The addressed workspace and legacy lifecycle suites passed 17
   integrations. Migration 0389 extends the immutable disposal guards.
+
+  The combined Stop and Archive and Stop and Drop routes now retire the
+  addressed assignment before preservation. The Stop and Drop integration
+  verifies the requesting actor and that preservation and release cite the
+  retired assignment. A repeated request previously returned 503 after
+  removal. It now returns the recorded disposition with HTTP 200.
 - [x] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
 
   The admin host list now identifies the durable registration bound to the
@@ -1024,6 +1030,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   source, 18 owning integration and migration cases and the 148-test
   supervisor A/B lane passed. The local master journal was an unchanged
   prefix through 0368, with the candidate finishing at 0389.
+
+  The two local Web A/B shards reported 380/381 and 344/346. The Agent
+  terminal-recovery and Flow permission-acknowledgement cases passed targeted
+  retries with their original limits. O-reaper failed before readiness in
+  Docker's exhausted volume store. It passed with a bounded disposable
+  PostgreSQL tmpfs while retaining the original Ryuk lease and ownership
+  assertions. The Darwin isolation lane reported 52/53 on a stable revision.
+  Its S1 Web startup timeout passed in a separate fresh-build retry.
 
 ### Proposed commit checkpoints
 

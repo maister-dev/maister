@@ -53,7 +53,7 @@ import { startRealSupervisor } from "@/test-support/real-supervisor";
 import { mintPlacement } from "../placement";
 import { ensureLocalExecutionHost } from "../registrar";
 import { getCommand, insertCommand } from "../commands";
-import { releaseAssignmentForRun } from "../assignments";
+import { getLatestAssignment, releaseAssignmentForRun } from "../assignments";
 import { createExecutionHosts } from "../client";
 import { canonicalLifecycleProjector } from "../events/lifecycle-projector";
 import {
@@ -1098,6 +1098,43 @@ it("C-10 Drop preserves dirty retained work before abandoning the Run", async ()
   expect(commands.filter(({ kind }) => kind === "workspace.release")).toHaveLength(1);
 }, 60_000);
 
+it.each([
+  { operation: "stop-drop", disposition: "drop", runStatus: "Abandoned" },
+  { operation: "stop-archive", disposition: "archive", runStatus: "Review" },
+] as const)("C-10 $operation retires the addressed assignment before preserving its checkout", async ({ operation, disposition, runStatus }) => {
+  const { db, runId, readWorkspace, supervisor: owningHost } = await prepareWorkspaceFixture();
+  const { executionWorkspaceId: handle } = await readWorkspace();
+  if (!handle) throw new Error("The Stop and Drop fixture has no checkout");
+  const checkout = privateCheckoutPath(owningHost, handle);
+  await writeFile(join(checkout, "stop-draft.txt"), "retained during stop\n");
+  await db.update(runs).set({ status: "Running" }).where(eq(runs.id, runId));
+  startCanonicalProjectionWorker();
+  const { POST } = operation === "stop-drop"
+    ? await import("@/app/api/runs/[runId]/stop-drop/route")
+    : await import("@/app/api/runs/[runId]/stop-archive/route");
+  const send = () => POST(
+    new NextRequest(`http://localhost/api/runs/${runId}/${operation}`, { method: "POST" }),
+    { params: Promise.resolve({ runId }) },
+  );
+  const response = await send();
+  const result = await response.json();
+  expect(response.status, JSON.stringify(result)).toBe(200);
+  expect(result).toMatchObject({ operation: disposition, runStatus, workspaceRemoved: true });
+  const commands = await listCommandsForRun(db, runId);
+  const preserved = commands.find(({ kind }) => kind === "workspace.preserve");
+  const released = commands.find(({ kind }) => kind === "workspace.release");
+  const assignment = await getLatestAssignment(db, runId);
+  expect(assignment).toMatchObject({ state: "released", addressedStopRequestedBy: session.userId });
+  expect(preserved).toMatchObject({ state: "succeeded", executionAssignmentId: assignment?.id });
+  expect(released).toMatchObject({
+    state: "succeeded", executionAssignmentId: assignment?.id, payload: { dispositionId: preserved?.id },
+  });
+  const replay = await send();
+  const replayed = await replay.json();
+  expect(replay.status, JSON.stringify(replayed)).toBe(200);
+  expect(replayed).toMatchObject({ idempotent: true, runStatus });
+}, 60_000);
+
 it("C-10 projects a publication from the historical owner and holds removal until the outcome is verified", async () => {
   const {
     db,
@@ -1230,10 +1267,11 @@ it("C-09 keeps the same prepared checkout and reuses its checkpoint after a new 
   await expect(
     reserveWorkspaceWorkload(db, { ...workload, assignmentId: initial.id }),
   ).rejects.toMatchObject({ code: "CONFLICT" });
-  await settle(
-    (await reserveWorkspaceWorkload(db, { ...workload, assignmentId: next.id }))
-      .id,
-  );
+  const edit = await reserveWorkspaceWorkload(db, { ...workload, assignmentId: next.id });
+  await settle(edit.id);
+  expect(await getCommand(db, edit.id)).toMatchObject({
+    result: { processOutcome: "exited", exitCode: 0, quiescence: "proved" },
+  });
   expect(await patchOf(workspace)).toContain("+after handoff");
   const restore = await reserveWorkspaceGitOperation(db, {
     runId,

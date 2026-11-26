@@ -2589,6 +2589,25 @@ export async function discardWorkbenchForToken(
   return removeWorkbenchForCtx(runId, ctx, deps, "discard");
 }
 
+async function stopForAddressedDisposal(
+  runId: string,
+  userId: string,
+  authorize: WorkbenchLifecycleDeps["authorize"],
+): Promise<{
+  client: ExecutionDb;
+  workspace: Workspace;
+  supervisorStopped: boolean;
+} | null> {
+  const client = db();
+  const workspace = await findAddressedWorkbench(client, runId);
+  if (!workspace) return null;
+  await authorize(requireRunProjectId(workspace.projectId, runId), "recoverRun");
+  if (workspace.removedAt) return { client, workspace, supervisorStopped: false };
+  const { stopRunForUser } = await import("@/lib/runs/stop");
+  const { supervisorStopped } = await stopRunForUser(userId, runId);
+  return { client, workspace, supervisorStopped };
+}
+
 // POST /api/runs/{runId}/stop-archive — all workspace-backed run kinds. Stop
 // commits the parked status first; an archive failure leaves the run retryable.
 export async function stopThenArchive(
@@ -2598,6 +2617,22 @@ export async function stopThenArchive(
   const deps = depsFromOptions(options);
 
   const sessionUser = await deps.requireActiveSession();
+
+  if (!options?.deps) {
+    const stopped = await stopForAddressedDisposal(
+      runId,
+      sessionUser.id,
+      deps.authorize,
+    );
+    if (stopped) {
+      const { client, workspace, supervisorStopped } = stopped;
+      const receipt = await disposeAddressedWorkbench(client, workspace, {
+        kind: "archive",
+        actorUserId: sessionUser.id,
+      });
+      return { ...addressedArchiveResult(runId, receipt), supervisorStopped };
+    }
+  }
 
   const ctx = await deps.loadContext(runId);
 
@@ -2620,6 +2655,24 @@ export async function stopThenDrop(
   const deps = depsFromOptions(options);
 
   const sessionUser = await deps.requireActiveSession();
+
+  if (!options?.deps) {
+    const stopped = await stopForAddressedDisposal(
+      runId,
+      sessionUser.id,
+      deps.authorize,
+    );
+    if (stopped) {
+      const { client, workspace, supervisorStopped } = stopped;
+      const drop = await removeAddressedWorkbench(
+        client,
+        workspace,
+        "drop",
+        sessionUser.id,
+      );
+      return { ...drop, supervisorStopped };
+    }
+  }
 
   const ctx = await deps.loadContext(runId);
 
