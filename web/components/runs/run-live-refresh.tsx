@@ -108,7 +108,41 @@ export function RunLiveRefresh({
     if (liveness === "live" && !hasWorkbench) seenRef.current = null;
   }, [liveness, runId, hasWorkbench]);
 
+  const prevTriggerRef = useRef<{
+    runId: string;
+    live: boolean;
+    hasWorkbench: boolean;
+    eventCount: number;
+    liveness: string;
+  } | null>(null);
+
   useEffect(() => {
+    const prev = prevTriggerRef.current;
+
+    prevTriggerRef.current = {
+      runId,
+      live,
+      hasWorkbench,
+      eventCount,
+      liveness,
+    };
+
+    const settledInWorkbench =
+      prev !== null &&
+      hasWorkbench &&
+      prev.hasWorkbench &&
+      prev.runId === runId &&
+      prev.live &&
+      !live &&
+      prev.eventCount === eventCount &&
+      prev.liveness === liveness;
+
+    if (settledInWorkbench) {
+      seenMetadataRef.current = metadataRef.current;
+
+      return;
+    }
+
     if ((live || hasWorkbench) && (eventCount > 0 || liveness === "live")) {
       triggerRefresh();
     }

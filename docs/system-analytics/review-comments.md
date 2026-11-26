@@ -244,6 +244,16 @@ flowchart TD
 
 Approve is soft-warned (never blocked) while open threads exist.
 
+## Anchor line indexing and logging (Implemented)
+
+Review-comment anchor extraction and placement parse unified-diff hunks via
+`parseDiffLineIndex` (`web/lib/diff/line-index.ts`, sharing C-quoted path and
+section splitting with `web/lib/diff/sections.ts`), completely decoupled from
+Shiki WASM and `@git-diff-view/core`. `LOG_LEVEL`-gated `pino` loggers
+(`diff-line-index` and `review-comments-diff`) emit `DEBUG` timings/counts and
+`WARN` on malformed hunk headers or unavailable diff sources, never logging
+comment bodies.
+
 ## Expectations
 
 All bullets are **(Implemented)** — the as-built acceptance contract.
@@ -264,13 +274,10 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
   and no deferred created or released.
 - POST (root) MUST validate `(filePath, side, line)` against the
   server-recomputed scope-selected current diff parsed via pure unified-diff
-  hunk indexing (`lib/diff/line-index.ts` `parseDiffLineIndex` — byte-identical
-  `{ oldLines, newLines }` lookups decoupled from Shiki WASM and
-  `@git-diff-view/core`, Implemented) and store the server-extracted
-  `line_content`; a `truncated` diff or a file absent from the parsed diff →
-  409 `PRECONDITION`. `diff-line-index` and `review-comments-diff` log `DEBUG`
-  timings/counts and `WARN` on malformed hunk headers or unavailable sources
-  (`LOG_LEVEL`-gated `pino`, never logging comment bodies).
+  hunk indexing (`lib/diff/line-index.ts` `parseDiffLineIndex`, byte-identical
+  `{ oldLines, newLines }` lookups without Shiki WASM) and store the
+  server-extracted `line_content`; a `truncated` diff or a file absent from the
+  parsed diff → 409 `PRECONDITION`.
 - GET is exactly one DB query for the run's comments plus AT MOST one
   in-memory diff parse — no N+1; zero threads short-circuit without
   computing a diff, an unavailable diff source (removed/GC'd workspace)
@@ -353,7 +360,7 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
 - **Summary absent or empty while open threads exist** → the composed value
   is the threads section alone (no leading blank line); zero threads + no
   summary → nothing is injected (pre-feature behavior).
-- **Unified-diff hunk parsing edge cases (`EDGE-PERF-09`, Implemented)** →
+- **Unified-diff hunk parsing edge cases (Implemented)** →
   `parseDiffLineIndex` (`web/lib/diff/line-index.ts`) preserves CRLF `\r` and
   significant trailing spaces on data lines, handles `\ No newline at end of
   file` on old/new/both sides, decodes C-quoted paths (`web/lib/diff/sections.ts`),

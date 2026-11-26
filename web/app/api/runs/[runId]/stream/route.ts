@@ -30,6 +30,7 @@ import { executionEvents, runs } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { keepaliveMs } from "@/lib/runs/keepalive-config";
 import {
+  contextUsageOnlySql,
   shouldReplayRunStream,
   streamReadyEvent,
 } from "@/lib/runs/stream-options";
@@ -118,17 +119,43 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
 
 async function refreshRunStatus(
   runId: string,
-): Promise<{ status: string; currentStepId: string | null } | null> {
+  includeGoverned: boolean,
+): Promise<{
+  status: string;
+  currentStepId: string | null;
+  isGoverned?: boolean;
+} | null> {
   const db = getDb() as unknown as Db;
+  const baseColumns = {
+    status: runs.status,
+    currentStepId: runs.currentStepId,
+  };
   const rows = await db
-    .select({ status: runs.status, currentStepId: runs.currentStepId })
+    .select(
+      includeGoverned
+        ? {
+            ...baseColumns,
+            isGoverned: runDisclosureGovernedSql({
+              id: runs.id,
+              knowledgeAccess: runs.knowledgeAccess,
+              resultContract: runs.resultContract,
+            }),
+          }
+        : baseColumns,
+    )
     .from(runs)
     .where(eq(runs.id, runId));
   const row = rows[0];
 
   if (!row) return null;
 
-  return { status: row.status, currentStepId: row.currentStepId };
+  return includeGoverned
+    ? {
+        status: row.status,
+        currentStepId: row.currentStepId,
+        isGoverned: "isGoverned" in row && row.isGoverned === true,
+      }
+    : { status: row.status, currentStepId: row.currentStepId };
 }
 
 // Durable events that DO advance Last-Event-ID. We deliberately do NOT
@@ -201,21 +228,10 @@ async function readCanonicalRunEvents(
   const columns = context
     ? {
         ...baseColumns,
-        contextUsageOnly: sql<boolean>`COALESCE(CASE
-          WHEN ${executionEvents.eventType} = 'session.update' THEN
-            jsonb_typeof(${executionEvents.payload}) = 'object'
-            AND (
-              ${executionEvents.payload}->>'contextType' = 'usage_update'
-              OR (
-                jsonb_typeof(${executionEvents.payload}->'update') = 'object'
-                AND ${executionEvents.payload}->'update'->>'sessionUpdate' = 'usage_update'
-              )
-            )
-          WHEN ${executionEvents.eventType} = 'session.line' THEN
-            jsonb_typeof(${executionEvents.payload}) = 'object'
-            AND ${executionEvents.payload}->'contextUsageOnly' = 'true'::jsonb
-          ELSE false
-        END, false)`,
+        contextUsageOnly: contextUsageOnlySql({
+          eventType: executionEvents.eventType,
+          payload: executionEvents.payload,
+        }),
       }
     : baseColumns;
 
@@ -410,6 +426,7 @@ function canonicalRunEventStream(input: {
           let runStatus: {
             status: string;
             currentStepId: string | null;
+            isGoverned?: boolean;
           } | null = null;
 
           if (
@@ -417,9 +434,16 @@ function canonicalRunEventStream(input: {
             Date.now() - lastStatusCheck >= STATUS_REFRESH_MS
           ) {
             lastStatusCheck = Date.now();
-            runStatus = await refreshRunStatus(input.run.id);
+            runStatus = await refreshRunStatus(input.run.id, !governed);
             checkedStatus = true;
             if (!runStatus) break;
+            if (!governed && runStatus.isGoverned) {
+              governed = true;
+              log.debug(
+                { runId: input.run.id },
+                "run promoted to governed mid-stream",
+              );
+            }
           }
 
           const isTerminal =
@@ -427,11 +451,16 @@ function canonicalRunEventStream(input: {
           const hasOutgoing = events.length > 0 || contextChanged;
           let verifiedThisIteration = false;
 
-          if (!governed && hasOutgoing && (await isRunGoverned(input.run.id))) {
+          if (
+            !governed &&
+            !checkedStatus &&
+            hasOutgoing &&
+            (await isRunGoverned(input.run.id))
+          ) {
             governed = true;
             log.debug(
               { runId: input.run.id },
-              "[FIX:vault-enroll] run promoted to governed mid-stream",
+              "run promoted to governed mid-stream",
             );
           }
 
@@ -596,13 +625,10 @@ export async function GET(
   req: NextRequest,
   { params }: RouteParams,
 ): Promise<Response> {
-  const { runId } = await params;
-  const replayEvents = shouldReplayRunStream(req.url);
-
   // Auth-first: authenticate AND clear the forced-password-change gate BEFORE
-  // the run lookup, so unauthenticated / must-change callers cannot probe run
-  // existence (404-vs-403 shape). Project membership is enforced below once
-  // projectId is derived from the run row.
+  // reading params or looking up the run, so unauthenticated / must-change
+  // callers cannot probe run existence (404-vs-403 shape). Project membership
+  // is enforced below once projectId is derived from the run row.
   let sessionUser: { id: string };
 
   try {
@@ -618,6 +644,9 @@ export async function GET(
     }
     throw err;
   }
+
+  const { runId } = await params;
+  const replayEvents = shouldReplayRunStream(req.url);
 
   const run = await loadRunLite(runId);
 

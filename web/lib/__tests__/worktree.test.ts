@@ -81,9 +81,13 @@ import {
   branchExists,
   deliveryCommitStats,
   deliveryHistoryStats,
+  diffChangeStats,
+  diffNameStatus,
   diffRange,
+  diffRangeBounded,
   diffRunWorkspace,
   diffWorkingTree,
+  diffWorkingTreeChangeStats,
   findTargetMergeByRunId,
   listBranches,
   promoteLocalMerge,
@@ -887,10 +891,11 @@ describe("single-spawn bounded git diff", () => {
     for (const call of calls) {
       const diffIdx = call.args.indexOf("diff");
 
-      expect(call.args.slice(diffIdx, diffIdx + 4)).toEqual([
+      expect(call.args.slice(diffIdx, diffIdx + 5)).toEqual([
         "diff",
         "--no-color",
         "--no-ext-diff",
+        "--no-textconv",
         "--end-of-options",
       ]);
     }
@@ -902,5 +907,172 @@ describe("single-spawn bounded git diff", () => {
     expect(wtDiff.text).not.toMatch(/\u001b\[/);
     expect(wsDiff.text).toBe(rangeDiff.text);
     expect(wtDiff.text).toContain("+hello world updated");
+  });
+
+  it("handles spaced paths, Cyrillic filenames, and directory-move renames via -z across diffNameStatus, diffChangeStats, diffWorkingTree, and diffWorkingTreeChangeStats", async () => {
+    await mkdir(join(repo, "dir"), { recursive: true });
+    await mkdir(join(repo, "src"), { recursive: true });
+    await writeFile(
+      join(repo, "foo.ts"),
+      "export const a = 1;\nexport const b = 2;\nexport const c = 3;\n",
+    );
+    await writeFile(
+      join(repo, "src", "bar.ts"),
+      "export const x = 1;\nexport const y = 2;\nexport const z = 3;\n",
+    );
+    await writeFile(join(repo, "dir", "my file.ts"), "export const s = 1;\n");
+    await writeFile(join(repo, "привет мир.ts"), "export const ru = 1;\n");
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-m", "seed special paths and rename sources"]);
+    const baseCommit = await resolveBaseCommit({
+      projectRepoPath: repo,
+      baseRef: "main",
+    });
+
+    await git(repo, ["checkout", "-b", "unicode-and-renames"]);
+    // Move root -> subdir (`foo.ts` -> `src/foo.ts`) and subdir -> root (`src/bar.ts` -> `bar.ts`)
+    // with small edits so additions/deletions are non-zero.
+    await git(repo, ["mv", "foo.ts", "src/foo.ts"]);
+    await writeFile(
+      join(repo, "src", "foo.ts"),
+      "export const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const d = 4;\n",
+    );
+    await git(repo, ["mv", "src/bar.ts", "bar.ts"]);
+    await writeFile(
+      join(repo, "bar.ts"),
+      "export const x = 1;\nexport const y = 2;\n",
+    );
+    await writeFile(
+      join(repo, "dir", "my file.ts"),
+      "export const s = 2;\nexport const s2 = 3;\n",
+    );
+    await writeFile(
+      join(repo, "привет мир.ts"),
+      "export const ru = 2;\nexport const ru2 = 3;\n",
+    );
+    await git(repo, ["add", "."]);
+    await git(repo, [
+      "commit",
+      "-m",
+      "rename across dirs and edit unicode/spaced",
+    ]);
+
+    const nameStatus = await diffNameStatus({
+      worktreePath: repo,
+      baseRef: baseCommit,
+      branch: "unicode-and-renames",
+    });
+    const stats = await diffChangeStats({
+      worktreePath: repo,
+      baseRef: baseCommit,
+      branch: "unicode-and-renames",
+    });
+
+    expect(nameStatus).toEqual(
+      expect.arrayContaining([
+        { path: "src/foo.ts", oldPath: "foo.ts", status: "R" },
+        { path: "bar.ts", oldPath: "src/bar.ts", status: "R" },
+        { path: "dir/my file.ts", status: "M" },
+        { path: "привет мир.ts", status: "M" },
+      ]),
+    );
+    expect(stats).toEqual(
+      expect.arrayContaining([
+        {
+          path: "src/foo.ts",
+          oldPath: "foo.ts",
+          status: "R",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+        {
+          path: "bar.ts",
+          oldPath: "src/bar.ts",
+          status: "R",
+          additions: 0,
+          deletions: 1,
+          binary: false,
+        },
+        {
+          path: "dir/my file.ts",
+          status: "M",
+          additions: 2,
+          deletions: 1,
+          binary: false,
+        },
+        {
+          path: "привет мир.ts",
+          status: "M",
+          additions: 2,
+          deletions: 1,
+          binary: false,
+        },
+      ]),
+    );
+
+    // Working-tree paths (including untracked Cyrillic file) via diffWorkingTree
+    // and diffWorkingTreeChangeStats against baseCommit.
+    await writeFile(join(repo, "новый файл.ts"), "export const fresh = 1;\n");
+    const wtDiff = await diffWorkingTree(repo, baseCommit);
+    const wtStats = await diffWorkingTreeChangeStats(repo, baseCommit);
+
+    expect(wtDiff.nameStatus).toEqual(
+      expect.arrayContaining([
+        { path: "src/foo.ts", oldPath: "foo.ts", status: "R" },
+        { path: "bar.ts", oldPath: "src/bar.ts", status: "R" },
+        { path: "dir/my file.ts", status: "M" },
+        { path: "привет мир.ts", status: "M" },
+        { path: "новый файл.ts", status: "A" },
+      ]),
+    );
+    expect(wtStats).toEqual(
+      expect.arrayContaining([
+        {
+          path: "src/foo.ts",
+          oldPath: "foo.ts",
+          status: "R",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+        {
+          path: "bar.ts",
+          oldPath: "src/bar.ts",
+          status: "R",
+          additions: 0,
+          deletions: 1,
+          binary: false,
+        },
+        {
+          path: "новый файл.ts",
+          status: "A",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ]),
+    );
+  });
+
+  it("rejects negative or non-finite maxBytes with MaisterError(CONFIG)", async () => {
+    const baseCommit = await resolveBaseCommit({
+      projectRepoPath: repo,
+      baseRef: "main",
+    });
+
+    for (const badMax of [
+      -1,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      await expect(
+        diffRangeBounded(
+          { worktreePath: repo, baseRef: baseCommit, branch: "main" },
+          badMax,
+        ),
+      ).rejects.toMatchObject({ code: "CONFIG" });
+    }
   });
 });

@@ -7,6 +7,7 @@ import { Button } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 import { useRunStream } from "@/lib/use-run-stream";
 
@@ -22,8 +23,11 @@ export function AssignmentLiveRefresh({
   runId: string | null;
 }): ReactElement {
   const t = useTranslations("specialistAssignments");
+  const tRun = useTranslations("run");
   const router = useRouter();
-  const { eventCount, liveness } = useRunStream(runId, { retain: false });
+  const { eventCount, liveness, reconnect } = useRunStream(runId, {
+    retain: false,
+  });
   const [unavailable, setUnavailable] = useState(false);
   const scope = `${assignmentId}:${runId ?? ""}`;
   const [trackedScope, setTrackedScope] = useState(scope);
@@ -80,6 +84,18 @@ export function AssignmentLiveRefresh({
 
   return (
     <div className="flex items-center gap-2">
+      {runId !== null && liveness !== "closed" ? (
+        <RunStreamLiveness
+          labels={{
+            disconnected: tRun("streamDisconnected"),
+            live: tRun("streamLive"),
+            reconnect: tRun("streamReconnect"),
+            reconnecting: tRun("streamReconnecting"),
+          }}
+          liveness={liveness}
+          onReconnect={reconnect}
+        />
+      ) : null}
       {unavailable ? (
         <p className="text-xs text-mute" role="status">
           {t("progressUnavailable")}

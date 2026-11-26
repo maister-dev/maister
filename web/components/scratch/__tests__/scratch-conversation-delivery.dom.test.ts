@@ -28,14 +28,23 @@ const TestIntlProvider = NextIntlClientProvider as ComponentType<{
 
 const { router, stream } = vi.hoisted(() => ({
   router: { refresh: vi.fn() },
-  stream: { eventCount: 0 },
+  stream: {
+    eventCount: 0,
+    liveness: "live" as
+      "connecting" | "live" | "reconnecting" | "disconnected" | "closed",
+    reconnect: vi.fn(),
+  },
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => router,
 }));
 vi.mock("@/lib/use-run-stream", () => ({
-  useRunStream: () => ({ eventCount: stream.eventCount }),
+  useRunStream: () => ({
+    eventCount: stream.eventCount,
+    liveness: stream.liveness,
+    reconnect: stream.reconnect,
+  }),
 }));
 vi.mock("@/components/scratch/scratch-composer", () => ({
   ScratchComposer: (props: {
@@ -160,6 +169,8 @@ function notice(): string {
 beforeEach(() => {
   router.refresh.mockReset();
   stream.eventCount = 0;
+  stream.liveness = "live";
+  stream.reconnect.mockReset();
   dialogStatus = "Running";
   runStatus = "Running";
   recoverRefusal = null;
@@ -483,5 +494,40 @@ describe("scratch live refresh and recovery", () => {
     await act(async () => {});
 
     expect(router.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders stream liveness and wires Reconnect on disconnected live runs, hiding when terminal", async () => {
+    await render();
+    await act(async () => {});
+
+    expect(
+      container.querySelector('[data-testid="run-stream-liveness"]')
+        ?.textContent,
+    ).toBe(en.run.streamLive);
+
+    stream.liveness = "disconnected";
+    await render();
+    expect(
+      container.querySelector('[data-testid="run-stream-liveness"]')
+        ?.textContent,
+    ).toBe(en.run.streamDisconnected);
+
+    const reconnectButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === en.run.streamReconnect,
+    );
+
+    expect(reconnectButton).toBeDefined();
+    act(() => {
+      reconnectButton?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    expect(stream.reconnect).toHaveBeenCalledOnce();
+
+    stream.liveness = "closed";
+    await refresh("Done", "Done");
+    expect(
+      container.querySelector('[data-testid="run-stream-liveness"]'),
+    ).toBeNull();
   });
 });

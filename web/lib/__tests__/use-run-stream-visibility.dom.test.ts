@@ -233,4 +233,129 @@ describe("useRunStream visibility pause/resume", () => {
     act(() => vi.advanceTimersByTime(500));
     expect(MockRunEventSource.instances).toHaveLength(countBeforeSwitch + 2);
   });
+
+  it("resets state and avoids duplicating replayed events on run-1 -> null -> run-1 round-trip with retain: true", () => {
+    act(() => renderHarness("run-1", true));
+    const first = MockRunEventSource.instances[0];
+
+    act(() => first.onopen?.());
+    act(() => first.emit({ type: "session.update", runSequence: "9" }, "9"));
+    expect(latest?.events).toHaveLength(1);
+    expect(latest?.eventCount).toBe(1);
+    expect(latest?.lastEventId).toBe("9");
+
+    // Exhaust retries so run-1 ends in disconnected + error state.
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(500));
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(2000));
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    expect(latest?.liveness).toBe("disconnected");
+    expect(latest?.error).toBe("eventsource error");
+
+    // Clear runId to null.
+    act(() => renderHarness(null, true));
+    expect(latest?.liveness).toBe("closed");
+    expect(latest?.error).toBeNull();
+    expect(latest?.lastEventId).toBeNull();
+    expect(latest?.events).toHaveLength(0);
+    expect(latest?.eventCount).toBe(0);
+
+    const countBeforeReturn = MockRunEventSource.instances.length;
+
+    // Return to run-1: state must be clean and replayed events must not duplicate.
+    act(() => renderHarness("run-1", true));
+    expect(MockRunEventSource.instances).toHaveLength(countBeforeReturn + 1);
+    expect(latest?.liveness).toBe("connecting");
+    expect(latest?.error).toBeNull();
+    expect(latest?.lastEventId).toBeNull();
+    expect(latest?.events).toHaveLength(0);
+    expect(latest?.eventCount).toBe(0);
+
+    const returned = MockRunEventSource.instances.at(-1)!;
+
+    expect(new URL(returned.url).searchParams.get("lastEventId")).toBeNull();
+
+    act(() => returned.onopen?.());
+    act(() => returned.emit({ type: "session.update", runSequence: "9" }, "9"));
+    expect(latest?.liveness).toBe("live");
+    expect(latest?.events).toHaveLength(1);
+    expect(latest?.eventCount).toBe(1);
+    expect(latest?.lastEventId).toBe("9");
+  });
+
+  it("resets liveness, error, cursor, and retry budget on run-1 -> null -> run-1 round-trip with retain: false", () => {
+    act(() => renderHarness("run-1", false));
+    const first = MockRunEventSource.instances[0];
+
+    act(() => first.onopen?.());
+    act(() => first.emit({ type: "session.update", runSequence: "15" }, "15"));
+    expect(latest?.eventCount).toBe(1);
+    expect(latest?.lastEventId).toBe("15");
+
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(500));
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(2000));
+    act(() => MockRunEventSource.instances.at(-1)?.onerror?.());
+    expect(latest?.liveness).toBe("disconnected");
+    expect(latest?.error).toBe("eventsource error");
+
+    act(() => renderHarness(null, false));
+    expect(latest?.liveness).toBe("closed");
+    expect(latest?.error).toBeNull();
+    expect(latest?.lastEventId).toBeNull();
+    expect(latest?.eventCount).toBe(0);
+
+    const countBeforeReturn = MockRunEventSource.instances.length;
+
+    act(() => renderHarness("run-1", false));
+    expect(MockRunEventSource.instances).toHaveLength(countBeforeReturn + 1);
+    expect(latest?.liveness).toBe("connecting");
+    expect(latest?.error).toBeNull();
+    expect(latest?.lastEventId).toBeNull();
+    expect(latest?.eventCount).toBe(0);
+
+    const returned = MockRunEventSource.instances.at(-1)!;
+
+    expect(new URL(returned.url).searchParams.get("lastEventId")).toBeNull();
+
+    // Fresh retry budget: first error schedules a 500ms retry.
+    act(() => returned.onerror?.());
+    expect(latest?.liveness).toBe("reconnecting");
+    act(() => vi.advanceTimersByTime(500));
+    expect(MockRunEventSource.instances).toHaveLength(countBeforeReturn + 2);
+  });
+
+  it("suppresses hidden onerror reconnects and keeps onShow idempotent when already connected", () => {
+    act(() => renderHarness("run-guard", false));
+    expect(MockRunEventSource.instances).toHaveLength(1);
+    const first = MockRunEventSource.instances[0];
+
+    act(() => first.onopen?.());
+    expect(latest?.liveness).toBe("live");
+
+    // Spurious visible visibilitychange while already connected does not open a duplicate socket.
+    act(() => transitionVisibility("visible"));
+    expect(MockRunEventSource.instances).toHaveLength(1);
+    expect(first.close).not.toHaveBeenCalled();
+
+    // An error firing after the document became hidden closes cleanly without scheduling hidden reconnects.
+    setVisibilityState("hidden");
+    act(() => first.onerror?.());
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(latest?.error).toBeNull();
+    expect(latest?.liveness).toBe("live");
+
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(MockRunEventSource.instances).toHaveLength(1);
+
+    // Returning to visible reconnects cleanly.
+    act(() => transitionVisibility("visible"));
+    expect(MockRunEventSource.instances).toHaveLength(2);
+  });
 });

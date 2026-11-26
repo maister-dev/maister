@@ -78,6 +78,7 @@ export function useRunStream(
 ): UseRunStreamResult {
   const retain = options?.retain ?? true;
   const replay = options?.replay ?? retain;
+  const [prevRunId, setPrevRunId] = useState<string | null>(runId);
   const [state, setState] = useState<RunStreamState>(() =>
     initialRunStreamState(runId),
   );
@@ -85,6 +86,13 @@ export function useRunStream(
   const [attemptContext, setAttemptContext] = useState<ContextSnapshot | null>(
     null,
   );
+
+  if (prevRunId !== runId) {
+    setPrevRunId(runId);
+    setState(initialRunStreamState(runId));
+    setContext(null);
+    setAttemptContext(null);
+  }
   const sourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
   const lifecycleRef = useRef(initialRunStreamLifecycle);

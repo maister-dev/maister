@@ -157,6 +157,25 @@ function scanQuotedTokenEnd(input: string, start: number): number {
   return -1;
 }
 
+// Unified diff `--- `/`+++ ` headers append a literal `\t` (or `\t<timestamp>`)
+// after paths containing spaces or in non-git patches. Strip only a trailing
+// literal tab outside C-quoted paths so escaped `\t` inside quotes stays intact.
+function stripUnifiedHeaderTrailingTab(raw: string): string {
+  if (raw.startsWith('"')) {
+    const endQuote = scanQuotedTokenEnd(raw, 0);
+
+    if (endQuote !== -1 && raw[endQuote + 1] === "\t") {
+      return raw.slice(0, endQuote + 1);
+    }
+
+    return raw;
+  }
+
+  const tabIdx = raw.indexOf("\t");
+
+  return tabIdx === -1 ? raw : raw.slice(0, tabIdx);
+}
+
 function parseDiffGitTokens(headerLine: string): {
   oldToken?: string;
   newToken?: string;
@@ -238,7 +257,7 @@ export function extractHeaderBodyLines(section: string): string[] {
     const lineEnd = nl === -1 ? section.length : nl;
     const line = section.slice(pos, lineEnd);
 
-    if (line.startsWith("@@")) break;
+    if (line.startsWith("@@") || line === "GIT binary patch") break;
     lines.push(line);
     if (line.startsWith("+++ ")) break;
     if (nl === -1) break;
@@ -259,7 +278,7 @@ export function parsePath(
   for (const line of bodyLines) {
     if (line.startsWith("@@")) break;
     if (line.startsWith("+++ ")) {
-      const candidate = line.slice(4);
+      const candidate = stripUnifiedHeaderTrailingTab(line.slice(4));
 
       if (candidate !== "/dev/null") {
         plusPath = repoRelPath(candidate);
@@ -269,7 +288,7 @@ export function parsePath(
     } else if (line.startsWith("copy to ")) {
       renameToPath = unescapeGitQuotedPath(line.slice("copy to ".length));
     } else if (line.startsWith("--- ")) {
-      const candidate = line.slice(4);
+      const candidate = stripUnifiedHeaderTrailingTab(line.slice(4));
 
       if (candidate !== "/dev/null") {
         minusPath = repoRelPath(candidate);
@@ -300,7 +319,7 @@ export function parseOldPath(
     } else if (line.startsWith("copy from ")) {
       renameFromPath = unescapeGitQuotedPath(line.slice("copy from ".length));
     } else if (line.startsWith("--- ")) {
-      const candidate = line.slice(4);
+      const candidate = stripUnifiedHeaderTrailingTab(line.slice(4));
 
       if (candidate !== "/dev/null") {
         minusPath = repoRelPath(candidate);

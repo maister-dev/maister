@@ -7956,10 +7956,13 @@ paths:
             **(Implemented)** Opt-in flag to include the raw unified `diff` string
             in the JSON response. When omitted, `diff` is omitted from the
             response while `files` and `perFile` are served (using the shared
-            `32 MiB` LRU prepared-diff cache — bounded by the UTF-8 byte length
-            of cached `preparedJson` strings, with a `16 MiB` single-entry cap
-            and parsed `prepared` objects retained alongside for SSR hits — when
-            immutable refs match).
+            `lib/diff/cache.ts` LRU prepared-diff cache — bounded by a `32 MiB`
+            total byte cap, a `16 MiB` single-entry cap on the UTF-8 byte length
+            of cached `preparedJson` strings, and a `DIFF_CACHE_MAX_ENTRIES = 256`
+            entry cap, with parsed `prepared` objects retained alongside for SSR
+            hits — keyed by immutable commit SHAs, `review:<fingerprint>`, or a
+            content digest hashing `(scopeKey, diff, truncated, nameStatus)` to
+            prevent cross-tenant collisions or stale `files[]` on truncated diffs).
             When `raw=1`, raw `diff` is read from git while cached `files` and
             pre-serialized `perFile` are still reused.
       responses:
@@ -7993,6 +7996,11 @@ paths:
                         additions: 2
                         deletions: 1
                     perFile: []
+        "400":
+          description: Invalid `?scope=` query value (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -10524,8 +10532,8 @@ paths:
         Body is a shape-discriminated union: a ROOT comment
         (`{filePath, side, line, body}`) or a REPLY (`{parentId, body}`).
         For a root, the anchor is validated against the server-recomputed
-        diff (the same `diffRunWorkspace` + `lib/diff/prepare.ts` source the
-        view renders) and `lineContent` is extracted server-side — the client
+        diff (the same `diffRunWorkspace` + `lib/diff/line-index.ts` line-index
+        model matching the view) and `lineContent` is extracted server-side — the client
         never supplies it. A `truncated` diff, a `filePath` absent from the
         parsed diff, or a `line` absent on the named side → 409
         `PRECONDITION`. For a reply, `parentId` must resolve to a ROOT
@@ -14285,10 +14293,11 @@ paths:
         a runtime event file, or live supervisor state.
 
         Use the standard SSE `Last-Event-ID` header (or `?lastEventId=N`
-        query string fallback) to resume after disconnect, or `?replay=false` to
-        start at the current durable tail with `session.stream_ready`. Terminal
-        states (`Done`, `Abandoned`, `Failed`, `Crashed`) close the
-        stream cleanly after draining trailing events.
+        query string fallback) to resume after disconnect, or set `?replay=` to
+        `"false"`, `"0"`, or `"live"` (case-insensitive; any other value replays
+        from sequence zero) to start at the current durable tail with
+        `session.stream_ready`. Terminal states (`Done`, `Abandoned`, `Failed`,
+        `Crashed`) close the stream cleanly after draining trailing events.
 
         Canonical frames contain `type`, `eventId`, `runSequence`, `occurredAt`,
         and `hostSessionId`. On a context opt-in stream, usage-only frames
@@ -14310,15 +14319,15 @@ paths:
         - name: Last-Event-ID
           in: header
           required: false
-          schema: { type: string }
+          schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
         - name: lastEventId
           in: query
           required: false
-          schema: { type: integer, minimum: 0 }
+          schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
         - name: replay
           in: query
           required: false
-          description: Set to `"false"`, `"0"`, or `"live"` to start at the current durable tail and emit `session.stream_ready`; any other value (or omission) replays from sequence zero without returning 4xx.
+          description: Set to `"false"`, `"0"`, or `"live"` (case-insensitive) to start at the current durable tail and emit `session.stream_ready`; any other value (or omission) replays from sequence zero without returning 4xx.
           schema: { type: string }
         - name: context
           in: query
@@ -14333,6 +14342,11 @@ paths:
               schema:
                 type: string
                 enum: [text/event-stream]
+        "400":
+          description: Invalid, negative, leading-zero, or overlong `Last-Event-ID`/`lastEventId` cursor (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           $ref: "#/components/responses/Precondition"
         "401":
@@ -14343,8 +14357,9 @@ paths:
         "403":
           description: |
             Caller is not a `viewer` or above for the run's project
-            (`UNAUTHORIZED`), or the authenticated account must change its
-            password first (`PASSWORD_CHANGE_REQUIRED`).
+            (`UNAUTHORIZED`), the account is inactive (`ACCOUNT_INACTIVE`), or
+            the authenticated account must change its password first
+            (`PASSWORD_CHANGE_REQUIRED`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -19845,21 +19860,23 @@ paths:
   /api/librarian/stream:
     get:
       tags: [librarian]
-      summary: (ADR-185 — Designed) SSE — the caller's librarian conversation stream
+      summary: (ADR-185 — Implemented) SSE — the caller's librarian conversation stream
       description: |
-        (Designed — ADR-185, `LCV-12`.) Requires an active session, checked as
+        (Implemented — ADR-185, `LCV-12`.) Requires an active session, checked as
         the FIRST await. Addressed by the SESSION USER: it emits only the
         owner's conversation, and there is no parameter naming a user or a
         conversation.
 
         A server-side poll of durable tables — 500 ms while a turn runs, 2 s
-        when idle; the stream closes after five quiet minutes. Frames are
-        pointers, not payloads: `librarian.message`, `librarian.turn`,
-        `librarian.indicator` and `librarian.reset` name what changed, and the
-        client refetches it. Every durable frame's SSE `id` is the
-        conversation's monotonic `seq`; the standard `Last-Event-ID` header, or
-        the `?lastEventId=` fallback, resumes strictly after it. A heartbeat
-        every 15 s carries no `id`. Frame schemas live in
+        while enabled and idle, and 30 s while disabled and idle; the stream
+        closes after five quiet minutes. Frames are pointers, not payloads:
+        `librarian.message`, `librarian.turn`, `librarian.indicator`,
+        `librarian.reset`, `librarian.settings`, and `librarian.work` name what
+        changed, and the client refetches it. Every durable conversation frame's
+        SSE `id` is the conversation's monotonic `seq`; the standard
+        `Last-Event-ID` header, or the `?lastEventId=` fallback, resumes
+        strictly after it. `librarian.settings`, `librarian.work`, and the
+        15 s heartbeat carry no `id`. Frame schemas live in
         `async/librarian-stream.asyncapi.yaml`.
 
         The run stream supplies a responding state while the turn is active;
@@ -34613,7 +34630,7 @@ components:
             (Implemented, ADR-066) Per-file syntax payload for the client diff
             renderer (`@git-diff-view/react`): the file's repo-relative `path`,
             resolved `fileLang`, and a server-built `bundle` (Shiki-highlighted
-            `DiffFile.getBundle()` output) hydrated on the client with no
+            `DiffFile._getFullBundle()` output) hydrated on the client with no
             client-side highlighting. Any single file exceeding
             `maxLineToIgnoreSyntax` (`2,000` changed/syntax lines) is downgraded
             individually to a zero-Shiki monochrome plaintext bundle

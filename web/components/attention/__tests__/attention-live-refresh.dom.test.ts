@@ -457,6 +457,20 @@ describe("app attention refresh", () => {
     const shared = AttentionEventSource.sources[0];
 
     expect(new URL(shared.url).pathname).toBe("/api/attention/stream");
+
+    // While transiently connecting under AttentionStreamProvider, TaskLaunchIntentStatus
+    // does not duplicate StatusBar's indicator.
+    const statusRegion = container.querySelector(
+      '[data-testid="task-launch-intent-status"]',
+    );
+
+    expect(
+      container.querySelectorAll('[data-testid="run-stream-liveness"]'),
+    ).toHaveLength(1);
+    expect(
+      statusRegion?.querySelector('[data-testid="run-stream-liveness"]'),
+    ).toBeNull();
+
     act(() => shared.onopen?.());
     act(() => shared.tick(["work"]));
     expect(router.refresh).toHaveBeenCalledOnce();
@@ -464,10 +478,6 @@ describe("app attention refresh", () => {
 
     // While live under AttentionStreamProvider, TaskLaunchIntentStatus does not
     // duplicate StatusBar's "Live" pill.
-    const statusRegion = container.querySelector(
-      '[data-testid="task-launch-intent-status"]',
-    );
-
     expect(
       container.querySelectorAll('[data-testid="run-stream-liveness"]'),
     ).toHaveLength(1);

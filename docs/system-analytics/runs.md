@@ -1536,9 +1536,11 @@ promotion policy.
   reconnecting on `"visible"` with one catch-up tick; retained transcript
   streams (`retain: true`) keep their socket open so in-memory event arrays do
   not drop frames across background tab switches. Streaming UI consumers
-  (`LiveRunInspector`, `ScratchConversation`, `AssignmentLiveRefresh`) use
-  leading-coalescing refresh throttling (`lib/runs/coalesced-refresh.ts`)
-  instead of trailing `clearTimeout` debounces. The run shell owns the shared
+  (`LiveRunInspector`, `ScratchConversation`, `AssignmentLiveRefresh`,
+  `RunLiveRefresh`, `FlowGraphView`, `WorkbenchGitPanel`, `StudyLab`) use
+  leading-coalescing refresh throttling (`web/lib/runs/coalesced-refresh.ts`
+  via `web/lib/runs/use-coalesced-refresh.ts`) instead of trailing
+  `clearTimeout` debounces. The run shell owns the shared
   Flow-run subscription used by refresh, inspector, transcript, and graph, and
   `ScratchRunDetailLayout` owns the shared `<RunStreamProvider>` for scratch
   runs; Studio owns its independent subscription.

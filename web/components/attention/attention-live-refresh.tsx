@@ -10,6 +10,10 @@ import { useRouter } from "next/navigation";
 import { useAttentionReviewWatch } from "@/components/attention/attention-review-watch";
 import { useSharedAttentionStream } from "@/components/attention/attention-stream-provider";
 import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
+import {
+  isDocumentHidden,
+  subscribeDocumentVisibility,
+} from "@/lib/sse-visibility";
 
 /**
  * Keeps the app shell and current page fresh from the attention stream.
@@ -38,27 +42,19 @@ export function AttentionLiveRefresh({
   const [visibilityRev, setVisibilityRev] = useState(0);
   const seenReviewResync = useRef(0);
 
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const onVisibilityChange = (): void => {
-      if (document.visibilityState !== "hidden") {
-        setVisibilityRev((rev) => rev + 1);
-      }
-    };
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, []);
+  useEffect(
+    () =>
+      subscribeDocumentVisibility({
+        onHide: () => {},
+        onShow: () => {
+          setVisibilityRev((rev) => rev + 1);
+        },
+      }),
+    [],
+  );
 
   useEffect(() => {
-    if (
-      (typeof document !== "undefined" &&
-        document.visibilityState === "hidden") ||
-      seenReviewResync.current === reviewResync
-    ) {
+    if (isDocumentHidden() || seenReviewResync.current === reviewResync) {
       return;
     }
     seenReviewResync.current = reviewResync;
@@ -67,8 +63,7 @@ export function AttentionLiveRefresh({
 
   useEffect(() => {
     if (
-      (typeof document !== "undefined" &&
-        document.visibilityState === "hidden") ||
+      isDocumentHidden() ||
       refreshing ||
       shellTick === 0 ||
       shellTick === seenRef.current

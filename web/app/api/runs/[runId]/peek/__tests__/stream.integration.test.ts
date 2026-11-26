@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import Ajv from "ajv";
-import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { parse } from "yaml";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -18,6 +18,7 @@ import {
   subscribePeekChanges,
   type PeekHint,
 } from "@/lib/runs/peek-wake";
+import { contextUsageOnlySql } from "@/lib/runs/stream-options";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 const session = vi.hoisted(() => ({ user: null as SessionUser | null }));
 const readModelSpies = vi.hoisted(() => ({
@@ -552,7 +553,7 @@ it("peek triggers omit to_jsonb, filter pending_gap at WHEN and preserve executi
   }
 });
 
-it("FIX-REPARENT: reparented grandchild to another root is NOT dropped by foreign_root_run and emits peek.changed", async () => {
+it("reparenting a grandchild to another root is not dropped by foreign_root_run and emits peek.changed", async () => {
   const grandchild = await seedRun(child, projectId, root);
   const otherRoot = await seedRun(null, projectId, null);
   const response = await streamGet(
@@ -595,7 +596,7 @@ it("FIX-REPARENT: reparented grandchild to another root is NOT dropped by foreig
   }
 });
 
-it("FIX-PENDING-KEY: same-burst node_attempts + execution_events on a non-selected descendant does NOT lose peek.changed", async () => {
+it("same-burst node_attempts and execution_events on a non-selected descendant preserve peek.changed", async () => {
   const grandchild = await seedRun(child, projectId, root);
   const blockerRoot = await seedRun(null, projectId, null);
   const response = await streamGet(
@@ -659,7 +660,7 @@ it("FIX-PENDING-KEY: same-burst node_attempts + execution_events on a non-select
   }
 });
 
-it("FIX-GOVERNED-PEEK: governed run bypasses 2,500 ms auth coalesce on transcript hints and revokes immediately", async () => {
+it("governed run bypasses 2,500 ms auth coalesce on transcript hints and revokes immediately", async () => {
   await database.pool.query(
     `UPDATE runs
         SET knowledge_access = '{"schemaVersion":1,"state":"complete","generation":1,"restrictions":[]}'::jsonb
@@ -703,7 +704,225 @@ it("FIX-GOVERNED-PEEK: governed run bypasses 2,500 ms auth coalesce on transcrip
   }
 });
 
-it("FIX-SQL-JSONB: real Postgres handles malformed execution_events JSONB payloads with zero 22P02 errors", async () => {
+it("burst of >128 unrelated hints from another project does not overflow pending or emit peek.resync", async () => {
+  const otherProject = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO projects(id,slug,name,repo_path,main_branch,branch_prefix,maister_yaml_path,task_key) VALUES($1,$2,'Noisy',$3,'main','maister/','/tmp/maister.yaml',$4)",
+    [
+      otherProject,
+      `noisy-${otherProject}`,
+      `/tmp/noisy-${otherProject}`,
+      `N${otherProject.replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+    ],
+  );
+
+  const response = await streamGet(
+    new NextRequest(
+      `http://localhost/api/runs/${root}/peek/stream?selected=${child}`,
+    ),
+    { params: Promise.resolve({ runId: root }) },
+  );
+
+  expect(response.status).toBe(200);
+  const reader = response.body!.getReader();
+
+  try {
+    expect(await frame(reader)).toEqual({
+      type: "peek.ready",
+      anchorRunId: root,
+      selectedRunId: child,
+      selectionState: "ready",
+    });
+
+    readModelSpies.authorizePeekRun.mockClear();
+    readModelSpies.peekPath.mockClear();
+
+    // Deliver 135 distinct top-level run hints in a single transaction flush (>128 cap).
+    await database.pool.query(
+      `INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,parent_run_id,root_run_id,agent_workspace)
+       SELECT gen_random_uuid()::text,$1,'agent','Running','v1','revision',NULL,NULL,'none'
+         FROM generate_series(1, 135)`,
+      [otherProject],
+    );
+
+    // Barrier transcript hint on selected child arrives next with no spurious peek.resync.
+    await database.pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content) VALUES($1,$2,1,'assistant','after noisy burst')",
+      [randomUUID(), child],
+    );
+
+    expect(await frame(reader)).toEqual({
+      type: "run.changed",
+      runId: child,
+      kind: "transcript",
+    });
+    expect(readModelSpies.authorizePeekRun).toHaveBeenCalledTimes(0);
+    expect(readModelSpies.peekPath).toHaveBeenCalledTimes(0);
+  } finally {
+    await reader.cancel();
+  }
+});
+
+it("intermediate governed run on anchor -> mid -> selected enforces immediate pre-emit disclosure revocation", async () => {
+  const midProject = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO projects(id,slug,name,repo_path,main_branch,branch_prefix,maister_yaml_path,task_key) VALUES($1,$2,'Mid',$3,'main','maister/','/tmp/maister.yaml',$4)",
+    [
+      midProject,
+      `mid-${midProject}`,
+      `/tmp/mid-${midProject}`,
+      `M${midProject.replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+    ],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,user_id,project_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), userId, midProject],
+  );
+
+  const mid = await seedRun(root, midProject, root);
+  const leaf = await seedRun(mid, projectId, root);
+
+  await database.pool.query(
+    `UPDATE runs
+        SET knowledge_access = '{"schemaVersion":1,"state":"complete","generation":1,"restrictions":[]}'::jsonb
+      WHERE id = $1`,
+    [mid],
+  );
+
+  const response = await streamGet(
+    new NextRequest(
+      `http://localhost/api/runs/${root}/peek/stream?selected=${leaf}`,
+    ),
+    { params: Promise.resolve({ runId: root }) },
+  );
+
+  expect(response.status).toBe(200);
+  const reader = response.body!.getReader();
+
+  try {
+    expect(await frame(reader)).toEqual({
+      type: "peek.ready",
+      anchorRunId: root,
+      selectedRunId: leaf,
+      selectionState: "ready",
+    });
+
+    // Revoke membership on the intermediate governed run's project well inside 2,500 ms.
+    await database.pool.query(
+      "DELETE FROM project_members WHERE user_id=$1 AND project_id=$2",
+      [userId, midProject],
+    );
+
+    // Emit a transcript hint on ungoverned leaf (would bypass auth for 2.5s if mid weren't tracked).
+    await database.pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content) VALUES($1,$2,1,'assistant','leaf after mid revoke')",
+      [randomUUID(), leaf],
+    );
+    await database.pool.query("UPDATE runs SET status='Review' WHERE id=$1", [
+      root,
+    ]);
+
+    const frames = [
+      await frame(reader),
+      await frame(reader),
+      await frame(reader),
+    ];
+
+    expect(frames[0]).toEqual({ type: "peek.selection_unavailable" });
+    expect(frames).toContainEqual({
+      type: "run.changed",
+      runId: root,
+      kind: "summary",
+    });
+    expect(frames).toContainEqual({ type: "peek.changed" });
+    expect(frames).not.toContainEqual(expect.objectContaining({ runId: leaf }));
+  } finally {
+    await reader.cancel();
+  }
+});
+
+it("updating run_id on execution_events and run_messages notifies both old and new runs", async () => {
+  const targetRun = await seedRun(root, projectId, root);
+  const watched = new Set([child, targetRun]);
+  const hints: PeekHint[] = [];
+  const release = await subscribePeekChanges(
+    (hint) => {
+      if (watched.has(hint.runId)) hints.push(hint);
+    },
+    () => {},
+  );
+
+  try {
+    const eventId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO execution_events(id,source,source_key,run_id,run_sequence,event_type,payload_schema,payload,occurred_at,received_at,ingest_disposition) VALUES($1,'manager',$1,$2,1,'session.update','maister.session.update.v1','{}',now(),now(),'accepted')",
+      [eventId, child],
+    );
+    await vi.waitFor(() => expect(hints).toHaveLength(1));
+    hints.length = 0;
+
+    await database.pool.query(
+      "UPDATE execution_events SET run_id=$1 WHERE id=$2",
+      [targetRun, eventId],
+    );
+    await vi.waitFor(() => expect(hints).toHaveLength(2));
+    expect(hints).toContainEqual({
+      source: "execution_events",
+      topic: "execution",
+      runId: targetRun,
+      parentRunId: null,
+      previousParentRunId: null,
+      rootRunId: null,
+    });
+    expect(hints).toContainEqual({
+      source: "execution_events",
+      topic: "execution",
+      runId: child,
+      parentRunId: null,
+      previousParentRunId: null,
+      rootRunId: null,
+    });
+
+    hints.length = 0;
+    const messageId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO run_messages(id,run_id,sequence,role,content) VALUES($1,$2,1,'assistant','movable')",
+      [messageId, child],
+    );
+    await vi.waitFor(() => expect(hints).toHaveLength(1));
+    hints.length = 0;
+
+    await database.pool.query("UPDATE run_messages SET run_id=$1 WHERE id=$2", [
+      targetRun,
+      messageId,
+    ]);
+    await vi.waitFor(() => expect(hints).toHaveLength(2));
+    expect(hints).toContainEqual({
+      source: "run_messages",
+      topic: "transcript",
+      runId: targetRun,
+      parentRunId: null,
+      previousParentRunId: null,
+      rootRunId: null,
+    });
+    expect(hints).toContainEqual({
+      source: "run_messages",
+      topic: "transcript",
+      runId: child,
+      parentRunId: null,
+      previousParentRunId: null,
+      rootRunId: null,
+    });
+  } finally {
+    await release();
+  }
+});
+
+it("shared contextUsageOnly SQL predicate handles malformed JSONB and SQL NULL payloads in real Postgres with zero 22P02 errors", async () => {
   const cases: Array<{
     seq: number;
     eventType: string;
@@ -737,49 +956,61 @@ it("FIX-SQL-JSONB: real Postgres handles malformed execution_events JSONB payloa
     {
       seq: 5,
       eventType: "session.line",
-      payloadSql: `'{"contextUsageOnly": "true"}'::jsonb`,
+      payloadSql: `NULL`,
       expected: false,
     },
     {
       seq: 6,
       eventType: "session.line",
+      payloadSql: `'{"contextUsageOnly": "true"}'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 7,
+      eventType: "session.line",
       payloadSql: `'{"contextUsageOnly": true}'::jsonb`,
       expected: true,
     },
     {
-      seq: 7,
+      seq: 8,
       eventType: "session.update",
       payloadSql: `'{"update": 123}'::jsonb`,
       expected: false,
     },
     {
-      seq: 8,
+      seq: 9,
       eventType: "session.update",
       payloadSql: `'{"update": {"sessionUpdate": "usage_update"}}'::jsonb`,
       expected: true,
     },
     {
-      seq: 9,
+      seq: 10,
       eventType: "session.update",
       payloadSql: `'{"contextType": "usage_update"}'::jsonb`,
       expected: true,
     },
     {
-      seq: 10,
+      seq: 11,
       eventType: "session.update",
       payloadSql: `'[]'::jsonb`,
       expected: false,
     },
     {
-      seq: 11,
+      seq: 12,
       eventType: "session.update",
       payloadSql: `'"yes"'::jsonb`,
       expected: false,
     },
     {
-      seq: 12,
+      seq: 13,
       eventType: "session.update",
       payloadSql: `'null'::jsonb`,
+      expected: false,
+    },
+    {
+      seq: 14,
+      eventType: "session.update",
+      payloadSql: `NULL`,
       expected: false,
     },
   ];
@@ -795,21 +1026,10 @@ it("FIX-SQL-JSONB: real Postgres handles malformed execution_events JSONB payloa
   const projected = await database.db
     .select({
       runSequence: executionEvents.runSequence,
-      contextUsageOnly: sql<boolean>`COALESCE(CASE
-        WHEN ${executionEvents.eventType} = 'session.update' THEN
-          jsonb_typeof(${executionEvents.payload}) = 'object'
-          AND (
-            ${executionEvents.payload}->>'contextType' = 'usage_update'
-            OR (
-              jsonb_typeof(${executionEvents.payload}->'update') = 'object'
-              AND ${executionEvents.payload}->'update'->>'sessionUpdate' = 'usage_update'
-            )
-          )
-        WHEN ${executionEvents.eventType} = 'session.line' THEN
-          jsonb_typeof(${executionEvents.payload}) = 'object'
-          AND ${executionEvents.payload}->'contextUsageOnly' = 'true'::jsonb
-        ELSE false
-      END, false)`,
+      contextUsageOnly: contextUsageOnlySql({
+        eventType: executionEvents.eventType,
+        payload: executionEvents.payload,
+      }),
     })
     .from(executionEvents)
     .where(

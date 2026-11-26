@@ -496,6 +496,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       };
 
       try {
+        if (closed || signal.aborted) return;
         if (resumeFrom === null) {
           const initial = await counters();
 

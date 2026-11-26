@@ -62,19 +62,14 @@ function peekHintSkipReason(
     hint.runId !== anchor &&
     hint.runId !== selected &&
     hint.parentRunId !== anchor &&
-    hint.previousParentRunId !== anchor
+    hint.previousParentRunId !== anchor &&
+    (selected === null ||
+      (hint.parentRunId !== selected && hint.previousParentRunId !== selected))
   ) {
     return "foreign_root_run";
   }
 
   return null;
-}
-
-function isHintPotentiallyRelevant(
-  hint: PeekHint,
-  scope: PeekHintScope,
-): boolean {
-  return peekHintSkipReason(hint, scope) === null;
 }
 
 async function hasGovernedPeekRun(runIds: readonly string[]): Promise<boolean> {
@@ -89,19 +84,25 @@ async function hasGovernedPeekRun(runIds: readonly string[]): Promise<boolean> {
   return rows.some((row) => row.isGoverned === true);
 }
 
+async function resolvePeekPath(
+  userId: string,
+  anchor: string,
+  runId: string,
+): Promise<string[] | null> {
+  try {
+    return await peekPath(userId, anchor, runId);
+  } catch (error) {
+    if (isMaisterError(error) && error.code === "PRECONDITION") return null;
+    throw error;
+  }
+}
+
 async function belongs(
   userId: string,
   anchor: string,
   runId: string,
 ): Promise<boolean> {
-  try {
-    await peekPath(userId, anchor, runId);
-
-    return true;
-  } catch (error) {
-    if (isMaisterError(error) && error.code === "PRECONDITION") return false;
-    throw error;
-  }
+  return (await resolvePeekPath(userId, anchor, runId)) !== null;
 }
 
 export async function GET(
@@ -116,15 +117,15 @@ export async function GET(
       query.selected === undefined ? null : parsePeekRunId(query.selected);
     const anchorAccess = await authorizePeekRun(user.id, anchor);
     const anchorRoot = anchorAccess.run.rootRunId ?? anchor;
-    let selected =
-      requested &&
-      requested !== anchor &&
-      (await belongs(user.id, anchor, requested))
-        ? requested
+    const initialPath =
+      requested && requested !== anchor
+        ? await resolvePeekPath(user.id, anchor, requested)
         : null;
+    let selected = initialPath ? requested : null;
+    let activePathIds: string[] = initialPath ?? [anchor];
     let governedScope =
       anchorAccess.run.companyId !== null ||
-      (await hasGovernedPeekRun(selected ? [anchor, selected] : [anchor]));
+      (await hasGovernedPeekRun(activePathIds));
     let lastAuthCheckedAt = Date.now();
     let hintsProcessed = 0;
     let hintsSkippedPreDb = 0;
@@ -174,22 +175,65 @@ export async function GET(
       }
     };
     const abort = (): void => finish();
+    const shouldSkipHint = (hint: PeekHint): boolean => {
+      const skipReason = peekHintSkipReason(hint, {
+        anchor,
+        selected,
+        anchorRoot,
+      });
+
+      if (skipReason !== null) {
+        hintsSkippedPreDb += 1;
+        if (log.isLevelEnabled("debug")) {
+          log.debug(
+            {
+              anchorRunId: anchor,
+              source: hint.source,
+              topic: hint.topic,
+              reason: skipReason,
+            },
+            "peek stream skipped unrelated hint pre-DB",
+          );
+        }
+
+        return true;
+      }
+
+      return false;
+    };
     const recheckAccess = async (): Promise<void> => {
       // A valid selected path already authorizes the anchor. Recheck the
       // anchor separately when there is no current authorized selection.
-      if (!selected || !(await belongs(user.id, anchor, selected))) {
+      const nextPath = selected
+        ? await resolvePeekPath(user.id, anchor, selected)
+        : null;
+
+      if (!nextPath) {
         await authorizePeekRun(user.id, anchor);
         if (selected) {
           selected = null;
           send({ type: "peek.selection_unavailable" });
         }
+        activePathIds = [anchor];
         governedScope =
           anchorAccess.run.companyId !== null ||
-          (await hasGovernedPeekRun([anchor]));
-      } else if (!governedScope) {
-        governedScope = await hasGovernedPeekRun([anchor, selected]);
+          (await hasGovernedPeekRun(activePathIds));
+      } else {
+        activePathIds = nextPath;
+        if (!governedScope) {
+          governedScope = await hasGovernedPeekRun(activePathIds);
+        }
       }
       lastAuthCheckedAt = Date.now();
+    };
+    const ensurePreEmitDisclosure = async (
+      checkedAccess: boolean,
+    ): Promise<void> => {
+      if (checkedAccess || governedScope) return;
+      if (await hasGovernedPeekRun(activePathIds)) {
+        governedScope = true;
+        await recheckAccess();
+      }
     };
     const drain = async (): Promise<void> => {
       if (working || !controller || closed) return;
@@ -199,47 +243,38 @@ export async function GET(
           const [key, hint] = pending.entries().next().value!;
 
           pending.delete(key);
-          const scope: PeekHintScope = { anchor, selected, anchorRoot };
-
-          if (!isHintPotentiallyRelevant(hint, scope)) {
-            hintsSkippedPreDb += 1;
-            if (log.isLevelEnabled("debug")) {
-              log.debug(
-                {
-                  anchorRunId: anchor,
-                  source: hint.source,
-                  topic: hint.topic,
-                  reason: peekHintSkipReason(hint, scope),
-                },
-                "peek stream skipped unrelated hint pre-DB",
-              );
-            }
-            continue;
-          }
+          if (shouldSkipHint(hint)) continue;
           hintsProcessed += 1;
+          let checkedAccess = false;
+
           if (
             governedScope ||
             hint.topic === "summary" ||
             Date.now() - lastAuthCheckedAt >= AUTH_RECHECK_INTERVAL_MS
           ) {
             await recheckAccess();
+            checkedAccess = true;
           }
           // Messages affect only the conversation that owns them. Neither the
           // hierarchy nor titles, status, workspace or results depend on them.
           if (hint.topic === "transcript") {
-            if (hint.runId === anchor || hint.runId === selected)
-              send({
-                type: "run.changed",
-                runId: hint.runId,
-                kind: hint.topic,
-              });
+            if (hint.runId === anchor || hint.runId === selected) {
+              await ensurePreEmitDisclosure(checkedAccess);
+              if (hint.runId === anchor || hint.runId === selected) {
+                send({
+                  type: "run.changed",
+                  runId: hint.runId,
+                  kind: hint.topic,
+                });
+              }
+            }
             continue;
           }
           const shared =
             hint.source === "workspaces" &&
             hint.rootRunId !== null &&
             hint.rootRunId === anchorRoot;
-          const related =
+          const isRelated = async (): Promise<boolean> =>
             shared ||
             hint.runId === anchor ||
             hint.runId === selected ||
@@ -248,8 +283,13 @@ export async function GET(
               (await belongs(user.id, anchor, hint.parentRunId))) ||
             (!!hint.previousParentRunId &&
               (await belongs(user.id, anchor, hint.previousParentRunId)));
+          const related = await isRelated();
 
           if (!related) continue;
+          const selectedBefore = selected;
+
+          await ensurePreEmitDisclosure(checkedAccess);
+          if (selected !== selectedBefore && !(await isRelated())) continue;
           if (hint.runId === anchor || shared)
             send({ type: "run.changed", runId: anchor, kind: hint.topic });
           if (selected && (hint.runId === selected || shared))
@@ -274,6 +314,7 @@ export async function GET(
     release = await subscribePeekChanges(
       (hint) => {
         if (closed) return;
+        if (shouldSkipHint(hint)) return;
         if (pending.size >= 128) {
           pending.clear();
           send({ type: "peek.resync", reason: "transport" });

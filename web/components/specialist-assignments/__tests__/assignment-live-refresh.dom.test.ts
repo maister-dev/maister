@@ -13,6 +13,7 @@ const { router, stream } = vi.hoisted(() => ({
     eventCount: 0,
     liveness: "live" as
       "connecting" | "live" | "reconnecting" | "disconnected" | "closed",
+    reconnect: vi.fn(),
   },
 }));
 
@@ -59,6 +60,7 @@ beforeEach(() => {
   router.refresh.mockReset();
   stream.eventCount = 0;
   stream.liveness = "live";
+  stream.reconnect.mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -103,5 +105,37 @@ describe("AssignmentLiveRefresh", () => {
 
     render({ ...baseProps, runId: "run-2" });
     expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("renders RunStreamLiveness for an active run and invokes reconnect when disconnected", () => {
+    render();
+    expect(
+      container.querySelector('[data-testid="run-stream-liveness"]')
+        ?.textContent,
+    ).toBe("run.streamLive");
+
+    stream.liveness = "disconnected";
+    render();
+    expect(
+      container.querySelector('[data-testid="run-stream-liveness"]')
+        ?.textContent,
+    ).toBe("run.streamDisconnected");
+
+    const reconnectButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "run.streamReconnect",
+    );
+
+    expect(reconnectButton).toBeDefined();
+    act(() => {
+      reconnectButton?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    expect(stream.reconnect).toHaveBeenCalledOnce();
+
+    render({ ...baseProps, runId: null });
+    expect(
+      container.querySelector('[data-testid="run-stream-liveness"]'),
+    ).toBeNull();
   });
 });

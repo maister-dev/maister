@@ -4,6 +4,7 @@ import {
   buildPreparedDiffCacheEntry,
   clearPreparedDiffCache,
   DIFF_CACHE_MAX_BYTES,
+  DIFF_CACHE_MAX_ENTRIES,
   enrichCachedDiffFiles,
   getCachedPreparedDiff,
   getPreparedDiffCacheStats,
@@ -59,6 +60,7 @@ describe("prepared diff byte-bounded LRU cache", () => {
     expect(getCachedPreparedDiff("sha:/repo:base:c")).toBe(entryC);
     expect(getPreparedDiffCacheStats()).toEqual({
       entries: 2,
+      maxEntries: DIFF_CACHE_MAX_ENTRIES,
       totalBytes: 24 * MIB,
       maxBytes: DIFF_CACHE_MAX_BYTES,
     });
@@ -77,6 +79,7 @@ describe("prepared diff byte-bounded LRU cache", () => {
     // Exactly 32 MiB fits with zero eviction.
     expect(getPreparedDiffCacheStats()).toEqual({
       entries: 2,
+      maxEntries: DIFF_CACHE_MAX_ENTRIES,
       totalBytes: 32 * MIB,
       maxBytes: DIFF_CACHE_MAX_BYTES,
     });
@@ -89,6 +92,7 @@ describe("prepared diff byte-bounded LRU cache", () => {
     expect(getCachedPreparedDiff("review:tiny")).toBe(tiny);
     expect(getPreparedDiffCacheStats()).toEqual({
       entries: 2,
+      maxEntries: DIFF_CACHE_MAX_ENTRIES,
       totalBytes: 16 * MIB + 1,
       maxBytes: DIFF_CACHE_MAX_BYTES,
     });
@@ -108,6 +112,7 @@ describe("prepared diff byte-bounded LRU cache", () => {
     expect(getCachedPreparedDiff("content:two:false")).toBe(healthyTwo);
     expect(getPreparedDiffCacheStats()).toEqual({
       entries: 2,
+      maxEntries: DIFF_CACHE_MAX_ENTRIES,
       totalBytes: 20 * MIB,
       maxBytes: DIFF_CACHE_MAX_BYTES,
     });
@@ -126,6 +131,7 @@ describe("prepared diff byte-bounded LRU cache", () => {
     expect(getCachedPreparedDiff("sha:/repo:base:b")).toBe(healthy);
     expect(getPreparedDiffCacheStats()).toEqual({
       entries: 1,
+      maxEntries: DIFF_CACHE_MAX_ENTRIES,
       totalBytes: 6 * MIB,
       maxBytes: DIFF_CACHE_MAX_BYTES,
     });
@@ -152,6 +158,7 @@ describe("prepared diff byte-bounded LRU cache", () => {
     expect(getCachedPreparedDiff("sha:/repo:base:ok")).toBe(healthy);
     expect(getPreparedDiffCacheStats()).toEqual({
       entries: 1,
+      maxEntries: DIFF_CACHE_MAX_ENTRIES,
       totalBytes: 2 * MIB,
       maxBytes: DIFF_CACHE_MAX_BYTES,
     });
@@ -177,9 +184,51 @@ describe("prepared diff byte-bounded LRU cache", () => {
     expect(getCachedPreparedDiff("sha:big")).toBe(big);
     expect(getPreparedDiffCacheStats()).toEqual({
       entries: 3,
+      maxEntries: DIFF_CACHE_MAX_ENTRIES,
       totalBytes: 30 * MIB,
       maxBytes: DIFF_CACHE_MAX_BYTES,
     });
+  });
+
+  it("caps total entries at DIFF_CACHE_MAX_ENTRIES for empty ('[]') entries and evicts LRU", () => {
+    expect(DIFF_CACHE_MAX_ENTRIES).toBe(256);
+
+    const makeEmptyEntry = (): PreparedDiffCacheEntry => ({
+      files: [],
+      prepared: { files: [], perFile: [], truncated: false },
+      preparedJson: "[]",
+      byteSize: 2,
+    });
+
+    for (let i = 0; i < DIFF_CACHE_MAX_ENTRIES; i += 1) {
+      setCachedPreparedDiff(`sha:/repo:base:${i}`, makeEmptyEntry());
+    }
+
+    // Promote key 0 so key 1 becomes the LRU victim.
+    expect(getCachedPreparedDiff("sha:/repo:base:0")).toBeDefined();
+
+    // Updating an existing key at capacity does not evict any sibling.
+    setCachedPreparedDiff("sha:/repo:base:2", makeEmptyEntry());
+    expect(getPreparedDiffCacheStats().entries).toBe(DIFF_CACHE_MAX_ENTRIES);
+    expect(getCachedPreparedDiff("sha:/repo:base:1")).toBeDefined();
+
+    // Now key 3 is the oldest unpromoted entry (0, 2, 1 were touched in order).
+    // Inserting 4 more keys evicts keys 3, 4, 5, 6 and preserves the 256 cap.
+    for (let i = 0; i < 4; i += 1) {
+      setCachedPreparedDiff(`sha:/repo:extra:${i}`, makeEmptyEntry());
+    }
+
+    expect(getPreparedDiffCacheStats()).toEqual({
+      entries: DIFF_CACHE_MAX_ENTRIES,
+      maxEntries: DIFF_CACHE_MAX_ENTRIES,
+      totalBytes: DIFF_CACHE_MAX_ENTRIES * 2,
+      maxBytes: DIFF_CACHE_MAX_BYTES,
+    });
+    expect(getCachedPreparedDiff("sha:/repo:base:0")).toBeDefined();
+    expect(getCachedPreparedDiff("sha:/repo:base:1")).toBeDefined();
+    expect(getCachedPreparedDiff("sha:/repo:base:3")).toBeUndefined();
+    expect(getCachedPreparedDiff("sha:/repo:base:6")).toBeUndefined();
+    expect(getCachedPreparedDiff("sha:/repo:extra:3")).toBeDefined();
   });
 
   it("enriches name-status entries and builds cross-producer compatible cache entries", async () => {

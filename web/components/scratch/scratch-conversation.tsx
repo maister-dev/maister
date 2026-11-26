@@ -18,6 +18,7 @@ import clsx from "clsx";
 
 import { isAcpContextFailureReason } from "../../../runtime/acp-context-failure";
 
+import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import {
   ScratchTranscript,
   type TranscriptLabels,
@@ -51,6 +52,7 @@ import {
   latestContextSnapshot,
   type ContextSnapshot,
 } from "@/lib/runs/context-snapshot";
+import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 import { isStaleViewErrorCode } from "@/lib/ui-error-message";
 import {
@@ -195,10 +197,12 @@ export function ScratchConversation({
     runId: string;
     commands: RunningLiveCommand[];
   }>({ runId: "", commands: [] });
-  const { eventCount, context: streamedContext } = useRunPageStream(
-    runId,
-    true,
-  );
+  const {
+    eventCount,
+    context: streamedContext,
+    liveness,
+    reconnect,
+  } = useRunPageStream(runId, true);
   const transcriptRevision = contextTranscriptRevision(streamedContext);
   const resolvedMessageEndpoint =
     messageEndpoint ?? `/api/scratch-runs/${runId}/messages`;
@@ -257,7 +261,11 @@ export function ScratchConversation({
   }
 
   useEffect(() => {
-    void fetchDetail();
+    const controller = new AbortController();
+
+    void fetchDetail(controller.signal);
+
+    return () => controller.abort();
   }, [fetchDetail]);
 
   const composerAgent: AdapterId = useMemo(() => {
@@ -758,6 +766,11 @@ export function ScratchConversation({
     );
   }
 
+  const showStreamLiveness =
+    (detail.run.status === undefined || isLiveRunStatus(detail.run.status)) &&
+    liveness !== undefined &&
+    liveness !== "closed";
+
   return (
     <section
       className={clsx(
@@ -778,6 +791,18 @@ export function ScratchConversation({
           >
             {t(`status.${status}`)}
           </span>
+          {showStreamLiveness ? (
+            <RunStreamLiveness
+              labels={{
+                disconnected: tRun("streamDisconnected"),
+                live: tRun("streamLive"),
+                reconnect: tRun("streamReconnect"),
+                reconnecting: tRun("streamReconnecting"),
+              }}
+              liveness={liveness}
+              onReconnect={reconnect}
+            />
+          ) : null}
         </header>
       ) : null}
 

@@ -8,6 +8,7 @@ import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+import pino from "pino";
 
 import { loadTaskLaunchIntegrityLimit } from "@/lib/tasks/launch-events";
 import { RunFindingsPanel } from "@/components/runs/run-findings-panel";
@@ -135,7 +136,7 @@ import {
   getCachedPreparedDiff,
   setCachedPreparedDiff,
 } from "@/lib/diff/cache";
-import { prepareDiff } from "@/lib/diff/prepare";
+import { prepareDiff, prepareDiffSummary } from "@/lib/diff/prepare";
 import { reposRoot, worktreesRoot } from "@/lib/instance-config";
 import {
   formatProjectRepoPath,
@@ -208,6 +209,11 @@ import { DeliveryPolicyCancelButton } from "@/components/runs/delivery-policy-ca
 import { GateChatPanel } from "@/components/runs/gate-chat-panel";
 import { AutoPromotionPanel } from "@/components/runs/auto-promotion-panel";
 import { CutoverFailureBanner } from "@/components/runs/cutover-failure-banner";
+
+const log = pino({
+  name: "run-detail-layout",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 type LayoutProps = {
   children: ReactNode;
@@ -309,14 +315,35 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
           }).catch(() => null)
         : Promise.resolve(null),
     ]);
-    const prepared = await prepareDiff(rawDiff, truncated);
 
-    diff = prepared;
-    if (cacheKey && nameStatus) {
-      setCachedPreparedDiff(
-        cacheKey,
-        buildPreparedDiffCacheEntry({ nameStatus, prepared }),
+    try {
+      const prepared = await prepareDiff(rawDiff, truncated);
+
+      diff = prepared;
+      if (cacheKey && nameStatus) {
+        setCachedPreparedDiff(
+          cacheKey,
+          buildPreparedDiffCacheEntry({ nameStatus, prepared }),
+        );
+      }
+    } catch (err) {
+      if (isMaisterError(err)) throw err;
+
+      const summary = prepareDiffSummary(rawDiff, truncated);
+
+      log.warn(
+        {
+          runId: detail.runId,
+          err: err instanceof Error ? err.message : String(err),
+          fileCount: summary.files.length,
+        },
+        "review panel diff preparation failed — degrading to summary without rich bundles",
       );
+      diff = {
+        files: summary.files,
+        perFile: [],
+        truncated: summary.truncated,
+      };
     }
   }
 
@@ -1148,7 +1175,6 @@ export default async function RunDetailLayout({
     capabilityNodes,
     resolvedCapabilitySet: resolvedSet,
     degradations: flowResultDegradations,
-    // eslint-disable-next-line react-hooks/purity -- async Server Component: one render per request reads the request clock.
     nowMs: Date.now(),
   });
   const showAgentCenter =
@@ -1156,8 +1182,7 @@ export default async function RunDetailLayout({
 
   const wallDurationMs = detail.endedAt
     ? Math.max(0, detail.endedAt.getTime() - detail.startedAt.getTime())
-    : // eslint-disable-next-line react-hooks/purity -- async Server Component: one render per request reads the request clock.
-      Math.max(0, Date.now() - detail.startedAt.getTime());
+    : Math.max(0, Date.now() - detail.startedAt.getTime());
   const policy = detail.deliveryPolicySnapshot;
   const displayWorktreePath = formatRunWorktreePath(
     detail.worktreePath,

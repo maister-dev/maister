@@ -167,6 +167,7 @@ export function WorkbenchGitPanel({
   const tl = useTranslations("workbenchLifecycle");
   const router = useRouter();
   const feedback = useFeedback();
+  const [trackedRunId, setTrackedRunId] = useState(runId);
   const [state, setState] = useState<GitState | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   // `git-state` is member-level (`recoverRun`): a viewer's 403 is a role, not
@@ -176,6 +177,14 @@ export function WorkbenchGitPanel({
   const [error, setError] = useState<string | null>(null);
   const [beginLoad] = useState(latestWins);
   const lastTickRef = useRef(refreshTick);
+
+  if (trackedRunId !== runId) {
+    setTrackedRunId(runId);
+    setState(null);
+    setLoadFailed(false);
+    setMembersOnly(false);
+    setError(null);
+  }
 
   const load = useCallback(
     (signal?: AbortSignal): Promise<void> => {
@@ -214,21 +223,30 @@ export function WorkbenchGitPanel({
   );
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+
+    void load(controller.signal);
+
+    return () => controller.abort();
   }, [load]);
 
   const triggerLoad = useCoalescedRefresh(
-    (signal) => load(signal),
+    (signal) => {
+      if (membersOnly) return;
+
+      return load(signal);
+    },
     REFRESH_COALESCE_MS,
-    runId,
+    membersOnly ? null : runId,
   );
 
   // Re-read on the run's stream tick, coalesced; the mount itself is not a tick.
   useEffect(() => {
     if (refreshTick === lastTickRef.current) return;
     lastTickRef.current = refreshTick;
+    if (membersOnly) return;
     triggerLoad();
-  }, [refreshTick, triggerLoad]);
+  }, [membersOnly, refreshTick, triggerLoad]);
 
   useEffect(() => {
     if (!state || !initialSection) return;

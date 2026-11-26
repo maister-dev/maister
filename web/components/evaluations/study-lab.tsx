@@ -177,7 +177,7 @@ export function StudyLab({
   const scheduleRefresh = useCoalescedRefresh(
     () => startTransition(() => router.refresh()),
     STUDY_REFRESH_COALESCE_MS,
-    study.id,
+    hasActive ? study.id : null,
   );
 
   const { liveness, reconnect } = useStudyStream({

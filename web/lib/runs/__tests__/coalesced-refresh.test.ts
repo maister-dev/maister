@@ -117,4 +117,62 @@ describe("createCoalescedRefresher", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(inFlightRun).toHaveBeenCalledTimes(1);
   });
+
+  it("swallows rejecting async callbacks without unhandled rejection and keeps the scheduler alive", async () => {
+    const onUnhandled = vi.fn();
+
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      let attempt = 0;
+      const run = vi.fn(async (_signal: AbortSignal) => {
+        attempt += 1;
+        if (attempt === 1) throw new Error("transient refresh failure");
+      });
+      const refresher = createCoalescedRefresher({ intervalMs: 250, run });
+
+      refresher.trigger();
+      await vi.advanceTimersByTimeAsync(250);
+      await Promise.resolve();
+      expect(run).toHaveBeenCalledTimes(1);
+
+      refresher.trigger();
+      await vi.advanceTimersByTimeAsync(250);
+      await Promise.resolve();
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(onUnhandled).not.toHaveBeenCalled();
+
+      refresher.dispose();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("schedules a single follow-up run when trigger() is called synchronously inside run", async () => {
+    let calls = 0;
+    const refresher = createCoalescedRefresher({
+      intervalMs: 250,
+      run: () => {
+        calls += 1;
+        if (calls === 1) {
+          refresher.trigger();
+          refresher.trigger();
+        }
+      },
+    });
+
+    refresher.trigger();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(calls).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(249);
+    expect(calls).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls).toBe(2);
+
+    refresher.dispose();
+  });
 });

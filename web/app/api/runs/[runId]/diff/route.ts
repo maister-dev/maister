@@ -140,10 +140,31 @@ type PreparedDiffResult =
   | { prepared: DiffPrepResult; renderUnavailableReason: null }
   | { prepared: DiffPrepResult; renderUnavailableReason: "prepare-failed" };
 
-function contentCacheKey(diff: string, truncated: boolean): string {
-  const digest = createHash("sha256").update(diff).digest("hex");
+function canonicalNameStatusForCache(
+  entries: readonly DiffNameStatusEntry[],
+): Array<{ path: string; oldPath: string | null; status: string }> {
+  return entries.map((entry) => ({
+    path: entry.path,
+    oldPath: entry.oldPath ?? null,
+    status: entry.status,
+  }));
+}
 
-  return `content:${digest}:${truncated}`;
+function contentCacheKey(input: {
+  scopeKey: string;
+  diff: string;
+  truncated: boolean;
+  nameStatus: readonly DiffNameStatusEntry[];
+}): string {
+  const canonical = JSON.stringify({
+    scopeKey: input.scopeKey,
+    diff: input.diff,
+    nameStatus: canonicalNameStatusForCache(input.nameStatus),
+    truncated: input.truncated,
+  });
+  const digest = createHash("sha256").update(canonical).digest("hex");
+
+  return `content:${digest}:${input.truncated}`;
 }
 
 // Splice pre-serialized `perFile` JSON directly into the envelope so cache hits
@@ -438,7 +459,7 @@ export async function GET(
     const db = getDb() as unknown as Db;
     const run = await loadRun(db, runId);
 
-    if (!run) {
+    if (!run || !run.projectId) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
 
@@ -472,7 +493,12 @@ export async function GET(
         renderUnavailableReason,
         cacheHit,
       } = await resolveCachedOrPrepare({
-        cacheKey: contentCacheKey(diff, truncated),
+        cacheKey: contentCacheKey({
+          scopeKey: `scratch:${runId}:${workspace.worktreePath}:${scratch.baseCommit}`,
+          diff,
+          truncated,
+          nameStatus,
+        }),
         runId,
         scope: "run",
         diff,
@@ -588,7 +614,7 @@ export async function GET(
 
       reviewSourceFingerprint = source.fingerprint;
       const resolved = await resolveCachedOrPrepare({
-        cacheKey: `review:${source.fingerprint}`,
+        cacheKey: `review:${workspace.worktreePath}:${source.fingerprint}`,
         runId,
         scope,
         diff: source.diff,
@@ -610,7 +636,12 @@ export async function GET(
       );
       const nameStatus = filterReviewableChangeEntries(wtDiff.nameStatus);
       const resolved = await resolveCachedOrPrepare({
-        cacheKey: contentCacheKey(diff, wtDiff.truncated),
+        cacheKey: contentCacheKey({
+          scopeKey: `uncommitted:${runId}:${workspace.worktreePath}:${base}`,
+          diff,
+          truncated: wtDiff.truncated,
+          nameStatus,
+        }),
         runId,
         scope,
         diff,

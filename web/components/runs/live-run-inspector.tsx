@@ -23,6 +23,10 @@ import {
   isLiveRunStatus,
 } from "@/lib/runs/live-inspector";
 import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
+import {
+  isDocumentHidden,
+  subscribeDocumentVisibility,
+} from "@/lib/sse-visibility";
 
 // Live token-cost poll config: the cost facts (token totals) carried in `facts`
 // are replaced by label as canonical usage events arrive during the run.
@@ -155,7 +159,8 @@ export function LiveRunInspector({
   const wallClockStartedAtMs = liveWallClock?.startedAtMs;
   const wallClockEndedAtMs = liveWallClock?.endedAtMs;
 
-  // Tick elapsed wall-clock once a second while the run is live and unfinished.
+  // Tick elapsed wall-clock once a second while the run is live, unfinished,
+  // and the tab is visible.
   useEffect(() => {
     if (
       !live ||
@@ -164,13 +169,36 @@ export function LiveRunInspector({
     )
       return;
 
+    let first: ReturnType<typeof setTimeout> | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
+
     const tick = (): void => setNowMs(Date.now());
-    const first = setTimeout(tick, 0);
-    const id = setInterval(tick, 1000);
+    const stop = (): void => {
+      if (first !== null) {
+        clearTimeout(first);
+        first = null;
+      }
+      if (interval !== null) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+    const start = (immediate: boolean): void => {
+      if (interval !== null || isDocumentHidden()) return;
+      if (immediate) tick();
+      else first = setTimeout(tick, 0);
+      interval = setInterval(tick, 1000);
+    };
+
+    start(false);
+    const unsubscribeVisibility = subscribeDocumentVisibility({
+      onHide: stop,
+      onShow: () => start(true),
+    });
 
     return () => {
-      clearTimeout(first);
-      clearInterval(id);
+      unsubscribeVisibility();
+      stop();
     };
   }, [live, wallClockStartedAtMs, wallClockEndedAtMs]);
 

@@ -1,7 +1,6 @@
-// Phase 2 (T2.3, RED): failing contract tests for the server diff-prep that
+// Contract tests for server diff preparation (`web/lib/diff/prepare.ts`) that
 // turns a raw unified `git diff` into the explicit CLIENT DTO the diff view
-// hydrates. The module `web/lib/diff/prepare.ts` does not exist yet — these
-// tests RED on the missing import (`@/lib/diff/prepare`).
+// hydrates.
 //
 // Style: node env, no jsdom; the async prep is awaited DIRECTLY (no React),
 // mirroring `lib/**/__tests__` pure-helper tests. `.test.ts` matches the `unit`
@@ -109,6 +108,32 @@ describe("prepareDiff — files summary (counts / status / repo-relative path)",
       "b.ts",
       "src/a.ts",
     ]);
+  });
+
+  it("counts in-hunk +++ and --- data lines accurately while excluding file headers", async () => {
+    const diff = [
+      "diff --git a/doc.yaml b/doc.yaml",
+      "index 1111111..2222222 100644",
+      "--- a/doc.yaml",
+      "+++ b/doc.yaml",
+      "@@ -1,4 +1,5 @@",
+      "---",
+      "--- removed-doc-sep",
+      "+---",
+      "+++ added-plus-prefix",
+      "+++i;",
+      " key: value",
+    ].join("\n");
+
+    const summary = prepareDiffSummary(diff);
+    const prepared = await prepareDiff(diff);
+
+    // Inside the hunk: 2 deletions (`---`, `--- removed-doc-sep`) and
+    // 3 additions (`+---`, `+++ added-plus-prefix`, `+++i;`).
+    expect(summary.files).toEqual([
+      { path: "doc.yaml", status: "M", additions: 3, deletions: 2 },
+    ]);
+    expect(prepared.files).toEqual(summary.files);
   });
 });
 
@@ -632,6 +657,13 @@ describe("prepareDiff — syntax budget, yield safety & single-pass sanitizer", 
 
   it("restores getEnableBuildTemplate() when buildBundle throws", async () => {
     const initialFlag = getEnableBuildTemplate();
+    // Use a unique section so `@git-diff-view/core`'s internal File cache
+    // cannot short-circuit `doSyntax()` before `shikiDiffHighlighter.getAST`.
+    const uncachedDiff = buildAddedTsSection(
+      "src/throws-bundle.ts",
+      3,
+      "throwsBundle",
+    );
 
     setEnableBuildTemplate(true);
     try {
@@ -639,12 +671,56 @@ describe("prepareDiff — syntax budget, yield safety & single-pass sanitizer", 
         throw new Error("simulated shiki failure");
       });
 
-      await expect(prepareDiff(TWO_FILE_DIFF)).rejects.toThrow(
+      await expect(prepareDiff(uncachedDiff)).rejects.toThrow(
         "simulated shiki failure",
       );
       expect(getEnableBuildTemplate()).toBe(true);
     } finally {
       setEnableBuildTemplate(initialFlag);
     }
+  });
+
+  it("routes plaintext and 0-line files straight to plaintextDiffHighlighter without charging MAX_TOTAL_SYNTAX_LINES or running Shiki", async () => {
+    // 9,000 plaintext lines (above MAX_TOTAL_SYNTAX_LINES) + 0-line pure rename
+    // of a .ts file + a 10-line .ts file: neither the .txt nor the 0-line .ts
+    // file may invoke Shiki or exhaust the syntax budget for the trailing .ts file.
+    const bigPlaintext = buildAddedTsSection("notes/dump.txt", 9_000, "txt");
+    const pureRenameTs = [
+      "diff --git a/src/old-empty.ts b/src/new-empty.ts",
+      "similarity index 100%",
+      "rename from src/old-empty.ts",
+      "rename to src/new-empty.ts",
+    ].join("\n");
+    const trailingTs = buildAddedTsSection("src/after-plain.ts", 10, "after");
+
+    const shikiAstSpy = vi.spyOn(shikiDiffHighlighter, "getAST");
+    const result = await prepareDiff(
+      [bigPlaintext, pureRenameTs, trailingTs].join("\n"),
+    );
+
+    expect(result.perFile).toHaveLength(3);
+    expect(result.perFile[0]?.fileLang).toBe("plaintext");
+    expect(result.perFile[1]?.fileLang).toBe("plaintext");
+    expect(result.perFile[2]?.fileLang).toBe("typescript");
+
+    const highlightedPaths = new Set(
+      shikiAstSpy.mock.calls.map((call) => call[1]),
+    );
+
+    expect(highlightedPaths).toEqual(new Set(["src/after-plain.ts"]));
+
+    // Pure plaintext-only diff does not invoke Shiki at all.
+    shikiAstSpy.mockClear();
+    const plainOnly = await prepareDiff(
+      [buildAddedTsSection("notes/only.txt", 20, "only"), pureRenameTs].join(
+        "\n",
+      ),
+    );
+
+    expect(plainOnly.perFile).toHaveLength(2);
+    expect(plainOnly.perFile.every((f) => f.fileLang === "plaintext")).toBe(
+      true,
+    );
+    expect(shikiAstSpy).not.toHaveBeenCalled();
   });
 });

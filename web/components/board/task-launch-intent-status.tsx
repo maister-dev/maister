@@ -189,7 +189,9 @@ export function TaskLaunchIntentStatus({
       {errorReason && errorReason !== "launch_response_unknown" ? (
         <p role="alert">{t(taskLaunchReasonKey(errorReason))}</p>
       ) : null}
-      {!isShared || liveness !== "live" ? (
+      {!isShared ||
+      liveness === "disconnected" ||
+      liveness === "reconnecting" ? (
         <RunStreamLiveness
           labels={{
             live: t("admission.live"),

@@ -33,6 +33,7 @@ type DbState = {
   latestSequence: bigint | null;
   eventBatches: Array<Array<Record<string, unknown>>>;
   eventSelects: EventSelectRecord[];
+  runSelects: Array<Record<string, unknown>>;
 };
 
 const dbState: DbState = {
@@ -40,6 +41,7 @@ const dbState: DbState = {
   latestSequence: null,
   eventBatches: [],
   eventSelects: [],
+  runSelects: [],
 };
 
 const activeControllers: AbortController[] = [];
@@ -59,6 +61,8 @@ function createFakeDb() {
         let capturedWhere: unknown = null;
         const resolveRows = () => {
           if (table === runsTable) {
+            dbState.runSelects.push(columns);
+
             return dbState.runRow ? [dbState.runRow] : [];
           }
           if (table === executionEventsTable) {
@@ -319,6 +323,7 @@ beforeEach(() => {
   dbState.latestSequence = -1n;
   dbState.eventBatches = [];
   dbState.eventSelects = [];
+  dbState.runSelects = [];
 
   requireActiveSessionMock.mockResolvedValue({
     id: "user-1",
@@ -484,6 +489,9 @@ describe("GET /api/runs/[runId]/stream", () => {
       "proj-1",
       "viewer",
     );
+    expect(
+      requireProjectRoleForUserMock.mock.calls.length,
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it("bounds auth rechecks on ordinary project runs while enforcing per-batch and 2,500 ms idle revocation on enrolled and company runs", async () => {
@@ -920,5 +928,59 @@ describe("GET /api/runs/[runId]/stream", () => {
     await flushImmediate();
 
     expect(runEventWakeBus.waiterCount(runId)).toBe(0);
+  });
+
+  it("authenticates before awaiting params and combines isGoverned into status refresh", async () => {
+    requireActiveSessionMock.mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "No session"),
+    );
+
+    let paramsTouched = false;
+    const unauthRes = await route.GET(
+      createRequest("http://localhost/api/runs/run-auth-first/stream"),
+      {
+        params: {
+          then: () => {
+            paramsTouched = true;
+          },
+        } as unknown as Promise<{ runId: string }>,
+      },
+    );
+
+    expect(unauthRes.status).toBe(401);
+    expect(paramsTouched).toBe(false);
+
+    const runId = "run-combined-status";
+
+    dbState.runRow = { ...dbState.runRow!, id: runId, isGoverned: false };
+    dbState.latestSequence = 0n;
+
+    const res = await route.GET(
+      createRequest(`http://localhost/api/runs/${runId}/stream?replay=false`),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+
+    await reader.read();
+    await waitForWakeWaiter(runId);
+
+    // Trigger a status refresh iteration (>= 500 ms) WITH an outgoing event:
+    // runs must be selected ONCE (combined status + isGoverned), not twice.
+    dbState.runSelects = [];
+    dbState.eventBatches.push([makeEventRow(1n)]);
+    vi.advanceTimersByTime(600);
+    runEventWakeBus.wake(runId);
+
+    const chunk = await reader.read();
+
+    expect(chunk.done).toBe(false);
+    await waitForWakeWaiter(runId);
+    expect(dbState.runSelects).toHaveLength(1);
+    expect(dbState.runSelects[0]).toHaveProperty("status");
+    expect(dbState.runSelects[0]).toHaveProperty("isGoverned");
+
+    await reader.cancel();
   });
 });

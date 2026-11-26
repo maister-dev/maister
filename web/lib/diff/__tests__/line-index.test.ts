@@ -5,18 +5,28 @@
 // with trailing-LF normalization so review-comment anchoring can decouple from
 // Shiki WASM without drifting from what the diff view renders.
 
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
+import { enrichCachedDiffFiles } from "@/lib/diff/cache";
 import { parseDiffLineIndex } from "@/lib/diff/line-index";
 import { prepareDiff } from "@/lib/diff/prepare";
 import {
+  extractHeaderBodyLines,
+  parseOldPath,
   parsePath,
   repoRelPath,
   unescapeGitQuotedPath,
 } from "@/lib/diff/sections";
+import { diffNameStatus, diffRunWorkspace } from "@/lib/worktree";
+
+const execFileAsync = promisify(execFile);
 
 const withFinalNewline = (lines: string[]): string => `${lines.join("\n")}\n`;
 
@@ -482,5 +492,149 @@ describe("parseDiffLineIndex — resilience & import isolation", () => {
     expect(
       parsePath("diff --git a/old.ts b/new.ts", ['+++ "b/dir/my file.ts"']),
     ).toBe("dir/my file.ts");
+  });
+
+  it("strips trailing tab/timestamp suffixes outside quotes on --- and +++ headers and stops before GIT binary patch", () => {
+    expect(
+      parsePath("diff --git a/dir/my file.ts b/dir/my file.ts", [
+        "--- a/dir/my file.ts\t",
+        "+++ b/dir/my file.ts\t",
+      ]),
+    ).toBe("dir/my file.ts");
+    expect(
+      parseOldPath("diff --git a/dir/my file.ts b/dir/my file.ts", [
+        "--- a/dir/my file.ts\t2026-01-01 00:00:00",
+      ]),
+    ).toBe("dir/my file.ts");
+    expect(
+      parsePath(
+        'diff --git "a/dir/my \\"quoted\\" file.ts" "b/dir/my \\"quoted\\" file.ts"',
+        [
+          '--- "a/dir/my \\"quoted\\" file.ts"\t',
+          '+++ "b/dir/my \\"quoted\\" file.ts"\t',
+        ],
+      ),
+    ).toBe('dir/my "quoted" file.ts');
+    // Escaped \t inside quotes belongs to the filename; literal trailing \t is stripped.
+    expect(
+      parsePath('diff --git "a/dir/a\\tb.ts" "b/dir/a\\tb.ts"', [
+        '+++ "b/dir/a\\tb.ts"\t',
+      ]),
+    ).toBe("dir/a\tb.ts");
+    // Deleted file with trailing tab after /dev/null still falls back to --- path.
+    expect(
+      parsePath("diff --git a/dir/gone file.ts b/dir/gone file.ts", [
+        "deleted file mode 100644",
+        "--- a/dir/gone file.ts\t",
+        "+++ /dev/null\t",
+      ]),
+    ).toBe("dir/gone file.ts");
+
+    const binarySection = withFinalNewline([
+      "diff --git a/bin.dat b/bin.dat",
+      "index 1111111..2222222 100644",
+      "GIT binary patch",
+      "literal 1234",
+      "+++ b/not-a-header",
+    ]);
+
+    expect(extractHeaderBodyLines(binarySection)).toEqual([
+      "index 1111111..2222222 100644",
+    ]);
+  });
+
+  it("maintains full real-git parity for spaced, quoted, and Cyrillic paths across diffRunWorkspace, parseDiffLineIndex, prepareDiff, enrichCachedDiffFiles, and diffNameStatus", async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), "maister-line-index-git-"));
+    const runGit = (args: string[]) =>
+      execFileAsync("git", ["-C", repo, ...args], {
+        env: { ...process.env, LC_ALL: "C" },
+      });
+
+    try {
+      await runGit(["init", "-b", "main"]);
+      await runGit(["config", "user.name", "Test"]);
+      await runGit(["config", "user.email", "test@example.com"]);
+
+      const spacedPath = "dir/my file.ts";
+      const quotedPath = 'dir/my "quoted" file.ts';
+      const cyrillicPath = "привет мир.ts";
+
+      await mkdir(path.join(repo, "dir"), { recursive: true });
+      await writeFile(path.join(repo, spacedPath), "export const s = 1;\n");
+      await writeFile(path.join(repo, quotedPath), "export const q = 1;\n");
+      await writeFile(path.join(repo, cyrillicPath), "export const ru = 1;\n");
+      await runGit(["add", "."]);
+      await runGit(["commit", "-m", "initial"]);
+
+      const baseCommit = (await runGit(["rev-parse", "HEAD"])).stdout.trim();
+
+      await runGit(["checkout", "-b", "feature/unicode-paths"]);
+      await writeFile(
+        path.join(repo, spacedPath),
+        "export const s = 2;\nexport const s2 = 3;\n",
+      );
+      await writeFile(path.join(repo, quotedPath), "export const q = 2;\n");
+      await writeFile(
+        path.join(repo, cyrillicPath),
+        "export const ru = 2;\nexport const ru2 = 3;\n",
+      );
+      await runGit(["add", "."]);
+      await runGit(["commit", "-m", "modify special paths"]);
+
+      const [{ text: rawDiff, truncated }, nameStatus] = await Promise.all([
+        diffRunWorkspace({
+          projectRepoPath: repo,
+          baseCommit,
+          branch: "feature/unicode-paths",
+        }),
+        diffNameStatus({
+          worktreePath: repo,
+          baseRef: baseCommit,
+          branch: "feature/unicode-paths",
+        }),
+      ]);
+
+      expect(truncated).toBe(false);
+
+      const indexed = await assertParityWithPrepareDiff(rawDiff, truncated);
+      const prepared = await prepareDiff(rawDiff, truncated);
+      const enriched = enrichCachedDiffFiles(nameStatus, prepared);
+
+      const expectedPaths = [spacedPath, quotedPath, cyrillicPath].sort();
+
+      expect([...indexed.files.keys()].sort()).toEqual(expectedPaths);
+      expect(nameStatus.map((entry) => entry.path).sort()).toEqual(
+        expectedPaths,
+      );
+      expect(enriched.find((f) => f.path === spacedPath)).toEqual({
+        path: spacedPath,
+        status: "M",
+        additions: 2,
+        deletions: 1,
+      });
+      expect(enriched.find((f) => f.path === quotedPath)).toEqual({
+        path: quotedPath,
+        status: "M",
+        additions: 1,
+        deletions: 1,
+      });
+      expect(enriched.find((f) => f.path === cyrillicPath)).toEqual({
+        path: cyrillicPath,
+        status: "M",
+        additions: 2,
+        deletions: 1,
+      });
+      expect(indexed.files.get(spacedPath)?.newLines.get(1)).toBe(
+        "export const s = 2;",
+      );
+      expect(indexed.files.get(quotedPath)?.newLines.get(1)).toBe(
+        "export const q = 2;",
+      );
+      expect(indexed.files.get(cyrillicPath)?.newLines.get(2)).toBe(
+        "export const ru2 = 3;",
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
   });
 });

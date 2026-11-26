@@ -71,9 +71,11 @@ channels:
         Replay is exclusive of `Last-Event-ID` or the `lastEventId` query
         fallback. Invalid, negative, leading-zero, or overlong cursors return
         HTTP 400 before streaming. A default connection replays from sequence
-        zero. `?replay=false` begins at the current durable tail and first emits
-        `session.stream_ready`. Terminal database run states close the stream
-        after already-readable canonical rows are emitted.
+        zero. Setting `?replay=` to `"false"`, `"0"`, or `"live"`
+        (case-insensitive; any other value replays from sequence zero) begins at
+        the current durable tail and first emits `session.stream_ready`. Terminal
+        database run states close the stream after already-readable canonical
+        rows are emitted.
         Clients request context snapshots with `?context=1`. The manager sends
         the active run snapshot and, for a Flow, may send the current attempt
         snapshot on the same connection (coalesced at 500 ms during bursts, plus
@@ -102,10 +104,12 @@ channels:
         invalidation after commit, including waits with no execution host event.
         New metadata and final projection changes remain observable after execution settles.
         Unrelated `transcript`, `execution_events`, foreign-`rootRunId`, and unrelated top-level
-        root `runs` hints are discarded in memory before any database authorization or ancestry
-        query, while reparenting transitions pass through; relevant `summary` hints and
-        governed/company runs re-verify immediately before emitting, while ordinary non-governed
-        `transcript`/`execution` bursts coalesce auth rechecks to 2,500 ms (Implemented).
+        root `runs` hints are discarded in memory before enqueueing into the 128-entry `pending`
+        backpressure map and before any database authorization or ancestry query, while reparenting
+        transitions pass through; `governedScope` covers the full `anchor → ... → selected` path
+        including mid-stream vault enrollment. Relevant `summary` hints and governed/company scopes
+        re-verify immediately before emitting, while ordinary non-governed `transcript`/`execution`
+        bursts coalesce auth rechecks to 2,500 ms (Implemented).
         HTTP heartbeats are transport-only and perform no data polling.
       message:
         oneOf:

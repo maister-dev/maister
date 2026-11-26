@@ -817,4 +817,106 @@ describe("GET /api/runs/[runId]/diff — opt-in ?raw=1 & prepared LRU cache", ()
     expect(diffRunWorkspace).not.toHaveBeenCalled();
     expect(diffNameStatus).not.toHaveBeenCalled();
   });
+
+  it("misses contentCacheKey when nameStatus changes beyond a truncated diff prefix and isolates distinct runs", async () => {
+    const truncatedPrefix = "diff --git a/big.txt b/big.txt\n@@ -1 +1 @@\n+x\n";
+
+    // Part (a): same run, same truncated diff prefix, changed nameStatus -> MISS.
+    const runA = seedFlowRun();
+
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
+      text: truncatedPrefix,
+      truncated: true,
+      nameStatus: [
+        { path: "big.txt", status: "M" },
+        { path: "tail-a.ts", status: "A" },
+      ],
+    });
+    const firstRes = await invokeGet(runA, "?scope=uncommitted");
+    const firstBody = (await firstRes.json()) as {
+      files?: Array<{ path: string; status: string }>;
+    };
+
+    expect(firstRes.status).toBe(200);
+    expect(firstBody.files?.map((f) => f.path)).toEqual([
+      "big.txt",
+      "tail-a.ts",
+    ]);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
+      text: truncatedPrefix,
+      truncated: true,
+      nameStatus: [
+        { path: "big.txt", status: "M" },
+        { path: "tail-b.ts", status: "A" },
+      ],
+    });
+    const secondRes = await invokeGet(runA, "?scope=uncommitted");
+    const secondBody = (await secondRes.json()) as {
+      files?: Array<{ path: string; status: string }>;
+    };
+
+    expect(secondRes.status).toBe(200);
+    expect(secondBody.files?.map((f) => f.path)).toEqual([
+      "big.txt",
+      "tail-b.ts",
+    ]);
+    expect(prepareDiff).toHaveBeenCalledTimes(2);
+
+    // Part (b): two different runs with identical truncated diff prefix AND
+    // identical nameStatus must NOT share a content: cache entry.
+    dbState.tables.runs = [
+      {
+        id: "run-other",
+        runKind: "flow",
+        projectId: "project-2",
+        status: "Running",
+      },
+    ];
+    dbState.tables.projects = [
+      { id: "project-2", mainBranch: "main", repoPath: "/repos/other" },
+    ];
+    dbState.tables.workspaces = [
+      {
+        id: "workspace-2",
+        runId: "run-other",
+        projectId: "project-2",
+        branch: "maister/other",
+        worktreePath: "/repos/other/.maister/wt-2",
+        parentRepoPath: "/repos/other",
+        baseCommit: "feedbeef",
+        baseBranch: "main",
+        targetBranch: "main",
+        removedAt: null,
+      },
+    ];
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
+      text: truncatedPrefix,
+      truncated: true,
+      nameStatus: [
+        { path: "big.txt", status: "M" },
+        { path: "tail-b.ts", status: "A" },
+      ],
+    });
+
+    const otherRunRes = await invokeGet("run-other", "?scope=uncommitted");
+
+    expect(otherRunRes.status).toBe(200);
+    expect(prepareDiff).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns 404 when a run has no projectId", async () => {
+    dbState.tables.runs.push({
+      id: "run-no-project",
+      runKind: "agent",
+      projectId: null,
+      status: "Running",
+    });
+
+    const res = await invokeGet("run-no-project");
+
+    expect(res.status).toBe(404);
+    expect(requireProjectAction).not.toHaveBeenCalled();
+  });
 });

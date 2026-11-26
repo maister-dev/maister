@@ -9,16 +9,18 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// `DIFF_CACHE_MAX_BYTES` (32 MiB) and `MAX_SINGLE_ENTRY_BYTES` (16 MiB) bound
-// the UTF-8 byte length of cached `preparedJson` strings; the corresponding
-// parsed `prepared` objects are retained alongside for SSR hits.
+// `DIFF_CACHE_MAX_BYTES` (32 MiB), `MAX_SINGLE_ENTRY_BYTES` (16 MiB), and
+// `DIFF_CACHE_MAX_ENTRIES` (256) bound both UTF-8 JSON bytes and Map entry
+// count (preventing unbounded growth from empty `"[]"` entries).
 export const DIFF_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+export const DIFF_CACHE_MAX_ENTRIES = 256;
 
 const MAX_SINGLE_ENTRY_BYTES = DIFF_CACHE_MAX_BYTES / 2;
 
 export type DiffNameStatusEntry = {
   path: string;
   status: string;
+  oldPath?: string;
 };
 
 export type CachedDiffFile = {
@@ -70,6 +72,7 @@ export function buildPreparedDiffCacheEntry(input: {
 
 export type PreparedDiffCacheStats = {
   entries: number;
+  maxEntries: number;
   totalBytes: number;
   maxBytes: number;
 };
@@ -85,7 +88,7 @@ function keyKindOf(key: string): string {
 
 export function getCachedPreparedDiff(
   key: string,
-): PreparedDiffCacheEntry | undefined {
+): Readonly<PreparedDiffCacheEntry> | undefined {
   const entry = cache.get(key);
 
   if (!entry) {
@@ -122,8 +125,13 @@ export function getCachedPreparedDiff(
 export function setCachedPreparedDiff(
   key: string,
   entry: PreparedDiffCacheEntry,
+  options?: { maxEntries?: number },
 ): void {
   if (!Number.isFinite(entry.byteSize) || entry.byteSize < 0) return;
+
+  const maxEntries = options?.maxEntries ?? DIFF_CACHE_MAX_ENTRIES;
+
+  if (!Number.isInteger(maxEntries) || maxEntries < 1) return;
 
   const existing = cache.get(key);
 
@@ -146,7 +154,11 @@ export function setCachedPreparedDiff(
     return;
   }
 
-  while (totalBytes + entry.byteSize > DIFF_CACHE_MAX_BYTES && cache.size > 0) {
+  while (
+    cache.size > 0 &&
+    (totalBytes + entry.byteSize > DIFF_CACHE_MAX_BYTES ||
+      cache.size >= maxEntries)
+  ) {
     const oldestKey = cache.keys().next().value;
 
     if (oldestKey === undefined) break;
@@ -180,6 +192,7 @@ export function clearPreparedDiffCache(): void {
 export function getPreparedDiffCacheStats(): PreparedDiffCacheStats {
   return {
     entries: cache.size,
+    maxEntries: DIFF_CACHE_MAX_ENTRIES,
     totalBytes,
     maxBytes: DIFF_CACHE_MAX_BYTES,
   };

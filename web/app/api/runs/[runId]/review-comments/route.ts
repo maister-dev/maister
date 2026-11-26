@@ -115,11 +115,11 @@ export async function GET(
   const { runId } = await params;
 
   try {
+    const user = await requireActiveSession();
+
     const scope = reviewCommentScopeOrDefault(
       req.nextUrl.searchParams.get("scope"),
     );
-
-    const user = await requireActiveSession();
 
     const dbh = db();
     const run = await loadRun(dbh, runId);
@@ -176,29 +176,26 @@ export async function POST(
 ): Promise<NextResponse> {
   const { runId } = await params;
 
-  let body: z.infer<typeof postBodySchema>;
-
   try {
-    body = postBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
+    // Auth-first: authenticate before parsing input or touching resources so
+    // unauthenticated callers receive 401 rather than 400/404; project
+    // membership is enforced once projectId is derived from the run row.
+    const sessionUser = await requireActiveSession();
+
+    let body: z.infer<typeof postBodySchema>;
+
+    try {
+      body = postBodySchema.parse(await req.json());
+    } catch (err) {
+      throw new MaisterError(
         "CONFIG",
         `invalid review-comment body: ${(err as Error).message}`,
-      ),
-      { runId, method: "POST" },
-    );
-  }
+      );
+    }
 
-  try {
     const scope = reviewCommentScopeOrDefault(
       req.nextUrl.searchParams.get("scope"),
     );
-
-    // Auth-first: authenticate before any resource lookup so unauthenticated
-    // callers cannot probe run existence; project membership is enforced once
-    // projectId is derived from the run row.
-    const sessionUser = await requireActiveSession();
 
     const dbh = db();
     const run = await loadRun(dbh, runId);

@@ -28,6 +28,7 @@ const log = pino({
 
 export const MAX_TOTAL_SYNTAX_LINES = 8_000;
 export const DIFF_YIELD_BATCH_SIZE = 5;
+export const DIFF_YIELD_BUDGET_MS = 16;
 
 export type DiffFileSummary = {
   path: string;
@@ -105,16 +106,24 @@ function countChanges(section: string): {
   let deletions = 0;
   let contextLines = 0;
   let inHunk = false;
+  let pos = 0;
 
-  for (const line of section.split("\n")) {
-    if (line.startsWith("@@ ")) {
+  while (pos < section.length) {
+    const nl = section.indexOf("\n", pos);
+    const lineEnd = nl === -1 ? section.length : nl;
+
+    if (lineEnd - pos >= 3 && section.startsWith("@@ ", pos)) {
       inHunk = true;
-      continue;
+    } else if (inHunk && pos < lineEnd) {
+      const ch = section.charCodeAt(pos);
+
+      if (ch === 43) additions += 1;
+      else if (ch === 45) deletions += 1;
+      else if (ch === 32) contextLines += 1;
     }
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
-    if (line.startsWith("+")) additions += 1;
-    else if (line.startsWith("-")) deletions += 1;
-    else if (inHunk && line.startsWith(" ")) contextLines += 1;
+
+    if (nl === -1) break;
+    pos = nl + 1;
   }
 
   return {
@@ -284,6 +293,12 @@ export async function prepareDiff(
   const perFileSyntaxCap = shikiDiffHighlighter.maxLineToIgnoreSyntax;
 
   const sectionPlans = sections.map((section) => {
+    const detectedLang = langFromPath(section.path);
+
+    if (detectedLang === "plaintext" || section.syntaxLines === 0) {
+      return { section, fileLang: "plaintext", usePlaintext: true };
+    }
+
     // A single oversized file (e.g. lockfile) exceeds Shiki's per-file cap and
     // would skip highlighting anyway: downgrade only this file without charging
     // the shared budget or starving subsequent small source files.
@@ -293,7 +308,6 @@ export async function prepareDiff(
       return { section, fileLang: "plaintext", usePlaintext: true };
     }
 
-    const detectedLang = langFromPath(section.path);
     const fitsBudget =
       !budgetExhausted &&
       syntaxLinesUsed + section.syntaxLines <= MAX_TOTAL_SYNTAX_LINES;
@@ -318,7 +332,6 @@ export async function prepareDiff(
 
   const files = summarizeSections(sections);
   const perFile: PreparedFile[] = [];
-  const DIFF_YIELD_BUDGET_MS = 16;
   let yieldCount = 0;
   let index = 0;
 

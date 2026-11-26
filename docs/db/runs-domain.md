@@ -1064,7 +1064,7 @@ Operational runs freeze `agent_kind` and `result_contract`; integrity generation
 
 ## Peek paging and push hints (Implemented)
 
-Migration 0211 adds three bounded page-order indexes; 0212 adds transactional advisory notification triggers on existing canonical tables. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](../system-analytics/run-peek-data.md).
+Migration 0211 adds three bounded page-order indexes; 0212 adds transactional advisory notification triggers on existing canonical tables and 0368 (`0368_run_sync_attempt_peek_hint`) adds the 7th trigger on `run_sync_attempts`; 0369 (`0369_optimize_peek_hint_triggers`, Implemented) replaces the `execution_events_peek_hint` and `run_messages_peek_hint` functions with zero-`to_jsonb` column-direct functions (`public.maister_execution_events_peek_hint` behind a Postgres-valid `AFTER INSERT OR UPDATE ... WHEN (NEW.ingest_disposition = 'accepted' AND NEW.run_sequence IS NOT NULL)` guard, and `public.maister_run_messages_peek_hint`) while preserving all 7 trigger names asserted by `web/lib/runs/peek-wake.ts`. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](../system-analytics/run-peek-data.md).
 
 ## Flow wait and delivery ownership (Designed)
 
