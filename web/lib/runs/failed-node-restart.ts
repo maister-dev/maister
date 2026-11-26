@@ -65,7 +65,7 @@ export async function loadFailedNodeRestartTarget(db: Db, runId: string) {
     )
     .limit(1);
 
-  if (!target || workbenchClaimHoldsTree(target.workspace)) return null;
+  if (!target?.workspace.worktreePath || workbenchClaimHoldsTree(target.workspace)) return null;
   const { attempt } = target;
 
   if (

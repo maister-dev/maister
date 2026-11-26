@@ -14,6 +14,7 @@ import { launchRefusal } from "./launch-resolution";
 
 import { projects } from "@/lib/db/schema";
 import { requiresLaunchUnattended } from "@/lib/runs/execution-policy";
+import { assertAcceptedTaskLaunchHost } from "@/lib/execution-host/project-preference";
 
 /** A durable accepted decision is revalidated; its actor ID is not a fresh human grant. */
 export async function assertTaskLaunchDispatchAuthority(
@@ -54,19 +55,20 @@ export async function assertTaskLaunchDispatchAuthority(
       intent.basis.userId,
       actions,
     );
-
-    return;
-  }
-  if (intent.basis.kind === "automatic" && intent.basis.origin) {
+  } else if (intent.basis.kind === "automatic" && intent.basis.origin) {
     await assertStoredTaskLaunchTokenAuthority(db, intent.id, actions);
+  } else {
+    const [project] = await db
+      .select({ archivedAt: projects.archivedAt })
+      .from(projects)
+      .where(eq(projects.id, intent.projectId));
 
-    return;
+    if (!project || project.archivedAt)
+      throw launchRefusal("launch_authority_revoked", "PRECONDITION");
   }
-  const [project] = await db
-    .select({ archivedAt: projects.archivedAt })
-    .from(projects)
-    .where(eq(projects.id, intent.projectId));
-
-  if (!project || project.archivedAt)
-    throw launchRefusal("launch_authority_revoked", "PRECONDITION");
+  await assertAcceptedTaskLaunchHost(
+    db,
+    intent.projectId,
+    intent.effectiveExecutionHostId,
+  );
 }

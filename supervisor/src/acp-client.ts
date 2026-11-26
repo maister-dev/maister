@@ -5,6 +5,7 @@ import type {
 } from "node:stream";
 import type { Logger } from "pino";
 import type { AcpContextFailureReason } from "../../runtime/acp-context-failure";
+import type { WorkspaceClaudeSubagent } from "../../runtime/workspace-flow-persona";
 
 import { randomUUID } from "node:crypto";
 
@@ -15,6 +16,7 @@ import { isNativeKnowledgeReadTool } from "../../runtime/knowledge-tool-effects"
 import { connectAcpClient, type AcpConnection } from "./acp-connection";
 import { readSessionModels, type SessionModelView } from "./session-models";
 import {
+  type addressedClaudeSettings,
   claudeModelOptions,
   claudeToolArbitrationOptions,
 } from "./claude-tool-arbitration";
@@ -84,6 +86,8 @@ export type CreateAcpConnectionArgs = {
   adapter: ExecutorAgent;
   /** Effective declared model, also supplied for executor-only legacy requests. */
   model?: string;
+  claudeSettings?: ReturnType<typeof addressedClaudeSettings>;
+  claudeSubagent?: WorkspaceClaudeSubagent;
   pendingPermissions?: PendingPermissionRegistry;
   mcpServers?: McpServerInput[];
   // When set, resume the prior ACP session via the `session/resume` call
@@ -211,7 +215,7 @@ export function resolveAutoApproveOption(
   );
 }
 
-type AcpMethod = "initialize" | "newSession" | "resumeSession" | "prompt";
+type AcpMethod = "initialize" | "newSession" | "resumeSession" | "setSessionConfigOption" | "prompt";
 
 const ACP_HANDSHAKE_TIMEOUT_ENV = "MAISTER_ACP_HANDSHAKE_TIMEOUT_MS";
 
@@ -1210,16 +1214,41 @@ export async function createAcpConnection(
     };
   });
 
+  const subagent = args.claudeSubagent;
   const claudeOptions = {
     ...claudeModelOptions(args.runner?.model ?? args.model),
     ...(record.enforcementProfile || record.readOnlySession
       ? claudeToolArbitrationOptions()
       : {}),
+    ...(args.claudeSettings?.settings ? { settings: args.claudeSettings.settings } : {}),
+    ...(subagent ? { agents: { [subagent.stem]: {
+      description: subagent.description,
+      prompt: subagent.prompt,
+    } } } : {}),
   };
   const sessionMeta =
     args.adapter === "claude" && Object.keys(claudeOptions).length > 0
       ? { _meta: { claudeCode: { options: claudeOptions } } }
       : {};
+  const applyClaudeMode = async (acpSessionId: string): Promise<void> => {
+    const mode = args.claudeSettings?.mode;
+    if (!mode) return;
+    const acknowledgement = await callAcpMethod({
+      adapter: args.adapter,
+      method: "setSessionConfigOption",
+      sessionId,
+      logger,
+      timeoutMs: handshakeTimeoutMs,
+      run: () => connection.setSessionConfigOption({
+        sessionId: acpSessionId,
+        configId: "mode",
+        value: mode,
+      }),
+    });
+    if (!acknowledgement.configOptions.some((option) =>
+      option.id === "mode" && option.currentValue === mode))
+      throw new SupervisorError("ACP_PROTOCOL", "Claude did not acknowledge the addressed session's native permission mode");
+  };
 
   // Resume uses the ACP `session/resume` call: it restores the prior
   // conversation into the agent's context WITHOUT replaying history (ACP spec:
@@ -1256,6 +1285,7 @@ export async function createAcpConnection(
         "acp resume-session",
       );
       record.acpSessionId = resumeSessionId;
+      await applyClaudeMode(resumeSessionId);
       const resumedModels = readSessionModels(resumeResp);
 
       harvestSessionModels(
@@ -1307,6 +1337,7 @@ export async function createAcpConnection(
   );
 
   record.acpSessionId = newSessionResp.sessionId;
+  await applyClaudeMode(newSessionResp.sessionId);
   const sessionModels = readSessionModels(newSessionResp);
 
   harvestSessionModels(args.runner, sessionModels, modelCatalogCache, logger);

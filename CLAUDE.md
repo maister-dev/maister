@@ -37,10 +37,10 @@ Backend split:
 - `supervisor/` — separate Node daemon. Owns ACP sessions, spawns agent
   processes through the platform ACP runner registry, heartbeat, and
   permission input delivery. Reachable
-  from Next.js over HTTP+SSE. Both processes share the host filesystem
-  (ADR-023) — a different host for the supervisor is not supported today;
-  ADR-166 (Implemented) makes the supervisor a registered _execution host_
-  behind `web/lib/execution-host/` so later stages can move it.
+  from Next.js over HTTP+SSE as a registered _execution host_ behind
+  `web/lib/execution-host/` (ADR-166). The default deployment shares
+  repository paths. The Stage C pilot uses opaque handles for workspaces
+  owned by selected supervisors (ADR-219).
 - The personal librarian is a durable per-user conversation in `web/lib/librarian/`
   and `web/components/librarian/`; its turns use owner-bound MCP tokens and
   supervisor-hosted ACP sessions (ADR-185..189).
@@ -99,9 +99,9 @@ See [concurrent heavy checks](docs/configuration.md#concurrent-heavy-checks).
 - **IPC Next.js ↔ supervisor**: HTTP+SSE through `web/lib/execution-host/`
   (Implemented — ADR-166: durable host identity, per-run epoch-fenced
   assignments, enveloped command ledger, opaque adopted-workspace handles);
-  the supported single-host deployment still shares repository/worktree
-  material until Stage C, but the Stage B event and runtime-data plane is
-  path-free (ADR-167).
+  legacy execution shares repository/worktree paths. Stage B makes the event
+  and runtime-data plane path-free (ADR-167). Stage C adds host-owned
+  checkout and workload delivery for the selected-supervisor pilot (ADR-219).
 - **Flow plugins**: git repos pinned by tag (`v1.2.3`); installed system-wide
   to `~/.maister/flows/<id>@<tag>/` and symlinked into each consuming
   project's `.maister/<slug>/flows/`.

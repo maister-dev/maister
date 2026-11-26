@@ -258,6 +258,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-216](#adr-216-durable-flow-waits) | Durable Flow waits | Implemented | 2026-11-20 |
 | [ADR-217](#adr-217-evidence-gated-autonomous-completion) | Evidence-gated autonomous completion | Implemented | 2026-11-20 |
 | [ADR-218](#adr-218-recoverable-installation-of-project-dependencies) | Recoverable installation of project dependencies | Accepted | 2026-11-23 |
+| [ADR-219](#adr-219-selected-supervisor-workspace-ownership) | Selected supervisor workspace ownership | Accepted | 2026-11-23 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2492,5 +2493,14 @@ Full record: [`decisions/adr-217.md`](decisions/adr-217.md)
 **Date:** 2026-11-23
 
 Full record: [`decisions/adr-218.md`](decisions/adr-218.md)
+
+---
+
+### ADR-219: Selected supervisor workspace ownership
+
+**Status:** Accepted
+**Date:** 2026-11-23
+
+Full record: [`decisions/adr-219.md`](decisions/adr-219.md)
 
 ---

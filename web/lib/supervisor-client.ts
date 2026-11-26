@@ -1,6 +1,10 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
+import type { ClaudeNativePermissions } from "../../runtime/claude-native-permissions";
+import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspaceRetainedRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
+import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
+import type { WorkspacePullRequestQuery, WorkspacePullRequestStatus } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
   WorkspacePublicationSnapshot,
@@ -22,7 +26,9 @@ import type {
   RuntimeObjectContent,
   RuntimeObjectContentStream,
 } from "@/lib/execution-host/contracts";
+import type { SelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 
 import pino from "pino";
@@ -40,6 +46,12 @@ import {
   type CommandReceiptV2,
 } from "../../runtime/command-evidence";
 import {
+  EXECUTION_HOST_KEY_HEADER,
+  EXECUTION_HOST_KEY_PATTERN,
+} from "../../runtime/execution-host-address";
+import { GIT_OBJECT_ID } from "../../runtime/wait-head";
+import { isWorkspaceSourceRef } from "../../runtime/workspace-prepare";
+import {
   MAX_OBJECT_RESPONSE_BYTES,
   parseObjectContentLength,
 } from "../../runtime/object-integrity";
@@ -52,6 +64,8 @@ import {
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema, WorkspaceEvidenceObjectSchema, WorkspacePublicationTargetSchema, WorkspacePullRequestStatusSchema, WorkspaceReviewFingerprintSchema, WorkspaceStatusSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
@@ -62,6 +76,16 @@ const logger = pino({
   name: "supervisor-client",
   level: process.env.LOG_LEVEL ?? "info",
 });
+const supervisorEndpointScope = new AsyncLocalStorage<SelectedExecutionEndpoint>();
+
+/** Preserve the selected origin and stable key for the full async wire call. */
+export function withPinnedSupervisorEndpoint<T>(endpoint: SelectedExecutionEndpoint, action: () => T): T {
+  return supervisorEndpointScope.run(endpoint, action);
+}
+
+function supervisorEndpoint(): SelectedExecutionEndpoint | null {
+  return supervisorEndpointScope.getStore() ?? configuredSelectedExecutionEndpoint();
+}
 
 const DEFAULT_BASE_URL = "http://localhost:7777";
 const DEFAULT_HEALTH_TIMEOUT_MS = 1_000;
@@ -139,6 +163,7 @@ export type CreateSessionInput = {
   resumeSessionId?: string;
   capabilityProfileObjectId?: string;
   capabilityInstructionsObjectId?: string;
+  claudePermissions?: ClaudeNativePermissions;
   outputObjects?: SupervisorRuntimeOutputBinding[];
   adapterLaunch?: SupervisorAdapterLaunchInput;
   mcpServers?: AgentMcpServer[];
@@ -304,7 +329,7 @@ export type SupervisorModelCatalog = {
 // reads as ready; the registrar (lib/execution-host) REQUIRES it to register.
 export const ExecutionHostIdentitySchema = z
   .object({
-    hostKey: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
+    hostKey: z.string().regex(EXECUTION_HOST_KEY_PATTERN),
     bootId: z.string().guid(),
     protocolVersion: z.literal(1),
   })
@@ -315,6 +340,8 @@ export type ExecutionHostIdentity = z.infer<typeof ExecutionHostIdentitySchema>;
 export const ExecutionHostDataPlaneCapabilitiesSchema = z
   .object({
     dataPlaneVersion: z.literal("execution-host-data-plane.v1"),
+    workspaceProtocol: z.tuple([z.literal(1)]).optional(),
+    workspaceSyncResolver: z.literal(1).optional(),
     eventStream: z.boolean(),
     asyncPrompt: z.boolean(),
     runtimeObjects: z.boolean(),
@@ -672,6 +699,8 @@ export type SupervisorEvent =
     };
 
 function baseUrl(): string {
+  const selected = supervisorEndpoint();
+  if (selected) return selected.url;
   const configured = process.env.MAISTER_SUPERVISOR_URL;
 
   if (configured) return configured;
@@ -692,6 +721,32 @@ function baseUrl(): string {
   }
 
   return DEFAULT_BASE_URL;
+}
+
+function supervisorAddressOptions(headers?: Record<string, string>): {
+  headers?: Record<string, string>;
+  redirect?: "error";
+} {
+  const endpoint = supervisorEndpoint();
+
+  if (!endpoint) return { headers };
+
+  return {
+    headers: { ...headers, [EXECUTION_HOST_KEY_HEADER]: endpoint.hostKey },
+    redirect: "error",
+  };
+}
+
+function fetchSupervisor(
+  url: string,
+  init: Omit<RequestInit, "headers"> & {
+    headers?: Record<string, string>;
+  } = {},
+): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    ...supervisorAddressOptions(init.headers),
+  });
 }
 
 const KNOWN_SUPERVISOR_CODES: ReadonlySet<MaisterErrorCode> = new Set([
@@ -795,7 +850,9 @@ function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
 
 async function fetchLongLivedSupervisor(
   url: string,
-  init: Omit<UndiciRequestInit, "dispatcher">,
+  init: Omit<UndiciRequestInit, "dispatcher" | "headers"> & {
+    headers?: Record<string, string>;
+  },
   ctx: string,
 ): Promise<Response> {
   logger.debug(
@@ -805,6 +862,7 @@ async function fetchLongLivedSupervisor(
 
   return (await undiciFetch(url, {
     ...init,
+    ...supervisorAddressOptions(init.headers),
     dispatcher: longLivedDispatcher,
   })) as unknown as Response;
 }
@@ -840,6 +898,7 @@ export async function checkSupervisorHealth(
 
   try {
     res = await fetch(url, {
+      redirect: supervisorEndpoint() ? "error" : undefined,
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
@@ -875,9 +934,15 @@ export async function checkSupervisorHealth(
   const parsed = SupervisorHealthSchema.safeParse(body);
 
   if (!parsed.success) {
+    const incompatible =
+      supervisorEndpoint() &&
+      parsed.error.issues.some(
+        ({ path }) => path[0] === "host" && path[1] === "protocolVersion",
+      );
+
     return {
       kind: "unavailable",
-      reason: "malformed",
+      reason: incompatible ? "workspace_protocol_unsupported" : "malformed",
       message: parsed.error.message,
     };
   }
@@ -917,7 +982,7 @@ export async function checkSupervisorDiagnostics(
   logger.debug({ url }, "checkSupervisorDiagnostics");
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
@@ -983,7 +1048,7 @@ export async function checkSupervisorEnvRefs(
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "POST",
       cache: "no-store",
       headers: { "content-type": "application/json" },
@@ -1021,7 +1086,7 @@ export async function listSessions(): Promise<SupervisorSessionRecord[]> {
   let res: Response;
 
   try {
-    res = await fetch(url);
+    res = await fetchSupervisor(url);
   } catch (err) {
     throw networkErrorToMaister(err, "listSessions");
   }
@@ -1099,7 +1164,7 @@ export async function resolveModelSuggestions(
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...draft, force: opts?.force ?? false }),
@@ -1145,7 +1210,7 @@ export async function probeMcpViaSupervisor(
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(req),
@@ -1489,7 +1554,7 @@ async function request<T>(spec: WireRequest): Promise<WireResponse<T>> {
     try {
       res = spec.longLived
         ? await fetchLongLivedSupervisor(url, init, spec.ctx)
-        : await fetch(url, { ...init, cache: "no-store" });
+        : await fetchSupervisor(url, { ...init, cache: "no-store" });
     } catch (err) {
       throw networkErrorToMaister(err, spec.ctx);
     }
@@ -1859,6 +1924,250 @@ export async function getCommandReceipt(
   }
 }
 
+async function sendWorkspaceCommand(path: string, input: WorkspaceCommandRequest | WorkspaceRetainedRequest, method: "POST" | "DELETE" = "POST"): Promise<void> {
+  const commandPath = `/v1/commands/${encodeURIComponent(input.command.id)}`;
+  const res = await request<unknown>({
+    method,
+    path,
+    body: input,
+    ctx: input.command.kind,
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: 10_000,
+  });
+  const received = WorkspacePrepareAcceptanceSchema.safeParse(res.body);
+  if (!received.success || received.data.commandId !== input.command.id ||
+      res.status !== 202 || res.headers.get("location") !== commandPath)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace acceptance");
+}
+
+export function sendWorkspacePreparation(input: WorkspacePrepareRequest): Promise<void> {
+  return sendWorkspaceCommand("/v1/workspaces/prepare", input);
+}
+
+export function sendWorkspaceMaterialization(handle: string, input: WorkspaceMaterializeRequest): Promise<void> {
+  return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(handle)}/materialization`, input);
+}
+
+export function sendWorkspaceWorkload(handle: string, input: WorkspaceWorkloadRequest): Promise<void> {
+  return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(handle)}/commands`, input);
+}
+
+export function sendWorkspaceGitCommand(handle: string, input: WorkspaceCheckpointRequest | WorkspaceRestoreRequest): Promise<void> {
+  const operation = input.command.kind === "workspace.checkpoint" ? "checkpoint" : "restore";
+
+  return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(handle)}/${operation}`, input);
+}
+
+export function sendRetainedWorkspaceCommand(input: WorkspaceRetainedRequest): Promise<void> {
+  const workspace = `/v1/workspaces/${encodeURIComponent(input.owner.workspaceHandle)}`;
+  if (input.command.kind === "workspace.release") return sendWorkspaceCommand(workspace, input, "DELETE");
+  const action = input.command.kind === "workspace.preserve" ? "preserve"
+    : input.command.kind === "workspace.sync" ? "sync" : "publication";
+
+  return sendWorkspaceCommand(`${workspace}/${action}`, input);
+}
+
+export async function getWorkspacePublicationTarget(
+  handle: string,
+  input: Omit<WorkspacePublicationTarget, "priorTarget">,
+): Promise<WorkspacePublicationTarget> {
+  const query = new URLSearchParams({ ...input, generation: String(input.generation) });
+  const result = await request<unknown>({
+    method: "GET",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/publication-target?${query}`,
+    ctx: "getWorkspacePublicationTarget",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const parsed = WorkspacePublicationTargetSchema.safeParse(result.body);
+  if (!parsed.success || parsed.data.generation !== input.generation ||
+    parsed.data.remoteId !== input.remoteId || parsed.data.targetRef !== input.targetRef)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned a different publication target");
+
+  return parsed.data;
+}
+
+export async function getWorkspacePullRequest(
+  handle: string,
+  input: WorkspacePullRequestQuery,
+): Promise<WorkspacePullRequestStatus> {
+  const query = new URLSearchParams({
+    ...input,
+    generation: String(input.generation),
+    number: String(input.number),
+  });
+  const result = await request<unknown>({
+    method: "GET",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/pull-request?${query}`,
+    ctx: "getWorkspacePullRequest",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const observed = WorkspacePullRequestStatusSchema.safeParse(result.body);
+  if (!observed.success ||
+    observed.data.generation !== input.generation ||
+    observed.data.remoteId !== input.remoteId ||
+    observed.data.number !== input.number ||
+    observed.data.url !== input.url ||
+    observed.data.baseRef !== input.baseRef)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned a different pull request");
+
+  return observed.data;
+}
+
+export function cancelWorkspaceWorkload(handle: string, targetCommandId: string, input: WorkspaceCancelWorkloadRequest): Promise<void> {
+  return sendWorkspaceCommand(
+    `/v1/workspaces/${encodeURIComponent(handle)}/commands/${encodeURIComponent(targetCommandId)}/cancel`, input,
+  );
+}
+
+export async function resolveWorkspaceRevision(repositoryId: string, ref: string, pinnedCommit?: string): Promise<WorkspaceRevisionObservation> {
+  const res = await request<unknown>({
+    method: "POST",
+    path: "/v1/repositories/resolve-revision",
+    body: { repositoryId, ref, ...(pinnedCommit === undefined ? {} : { pinnedCommit }) },
+    ctx: "resolveWorkspaceRevision",
+    fallbackCode: "PRECONDITION",
+    timeoutMs: pinnedCommit === undefined ? 10_000 : 75_000,
+  });
+  const received = z.object({
+    repositoryId: z.literal(repositoryId),
+    ref: z.literal(ref),
+    commit: z.string().regex(GIT_OBJECT_ID),
+    pinnedCommit: z.string().regex(GIT_OBJECT_ID).optional(),
+  }).strict().safeParse(res.body);
+  if (res.status !== 200 || !received.success ||
+      (pinnedCommit === undefined
+        ? received.data.pinnedCommit !== undefined
+        : !received.data.pinnedCommit?.startsWith(pinnedCommit.toLowerCase())))
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid Git revision witness");
+
+  return received.data;
+}
+
+export async function observeWorkspaceRevision(repositoryId: string, ref: string): Promise<string> {
+  return (await resolveWorkspaceRevision(repositoryId, ref)).commit;
+}
+
+const sourceRef = z.string().refine(isWorkspaceSourceRef);
+const workspaceSourceRefPage = z.object({
+  refs: z.array(sourceRef).max(100),
+  defaultRef: sourceRef.nullable(),
+  nextCursor: z.string().min(1).max(512).nullable(),
+}).strict();
+
+export async function listWorkspaceSourceRefs(repositoryId: string, cursor?: string): Promise<WorkspaceSourceRefPage> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const res = await request<unknown>({
+    method: "GET",
+    path: `/v1/repositories/${encodeURIComponent(repositoryId)}/refs${query}`,
+    ctx: "listWorkspaceSourceRefs",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const received = workspaceSourceRefPage.safeParse(res.body);
+  if (res.status !== 200 || !received.success)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid repository branch page");
+
+  return received.data;
+}
+
+export async function getWorkspaceStatus(handle: string, generation: number): Promise<WorkspaceStatus> {
+  const res = await request<unknown>({
+    method: "GET",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/status?generation=${generation}`,
+    ctx: "getWorkspaceStatus",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const status = WorkspaceStatusSchema.safeParse(res.body);
+  if (res.status !== 200 || !status.success || status.data.workspace.handle !== handle ||
+      status.data.workspace.generation !== generation)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned a different workspace status");
+
+  return status.data;
+}
+
+export async function getWorkspaceDiff(handle: string, input: WorkspaceDiffQuery): Promise<WorkspaceEvidenceObject> {
+  const query = new URLSearchParams({
+    generation: String(input.generation),
+    ...(input.base ? { base: input.base } : {}),
+    ...(input.head ? { head: input.head } : {}),
+    ...(input.checkpointId ? { checkpointId: input.checkpointId } : {}),
+    ...(input.format ? { format: input.format } : {}),
+  });
+  return getWorkspaceEvidence(handle, "diff", query, input.generation);
+}
+
+export async function getWorkspaceLog(handle: string, input: WorkspaceLogQuery): Promise<WorkspaceEvidenceObject> {
+  const query = new URLSearchParams({
+    generation: String(input.generation),
+    ...(input.cursor ? { cursor: input.cursor } : {}),
+    ...(input.limit !== undefined ? { limit: String(input.limit) } : {}),
+    ...(input.base ? { base: input.base } : {}),
+    ...(input.head ? { head: input.head } : {}),
+  });
+
+  return getWorkspaceEvidence(handle, "log", query, input.generation);
+}
+
+export async function getWorkspaceReviewFingerprint(
+  handle: string,
+  input: { generation: number; base: string },
+): Promise<WorkspaceReviewFingerprint> {
+  const query = new URLSearchParams({ generation: String(input.generation), base: input.base });
+  const res = await request<unknown>({
+    method: "GET",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/review-fingerprint?${query}`,
+    ctx: "getWorkspaceReviewFingerprint",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const parsed = WorkspaceReviewFingerprintSchema.safeParse(res.body);
+  if (!parsed.success || parsed.data.baseCommit !== input.base || parsed.data.generation !== input.generation)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned a different review fingerprint range");
+
+  return parsed.data;
+}
+
+async function getWorkspaceEvidence(handle: string, resource: "diff" | "log", query: URLSearchParams, generation: number): Promise<WorkspaceEvidenceObject> {
+  const res = await request<unknown>({
+    method: "GET",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/${resource}?${query}`,
+    ctx: `getWorkspaceEvidence/${resource}`,
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const evidence = WorkspaceEvidenceObjectSchema.safeParse(res.body);
+  if (res.status !== 200 || !evidence.success || evidence.data.generation !== generation)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace evidence reference");
+
+  return evidence.data;
+}
+
+export async function getWorkspaceCommandReceipt(
+  commandId: string,
+  eventId?: string,
+): Promise<WorkspaceCommandReceipt | null> {
+  try {
+    const res = await request<unknown>({
+      method: "GET",
+      path: `/v1/commands/${encodeURIComponent(commandId)}${eventId ? `?eventId=${encodeURIComponent(eventId)}` : ""}`,
+      ctx: "getWorkspaceCommandReceipt",
+      fallbackCode: "ACP_PROTOCOL",
+      timeoutMs: ADMIN_READ_TIMEOUT_MS,
+    });
+    const receipt = WorkspaceCommandReceiptSchema.safeParse(res.body);
+    if (!receipt.success || receipt.data.commandId !== commandId)
+      throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace receipt");
+
+    return receipt.data;
+  } catch (error) {
+    if (httpStatusOf(error) === 404) return null;
+    throw error;
+  }
+}
+
 /** ADR-167 D5 amendment: the raw span body; the transport validates it. */
 export async function readRuntimeEventSpan(input: {
   streamId: string;
@@ -1989,7 +2298,7 @@ async function runtimeObjectBinaryResponse(input: {
   try {
     request = new UndiciRequest(`${baseUrl()}${input.path}`, {
       method: input.method,
-      headers: input.headers,
+      ...supervisorAddressOptions(input.headers),
       body: input.bytes,
       cache: "no-store",
       signal: combineSignals(input.signal, controller.signal),

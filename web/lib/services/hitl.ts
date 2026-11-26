@@ -4817,6 +4817,13 @@ async function preflightParkExportBranch(args: {
       `workspace unavailable for budget park export: ${args.runId}`,
     );
   }
+  if (!workspace.worktreePath || !workspace.parentRepoPath) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "Budget park export requires a retained manager-local worktree",
+      { details: { reason: "workspace_protocol_unsupported", runId: args.runId } },
+    );
+  }
 
   const [head, localHead, metadata] = await Promise.all([
     headCommit({ worktreePath: workspace.worktreePath }),
@@ -6314,9 +6321,16 @@ async function handleNodeInterruptResponse(args: {
       .at(-1);
     // `runs` has no worktree_path — it lives on `workspaces`.
     const workspaceRows = await db
-      .select({ worktreePath: workspaces.worktreePath })
+      .select({ worktreePath: workspaces.worktreePath, ownershipKind: workspaces.ownershipKind })
       .from(workspaces)
       .where(eq(workspaces.runId, runId));
+    if (workspaceRows[0]?.ownershipKind === "host_owned") {
+      throw new MaisterError(
+        "PRECONDITION",
+        "This restart cannot restore a selected-host workspace. Choose Keep changes to restart.",
+        { details: { reason: "workspace_protocol_unsupported", runId, targetNodeId } },
+      );
+    }
     const worktreePath = workspaceRows[0]?.worktreePath as
       string | null | undefined;
 

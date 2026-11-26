@@ -7,6 +7,7 @@ import {
   findActiveAssignmentForRun,
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
+import { requireProjectAction } from "@/lib/authz";
 import {
   runs as runsTable,
   scratchRuns as scratchRunsTable,
@@ -175,6 +176,8 @@ function seedScratchRun(
     runId,
     projectId: "project-1",
     branch: "scratch/demo",
+    ownershipKind: "legacy_path",
+    worktreePath: "/repos/demo/.maister/run-1",
     parentRepoPath: "/repos/demo",
     removedAt: overrides.removedAt ?? null,
     baseBranch: "main",
@@ -263,6 +266,30 @@ describe("POST /api/runs/[runId]/promote", () => {
       runId,
       reason: "run promoted to Done",
     });
+  });
+
+  it("refuses promotion with reviewed source when the caller cannot read repository files", async () => {
+    const runId = seedScratchRun({ runKind: "flow" });
+    const authorize = vi.mocked(requireProjectAction);
+    const allow = authorize.getMockImplementation();
+    if (!allow) throw new Error("Project authorization fixture was not configured");
+
+    await authorize.withImplementation(async (...args) => {
+      if (args[1] === "readRepoFiles")
+        throw new MaisterError("UNAUTHORIZED", "Repository files are restricted");
+      return allow(...args);
+    }, async () => {
+      const response = await invokePost(runId, {
+        reviewedSource: {
+          head: "a".repeat(40),
+          fingerprint: `sha256:${"b".repeat(64)}`,
+        },
+      });
+      expect(response.status).toBe(403);
+    });
+    expect(authorize).toHaveBeenLastCalledWith("project-1", "readRepoFiles");
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.runs[0]?.status).toBe("Review");
   });
 
   it("rejects a missing target branch before merge", async () => {

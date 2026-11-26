@@ -19,6 +19,10 @@ import {
 } from "./launch-token";
 import { lockTaskLaunchReservation } from "./launch-locks";
 import { emitTaskLaunchChanged } from "./launch-events";
+import {
+  taskLaunchHostSelection,
+  taskLaunchSettingsDigest,
+} from "./launch-receipt";
 
 import {
   executionAssignments,
@@ -376,7 +380,10 @@ export async function prepareTaskLaunchRecovery(
     intent.inputSnapshot.version !== 2 ||
     intent.settingsSnapshot.version !== 2 ||
     retryDigest(intent.inputSnapshot) !== intent.inputDigest ||
-    retryDigest(intent.settingsSnapshot) !== intent.settingsDigest ||
+    taskLaunchSettingsDigest(
+      intent.settingsSnapshot,
+      taskLaunchHostSelection(intent),
+    ) !== intent.settingsDigest ||
     run.taskAdmissionSnapshot?.version !== 2 ||
     run.taskAdmissionSnapshot.intentId !== intent.id ||
     run.taskAdmissionSnapshot.basis !== intent.basis.kind

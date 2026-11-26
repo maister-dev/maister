@@ -16,12 +16,13 @@ import { ExecutionEventProjectionError } from "./projector";
 
 import { commandSignals } from "@/lib/execution-host/signals";
 import { getCommand } from "@/lib/execution-host/commands";
-import { defaultTransport } from "@/lib/execution-host/default-transport";
+import { transportForExecutionHost } from "@/lib/execution-host/default-transport";
+import { getHostById } from "@/lib/execution-host/hosts";
 import {
   depositPromptReceipt,
   recordPromptEvent,
 } from "@/lib/execution-host/prompt-evidence";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   executionAssignments,
   runs,
@@ -104,10 +105,14 @@ async function preparePromptEvidence(
   const command = await getCommand(db, commandId);
 
   if (!command || command.receiptEvidence) return prepared;
+  if (command.executionHostId !== prepared.executionHostId)
+    throw new MaisterError("ACP_PROTOCOL", "Prompt evidence belongs to a different execution host");
+  const host = await getHostById(db, command.executionHostId);
+  if (!host) return prepared;
   let receipt: CommandReceipt | null;
 
   try {
-    receipt = await defaultTransport().getCommandReceipt(commandId);
+    receipt = await transportForExecutionHost(host).getCommandReceipt(commandId);
   } catch (error) {
     if (signal.aborted) throw error;
     if (!isMaisterError(error) || error.code !== "EXECUTOR_UNAVAILABLE")

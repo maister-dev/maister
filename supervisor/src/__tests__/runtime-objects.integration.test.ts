@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { removeWorkspaceExecutionSchema } from "./_fixtures/legacy-host-state";
 import { HOST_STATE_SCHEMA_VERSION } from "../host-state";
 import { RuntimeObjectRegistry } from "../runtime-objects";
 
@@ -581,6 +582,7 @@ describe("runtime object transport", () => {
         db.exec(`ALTER TABLE runtime_objects DROP COLUMN ${name}`);
     }
     db.exec("ALTER TABLE workspaces DROP COLUMN company_id");
+    removeWorkspaceExecutionSchema(db);
     db.exec("PRAGMA user_version = 12;");
     db.close();
     const restarted = await bootHost({

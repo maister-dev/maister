@@ -1,4 +1,5 @@
 openapi: 3.0.3
+x-designed-stage-c-workspace-profile: stage-c-workspace.schema.yaml
 info:
   title: MAIster Web HTTP API
   version: "0.12.0"
@@ -2362,6 +2363,13 @@ paths:
           required: false
           description: Preview an enabled Flow belonging to the task's project.
           schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: executionHostId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: branchCursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 512 }
+          description: Continuation issued for the same addressed supervisor and project repository.
         - name: relaunchOfRunId
           in: query
           description: Scoped source run included in the immutable settings token; task input and launch authority are captured fresh.
@@ -2480,6 +2488,75 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/settings/execution-host:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: stageCReadProjectHostSettings
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/ProjectHostSettings
+      summary: Read the default supervisor preference for a project
+      description: Requires current project settings authority. The response includes a composite ETag for saving the preference.
+      responses:
+        "200":
+          description: Current preference and revisions.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: &stageCProjectHostSettings
+                type: object
+                additionalProperties: false
+                required: [defaultExecutionHostId, preferenceRevision, eligibilityRevision]
+                properties:
+                  defaultExecutionHostId: { type: string, nullable: true }
+                  preferenceRevision: { type: integer, minimum: 1 }
+                  eligibilityRevision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Project not found or no longer visible. }
+    patch:
+      operationId: stageCUpdateProjectHostSettings
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/ProjectHostPreference
+      summary: Update the default supervisor preference for a project
+      description: Requires current settings authority and a same-origin request. Null inherits the instance default.
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [defaultExecutionHostId]
+              properties:
+                defaultExecutionHostId: { type: string, nullable: true, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+      responses:
+        "200":
+          description: Stored preference and refreshed revision.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: *stageCProjectHostSettings
+        "400": { description: Invalid preference body. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Project not found or no longer visible. }
+        "409":
+          description: Stale or malformed settings revision, or an ineligible host. No settings were changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/projects/{slug}/settings/runner:
     patch:
       tags: [projects]
@@ -7940,7 +8017,9 @@ paths:
             (current behavior). `since-last-review`: `<prev-review-visit-sha>..branch`
             from `hitl_requests.review_tip_sha`. `last-node`:
             `<pre-attempt-checkpoint-sha>..branch` for the latest completed agent
-            node (ADR-079 checkpoint ref). `uncommitted`: `HEAD` vs working tree
+            node (ADR-079 checkpoint ref). On an addressed supervisor, `last-node`
+            compares the verified retained checkpoint with the current working
+            tree and returns the captured checkpoint commit. `uncommitted`: `HEAD` vs working tree
             (tracked) + untracked as additions, rendered under a temp
             `GIT_INDEX_FILE` intent-to-add — the real index is NEVER mutated. A
             scope whose base ref is missing is hidden/disabled with a reason,
@@ -8911,6 +8990,12 @@ paths:
         base commit, resolved policy snapshot, and default target branch are
         derived from server state.
 
+        An addressed task Run with manual branch delivery publishes its
+        committed HEAD to the approved dedicated branch on the selected
+        supervisor. Web records the claim before dispatch and finalizes after
+        the supervisor proves the resulting remote SHA. Repeating the same
+        owner's request returns the retained result without a second push.
+
         M18 compatibility modes `local_merge`, `rebase_merge`, and
         `pull_request` map to ADR-085 delivery strategies `merge`,
         `rebase_merge`, and `pull_request`. ADR-085 also adds optional
@@ -8922,11 +9007,16 @@ paths:
         assignment/inbox path.
 
         Promotion is gated at promote time by the M16 readiness chokepoint
-        (`assertEvidenceReady(runId, "review")`) and by a target-drift guard:
+        (`assertEvidenceReady(runId, "review")`). For merge and PR delivery:
         `reviewedTargetCommit` MUST equal the live target HEAD unless
         `allowTargetDrift` is set, else `PRECONDITION` (the target advanced
         since review). A body omitting `reviewedTargetCommit` is refused
         `PRECONDITION` — never promoted blind.
+
+        Manual branch publication from a supervisor-owned workspace also
+        requires `reviewedSource` with the exact HEAD and sealed Review
+        fingerprint. An omitted source returns `review_source_required`
+        and a mismatched source returns `review_source_changed` at HTTP 409.
 
         On success all strategies terminate the run at `Done` (no new run
         status); `pull_request` additionally records `pullRequestUrl`/`prNumber`.
@@ -9035,6 +9125,16 @@ paths:
         (`parent_run_id IS NULL`), `workspace_mode <> 'shared'`, not an experiment
         member. Mutually exclusive with promotion and every other lifecycle op
         (double fence).
+
+        For an owned checkout on a selected supervisor, the manager pins the
+        original HEAD and approved target SHA. A changed target returns 409.
+        Mechanical conflict reporting returns 200 with repository-relative
+        paths and the original checkout intact. In Review an authorized
+        resolver request returns 202 after the owning supervisor records the
+        prepared conflict and the manager reserves its ACP assignment. The
+        original supervisor verifies the result and any dedicated branch
+        publication under the recorded lease. This requires host capability
+        `workspaceSyncResolver: 1`.
 
         **(ADR-181 — Implemented) Update.** The `status='Review'` arm is replaced
         by the workbench git policy (`update`): every parked status
@@ -9659,6 +9759,8 @@ paths:
         SHA-256 fingerprints. It writes no response, input artifact, evidence,
         run state, or ACP side effect. Resolved roots are excluded. Preview and
         runner logging is limited to ids, counts, state, and digests.
+        For an addressed workspace, the owning supervisor verifies the digest
+        of the same pinned snapshot used by the review diff.
       operationId: previewRunReviewFeedback
       parameters:
         - name: runId
@@ -9729,6 +9831,8 @@ paths:
               application/json:
                 { schema: { $ref: "#/components/schemas/MaisterErrorBody" } },
             }
+        "502": { description: The selected supervisor returned invalid review evidence. }
+        "503": { description: The selected supervisor could not verify the review snapshot. }
 
   /api/runs/{runId}/hitl/{hitlRequestId}/restart-preview:
     get:
@@ -10725,15 +10829,15 @@ paths:
   /api/runs/{runId}/takeover/claim:
     post:
       tags: [takeover]
-      summary: (M11b) Claim a run for manual takeover (local worktree handoff)
+      summary: Claim a run for manual takeover on its owning supervisor
       description: |
         (M11b — Implemented. Reflects HEAD-after-M11b.)
 
-        Claims a run parked at an M11a `human_review` node for a LOCAL worktree
-        handoff (ADR-030). The run transitions `NeedsInput → HumanWorking` (a real
-        `runs.status`). The EXISTING worktree path + run branch are exposed; NO new
-        branch, target, PR, remote, or supervisor session is created — the reviewer
-        edits in place on the same host.
+        Claims a run parked at a `human_review` node (ADR-030). The run
+        transitions `NeedsInput → HumanWorking`. A local checkout returns its
+        path and branch. An addressed checkout requires `readRepoFiles`, captures
+        the selected supervisor's observed HEAD and returns the supervisor ID,
+        workspace handle and branch with a null worktree path.
 
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`); role-restricted claim is M13.
@@ -10767,7 +10871,7 @@ paths:
         "200":
           description: |
             Claim recorded. The run is now `HumanWorking`; the response carries the
-            checkout context (the EXISTING worktree path + run branch).
+            checkout context for its owner.
           content:
             application/json:
               schema:
@@ -10776,7 +10880,15 @@ paths:
                 properties:
                   worktreePath:
                     type: string
-                    description: Existing `workspaces.worktree_path` (server-state).
+                    nullable: true
+                    description: Local worktree path or null for an addressed checkout.
+                  executionHostId:
+                    type: string
+                    description: Selected supervisor ID for an addressed checkout.
+                  workspaceHandle:
+                    type: string
+                    pattern: '^ws_[a-f0-9]{32}$'
+                    description: Opaque retained workspace handle for an addressed checkout.
                   branch:
                     type: string
                     description: Existing `workspaces.branch` — the run branch (no new branch).
@@ -10790,6 +10902,14 @@ paths:
                     worktreePath: /repos/my-app/.maister/my-app/runs/abc/worktree
                     branch: maister/task-42-attempt-1
                     ownerUserId: 8f1c2e34-...
+                addressed:
+                  summary: Claim recorded for a supervisor-owned checkout
+                  value:
+                    worktreePath: null
+                    branch: maister/task-42-attempt-1
+                    ownerUserId: 3d14cf7f-058a-4445-9232-bcf858ff9301
+                    executionHostId: 2270d4a6-fae1-4918-88ee-1abe352538b6
+                    workspaceHandle: ws_d2610411cca146be8251349f8a49ed8c
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -10804,7 +10924,15 @@ paths:
             One of (`MaisterErrorBody`):
             - run is not `NeedsInput`, or the current node is not a `human_review`
               node offering the `takeover` decision (`PRECONDITION`);
-            - a concurrent claim won the CAS first (`CONFLICT`).
+            - the addressed checkout has no active assignment or verified HEAD
+              (`PRECONDITION`);
+            - a concurrent claim won the CAS first or the assignment or node
+              changed during the HEAD read (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: The selected supervisor is unavailable.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -10824,6 +10952,11 @@ paths:
         the graph runner at the `human_review` node's `transitions.takeover` target
         (a validation node — `checks`) so the staled gates rerun over the human's
         commits and a fresh `human_review` gate is produced.
+
+        An addressed return requires current repository access, a clean checkout
+        and commits descending from the claim-time HEAD. The owning supervisor
+        seals the committed patch and log. The return atomically binds the next
+        execution epoch to the same host and workspace and records the evidence.
 
         Requires the session user to equal the recorded `owner_user_id`
         (owner-only in M11b; "take over stale work" by another user is M13).
@@ -11989,8 +12122,21 @@ paths:
         via `listSessions()` and calls `deleteSession(sessionId)` when found, then
         clears live ACP/current-step handles.
 
+        An addressed project Flow retains the first Stop actor against its
+        assignment. The handler waits for owning-host retirement evidence and
+        fences descendant dispatch. A stopped descendant is abandoned before
+        the parent enters Review. Recoverable uncertainty leaves the retained
+        Stop pending.
+
         - **flow** (Implemented) → `runs.status = Review`, active assignments
           closed.
+          For an addressed project Flow in `Running` or `NeedsInput`, Stop
+          first persists the requesting operator on the current assignment.
+          The supervisor cancels each exact workload and returns a canonical
+          retirement witness. Web retains the worktree and assignment until
+          workload and ACP quiescence are proved. An unavailable or unfinished
+          witness returns 503 with `addressed_stop_pending`. A repeated Stop
+          on the already parked assignment returns its Review state.
         - **scratch** → `Review` when the run still has a live
           worktree, otherwise `Abandoned` (shared scratch-stop primitive; the
           dedicated `POST /api/scratch-runs/{runId}/stop` route delegates to the
@@ -12074,8 +12220,10 @@ paths:
         an archive failure leaves the run in `Review`, retryable through the
         plain `archive` route — no extra idempotency marker. Body is empty; run
         kind, project, session, and paths are server-derived. Requires
-        `requireProjectAction("recoverRun")` (authorized once for the combined
-        operation).
+        `requireProjectAction("recoverRun")`. For an addressed workspace the
+        original supervisor must prove assignment retirement before preservation
+        and release. An authorized repeat after removal returns the recorded
+        archive with `idempotent: true` and `supervisorStopped: false`.
       operationId: stopArchiveRunWorkbench
       parameters:
         - name: runId
@@ -12122,7 +12270,10 @@ paths:
         durable before the drop, so a drop failure leaves the run in `Review`,
         retryable through the plain `drop` route. Body is empty; run kind,
         project, session, and paths are server-derived. Requires
-        `requireProjectAction("recoverRun")` (authorized once).
+        `requireProjectAction("recoverRun")`. For an addressed workspace the
+        original supervisor must prove assignment retirement before preservation
+        and release. An authorized repeat after removal returns the recorded
+        drop with `idempotent: true` and `supervisorStopped: false`.
       operationId: stopDropRunWorkbench
       parameters:
         - name: runId
@@ -12164,6 +12315,10 @@ paths:
         and retains the original run status as non-actionable history. Live and
         HITL states are refused. A completed identical replay is idempotent;
         a conflicting completed intent is `409 CONFLICT`.
+        For an addressed owned worktree, the original supervisor produces
+        both the preservation and physical-release receipts. Web finalizes
+        the archive after the verified release. A still-pending effect stays
+        recoverable under the original claim.
       operationId: archiveRunWorkbench
       parameters:
         - name: runId
@@ -12607,6 +12762,45 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/git-log:
+    get:
+      tags: [runs]
+      operationId: readRunWorkspaceGitLog
+      summary: Read Git history from a retained addressed Run workspace
+      description: Requires current Run read and repository content grants. The server derives the workspace owner from the Run, verifies the sealed page and rechecks authority before returning its bytes.
+      parameters:
+        - { name: runId, in: path, required: true, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string, minLength: 1, maxLength: 512 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: One topologically ordered page from the verified HEAD.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [head, commits, nextCursor]
+                properties:
+                  head: &workspaceLogCommitId { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+                  commits:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [commit, committedAt, subject]
+                      properties:
+                        commit: *workspaceLogCommitId
+                        committedAt: { type: string, format: date-time }
+                        subject: { type: string }
+                  nextCursor: { type: string, minLength: 1, maxLength: 512, nullable: true }
+        "400": { description: Invalid page parameters. }
+        "401": { description: Authentication required. }
+        "403": { description: Current Run or repository access refused. }
+        "404": { description: No retained addressed workspace for the Run. }
+        "409": { description: "Cursor, ownership or history bound refused." }
+        "503": { description: The selected host or its projected evidence is unavailable. }
   /api/runs/{runId}/git-state:
     get:
       tags: [runs]
@@ -12935,6 +13129,11 @@ paths:
           `source: pr_finalize`. The read never writes the ADR-140 PR state.
           `reviewedTargetCommit` and `allowTargetDrift` are refused outside
           `Review`.
+
+        An addressed workspace uses the main promotion route from Review,
+        which requires the checked source and target. For a parked addressed
+        Run this route reads the PR, its base and the stable checkout HEAD
+        through the original supervisor after execution release.
 
         An externally merged PR is surfaced by `pr_state_scan` and finalized
         manually; promotion stays manual by default.
@@ -20506,6 +20705,9 @@ paths:
           name: flowId
           schema: { type: string, minLength: 1, maxLength: 256 }
         - in: query
+          name: executionHostId
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - in: query
           name: agentId
           description: Preview the actual code-delivery agent instead of a Flow; cannot be combined with flowId.
           schema: { type: string, minLength: 1, maxLength: 256 }
@@ -27354,6 +27556,8 @@ components:
       required:
         [taskId, taskRevision, settingsToken, qualification, activeLaunch, target]
       properties:
+        executionHostSelection:
+          $ref: "#/components/schemas/TaskLaunchHostSelection"
         taskId: { type: string, minLength: 1, maxLength: 256 }
         taskRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
         settingsToken: { type: string, minLength: 1, maxLength: 256 }
@@ -27490,6 +27694,12 @@ components:
       additionalProperties: false
       required: [taskId]
       properties:
+        branchCursor: { type: string, minLength: 1, maxLength: 512 }
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId: { type: string, minLength: 1, maxLength: 256 }
         flowId: { type: string, minLength: 1, maxLength: 256 }
         relaunchOfRunId: { type: string, minLength: 1, maxLength: 256 }
@@ -27514,6 +27724,11 @@ components:
         - expectedTaskRevision
         - expectedSettingsToken
       properties:
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId:
           type: string
           minLength: 1
@@ -27596,6 +27811,11 @@ components:
         - expectedTaskRevision
         - expectedSettingsToken
       properties:
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId:
           type: string
           minLength: 1
@@ -27698,6 +27918,11 @@ components:
         - expectedSettingsToken
         - expectedStateVersion
       properties:
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId:
           type: string
           minLength: 1
@@ -27785,6 +28010,11 @@ components:
         - expectedSettingsToken
         - expectedStateVersion
       properties:
+        executionHostId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional eligible supervisor ID from the launch preview.
         taskId:
           type: string
           minLength: 1
@@ -27872,6 +28102,17 @@ components:
           properties:
             flowId: { not: {} }
             agentId: { type: string }
+    TaskLaunchHostSelection:
+      type: object
+      additionalProperties: false
+      description: Shared children inherit the parent workspace's saved host. A request may omit the host or name the same host. A different override returns PRECONDITION with reason shared_root_host_conflict. A root that has yet to materialize returns shared_root_host_unavailable.
+      required: [requestedExecutionHostId, effectiveExecutionHostId, provenance, eligibilityRevision]
+      properties:
+        requestedExecutionHostId: { type: string, minLength: 1, maxLength: 256, nullable: true }
+        effectiveExecutionHostId: { type: string, minLength: 1, maxLength: 256 }
+        provenance: { type: string, enum: [explicit, projectDefault, instanceDefault, sharedRoot] }
+        eligibilityRevision: { type: string, pattern: '^[a-f0-9]{64}$' }
+
     TaskLaunchReceipt:
       type: object
       additionalProperties: false
@@ -27890,6 +28131,24 @@ components:
         - reason
         - snapshot
       properties:
+        executionHostSelection:
+          $ref: "#/components/schemas/TaskLaunchHostSelection"
+        executionHostPlacement:
+          type: object
+          additionalProperties: false
+          required: [savedDisplayName, actual]
+          description: Authorized readback for an addressed intent. The actual host and epoch come from the committed first dispatch and remain readable after release.
+          properties:
+            savedDisplayName: { type: string, nullable: true }
+            actual:
+              type: object
+              nullable: true
+              additionalProperties: false
+              required: [executionHostId, displayName, assignmentEpoch]
+              properties:
+                executionHostId: { type: string, minLength: 1, maxLength: 256 }
+                displayName: { type: string, minLength: 1 }
+                assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
         schemaVersion:
           type: integer
           enum:
@@ -33174,6 +33433,34 @@ components:
           deliveryPolicyDefault,
         ]
       properties:
+        branchesNextCursor:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 512
+          description: Present for addressed repository pages. Null marks the last page.
+        executionHostSelection:
+          $ref: "#/components/schemas/TaskLaunchHostSelection"
+        executionHostOptions:
+          type: object
+          additionalProperties: false
+          required: [defaultExecutionHostId, hosts]
+          description: Project-eligible supervisor choices for interactive admission. Display names carry no authority and do not participate in the preview token.
+          properties:
+            defaultExecutionHostId:
+              type: string
+              nullable: true
+              minLength: 1
+              maxLength: 256
+            hosts:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, displayName]
+                properties:
+                  id: { type: string, minLength: 1, maxLength: 256 }
+                  displayName: { type: string, minLength: 1 }
         canManagePackages:
           type: boolean
           description: Current manageLocalPackages project action permits explicit package adoption; it does not launch a task.
@@ -34980,6 +35267,22 @@ components:
             ("target advanced since review") unless `allowTargetDrift` is set;
             a manual flow body omitting it is refused `PRECONDITION`, never
             promoted blind.
+        reviewedSource:
+          type: object
+          additionalProperties: false
+          required: [head, fingerprint]
+          description: |
+            Required for manual branch publication from a supervisor-owned
+            workspace. Submit the exact HEAD and sealed snapshot fingerprint
+            shown in Review. A changed source returns CONFLICT with reason
+            review_source_changed before reserving publication.
+          properties:
+            head:
+              type: string
+              pattern: '^(?:[a-f0-9]{40}|[a-f0-9]{64})$'
+            fingerprint:
+              type: string
+              pattern: '^sha256:[a-f0-9]{64}$'
         allowTargetDrift:
           type: boolean
           default: false
@@ -35071,9 +35374,9 @@ components:
       type: object
       description: |
         (ADR-181 — Implemented) The lazy git read model of one run worktree,
-        served only by `GET /api/runs/{runId}/git-state`. Every field is always
-        present; a degraded sub-read is `null` (or empty) and named in
-        `warnings`.
+        served only by `GET /api/runs/{runId}/git-state`. A degraded sub-read is
+        `null` (or empty) and named in `warnings`. A host-owned workspace adds
+        `workspaceStatus` and returns the owning supervisor's observed HEAD.
       additionalProperties: false
       required:
         - runId
@@ -35193,6 +35496,15 @@ components:
           properties:
             tracked: { type: integer, minimum: 0 }
             untracked: { type: integer, minimum: 0 }
+        workspaceStatus:
+          type: object
+          nullable: true
+          description: Supervisor-reported status for a host-owned workspace. Null until the status is known.
+          required: [workingTree, headState]
+          additionalProperties: false
+          properties:
+            workingTree: { type: string, enum: [clean, dirty, nonGit] }
+            headState: { type: string, enum: [branch, detached, nonGit] }
         unpushedCommits:
           type: integer
           minimum: 0
@@ -35338,6 +35650,7 @@ components:
             type: string
             enum:
               - head
+              - workspaceStatus
               - targetHead
               - dirty
               - upstream

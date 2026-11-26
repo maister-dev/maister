@@ -21,6 +21,7 @@ const sampledAt = "2026-09-22T10:00:00.000Z";
 
 const status: AdminExecutionHostStatus = {
   sampledAt,
+  selectedHost: null,
   hosts: [
     {
       id: "host-1",
@@ -171,6 +172,35 @@ async function pressureCells(streams: readonly StreamRow[]): Promise<string[]> {
 }
 
 describe("ExecutionHostStatus", () => {
+  it("distinguishes the configured supervisor from a visible foreign registration", async () => {
+    const matched = renderToStaticMarkup(
+      await ExecutionHostStatus({
+        status: {
+          ...status,
+          selectedHost: {
+            kind: "registered",
+            hostId: "host-1",
+            hostKey: "eh_local",
+          },
+        },
+      }),
+    );
+    expect(matched).toContain("hosts.selected");
+    const pending = renderToStaticMarkup(
+      await ExecutionHostStatus({
+        status: {
+          ...status,
+          selectedHost: { kind: "unregistered", hostKey: "eh_expected" },
+        },
+      }),
+    );
+    expect(pending).toContain(
+      "hosts.awaitingRegistration(hostKey=eh_expected)",
+    );
+    expect(pending).not.toContain("hosts.selected");
+    expect(pending).toContain("Local");
+  });
+
   it("renders explicit legends, compact durations, and locale-stable UTC dates", async () => {
     const markup = renderToStaticMarkup(await ExecutionHostStatus({ status }));
     const expectedDate = new Intl.DateTimeFormat("ru-RU", {

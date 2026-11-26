@@ -905,6 +905,441 @@ Failure classification is explicit and shared by consumers:
 
 Preserve `MaisterError`/`SupervisorError` conventions. Add a strict reason union and new codes only if existing codes cannot express an actionable domain distinction. Update code-to-HTTP and EN/RU error presentation together; never branch on message text. Document bounded safe diagnostics with request IDs/operation kind/status/cause code, not the prohibited request body.
 
+## Selected supervisor Stage C (Implemented)
+
+[ADR-219](../decisions/adr-219.md) defines the ownership split. Web commits
+the Run, addressed assignment, preparation claim and command together.
+The supervisor accepts the command before any physical effect. Web commits
+and acknowledges ingestion on that supervisor's stream. Projection applies
+the terminal outcome under the original owner. The [Stage C plan](../../.ai-factory/plans/feature-stage-c-selected-supervisor.md#requirement-to-test-matrix)
+maps C-01 through C-15 to their executable witnesses and release gates.
+
+### Host identity and protocol
+
+The single-host addressed compatibility path is enabled by setting
+`MAISTER_SELECTED_EXECUTION_HOST_KEY` beside `MAISTER_SUPERVISOR_URL` in
+Web. The URL is a trusted HTTP(S) origin. The persisted assignment must name
+the configured host key. Web checks fresh health and the existing durable
+data-plane capability before binding. The supervisor checks the expected
+host header before running its route handler. Same-key reboot refreshes the
+existing host row and leaves receipt recovery on the original store.
+
+The operator configures an endpoint and stable host key. Web resolves the
+saved host ID to that descriptor and verifies the key and
+`workspaceProtocol: [1]` capability through the existing `GET /health` and
+`GET /capabilities` surfaces. Every addressed request after negotiation
+carries the expected host key in `X-Maister-Execution-Host-Key`, including
+receipt and object reads. A wrong peer refuses before
+opening a receipt or accepting a command. A reboot with the same key retains
+the descriptor and recovers commands against the same store. A different
+key marks the descriptor unavailable and requires operator review.
+
+Migration 0396 preserves the existing default host row and its retained
+assignments. Web can register one additional trusted descriptor with
+`MAISTER_ADDITIONAL_EXECUTION_HOSTS`. The persisted role marks that row as a
+secondary, while the HTTP origin stays in operator configuration. Upgrade
+and drain incompatible writers before enabling the descriptor. PostgreSQL
+refuses singleton registry changes and new placements while a secondary
+row is live or retains work. Removing a descriptor keeps its row and
+workspace ownership visible and prevents routing to its former address.
+
+Each registered supervisor has its own event consumers, cursor and ACK.
+The registry and intake retain the primary as the default. Explicit and
+saved selections resolve to the exact stored host ID, with its own project
+eligibility and readiness. A secondary query or command uses the registered
+origin and stable key throughout receipt and artifact follow-up. An
+unavailable primary leaves an explicitly selected secondary eligible.
+
+Selecting workspace protocol 1 implies support for host envelope version 2
+on the same stream. A supervisor-first upgrade stays on the existing event
+shape until a versioned workspace command is accepted. After any such
+acceptance, all Web consumers of that stream must support version 2.
+Incompatible rollback requires an approved compatible restore or roll-forward
+with retained evidence.
+
+Stage C endpoints are operator-controlled and confined to the trusted
+deployment network. Redirects and caller-supplied endpoint addresses are
+refused. The user sees ID, label and permitted readiness information.
+Project eligibility, capabilities, liveness, capacity and drain have
+separate decisions. The [scheduler](scheduler.md#addressed-placement-stage-c)
+owns capacity and lease transitions.
+
+### Workspace protocol 1
+
+An accepted workload records its native process group before the shell is
+authorized. When a restarted supervisor observes the same group still active,
+it keeps the original receipt accepted. Web rechecks it on the existing
+recovery cadence without consuming another admission attempt. Positive
+retirement settles an interrupted receipt without repeating the command.
+
+The checked-in preparation path negotiates protocol 1 with its selected
+supervisor. Repository discovery uses that host's configured source
+registry. Checkout uses the exact frozen commit, a private cache fenced by
+source identity, and a canonical directory reserved for the command. The
+supervisor durably accepts the request before fetching or creating a
+workspace. The terminal receipt and version 2 outbox event commit together.
+Web applies the result under the Run, host, assignment, generation and
+digest checks after committing and acknowledging the event. The
+materialization generation separately gates model dispatch.
+
+The addressed workload operation selects a command from the sealed input
+generation by declaration ID and workload class. The request carries the
+Run's assignment and the opaque workspace handle. The supervisor registers
+the process group and OS identity in the accepted receipt before the gate
+authorizes the shell. Competing workloads on the same canonical workspace
+cannot pass while its previous group lacks a positive retirement witness.
+Same-ID replay after supervisor restart observes the retained group and
+returns an interrupted result. Cancellation signals only the live group
+owned by its exact command.
+
+The host seals stdout and stderr as runtime objects and associates each
+availability event with its workload command. Web checks that command's
+Run, host, assignment and epoch before making the bytes referenceable.
+The terminal workload receipt records process exit, declared output
+validity and group retirement independently. Web holds unresolved
+quiescence in the command ledger for reconciliation.
+
+The supervisor keys sealed Flow setup by stable host key, project,
+revision and original package asset digest. A private filesystem lock
+serializes the first attempt. The host runs the pinned `setup.sh` in
+its package directory with the bounded workload process and environment.
+A successful exit and positive retirement allow publication of the
+prepared asset fingerprint. A later command verifies the fingerprint
+and reports `setupReused` without creating a shell. Dependent actions
+receive verified per-command copies of the prepared assets. A previous
+attempt without a successful receipt holds that revision for operator
+inspection, since the shell may already have applied an external effect.
+The prepared tree is bounded to 255 entries and 64 MiB of regular files.
+
+For an addressed project, approving executable trust leaves the Flow's local
+setup status pending. Web binds the approved revision to the workspace
+capture in migration 0393. Preparation order is checkout, materialization,
+required setup, declared requirement probes and first dispatch. A receipt
+must prove zero exit and group retirement before the next phase opens.
+Web checks current executable trust on the pinned revision before sending
+any new effect. Previous captures gain a nullable setup field and preserve
+their original preparation behavior.
+
+An addressed Flow records its workspace assignment on each node attempt.
+The standard Codex action opens its ACP session through the same assignment
+and prepared workspace handle. The supervisor supplies the retained package
+instructions. Web renders per-node capability profiles and instructions from
+the launch-frozen catalogue and publishes them as assignment-owned runtime
+objects. The supervisor resolves both references against the Run, assignment,
+epoch and object kind before exposing its local paths to ACP. The same MCP
+trust and enforcement checks apply before creating the session. Addressed
+Claude sessions receive the node's typed native permissions and the
+supervisor's path-guard command over ACP. The supervisor also reads a
+subagent definition for that exact node from the sealed input generation
+and registers it with Claude's native session options.
+The graph driver uses that attempt ID for the CLI operation and the persisted
+evaluation ID for a command-check gate. A new driver for the same assignment
+can resume either operation with its existing receipt. Web applies the action
+or gate result after the terminal receipt proves process-group retirement and
+its output references resolve to the same Run and assignment. The graph
+persists the sealed JSON payload when it records action completion, so
+re-entry validates that payload through the declared form schema. Both operations
+address the Git checkout by its retained workspace handle. If a CLI or
+check action references `MAISTER_FLOW_DIR`, admission freezes the installed
+Flow files and executable bits within the input limits. The supervisor
+verifies the manifest and file digests and gives the process its own copy.
+CLI templates that render different command bytes, Git mutation assertions
+and workspace rewind policies still require their respective host contracts.
+
+The accepted-launch worker advances new prepare, materialize and requirement
+commands for the bound Run as their preceding evidence is applied. The Flow
+driver sends a newly reserved action or gate through the same ledger claim.
+Both paths leave commands with uncertain delivery to the recovery sweep.
+Fresh, unattempted workspace commands are eligible for sweep delivery without
+waiting for the in-flight grace period. Admission remains gated on the applied
+materialization and requirement results.
+
+When a Run reaches Review, its released execution assignment still identifies
+the retained checkout. Web admits post-release diff evidence only when its
+host, Run, assignment, epoch, workspace handle and generation match the
+current retained ownership record. Catalogue projection repeats that check.
+The browser receives the sealed patch after current repository read authorization.
+
+The [versioned schema profile](../api/stage-c-workspace.schema.yaml) fixes
+each operation's method, route, operation ID, stage-specific shape and
+terminal result. [Executable examples](../api/stage-c-workspace-examples.yaml)
+cover success, refusal, strict input and effect-free replay. Extensions
+describe the Stage C fragment of an existing route. The affected runtime
+tasks apply the whole request and authorization contract on the real
+Web and Fastify entry points.
+
+For mutating operations use the existing command header (`id`, `kind`,
+`issuedAt`) and the versioned payload. Use a tagged owner with either
+`assignment` (host key, Run ID, assignment ID and epoch) or
+`workspaceOperation` (host key, workspace handle, generation, operation
+claim ID and fence). Use the workspace owner only for the approved
+retained-workspace lifecycle. The versioned `/v1` routes have independent responses. Existing adoption,
+publication, release and command receipt callers keep their legacy paths.
+
+Resolve the target from the operation, URI and validated owner fence before
+acceptance. Require equality between the address and any handle or generation
+in the owner or payload. Compute lowercase SHA-256 of the RFC 8785 JSON for
+`{workspaceProtocol, operationId, hostKey, target, command, owner, payload}`.
+The trusted host key comes from negotiation and must match the owner. Preserve
+the original command ID, kind and issuedAt. The resolved target is
+`{kind:"prepare"}` for preparation (source and parent are in payload),
+`{kind:"workspace",handle,generation}` for existing workspaces or
+`{kind:"cancelWorkload",handle,generation,targetCommandId}` for cancellation.
+A changed target under an existing ID returns `command_digest_mismatch`.
+Recheck authority for every retry. An authorized exact replay returns the
+original 202 and the receipt URI in `Location` while the receipt is retained,
+even after the outcome is terminal. Preserve the original receipt across
+Web/host restarts, and use the existing retirement fence after reconciliation.
+
+| Operation | Input and authorization | Success and primary refusal |
+|---|---|---|
+| `GET /v1/repositories/{repositoryId}/refs` | Verified host key, repository scope derived from the authorized project and an optional opaque cursor. Host reads the approved Git source under its configured profile. | 200 with at most 100 approved branch names, default ref and optional next cursor. Invalid or foreign cursor refuses without disclosing refs. The board launch preview uses this operation when it needs host-owned branch metadata. |
+| `POST /v1/repositories/resolve-revision` | `repositoryId`, authorized ref and expected host key from Web. Host uses its approved source profile and performs a read-only observation. | 200 with repository ID, full commit and observed ref. Missing or ambiguous source returns 409 `PRECONDITION`. |
+| `POST /v1/workspaces/prepare` | `workspace.prepare` with assignment owner. Mode, full commit where applicable, approved repository ID, owned parent handle where applicable and immutable input digest. | 202 with command ID and accepted state. The terminal receipt supplies handle, generation, actual commit and input digest. An unavailable commit returns a terminal refusal with no ready handle. |
+| `POST /v1/workspaces/{id}/materialization` | `workspace.materialize` with assignment owner, current generation, manifest digest and sealed input references. | 202. Successful terminal receipt names the published input generation and digest. A mismatched digest or unreleased input source refuses before publication. |
+| `POST /v1/workspaces/{id}/commands` | Assignment owner and workspace generation. Payload discriminant `setup`, `cli`, `check` or `requirementProbe` selects a strict operation declaration from the frozen input. | 202. Completion contains exit code/signal, cancellation state, structured check validity and output references. An undeclared operation refuses before spawn. |
+| `POST /v1/workspaces/{id}/commands/{commandId}/cancel` | New command ID, owner, generation and target command from URL. | 202. Terminal cancellation records stopped or uncertain ownership and sealed partial output where available. A replay returns the original receipt. |
+| `GET /v1/workspaces/{id}`, `GET /v1/workspaces/{id}/status`, `GET /v1/workspaces/{id}/diff`, `GET /v1/workspaces/{id}/log` | Verified host and bound generation plus any bounded revision/range. The status projection includes observed HEAD. | 200 with metadata or sealed object reference. Refuse missing/wrong owner without supplying its content. Keep the existing `POST /workspaces/{id}/head` for the fenced ADR-216 wait witness. |
+| `GET /v1/workspaces/{id}/review-fingerprint` | Exact generation and reviewed base. | 200 with the Git review fingerprint and bounded checkout witness. |
+| `GET /v1/workspaces/{id}/publication-target` | Exact generation, approved remote ID and target ref. | 200 with the current target commit or null for an absent ref. |
+| `GET /v1/workspaces/{id}/pull-request` | Exact generation, recorded provider PR identity and base ref. | 200 with the provider state and observed head. A changed base or unverifiable provider state refuses. |
+| `POST /v1/workspaces/{id}/checkpoint`, `POST /v1/workspaces/{id}/restore` | `workspace.checkpoint` or `workspace.restore` on the current generation. Restore names a checkpoint bound to that physical workspace. | 202. Terminal receipt supplies the captured or restored Git tree witness. A stale generation refuses. ACP continues on the existing session checkpoint API. |
+| `POST /v1/workspaces/{id}/sync`, `POST /v1/workspaces/{id}/publication` | Typed Git operation, verified workspace owner, expected workspace HEAD, canonical target ref and prior target SHA. | 202 for asynchronous effects. Terminal receipt includes the prior and observed target. Ref divergence requires review before retry. |
+| `POST /v1/workspaces/{id}/preserve`, `DELETE /v1/workspaces/{id}` | Current workspace-operation owner and expected generation. Release also requires the recorded disposition and quiescence proof. | 202 for the addressed lifecycle operation. Terminal receipt supplies a preserved commit/reference or exact release witness. Unknown ownership or incomplete preservation keeps the workspace. |
+| `GET /v1/commands/{commandId}` and `GET /runtime-objects/{objectId}/content` | Verified addressed host and authorized durable owner. Web derives object ID and range from authorized response scope. | 200 with the addressed receipt. The current range API remains in use for content bytes and returned-byte digest. |
+
+The addressed Git log reads the exact observed HEAD in topological order and
+returns 20 commits by default, with a maximum of 100 per page and 64 KiB of
+sealed JSON. Its cursor is scoped to the stable host key, workspace handle,
+generation and HEAD. A changed HEAD or a cursor from a different workspace
+requires a fresh first page. The canonical runtime-object consumer verifies
+the retained assignment and workspace before applying the log evidence, even
+after capacity has been released. The Web Run history endpoint checks current
+Run, repository content and knowledge disclosure authority before requesting
+history and rechecks it after verifying the sealed page.
+
+Addressed Graph attempts with an explicit `rewind-to-node-checkpoint` retry
+policy use a private Git ref and a temporary index on the owning supervisor.
+The checkpoint preserves tracked and untracked content while leaving the live
+index intact. PostgreSQL migration 0387 binds the command to the active Run,
+assignment and generation. The supervisor uses its durable workspace writer
+claim to exclude process admission and release during Git mutation. After an
+interrupted restore it verifies HEAD, the live index and the captured tree
+before settling the original command. Rewind preserves unrelated untracked
+paths created during the failed attempt. An unproved restore keeps the claim.
+Replaying a completed restore returns its receipt and preserves later edits.
+The Run Diff's last-node scope uses the latest completed attempt's checkpoint.
+The supervisor verifies its retained receipt and tree for the same assignment
+and generation, then seals a diff against the current working tree. That read
+remains available after the Run releases capacity and requires current Web
+repository disclosure authority.
+
+For Review and Change Summary, the selected supervisor stages one temporary
+index and obtains the patch, name status and counts from that index. It seals
+them together as at most 64 KiB of JSON. Web verifies the object digest and
+the requested base. Review Diff and Change Summary apply the existing
+reviewable-file filter and compute the same source fingerprint. Git's
+NUL-delimited statistics preserve exact file names and binary-file state.
+
+Addressed mutation gates capture a pre-attempt checkpoint and evaluate
+`must_touch` against that checkpoint and the host's current Git tree. A
+`must_not_touch` gate also reads the pinned base range and requires both
+snapshots to have the same tree ID. Rename evidence includes both paths.
+A missing or changed snapshot blocks the gate under the existing check policy.
+
+An addressed node's declared diff artifact seals the patch against the
+Run's pinned base. The existing artifact ledger stores its execution-object
+ID, SHA-256 and byte length. A resumed driver reuses the current artifact
+from that attempt. The existing artifact stream applies Run and repository
+content authorization to downloads and bounded previews.
+
+Declared commit-set artifacts use the same object ledger. The supervisor
+checks the pinned base and observed HEAD against the retained checkout,
+seals the bounded `git log --oneline` bytes and returns both range limits.
+An unrelated HEAD is refused. A range whose endpoints coincide produces a
+verified empty object.
+
+The default diff uses the pinned base and immutable committed HEAD, matching
+the committed-range semantics of the local default artifact. It stores the
+same object identity and byte witness as declared Git artifacts.
+
+When a Run starts another epoch on the same addressed workspace, the
+preparation assignment remains the immutable source of materialization
+evidence. The current assignment must inherit that host and handle.
+PostgreSQL migration 0388 preserves the original records and refuses a
+substituted host or handle on placement. A previous epoch's checkpoint can be
+restored by the current owner only for the same Run, workspace and generation.
+The old epoch cannot admit a new workload.
+
+Before starting an addressed workload, the host verifies every sibling
+checkout declared in its sealed input generation. The workload's native
+process driver protects the context directory, each checkout and its Git
+administrative directories from writes. This covers siblings attached to
+other steps of the same Run, even when a workload receives no context mount
+in its arguments. Hosts without an enforceable driver refuse the workload.
+
+Manual takeover records the selected supervisor's claim-time HEAD. The
+handoff panel shows the supervisor and workspace ID. Return requires a clean
+checkout with commits after that HEAD and records the sealed log and diff.
+The manager rechecks the human claim and assignment while recording the
+return, then resumes validation in a new epoch on the same checkout.
+
+Addressed review feedback uses a digest of the same pinned Review snapshot
+as the diff and change summary. The supervisor's fingerprint read checks
+the retained owner and generation without publishing an object or event.
+The response transaction recomputes the digest while holding the Run and
+HITL rows, so stale source or feedback refuses without claiming the decision.
+
+Addressed graph rework and retry use the checkpoint command under the
+current assignment, including a checkpoint inherited from an earlier
+epoch on that workspace. Rewind restores the snapshot. Fresh attempt resets
+to its parent, removes unignored changes and verifies the resulting parent
+tree. Frozen inputs live under the host's run directory, outside the Git
+checkout. Restore retries check the retained output first. An interrupted
+restore can resume the same checkpoint under the original writer claim.
+A settled command returns its saved receipt.
+
+A retained publication command binds the registered host, workspace handle,
+generation, claim ID and monotonic publication fence. PostgreSQL 0389 binds
+the command to its historical assignment and a held promotion or workbench
+claim. It prevents claim replacement and workspace removal while the outcome
+is unresolved. The supervisor verifies the configured repository, clean HEAD
+and remote target. It persists the SQLite 22 writer fence before issuing a
+fast-forward push with an exact expected target lease. On replay, the
+supervisor reads the remote first. It settles an observed candidate from
+that readback and retries the original candidate only while the original
+lease still holds. A definitive Git ref rejection with the original lease
+still observed returns `publication_refused` and releases the writer fence.
+An unconfirmed publication remains accepted for same-command reconciliation.
+An older indeterminate receipt can settle through the original request under
+the retained host claim. On proof of settlement the supervisor atomically
+appends a terminal event and keeps the original receipt available by its
+event ID. Web applies each event against its exact receipt. A replay without
+proof leaves the old receipt and claim in place.
+Workload and cancellation receipts with uncertain quiescence follow the
+same protocol. The supervisor rechecks the recorded process group, preserves
+the recorded workload result and never launches the command again.
+Web
+accepts the terminal event after assignment release only when the immutable
+manager command, retained owner, host receipt, and verified target agree.
+The normal Web promotion route uses this flow for manual branch delivery.
+It requires current project authority, a Review-ready Run and a clean
+addressed checkout. The Review panel reads the host's sealed diff. Its
+publication request carries the exact commit and snapshot fingerprint that
+the operator reviewed. Web compares both with the original supervisor before
+claiming publication. Web reserves the dedicated branch, returns the verified
+delivery on retry and changes Review to Done once. Manual archive retains the
+same owning supervisor for preservation and release. Migration 0390 prevents
+an early release and keeps the Web claim until the physical release receipt
+applies. Human mechanical sync uses the same retained workspace fence.
+The supervisor checks the exact advertised target again at fetch, computes
+merge or rebase against a detached private checkout, and records the
+candidate ref before changing the live checkout. A crash between that change
+and durable receipt is reconciled against the candidate. The canonical
+terminal projection settles the existing sync timeline and releases its
+claim in one transaction. A stale target or content conflict leaves the
+live checkout untouched. Addressed retention uses the same preservation and
+release receipts, with the original deadline and evaluation hold rechecked
+under the claim.
+
+For a templated CLI action or command check, Web seals the operation's JSON
+context up to 128 KiB and reserves the object ID and digest with the immutable
+workload. The context excludes Web's environment. The supervisor verifies the
+object, assignment epoch and declaration, resolves the frozen template using
+its own allow-listed environment and bounds rendering before spawning Bash.
+Retries reuse the original context from the command ledger. Missing, invalid
+and oversized template inputs refuse before process registration.
+
+SQLite version 21 records a pre-delivery cancellation and its target fence in
+the same transaction. The fence identifies the Run, assignment epoch,
+workspace generation and exact target command. A later delivery with that
+identity refuses without registration, including after supervisor restart or
+compaction of the cancellation receipt. If the host has seen the workload,
+stop still requires retirement evidence from the original process group.
+
+For a running addressed project Flow, Web locks the Run and assignment,
+checks current `recoverRun`, stores the first operator and timestamp, and
+invalidates the Flow driver lease. PostgreSQL `0386` blocks new execution
+commands under that assignment and preserves its immutable Stop witness.
+Existing workload commands each get a stable, exact cancellation command.
+Never claim retirement from a missing session or a request timeout. Once
+canonical workload and ACP retirement are verified, reuse project Flow
+stop-to-Review and release the assignment in one transaction. A repeated
+request or the normal recovery sweep can resume the retained Stop while the
+operator's current authority still holds.
+
+Migration `0394` extends the Stop fence to the owner's Run tree. It permits
+claiming a Pending child before it has a workspace handle and prevents new
+execution commands under the stopped ancestor. A never-delivered child
+checkout command is settled without contacting the host. An uncertain
+command keeps its original assignment for reconciliation. Workload and ACP
+retirement for an active addressed child precedes its Abandoned transition.
+The parent reaches Review only after the subtree settles. The first actor,
+child assignment and actual host receipts remain attributable across retries.
+
+JSON commands are limited to 1 MiB and each strict variant explicitly
+accepts its input fields. IDs use the existing bounded host key, Run ID
+and UUID validators. A commit is a complete lowercase Git object ID for
+the repository's hash algorithm. Fully qualified branch refs must pass
+`git check-ref-format` under the approved source/target policy. CLI defaults
+to 300 seconds with a 3,600-second ceiling and a 4 MiB captured-output bound.
+Timeout and cancellation signal the owned workload group with SIGKILL.
+Requirement probes keep their 10-second and 1 MiB
+bounds. The host applies and advertises effective limits. Use the existing
+runtime process-group observation after workload child close. Allow a bounded
+one-second grace for descendants to retire before returning an uncertain
+quiescence result. This observation does not signal a group after child close.
+Use the existing runtime-object limits for sealed
+bytes and artifact content ranges. Command records retain the existing
+state-aware retirement rules. Transport delivery stops at its retry
+budget and retains the uncertain owner for reconciliation.
+
+For example, assignment epoch 4 can submit `workspace.prepare` for Run
+`run-example` at commit
+`0123456789abcdef0123456789abcdef01234567`. The host returns
+`{"commandId":"3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a","state":"accepted"}`.
+After a lost response the same command is read by ID on that host. The
+receipt reports `accepted` and the original 202 before settlement. A
+`completed` receipt returns the operation-specific result, including the
+original workspace handle and actual commit for preparation. A `rejected`
+receipt returns a typed refusal. An `indeterminate` receipt preserves ownership
+and returns the reconciliation condition. Keep that receipt as the original
+command's immutable terminal witness. Recovery records authorized readback or
+quiescence as separate evidence and never repeats the original side effect.
+All three terminal variants include
+the stream ID, event ID and SHA-256 of the canonical object containing exactly
+one of `result`, `refusal` or `condition`. Apply an owner result only after its
+receipt agrees with the committed canonical event.
+Submitting the same ID with a changed commit yields 409 `CONFLICT`
+(`command_digest_mismatch`) with zero new checkout. Submitting epoch 3
+against the existing fence yields 409 `FENCED` (`stale_assignment_epoch`).
+
+| Refusal | Status and reason | Durable effect |
+|---|---|---|
+| Invalid shape, identifier or input bound | 400 invalid request or 413 request too large | Zero accepted commands |
+| Wrong endpoint owner | 409 `EXECUTOR_UNAVAILABLE`, `host_identity_mismatch` | Zero effects on the requested resource |
+| Stale epoch or generation | 409 `FENCED`, `stale_assignment_epoch` or `stale_workspace_generation` | Zero effects on the requested resource |
+| Incompatible protocol | 503 `EXECUTOR_UNAVAILABLE`, `workspace_protocol_unsupported` | Zero accepted commands |
+| Missing or inaccessible handle/receipt/object | Existing 404 semantics for that resource | Zero disclosure |
+| Unavailable pinned SHA, unapproved ref or declared tool, unsafe target | 409 `PRECONDITION`, `source_commit_unavailable`, `source_ref_unapproved`, `tool_not_declared` or `workspace_rejected` | Pre-acceptance refusal has zero effects. A failed accepted checkout retains its original command and no ready handle |
+| Same command ID, changed bytes | 409 `CONFLICT`, `command_digest_mismatch` | Original receipt stays authoritative |
+| Check timeout, cancellation or truncated output | Terminal operation outcome with typed reason and sealed partial bytes where available | Retain current owner until quiescence is verified |
+
+A successful command receipt reports command execution. Check outcome
+validity is a separate field. Startup inventories an unfinished effect
+before issuing any replacement.
+
+### Qualification
+
+Run transport refusal and replay on the real Fastify acceptor. Exercise
+receipt/outbox recovery in the existing command-receipt suites and Web
+application through the launch-path integration tests. G1 adds the board
+journey under private roots. G2 adds two independently addressed stores.
+Update the [supervisor HTTP](../api/supervisor.openapi.yaml),
+[host event](../api/async/execution-host-events.asyncapi.yaml) and
+[Run SSE](../api/async/web-runs.asyncapi.yaml) contracts alongside the
+corresponding executable surfaces.
+
 ## Expectations
 
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))

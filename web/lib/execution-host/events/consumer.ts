@@ -2,7 +2,7 @@ import "server-only";
 
 import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { Db } from "@/lib/execution-host/db";
-import type { RuntimeEventEnvelope } from "@/lib/execution-host/runtime-events";
+import type { RuntimeEventWireEnvelope } from "@/lib/execution-host/runtime-events";
 
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -261,7 +261,7 @@ async function recordConsumerFailure(input: {
 }
 
 type BufferedEnvelope = {
-  envelope: RuntimeEventEnvelope;
+  envelope: RuntimeEventWireEnvelope;
   streamId: string;
   bytes: number;
 };

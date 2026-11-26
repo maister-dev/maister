@@ -409,6 +409,48 @@ function liveRecord(
 }
 
 describe("runReconcileSweep (integration)", () => {
+  it.each(["online", "offline"] as const)(
+    "reattaches a pathless Flow through its assignment when the default host is %s",
+    async (defaultHost) => {
+      const runId = await seedRun({ acpSessionId: "acp-addressed" });
+      const { opts, hosts, runFlow, listWorktrees } = await makeOpts({
+        listSessions: async () => {
+          if (defaultHost === "offline") throw new Error("default host offline");
+
+          return [];
+        },
+      });
+      const binding = await hosts.forRun(runId, { reason: "recover" });
+      const { assignment } = binding;
+      await db.insert(workspaces).values({
+        id: randomUUID(),
+        runId,
+        projectId,
+        branch: `maister/${runId}`,
+        ownershipKind: "host_owned",
+        executionHostId: assignment.executionHostId,
+        preparationAssignmentId: assignment.id,
+        workspaceGeneration: 1,
+        workspaceInputDigest: "a".repeat(64),
+      });
+      const sessionsForRun = vi.fn(async () => [
+        liveRecord(runId, "acp-addressed"),
+      ]);
+      const bind = vi
+        .spyOn(hosts, "forAssignment")
+        .mockResolvedValue({ ...binding, sessionsForRun });
+
+      const summary = await runReconcileSweep(opts);
+
+      expect(summary.reattached).toBe(1);
+      expect((await readRun(runId)).status).toBe("Running");
+      expect(bind).toHaveBeenCalledWith({ id: assignment.id });
+      expect(sessionsForRun).toHaveBeenCalledOnce();
+      expect(listWorktrees).not.toHaveBeenCalled();
+      await expect.poll(() => runFlow.mock.calls.length).toBe(1);
+    },
+  );
+
   it("activates a naturally exited pending agent question and preserves its terminal-origin assignment on later sweeps", async () => {
     const runId = await seedRun({
       runKind: "agent",

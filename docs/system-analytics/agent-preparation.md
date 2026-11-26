@@ -159,6 +159,79 @@ proves that condition; missing evidence is not that proof. Missing-baseline,
 qualification-source rejection and cleanup failures remain separate subsequent
 data. Retry is explicit after remediation; no historical diagnosis is invented.
 
+## Addressed preparation Stage C (Implemented)
+
+Commit the real Run, assignment and existing preparation claim before the
+host request. The claim binds repository and workspace mode, pinned source,
+input digest and selected host. A preparing Run cannot start an ACP
+session. A repeated claimant finds the durable owner. Only a successful
+application under its assignment epoch and preparation generation advances
+the Run to execution.
+
+Flow, Agent and Scratch reserve preparation under the same PostgreSQL
+transaction as placement when the selected supervisor advertises workspace
+protocol 1. Web records the host-owned workspace and queued
+`workspace.prepare` command without filesystem paths. A missing handle
+keeps the Run Pending. Session create and prompt admission enforce this
+boundary in the command ledger. The addressed host fetches the exact revision
+and returns a durable receipt. Web applies that receipt under the Run's current
+assignment and the reserved generation.
+
+An addressed launch captures approved package assets from a verified private
+copy. The same transaction reserves the input capture and the workspace. After
+checkout, Web checks current authority and seals the captured bytes through
+the runtime object plane. The supervisor verifies each object's digest and
+assignment. It publishes the complete input generation with one rename,
+retains its receipt and rechecks the saved bytes before ACP creation. Web
+records completion only after the canonical receipt has been applied. A package
+installation replaced after capture cannot substitute different bytes.
+
+For an addressed Flow, Web checks the launching user's `readRepoFiles`
+grant before the supervisor observes each approved sibling ref. An addressed
+Agent uses the active attachment's approved declarations. Web verifies those
+grants again before delivery and session admission. The supervisor checks
+out the captured commit into a private context directory. Its native write
+guard protects the checkout and its Git metadata from the adapter and child
+processes. Only the current step's mounts enter the ACP write guard.
+The session receives the verified packaged skill paths on its first prompt.
+Adapter processes inherit host plumbing and adapter-specific settings from a
+bounded allow-list. Explicit runner configuration and the run-scoped facade
+credential retain their separate channels.
+
+For a Claude node, the supervisor applies the pinned runner model through
+its child environment and ACP options. The session command carries typed
+permission rules. The supervisor supplies the packaged native path-guard
+command from the current declared lane, and the adapter acknowledges the
+requested permission mode before a prompt. Strict tool arbitration takes
+precedence over bypass mode. Capability instructions use the same sealed
+objects as on other adapters. The node's reuse digest includes native policy.
+
+Project Flow role bindings pin the agent ID, installation, definition
+digest, mode and prompt in the workspace input capture. The current project
+attachment and the pinned installation must both retain trust. Web uses the
+captured prompt for a session persona. The supervisor provides a subagent's
+sealed description and prompt to Claude through its native session options.
+Each node sees its own declared role. Structured knowledge also requires
+the existing exact actor and assignment checks.
+
+The manager resolves approved package, skill, instructions, capabilities,
+memory references and mounted context revisions. The supervisor verifies
+the captured digests, stages the inputs in a private directory and publishes
+the complete generation atomically. It resolves its own adapter, facade and
+credential profile. Revalidate grants before spawn, including the existing
+agent-memory and cross-project mount authorities. Retain the original inputs
+across replay and checkpoint resume. The launch-path and materialization
+integration scenarios C-05 and C-07 own the transaction and byte witnesses.
+
+An addressed Flow freezes its requirement checks with the admitted revision.
+The manager admits them in declaration order after workspace materialization
+and any required [host setup](execution-hosts.md#workspace-protocol-1).
+Checkout and input receipts alone leave the Run Pending while a required probe
+is outstanding. An applied successful receipt advances preflight. A failed
+probe with confirmed process retirement fails the Run and releases its active
+assignment while retaining the workspace and diagnostic evidence. Unconfirmed
+quiescence keeps the assignment in reconciliation.
+
 ## Expectations
 
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))

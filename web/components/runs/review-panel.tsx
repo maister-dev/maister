@@ -29,6 +29,7 @@ import {
   promotionBlockReason,
   type PromotionDeliveryPolicy,
   type PromotionMode,
+  type ReviewedPromotionSource,
 } from "@/lib/runs/promotion-operation";
 
 // The prepared diff DTO the page builds server-side (`prepareDiff`): a per-file
@@ -126,6 +127,8 @@ export interface ReviewPanelProps {
   // gated. The server `requireProjectAction(…,"promoteRun")` is the real
   // boundary — this is UI consistency / defense-in-depth.
   canPromote?: boolean;
+  addressedReviewUnavailable?: boolean;
+  reviewedSource?: ReviewedPromotionSource;
   // ADR-141: behind/ahead of the run branch vs its target (null when
   // the count could not be derived); branch-sync dialog seed + in-progress state.
   aheadBehind?: { ahead: number; behind: number } | null;
@@ -211,6 +214,8 @@ export function ReviewPanel({
   driftDetected = false,
   conflict,
   canPromote = true,
+  addressedReviewUnavailable = false,
+  reviewedSource,
   aheadBehind = null,
   sync = null,
   updateHref = null,
@@ -254,6 +259,7 @@ export function ReviewPanel({
     deliveryPolicy,
     mode,
     reviewedTargetCommit,
+    reviewedSource,
     canPromote,
     reviewReady: readinessReady,
     diffTruncated: diff.truncated,
@@ -339,6 +345,13 @@ export function ReviewPanel({
       } | null;
 
       const reason = data?.details?.reason;
+
+      if (reason === "review_source_changed") {
+        setError(t("addressedReviewChanged"));
+        router.refresh();
+
+        return;
+      }
 
       if (
         reason === "already_in_target" ||
@@ -533,32 +546,34 @@ export function ReviewPanel({
       ) : null}
 
       {/* ADR-066 diff (server-built Shiki bundle, split/inline) */}
-      <div className="mb-4">
-        <DiffView
-          files={diff.files}
-          labels={{
-            empty: tWorkbench("diff.empty"),
-            bodyUnavailable: tWorkbench("diff.bodyUnavailable"),
-            added: tWorkbench("diff.added"),
-            removed: tWorkbench("diff.removed"),
-            displayMode: tWorkbench("diff.displayMode"),
-            rich: tWorkbench("diff.rich"),
-            raw: tWorkbench("diff.raw"),
-            filterFiles: tWorkbench("diff.filterFiles"),
-            filterFilesPlaceholder: tWorkbench("diff.filterFilesPlaceholder"),
-            filterNoMatches: tWorkbench("diff.filterNoMatches"),
-            showFiles: tWorkbench("diff.showFiles"),
-            hideFiles: tWorkbench("diff.hideFiles"),
-            refresh: tWorkbench("diff.refresh"),
-            viewMode: tWorkbench("diff.viewMode"),
-            split: tWorkbench("diff.split"),
-            unified: tWorkbench("diff.unified"),
-            truncated: tWorkbench("diff.truncated"),
-          }}
-          perFile={diff.perFile}
-          truncated={diff.truncated}
-        />
-      </div>
+      {!addressedReviewUnavailable ? (
+        <div className="mb-4">
+          <DiffView
+            files={diff.files}
+            labels={{
+              empty: tWorkbench("diff.empty"),
+              bodyUnavailable: tWorkbench("diff.bodyUnavailable"),
+              added: tWorkbench("diff.added"),
+              removed: tWorkbench("diff.removed"),
+              displayMode: tWorkbench("diff.displayMode"),
+              rich: tWorkbench("diff.rich"),
+              raw: tWorkbench("diff.raw"),
+              filterFiles: tWorkbench("diff.filterFiles"),
+              filterFilesPlaceholder: tWorkbench("diff.filterFilesPlaceholder"),
+              filterNoMatches: tWorkbench("diff.filterNoMatches"),
+              showFiles: tWorkbench("diff.showFiles"),
+              hideFiles: tWorkbench("diff.hideFiles"),
+              refresh: tWorkbench("diff.refresh"),
+              viewMode: tWorkbench("diff.viewMode"),
+              split: tWorkbench("diff.split"),
+              unified: tWorkbench("diff.unified"),
+              truncated: tWorkbench("diff.truncated"),
+            }}
+            perFile={diff.perFile}
+            truncated={diff.truncated}
+          />
+        </div>
+      ) : null}
 
       {prUrl ? (
         <p className="mb-4 font-mono text-[11px]">
@@ -624,7 +639,11 @@ export function ReviewPanel({
         </div>
       ) : null}
 
-      {legacyNeedsRelaunch ? (
+      {addressedReviewUnavailable ? (
+        <p className="mb-3 text-sm text-amber" role="status">
+          {t("addressedReviewUnavailable")}
+        </p>
+      ) : legacyNeedsRelaunch ? (
         <p
           className="rounded-[10px] border border-amber-line bg-amber-soft p-4 font-mono text-[11px] leading-[1.5] text-amber"
           data-testid="review-relaunch"

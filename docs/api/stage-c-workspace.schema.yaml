@@ -1,0 +1,1325 @@
+$schema: http://json-schema.org/draft-07/schema#
+$id: https://maister.dev/contracts/designed/stage-c/workspace/v1
+title: Stage C selected supervisor protocol
+description: Designed workspace protocol v1. An extension validates the Stage C fragment of the existing
+  operation. Existing body, receipt, authentication and range contracts continue to apply.
+x-operations:
+  stageCHostCapabilities:
+    method: GET
+    path: /capabilities
+    request: null
+    response: CapabilityPatch
+    status: 200
+    extension: true
+  stageCRepositoryRefs:
+    {
+      method: GET,
+      path: "/v1/repositories/{repositoryId}/refs",
+      request: RefQuery,
+      response: RefPage,
+      status: 200
+    }
+  stageCResolveRevision:
+    {
+      method: POST,
+      path: /v1/repositories/resolve-revision,
+      request: SourceQuery,
+      response: SourceRevision,
+      status: 200
+    }
+  stageCPrepare:
+    method: POST
+    path: /v1/workspaces/prepare
+    request: StageCPrepareRequest
+    response: CommandAccepted
+    status: 202
+    result: WorkspacePrepared
+    replay: sameCommand
+  stageCMaterialize:
+    method: POST
+    path: /v1/workspaces/{id}/materialization
+    request: StageCMaterializeRequest
+    response: CommandAccepted
+    status: 202
+    result: MaterializedInputs
+    replay: sameCommand
+  stageCRunWorkload:
+    method: POST
+    path: /v1/workspaces/{id}/commands
+    request: StageCRunWorkloadRequest
+    response: CommandAccepted
+    status: 202
+    result: WorkloadResult
+    replay: sameCommand
+  stageCCancelWorkload:
+    method: POST
+    path: /v1/workspaces/{id}/commands/{commandId}/cancel
+    request: StageCCancelWorkloadRequest
+    response: CommandAccepted
+    status: 202
+    result: CancelResult
+    replay: sameCommand
+  stageCGetWorkspace: { method: GET, path: "/v1/workspaces/{id}", request: WorkspaceQuery, response: WorkspaceRecord, status: 200 }
+  stageCGetWorkspaceStatus:
+    {
+      method: GET,
+      path: "/v1/workspaces/{id}/status",
+      request: WorkspaceQuery,
+      response: WorkspaceStatus,
+      status: 200
+    }
+  stageCGetWorkspaceDiff: { method: GET, path: "/v1/workspaces/{id}/diff", request: DiffQuery, response: ObjectReference, status: 200 }
+  stageCGetReviewFingerprint: { method: GET, path: "/v1/workspaces/{id}/review-fingerprint", request: ReviewFingerprintQuery, response: ReviewFingerprint, status: 200 }
+  stageCGetWorkspaceLog: { method: GET, path: "/v1/workspaces/{id}/log", request: LogQuery, response: ObjectReference, status: 200 }
+  stageCCheckpoint:
+    method: POST
+    path: /v1/workspaces/{id}/checkpoint
+    request: StageCCheckpointRequest
+    response: CommandAccepted
+    status: 202
+    result: GitCheckpoint
+    replay: sameCommand
+  stageCRestore:
+    method: POST
+    path: /v1/workspaces/{id}/restore
+    request: StageCRestoreRequest
+    response: CommandAccepted
+    status: 202
+    result: GitCheckpoint
+    replay: sameCommand
+  stageCSync:
+    method: POST
+    path: /v1/workspaces/{id}/sync
+    request: StageCSyncRequest
+    response: CommandAccepted
+    status: 202
+    result: SyncResult
+    replay: sameCommand
+    implementedProfile: { owner: workspaceOperation, strategy: [fastForward, merge, rebase] }
+  stageCPublish:
+    method: POST
+    path: /v1/workspaces/{id}/publication
+    request: StageCPublishRequest
+    response: CommandAccepted
+    status: 202
+    result: PublicationResult
+    replay: sameCommand
+    implementedProfile:
+      owner: workspaceOperation
+      publication: [push, openPullRequest, promote]
+      integration: [merge, rebase]
+  stageCGetPublicationTarget: { method: GET, path: "/v1/workspaces/{id}/publication-target", request: PublicationTargetQuery, response: PublicationTarget, status: 200 }
+  stageCGetWorkspacePullRequest: { method: GET, path: "/v1/workspaces/{id}/pull-request", request: WorkspacePullRequestQuery, response: WorkspacePullRequestStatus, status: 200 }
+  stageCPreserve:
+    method: POST
+    path: /v1/workspaces/{id}/preserve
+    request: StageCPreserveRequest
+    response: CommandAccepted
+    status: 202
+    result: Preserved
+    replay: sameCommand
+    implementedProfile: { owner: workspaceOperation, disposition: archive }
+  stageCRelease:
+    method: DELETE
+    path: /v1/workspaces/{id}
+    request: StageCReleaseRequest
+    response: CommandAccepted
+    status: 202
+    result: Released
+    replay: sameCommand
+    implementedProfile: { owner: workspaceOperation, prerequisite: verifiedArchive }
+  stageCGetCommandReceipt:
+    method: GET
+    path: /v1/commands/{commandId}
+    request: null
+    response: WorkspaceCommandReceipt
+    status: 200
+  stageCGetRuntimeObjectContent:
+    method: GET
+    path: /runtime-objects/{objectId}/content
+    request: null
+    response: RuntimeObjectRangeMetadata
+    status: 206
+    transport: existing-range
+    extension: true
+  stageCTaskHostOptions:
+    method: GET
+    path: /api/task-launch-intents/options
+    request: null
+    response: HostOptionsPatch
+    status: 200
+    extension: true
+  stageCFlowHostOptions:
+    method: GET
+    path: /api/runs/launch-options
+    request: null
+    response: HostOptionsPatch
+    status: 200
+    extension: true
+  stageCCreateIntent:
+    method: POST
+    path: /api/task-launch-intents
+    request: HostSelectionPatch
+    response: HostSelectionReceipt
+    status: 202
+    extension: true
+    replay: sameIntent
+  stageCCreateConcurrentIntents:
+    method: POST
+    path: /api/task-launch-intents/concurrent
+    request: HostSelectionPatch
+    response: HostSelectionReceipt
+    status: 202
+    extension: true
+    replay: sameIntent
+  stageCReadIntent:
+    method: GET
+    path: /api/task-launch-intents/{intentId}
+    request: null
+    response: HostSelectionReceipt
+    status: 200
+    extension: true
+  stageCReplaceIntent:
+    method: POST
+    path: /api/task-launch-intents/{intentId}/replace
+    request: HostSelectionPatch
+    response: HostSelectionReceipt
+    status: 202
+    extension: true
+    replay: sameIntent
+  stageCCancelIntent:
+    method: POST
+    path: /api/task-launch-intents/{intentId}/cancel
+    request: null
+    response: HostSelectionReceipt
+    status: 200
+    extension: true
+  stageCReadProjectHostSettings:
+    method: GET
+    path: /api/projects/{slug}/settings/execution-host
+    request: null
+    response: ProjectHostSettings
+    status: 200
+  stageCUpdateProjectHostSettings:
+    method: PATCH
+    path: /api/projects/{slug}/settings/execution-host
+    request: ProjectHostPreference
+    response: ProjectHostSettings
+    status: 200
+    ifMatch: ProjectHostSettingsETag
+definitions:
+  OpaqueId: { type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]*$" }
+  HostKey: { type: string, minLength: 8, maxLength: 64, pattern: "^[A-Za-z0-9_-]+$" }
+  GitObjectId: { type: string, minLength: 1, maxLength: 64, pattern: "^([a-f0-9]{40}|[a-f0-9]{64})$" }
+  Digest: { type: string, minLength: 1, maxLength: 64, pattern: "^[a-f0-9]{64}$" }
+  WorkspaceHandle: { type: string, minLength: 1, maxLength: 64, pattern: "^ws_[a-f0-9]{32}$" }
+  Positive: { type: integer, minimum: 1, maximum: 9007199254740991 }
+  Uuid:
+    {
+      type: string,
+      minLength: 1,
+      maxLength: 36,
+      pattern: "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+    }
+  AssignmentOwner:
+    type: object
+    additionalProperties: false
+    required: [ kind, hostKey, runId, assignmentId, assignmentEpoch ]
+    properties:
+      kind:
+        enum: [ assignment ]
+      hostKey: { $ref: "#/definitions/HostKey" }
+      runId: &a3 { $ref: "#/definitions/OpaqueId" }
+      assignmentId: &a2 { $ref: "#/definitions/Uuid" }
+      assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+  WorkspaceOperationOwner:
+    type: object
+    additionalProperties: false
+    required: [ kind, hostKey, workspaceHandle, workspaceGeneration, claimId, fence ]
+    properties:
+      kind:
+        enum: [ workspaceOperation ]
+      hostKey: { $ref: "#/definitions/HostKey" }
+      workspaceHandle: &a5 { $ref: "#/definitions/WorkspaceHandle" }
+      workspaceGeneration: &a1 { $ref: "#/definitions/Positive" }
+      claimId: *a2
+      fence: *a1
+  ProjectHostPreference:
+    type: object
+    additionalProperties: false
+    required: [ defaultExecutionHostId ]
+    properties:
+      defaultExecutionHostId:
+        anyOf:
+          - *a3
+          - { type: "null" }
+  ProjectHostSettings:
+    type: object
+    additionalProperties: false
+    required: [ defaultExecutionHostId, preferenceRevision, eligibilityRevision ]
+    properties:
+      defaultExecutionHostId:
+        anyOf:
+          - *a3
+          - { type: "null" }
+      preferenceRevision: *a1
+      eligibilityRevision: { $ref: "#/definitions/Digest" }
+  ProjectHostSettingsETag:
+    description: Quoted composite revision for GET/response ETag and PATCH If-Match.
+    type: string
+    pattern: '^"[1-9][0-9]{0,15}:[a-f0-9]{64}"$'
+  HostChoice:
+    type: object
+    additionalProperties: false
+    required: [id, displayName]
+    properties:
+      id: *a3
+      displayName: { type: string, minLength: 1 }
+  HostOptionsPatch:
+    type: object
+    additionalProperties: false
+    required: [executionHostOptions]
+    properties:
+      executionHostOptions:
+        type: object
+        additionalProperties: false
+        required: [hosts, defaultExecutionHostId]
+        properties:
+          hosts:
+            type: array
+            items: { $ref: "#/definitions/HostChoice" }
+          defaultExecutionHostId:
+            anyOf:
+              - *a3
+              - { type: "null" }
+  HostSelectionPatch:
+    type: object
+    additionalProperties: false
+    properties:
+      executionHostId: *a3
+  HostSelectionReceipt:
+    type: object
+    additionalProperties: false
+    required: [executionHostSelection]
+    properties:
+      executionHostSelection:
+        type: object
+        additionalProperties: false
+        required: [requestedExecutionHostId, effectiveExecutionHostId, provenance, eligibilityRevision]
+        properties:
+          requestedExecutionHostId:
+            anyOf:
+              - *a3
+              - { type: "null" }
+          effectiveExecutionHostId: *a3
+          provenance:
+            enum: [explicit, projectDefault, instanceDefault, sharedRoot]
+          eligibilityRevision: { $ref: "#/definitions/Digest" }
+      executionHostPlacement:
+        type: object
+        additionalProperties: false
+        required: [savedDisplayName, actual]
+        properties:
+          savedDisplayName: { type: [string, "null"] }
+          actual:
+            anyOf:
+              - { $ref: "#/definitions/ObservedHostAssignment" }
+              - { type: "null" }
+  ObservedHostAssignment:
+    type: object
+    additionalProperties: false
+    required: [executionHostId, displayName, assignmentEpoch]
+    properties:
+      executionHostId: *a3
+      displayName: { type: string, minLength: 1 }
+      assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+  CapabilityPatch:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol ]
+    properties:
+      workspaceProtocol:
+        type: array
+        items:
+          enum: [ 1 ]
+        minItems: 1
+        maxItems: 1
+      workspaceSyncResolver:
+        type: integer
+        enum: [1]
+        description: Advertises retained conflict preparation, verification and abort.
+  WorkspaceQuery:
+    type: object
+    additionalProperties: false
+    required: [ generation ]
+    properties:
+      generation: *a1
+  ReviewFingerprintQuery:
+    type: object
+    additionalProperties: false
+    required: [generation, base]
+    properties:
+      generation: { $ref: "#/definitions/Positive" }
+      base: { $ref: "#/definitions/GitObjectId" }
+  ReviewFingerprint:
+    type: object
+    additionalProperties: false
+    required: [generation, baseCommit, sha256]
+    properties:
+      generation: { $ref: "#/definitions/Positive" }
+      baseCommit: { $ref: "#/definitions/GitObjectId" }
+      sha256: { $ref: "#/definitions/Digest" }
+  DiffQuery:
+    description: Exact commits reachable from the prepared checkout, or its retained checkpoint. A checkpointId selects the snapshot as the sole base. For an omitted base use the selected head. An omitted head reads the tracked and non-ignored untracked worktree against the base using a private temporary index. Patches above 65536 bytes are refused.
+    type: object
+    additionalProperties: false
+    required: [ generation ]
+    properties:
+      generation: *a1
+      base: &a4 { $ref: "#/definitions/GitObjectId" }
+      head: *a4
+      checkpointId: *a2
+      format:
+        const: review
+        description: Seal the patch and native Git file statistics in a WorkspaceGitReview JSON object. Requires base or checkpointId.
+    not:
+      anyOf:
+        - required: [checkpointId, base]
+        - required: [checkpointId, head]
+        - required: [format, head]
+        - allOf:
+            - required: [format]
+            - not:
+                anyOf:
+                  - required: [base]
+                  - required: [checkpointId]
+  LogQuery:
+    description: Page of history reachable from the observed HEAD in topological order, or a sealed plain text commit set for an explicit reachable base and head. The cursor is scoped to the stable host, handle, generation and HEAD. Results over 65536 bytes are refused.
+    type: object
+    additionalProperties: false
+    required: [ generation ]
+    properties:
+      generation: *a1
+      cursor: { type: string, minLength: 1, maxLength: 512 }
+      limit: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      base: *a4
+      head: *a4
+    dependencies:
+      base: [head]
+      head: [base]
+    not:
+      anyOf:
+        - required: [base, cursor]
+        - required: [base, limit]
+  RefQuery:
+    type: object
+    additionalProperties: false
+    required: []
+    properties:
+      cursor: { type: string, minLength: 1, maxLength: 512 }
+  RefPage:
+    type: object
+    additionalProperties: false
+    required: [ refs, defaultRef, nextCursor ]
+    properties:
+      refs:
+        type: array
+        maxItems: 100
+        items: { $ref: "#/definitions/GitRef" }
+      defaultRef:
+        anyOf:
+          - { $ref: "#/definitions/GitRef" }
+          - { type: "null" }
+      nextCursor:
+        anyOf:
+          - { type: string, minLength: 1, maxLength: 512 }
+          - { type: "null" }
+  SourceQuery:
+    type: object
+    additionalProperties: false
+    required: [ repositoryId, ref ]
+    properties:
+      repositoryId: *a3
+      ref: { $ref: "#/definitions/GitRef" }
+      pinnedCommit: { type: string, pattern: '^[0-9a-fA-F]{7,64}$' }
+  SourceRevision:
+    type: object
+    additionalProperties: false
+    required: [ repositoryId, ref, commit ]
+    properties:
+      repositoryId: *a3
+      ref: { $ref: "#/definitions/GitRef" }
+      commit: *a4
+      pinnedCommit: *a4
+  GitWorktree:
+    type: object
+    additionalProperties: false
+    required: [ mode, repositoryId, commit, inputDigest ]
+    properties:
+      mode:
+        enum: [ ownWorktree, readOnlyCheckout ]
+      repositoryId: *a3
+      commit: *a4
+      inputDigest: &a6 { $ref: "#/definitions/Digest" }
+  SharedWorktree:
+    type: object
+    additionalProperties: false
+    required: [ mode, parentHandle, parentGeneration, inputDigest ]
+    properties:
+      mode:
+        enum: [ sharedWorktree ]
+      parentHandle: *a5
+      parentGeneration: *a1
+      inputDigest: *a6
+  DirectoryWorkspace:
+    type: object
+    additionalProperties: false
+    required: [ mode, directoryProfileId, inputDigest ]
+    properties:
+      mode:
+        enum: [ directory ]
+      directoryProfileId: *a3
+      inputDigest: *a6
+  EmptyWorkspace:
+    type: object
+    additionalProperties: false
+    required: [ mode, inputDigest ]
+    properties:
+      mode:
+        enum: [ emptyDirectory ]
+      inputDigest: *a6
+  PreparePayload:
+    oneOf:
+      - { $ref: "#/definitions/GitWorktree" }
+      - { $ref: "#/definitions/SharedWorktree" }
+      - { $ref: "#/definitions/DirectoryWorkspace" }
+      - { $ref: "#/definitions/EmptyWorkspace" }
+  InputObject:
+    type: object
+    additionalProperties: false
+    required: [ objectId, sha256 ]
+    properties:
+      objectId: { $ref: "#/definitions/OpaqueId" }
+      sha256: *a6
+  WorkspaceInputManifest:
+    description: Sealed JSON in the first object of MaterializePayload. Maximum encoded size is 262144 bytes. Remaining objects must match the exact file set and total at most 67108864 bytes.
+    type: object
+    additionalProperties: false
+    required: [ version, workspaceInputDigest, files ]
+    properties:
+      version: { const: 1 }
+      workspaceInputDigest: *a6
+      files:
+        type: array
+        maxItems: 255
+        items:
+          type: object
+          additionalProperties: false
+          required: [ path, objectId, sha256 ]
+          properties:
+            path:
+              type: string
+              maxLength: 240
+              pattern: '^[A-Za-z0-9_.-]{1,128}(/[A-Za-z0-9_.-]{1,128})*$'
+              description: Relative UTF-8 file name. Dot segments, .git, .workspace-inputs.json and case-folded or prefix collisions are rejected. The optional context-repositories.json names frozen sibling contexts and uses WorkspaceContextInputs.
+            objectId: { type: string, format: uuid }
+            sha256: *a6
+            executable:
+              const: true
+              description: Allowed only for captured files below flow/. The retained file and its verified command-local copy are executable.
+  WorkspaceContextInputs:
+    description: The manager approves each sibling under the current user grant or agent attachment. Paths are resolved on the supervisor after source and SHA verification. At most eight distinct slugs per step.
+    type: array
+    maxItems: 64
+    items:
+      type: object
+      additionalProperties: false
+      required: [ stepId, repositoryId, slug, ref, declaredRef, commit ]
+      properties:
+        stepId: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.-]+$' }
+        repositoryId: *a3
+        slug: { type: string, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+        ref: { type: string, minLength: 1, maxLength: 255 }
+        declaredRef:
+          anyOf:
+            - { type: string, minLength: 1, maxLength: 255 }
+            - { type: 'null' }
+        commit: *a4
+  MaterializePayload:
+    type: object
+    additionalProperties: false
+    required: [ generation, manifestDigest, objects ]
+    properties:
+      generation: *a1
+      manifestDigest: *a6
+      objects:
+        type: array
+        minItems: 1
+        maxItems: 256
+        items:
+          allOf:
+            - { $ref: "#/definitions/InputObject" }
+            - properties: { objectId: { format: uuid } }
+        description: Sealed SHA-256 manifest object followed by the exact matching set of sealed content objects.
+  WorkloadPayload:
+    type: object
+    additionalProperties: false
+    required: [ generation, workload, declarationId, inputGeneration, inputDigest ]
+    properties:
+      generation: *a1
+      workload:
+        enum: [ setup, cli, check, requirementProbe ]
+      declarationId: *a3
+      inputGeneration: *a1
+      inputDigest: *a6
+      templateContext:
+        description: Optional assignment-bound context for a templated CLI or check. Its sealed JSON records version 1, declarationId and values without env. The host resolves the template from its retained declaration using its own permitted environment.
+        allOf:
+          - { $ref: "#/definitions/InputObject" }
+          - properties: { objectId: { format: uuid } }
+  WorkspaceWorkloadDeclarations:
+    description: Optional sealed workload-declarations.json input. The Flow reservation freezes node actions, command-check gates and requirement probes from the admitted revision. The supervisor uses a declaration only when the request selects its exact generation plus ID and workload. Maximum encoded size is 262144 bytes.
+    type: array
+    maxItems: 128
+    items:
+      type: object
+      additionalProperties: false
+      required: [ id, workload, command, timeoutMs ]
+      properties:
+        id: *a3
+        workload: { enum: [ setup, cli, check, requirementProbe ] }
+        command: { type: string, minLength: 1, maxLength: 32768 }
+        timeoutMs: { type: integer, minimum: 1, maximum: 3600000 }
+        structuredOutput:
+          enum: [ json, jsonFile ]
+          description: Inspect stdout JSON or use the supervisor's private MAISTER_OUTPUT_FILE with a 262144 byte limit.
+        flowAssets:
+          const: true
+          description: For CLI and check actions, verify the sealed flow/ files and export the path to their command-local copy as MAISTER_FLOW_DIR.
+  ActiveGeneration:
+    type: object
+    additionalProperties: false
+    required: [ generation ]
+    properties:
+      generation: *a1
+  RestorePayload:
+    type: object
+    additionalProperties: false
+    required: [ generation, checkpointId ]
+    properties:
+      generation: *a1
+      checkpointId: *a2
+      policy: { const: fresh-attempt, description: Reset to the checkpoint parent and clean unignored work. Omit to rewind to the captured tree. }
+  CheckoutExpectation:
+    type: object
+    additionalProperties: false
+    required: [ head, remoteId, targetRef, priorTarget ]
+    properties:
+      head: *a4
+      remoteId: *a3
+      targetRef: { $ref: "#/definitions/GitRef" }
+      priorTarget: &a7
+        anyOf:
+          - { $ref: "#/definitions/GitObjectId" }
+          - { type: "null" }
+  PublicationTargetQuery:
+    type: object
+    additionalProperties: false
+    required: [generation, remoteId, targetRef]
+    properties:
+      generation: *a1
+      remoteId: *a3
+      targetRef: { $ref: "#/definitions/GitRef" }
+  PublicationTarget:
+    type: object
+    additionalProperties: false
+    required: [generation, remoteId, targetRef, priorTarget]
+    properties:
+      generation: *a1
+      remoteId: *a3
+      targetRef: { $ref: "#/definitions/GitRef" }
+      priorTarget: *a7
+  WorkspacePullRequestQuery:
+    type: object
+    additionalProperties: false
+    required: [generation, remoteId, number, url, baseRef]
+    properties:
+      generation: *a1
+      remoteId: *a3
+      number: &stageCPrNumber { type: integer, minimum: 1, maximum: 9007199254740991 }
+      url: &stageCPrUrl { type: string, format: uri, pattern: "^https://", maxLength: 2048 }
+      baseRef: { $ref: "#/definitions/GitRef" }
+  WorkspacePullRequestStatus:
+    type: object
+    additionalProperties: false
+    required: [generation, remoteId, number, url, baseRef, state, prHead, workspaceHead]
+    properties:
+      generation: *a1
+      remoteId: *a3
+      number: *stageCPrNumber
+      url: *stageCPrUrl
+      baseRef: { $ref: "#/definitions/GitRef" }
+      state: { enum: [open, closed, merged] }
+      prHead: *a4
+      workspaceHead: *a4
+  SyncPayload:
+    type: object
+    additionalProperties: false
+    required: [ generation, expected, strategy ]
+    properties:
+      generation: *a1
+      expected: { $ref: "#/definitions/CheckoutExpectation" }
+      strategy:
+        enum: [ fastForward, merge, rebase ]
+      onConflict:
+        description: Report a mechanical conflict or prepare the exact pinned conflict for a resolver on the original supervisor.
+        enum: [report, prepareResolver]
+      resolver:
+        description: Settle a previously prepared conflict under the same workspace generation and claim with a higher fence.
+        type: object
+        additionalProperties: false
+        required: [commandId, action]
+        properties:
+          commandId: { type: string, format: uuid }
+          action: { enum: [verify, abort] }
+      publish:
+        description: Optional lease for the Run's dedicated branch at the same approved remote.
+        type: object
+        additionalProperties: false
+        required: [targetRef, priorTarget]
+        properties:
+          targetRef: { $ref: "#/definitions/GitRef" }
+          priorTarget: *a7
+    allOf:
+      - if: { required: [resolver] }
+        then:
+          properties:
+            onConflict: false
+            strategy: { enum: [merge, rebase] }
+      - if:
+          required: [onConflict]
+          properties:
+            onConflict: { const: prepareResolver }
+        then:
+          properties:
+            strategy: { enum: [merge, rebase] }
+  PublishPayload:
+    type: object
+    additionalProperties: false
+    required: [ generation, expected, publication ]
+    properties:
+      generation: *a1
+      expected: { $ref: "#/definitions/CheckoutExpectation" }
+      publication:
+        enum: [ push, openPullRequest, promote ]
+      integration:
+        description: For promotion to an existing approved target, compute and retain the candidate on the host before updating the target under its exact prior SHA.
+        enum: [ merge, rebase ]
+      pullRequest:
+        type: object
+        additionalProperties: false
+        required: [baseRef, baseCommit, title, body, draft]
+        properties:
+          baseRef: { $ref: "#/definitions/GitRef" }
+          baseCommit: { $ref: "#/definitions/GitObjectId" }
+          title: { type: string, minLength: 1, maxLength: 256 }
+          body: { type: string, maxLength: 32768 }
+          draft: { type: boolean }
+    allOf:
+      - if: { required: [integration] }
+        then:
+          properties:
+            publication: { enum: [promote] }
+            expected:
+              properties:
+                priorTarget: { $ref: "#/definitions/GitObjectId" }
+      - if: { properties: { publication: { const: openPullRequest } } }
+        then:
+          required: [pullRequest]
+          properties: { integration: false }
+        else:
+          properties: { pullRequest: false }
+  PreservePayload:
+    type: object
+    additionalProperties: false
+    required: [ generation, disposition, quiescenceId ]
+    properties:
+      generation: *a1
+      disposition:
+        enum: [ retain, archive ]
+      quiescenceId: *a3
+  ReleasePayload:
+    type: object
+    additionalProperties: false
+    required: [ generation, dispositionId, quiescenceId ]
+    properties:
+      generation: *a1
+      dispositionId: *a3
+      quiescenceId: *a3
+  CommandAccepted:
+    type: object
+    additionalProperties: false
+    required: [ commandId, state ]
+    properties:
+      commandId: *a2
+      state:
+        enum: [ accepted ]
+  WorkspaceRecord:
+    type: object
+    additionalProperties: false
+    required: [ handle, generation, mode, observedCommit ]
+    properties:
+      handle: *a5
+      generation: *a1
+      mode:
+        enum: [ ownWorktree, readOnlyCheckout, sharedWorktree, directory, emptyDirectory ]
+      observedCommit:
+        anyOf:
+          - *a4
+          - { type: "null" }
+  WorkspacePrepared:
+    type: object
+    additionalProperties: false
+    required: [ workspace, inputDigest ]
+    properties:
+      workspace: { $ref: "#/definitions/WorkspaceRecord" }
+      inputDigest: *a6
+  WorkspaceStatus:
+    type: object
+    additionalProperties: false
+    required: [ workspace, workingTree, headState ]
+    properties:
+      workspace: { $ref: "#/definitions/WorkspaceRecord" }
+      workingTree:
+        enum: [ clean, dirty, nonGit ]
+      headState:
+        enum: [ branch, detached, nonGit ]
+  MaterializedInputs:
+    type: object
+    additionalProperties: false
+    required: [ generation, inputGeneration, manifestDigest ]
+    properties:
+      generation: *a1
+      inputGeneration: *a1
+      manifestDigest: *a6
+  WorkloadResult:
+    type: object
+    additionalProperties: false
+    required: [ generation, processOutcome, exitCode, signal, checkValidity, outputState, objects, quiescence ]
+    properties:
+      generation: *a1
+      processOutcome:
+        enum: [ exited, signalled, timedOut, cancelled, interrupted ]
+      exitCode:
+        anyOf:
+          - { type: integer, minimum: 0, maximum: 255 }
+          - { type: "null" }
+      signal:
+        anyOf:
+          - { type: string, minLength: 1, maxLength: 32, pattern: "^SIG[A-Z0-9]+$" }
+          - { type: "null" }
+      checkValidity:
+        enum: [ notRequested, valid, invalid, unavailable ]
+      setupReused:
+        const: true
+        description: This setup command reused a verified successful package setup from the same supervisor.
+      outputState:
+        enum: [ sealed, truncated, unavailable ]
+      objects:
+        type: array
+        maxItems: 16
+        items: { $ref: "#/definitions/InputObject" }
+      quiescence:
+        enum: [ proved, uncertain ]
+  CancelResult:
+    type: object
+    additionalProperties: false
+    required: [ targetCommandId, quiescence, objects ]
+    properties:
+      targetCommandId: *a2
+      quiescence:
+        enum: [ proved, uncertain ]
+      objects:
+        type: array
+        maxItems: 16
+        items: { $ref: "#/definitions/InputObject" }
+  ObjectReference:
+    type: object
+    additionalProperties: false
+    required: [ generation, object ]
+    properties:
+      generation: *a1
+      object: { $ref: "#/definitions/InputObject" }
+      nextCursor: { type: string, minLength: 1, maxLength: 512 }
+      baseCommit:
+        description: Verified checkpoint commit or lower bound of an explicit commit-set request.
+        $ref: "#/definitions/GitObjectId"
+      headCommit:
+        description: Verified upper bound of an explicit commit-set request.
+        $ref: "#/definitions/GitObjectId"
+  GitCheckpoint:
+    type: object
+    additionalProperties: false
+    required: [ generation, checkpointId, tree ]
+    properties:
+      generation: *a1
+      checkpointId: *a2
+      tree: *a4
+      baseTree: { $ref: "#/definitions/GitObjectId", description: Verified parent tree for new checkpoint receipts. }
+      resultingTree: { $ref: "#/definitions/GitObjectId", description: Verified clean parent tree after a fresh attempt. }
+  WorkspaceGitReview:
+    type: object
+    additionalProperties: false
+    required: [baseCommit, worktreeTree, patch, files]
+    properties:
+      baseCommit: *a4
+      worktreeTree: *a4
+      patch: { type: string }
+      files:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [path, status, additions, deletions, binary]
+          properties:
+            path: { type: string, minLength: 1 }
+            oldPath: { type: string, minLength: 1 }
+            status: { enum: [A, C, D, M, R, T] }
+            additions: { type: integer, minimum: 0 }
+            deletions: { type: integer, minimum: 0 }
+            binary: { type: boolean }
+  GitResult:
+    type: object
+    additionalProperties: false
+    required: [ generation, head, priorTarget, observedTarget ]
+    properties:
+      generation: *a1
+      head: *a4
+      priorTarget: *a7
+      observedTarget: *a7
+  SyncResult:
+    type: object
+    additionalProperties: false
+    required: [generation, head, priorTarget, observedTarget, behind]
+    properties:
+      generation: *a1
+      head: *a4
+      priorTarget: *a4
+      observedTarget: *a4
+      behind: { type: integer, minimum: 0 }
+      conflictedFiles:
+        description: Repository-relative paths captured when the request opted in to conflict reporting. The encoded array is limited to 32 KiB. HEAD remains the original commit and there is no publication receipt.
+        type: array
+        minItems: 1
+        maxItems: 256
+        items: { type: string, minLength: 1, maxLength: 4096 }
+      resolverPrepared:
+        description: The original branch binding and approval preserved before materializing the exact Git conflict.
+        type: object
+        additionalProperties: false
+        required: [branch, strategy, targetRef]
+        properties:
+          branch:
+            anyOf:
+              - const: HEAD
+              - $ref: "#/definitions/GitRef"
+          strategy: { enum: [merge, rebase] }
+          targetRef: { $ref: "#/definitions/GitRef" }
+          publish:
+            type: object
+            additionalProperties: false
+            required: [targetRef, priorTarget]
+            properties:
+              targetRef: { $ref: "#/definitions/GitRef" }
+              priorTarget: *a7
+      resolverSettlement:
+        description: Whether the owning supervisor verified the resolved checkout or restored the original clean checkout.
+        enum: [verified, aborted]
+      publication:
+        description: Verified resulting public ref when a nontrivial sync requested publication.
+        type: object
+        additionalProperties: false
+        required: [targetRef, priorTarget, observedTarget]
+        properties:
+          targetRef: { $ref: "#/definitions/GitRef" }
+          priorTarget: *a7
+          observedTarget: *a4
+  Preserved:
+    type: object
+    additionalProperties: false
+    required: [ generation, dispositionId, retainedCommit ]
+    properties:
+      generation: *a1
+      dispositionId: *a3
+      retainedCommit:
+        anyOf:
+          - *a4
+          - { type: "null" }
+  Released:
+    type: object
+    additionalProperties: false
+    required: [ handle, generation, dispositionId ]
+    properties:
+      handle: *a5
+      generation: *a1
+      dispositionId: *a3
+  RefusalDetails:
+    type: object
+    additionalProperties: false
+    required: [ reason ]
+    properties:
+      reason:
+        enum:
+          [
+            invalid_request,
+            request_too_large,
+            workspace_protocol_unsupported,
+            host_identity_mismatch,
+            stale_assignment_epoch,
+            stale_workspace_generation,
+            stale_workspace_claim,
+            resource_not_found,
+            source_commit_unavailable,
+            source_ref_unapproved,
+            workspace_rejected,
+            tool_not_declared,
+            command_digest_mismatch,
+            retained_disposition_required,
+            target_ref_changed,
+            publication_provider_unavailable,
+            publication_refused,
+            sync_conflict,
+            non_fast_forward,
+            head_changed,
+            workspace_writer_active,
+            launch_request_key_conflict,
+            host_ineligible,
+            launch_settings_changed,
+            settings_revision_mismatch,
+            insufficient_project_role
+          ]
+  Refusal:
+    type: object
+    additionalProperties: false
+    required: [ code, message, details ]
+    properties:
+      code:
+        enum: [ INVALID_REQUEST, EXECUTOR_UNAVAILABLE, FENCED, NOT_FOUND, PRECONDITION, CONFLICT, UNAUTHENTICATED, UNAUTHORIZED ]
+      message: { type: string, minLength: 1, maxLength: 256 }
+      details: { $ref: "#/definitions/RefusalDetails" }
+  CommandTarget:
+    oneOf:
+      - type: object
+        additionalProperties: false
+        required: [ kind ]
+        properties:
+          kind: { const: prepare }
+      - type: object
+        additionalProperties: false
+        required: [ kind, handle, generation ]
+        properties:
+          kind: { const: workspace }
+          handle: *a5
+          generation: *a1
+      - type: object
+        additionalProperties: false
+        required: [ kind, handle, generation, targetCommandId ]
+        properties:
+          kind: { const: cancelWorkload }
+          handle: *a5
+          generation: *a1
+          targetCommandId: *a2
+  WorkspaceCommandReceipt:
+    description: The command ID from the URI and the verified owner scope must match. Completed results are selected by operationId.
+    type: object
+    additionalProperties: false
+    required: [ commandId, requestSha256, operationId, owner, target, phase ]
+    properties:
+      commandId: *a2
+      requestSha256: *a6
+      operationId: &stageCCommandOperation
+        enum: [stageCPrepare, stageCMaterialize, stageCRunWorkload, stageCCancelWorkload, stageCCheckpoint, stageCRestore, stageCSync, stageCPublish, stageCPreserve, stageCRelease]
+      owner: &stageCOwner
+        oneOf:
+          - { $ref: "#/definitions/AssignmentOwner" }
+          - { $ref: "#/definitions/WorkspaceOperationOwner" }
+      target: { $ref: "#/definitions/CommandTarget" }
+      phase: { enum: [ accepted, completed, rejected, indeterminate ] }
+      status: { const: 202 }
+      acceptance: { $ref: "#/definitions/CommandAccepted" }
+      streamId: *a2
+      eventId: *a2
+      outcomeSha256: *a6
+      result: { type: object }
+      refusal: { $ref: "#/definitions/Refusal" }
+      condition:
+        enum: [ effect_unconfirmed, quiescence_unconfirmed ]
+    oneOf:
+      - properties: { phase: { const: accepted }, streamId: false, eventId: false, outcomeSha256: false, result: false, refusal: false, condition: false }
+        required: [ status, acceptance ]
+      - properties: { phase: { const: completed }, status: false, acceptance: false, refusal: false, condition: false }
+        required: [ streamId, eventId, outcomeSha256, result ]
+        oneOf:
+          - properties: { operationId: { const: stageCPrepare }, result: { $ref: "#/definitions/WorkspacePrepared" } }
+          - properties: { operationId: { const: stageCMaterialize }, result: { $ref: "#/definitions/MaterializedInputs" } }
+          - properties: { operationId: { const: stageCRunWorkload }, result: { $ref: "#/definitions/WorkloadResult" } }
+          - properties: { operationId: { const: stageCCancelWorkload }, result: { $ref: "#/definitions/CancelResult" } }
+          - properties: { operationId: { const: stageCCheckpoint }, result: { $ref: "#/definitions/GitCheckpoint" } }
+          - properties: { operationId: { const: stageCRestore }, result: { $ref: "#/definitions/GitCheckpoint" } }
+          - properties: { operationId: { const: stageCSync }, result: { $ref: "#/definitions/SyncResult" } }
+          - properties: { operationId: { const: stageCPublish }, result: { $ref: "#/definitions/PublicationResult" } }
+          - properties: { operationId: { const: stageCPreserve }, result: { $ref: "#/definitions/Preserved" } }
+          - properties: { operationId: { const: stageCRelease }, result: { $ref: "#/definitions/Released" } }
+      - properties: { phase: { const: rejected }, status: false, acceptance: false, result: false, condition: false }
+        required: [ streamId, eventId, outcomeSha256, refusal ]
+      - properties: { phase: { const: indeterminate }, status: false, acceptance: false, result: false, refusal: false }
+        required: [ streamId, eventId, outcomeSha256, condition ]
+  WorkspaceTerminalEvent:
+    description: Designed flat envelope on the shared host stream. Event ID uses existing URL-namespace UUIDv5 derivation. Maximum sequence is 9223372036854775807.
+    type: object
+    additionalProperties: false
+    required: [ envelopeVersion, eventId, hostKey, hostBootId, streamId, sequence, eventType, occurredAt, payloadSchema, payload ]
+    properties:
+      envelopeVersion: { const: 2 }
+      eventId: *a2
+      hostKey: { $ref: "#/definitions/HostKey" }
+      hostBootId: *a2
+      streamId: *a2
+      sequence: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+      eventType: { const: workspace.command.terminal }
+      occurredAt: { type: string, format: date-time }
+      payloadSchema: { const: maister.workspace.command.terminal.v1 }
+      payload:
+        type: object
+        additionalProperties: false
+        required: [ commandId, requestSha256, operationId, owner, target, phase, outcomeSha256 ]
+        properties:
+          commandId: *a2
+          requestSha256: *a6
+          operationId: *stageCCommandOperation
+          owner: *stageCOwner
+          target: { $ref: "#/definitions/CommandTarget" }
+          phase: { enum: [ completed, rejected, indeterminate ] }
+          outcomeSha256: *a6
+  GitRef: { type: string, minLength: 1, maxLength: 256, pattern: "^refs/heads/[^\\s\\x00-\\x1f]+$" }
+  StageCPrepareRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.prepare ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner: { $ref: "#/definitions/AssignmentOwner" }
+      payload: { $ref: "#/definitions/PreparePayload" }
+  StageCMaterializeRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.materialize ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner: { $ref: "#/definitions/AssignmentOwner" }
+      payload: { $ref: "#/definitions/MaterializePayload" }
+  StageCRunWorkloadRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.run ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner: { $ref: "#/definitions/AssignmentOwner" }
+      payload: { $ref: "#/definitions/WorkloadPayload" }
+  StageCCancelWorkloadRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.cancel ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner: { $ref: "#/definitions/AssignmentOwner" }
+      payload: { $ref: "#/definitions/ActiveGeneration" }
+  StageCCheckpointRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.checkpoint ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner: { $ref: "#/definitions/AssignmentOwner" }
+      payload: { $ref: "#/definitions/ActiveGeneration" }
+  StageCRestoreRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.restore ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner: { $ref: "#/definitions/AssignmentOwner" }
+      payload: { $ref: "#/definitions/RestorePayload" }
+  StageCSyncRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.sync ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner: { $ref: "#/definitions/WorkspaceOperationOwner" }
+      payload: { $ref: "#/definitions/SyncPayload" }
+  StageCPublishRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.publish ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner:
+        oneOf:
+          - { $ref: "#/definitions/AssignmentOwner" }
+          - { $ref: "#/definitions/WorkspaceOperationOwner" }
+      payload: { $ref: "#/definitions/PublishPayload" }
+  StageCPreserveRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.preserve ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner: { $ref: "#/definitions/WorkspaceOperationOwner" }
+      payload: { $ref: "#/definitions/PreservePayload" }
+  StageCReleaseRequest:
+    type: object
+    additionalProperties: false
+    required: [ workspaceProtocol, command, owner, payload ]
+    properties:
+      workspaceProtocol:
+        enum: [ 1 ]
+      command:
+        type: object
+        additionalProperties: false
+        required: [ id, kind, issuedAt ]
+        properties:
+          id: *a2
+          kind:
+            enum: [ workspace.release ]
+          issuedAt: { type: string, minLength: 1, maxLength: 35, format: date-time }
+      owner: { $ref: "#/definitions/WorkspaceOperationOwner" }
+      payload: { $ref: "#/definitions/ReleasePayload" }
+  PublishedRef:
+    type: object
+    additionalProperties: false
+    required: [ publication, git ]
+    properties:
+      publication:
+        enum: [ push, promote ]
+      git: { $ref: "#/definitions/GitResult" }
+  OpenedPullRequest:
+    type: object
+    additionalProperties: false
+    required: [ publication, git, pullRequest ]
+    properties:
+      publication:
+        enum: [ openPullRequest ]
+      git: { $ref: "#/definitions/GitResult" }
+      pullRequest:
+        type: object
+        additionalProperties: false
+        required: [url, number, reused]
+        properties:
+          url: *stageCPrUrl
+          number: *stageCPrNumber
+          reused: { type: boolean }
+  PublicationResult:
+    oneOf:
+      - { $ref: "#/definitions/PublishedRef" }
+      - { $ref: "#/definitions/OpenedPullRequest" }
+  RuntimeObjectRangeMetadata:
+    type: object
+    additionalProperties: false
+    required: [ objectId, start, end, total, contentSha256 ]
+    properties:
+      objectId: { $ref: "#/definitions/OpaqueId" }
+      start: { type: integer, minimum: 0 }
+      end: { type: integer, minimum: 0 }
+      total: { $ref: "#/definitions/Positive" }
+      contentSha256: { $ref: "#/definitions/Digest" }

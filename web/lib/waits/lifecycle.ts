@@ -31,7 +31,7 @@ import {
   mintAssignment,
   releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
-import { flowConflictSyncAttemptId } from "@/lib/flows/graph/finish-continuation";
+import { isFlowConflictSyncAttempt } from "@/lib/flows/graph/finish-continuation";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { closeConditionWaitsForRun } from "@/lib/waits/close";
 import { waitConditionSchema, waitOutcomes } from "@/lib/waits/manifest";
@@ -847,8 +847,8 @@ export async function admitConditionWaitResume(
       owner.releasedReason !== "waiting_condition" ||
       owner.executionHostId !== original.executionHostId ||
       owner.epoch >= original.epoch ||
-      sync?.id !== flowConflictSyncAttemptId(wait.id) ||
-      sync.phase !== "succeeded"
+      !isFlowConflictSyncAttempt(wait.id, sync) ||
+      sync?.phase !== "succeeded"
     )
       return null;
   } else if (original.releasedReason !== "waiting_condition") {

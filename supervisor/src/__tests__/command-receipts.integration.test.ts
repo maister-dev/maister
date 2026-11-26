@@ -10,6 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { removeWorkspaceExecutionSchema } from "./_fixtures/legacy-host-state";
 import {
   SessionContentReferenceSchema,
   type RuntimeEventEnvelope,
@@ -627,6 +628,7 @@ describe("command receipts", () => {
     const commandId = randomUUID();
     const digest = "a".repeat(64);
 
+    removeWorkspaceExecutionSchema(legacy);
     legacy.exec(`BEGIN;
       ALTER TABLE command_receipts DROP COLUMN request_schema;
         ALTER TABLE command_receipts DROP COLUMN request_version;

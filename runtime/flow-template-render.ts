@@ -1,0 +1,337 @@
+import Mustache from "mustache";
+
+import {
+  findMustacheClose,
+  parseDefaultExpression,
+} from "./flow-template-expressions";
+
+export class FlowTemplateRenderError extends Error {}
+
+type TemplateLogger = {
+  debug(fields: Record<string, unknown>, message: string): void;
+};
+
+const MAX_TRACE_VALUE_LEN = 200;
+
+type DefaultResolution = {
+  placeholder: string;
+  value: string;
+};
+
+function previewValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (value.length <= MAX_TRACE_VALUE_LEN) return value;
+
+  return `${value.slice(0, MAX_TRACE_VALUE_LEN)}…`;
+}
+
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    Object.getPrototypeOf(v) !== null &&
+    !(v instanceof Date) &&
+    !(v instanceof RegExp)
+  );
+}
+
+function isObjectLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function resolvePath(
+  context: Record<string, unknown>,
+  path: string,
+): { found: true; value: unknown } | { found: false } {
+  const parts = path.split(".");
+  let current: unknown = context;
+
+  for (const part of parts) {
+    if (!isObjectLike(current) || !(part in current)) {
+      return { found: false };
+    }
+
+    const value = current[part];
+
+    if (value === undefined) {
+      return { found: false };
+    }
+
+    current = value;
+  }
+
+  return { found: true, value: current };
+}
+
+function renderScalar(value: unknown): string {
+  if (value === null || value === undefined) return "";
+
+  return String(value);
+}
+
+function makePlaceholder(
+  template: string,
+  index: number,
+  start: number,
+): string {
+  let suffix = 0;
+  let placeholder = `__MAISTER_TEMPLATE_DEFAULT_${index}_${template.length}_${start}__`;
+
+  while (template.includes(placeholder)) {
+    suffix += 1;
+    placeholder = `__MAISTER_TEMPLATE_DEFAULT_${index}_${template.length}_${start}_${suffix}__`;
+  }
+
+  return placeholder;
+}
+
+function protectDefaultExpressions(
+  template: string,
+  context: Record<string, unknown>,
+  opts: RenderOptions,
+): { template: string; resolutions: DefaultResolution[] } {
+  let output = "";
+  let cursor = 0;
+  const resolutions: DefaultResolution[] = [];
+
+  while (cursor < template.length) {
+    const start = template.indexOf("{{", cursor);
+
+    if (start === -1) {
+      output += template.slice(cursor);
+      break;
+    }
+
+    const close = findMustacheClose(template, start);
+
+    if (close === -1) {
+      output += template.slice(cursor);
+      break;
+    }
+
+    const rawTag = template.slice(start + 2, close).trim();
+    const expression = parseDefaultExpression(rawTag);
+
+    if (!expression) {
+      output += template.slice(cursor, close + 2);
+      cursor = close + 2;
+      continue;
+    }
+
+    const resolved = resolvePath(context, expression.path);
+    const usedDefault = !resolved.found;
+    const value = resolved.found
+      ? renderScalar(resolved.value)
+      : expression.literal;
+    const placeholder = makePlaceholder(template, resolutions.length, start);
+
+    opts.logger?.debug(
+      { path: expression.path, defaulted: usedDefault },
+      "resolved default operator",
+    );
+    if (opts.traceLog) {
+      opts.traceLog.debug(
+        {
+          path: expression.path,
+          defaulted: usedDefault,
+          value: previewValue(value),
+        },
+        "resolved default operator",
+      );
+    }
+
+    output += template.slice(cursor, start);
+    output += placeholder;
+    resolutions.push({ placeholder, value });
+    cursor = close + 2;
+  }
+
+  return { template: output, resolutions };
+}
+
+function restoreDefaultExpressions(
+  rendered: string,
+  resolutions: DefaultResolution[],
+  maxLength = Number.POSITIVE_INFINITY,
+): string {
+  if (resolutions.length === 0) return rendered;
+
+  let output = "";
+  let cursor = 0;
+
+  while (cursor < rendered.length) {
+    const resolution = resolutions.find((item) =>
+      rendered.startsWith(item.placeholder, cursor),
+    );
+
+    if (resolution) {
+      if (output.length + resolution.value.length > maxLength)
+        throw renderLimit();
+      output += resolution.value;
+      cursor += resolution.placeholder.length;
+      continue;
+    }
+
+    output += rendered[cursor];
+    cursor += 1;
+  }
+
+  return output;
+}
+
+function renderLimit(): FlowTemplateRenderError {
+  return new FlowTemplateRenderError(
+    "rendered template exceeds its workload budget",
+  );
+}
+
+/** Count leaves before Mustache concatenates sections and bound iterations even for empty output. */
+class BoundedTemplateWriter extends Mustache.Writer {
+  private remainingCharacters: number;
+  private remainingTokens: number;
+
+  constructor(maxLength: number) {
+    super();
+    this.remainingCharacters = maxLength;
+    this.remainingTokens = Math.max(8192, maxLength * 4);
+  }
+
+  private count(value: string | undefined): string {
+    if (value === undefined) return "";
+    this.remainingCharacters -= String(value).length;
+    if (this.remainingCharacters < 0) throw renderLimit();
+
+    return value;
+  }
+
+  override renderTokens(
+    ...args: Parameters<Mustache.Writer["renderTokens"]>
+  ): string {
+    this.remainingTokens -= Math.max(1, args[0].length);
+    if (this.remainingTokens < 0) throw renderLimit();
+
+    return super.renderTokens(...args);
+  }
+
+  override rawValue(...args: Parameters<Mustache.Writer["rawValue"]>): string {
+    return this.count(super.rawValue(...args));
+  }
+
+  override escapedValue(
+    ...args: Parameters<Mustache.Writer["escapedValue"]>
+  ): string {
+    return this.count(super.escapedValue(...args));
+  }
+
+  override unescapedValue(
+    ...args: Parameters<Mustache.Writer["unescapedValue"]>
+  ): string {
+    return this.count(super.unescapedValue(...args));
+  }
+}
+
+type WrapOpts = {
+  parentPath: string;
+  traceLog?: TemplateLogger;
+};
+
+function wrap(target: Record<string, unknown>, opts: WrapOpts): unknown {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      if (typeof prop === "symbol") {
+        return Reflect.get(obj, prop, receiver);
+      }
+      if (prop === "toString" || prop === "toJSON") {
+        return Reflect.get(obj, prop, receiver);
+      }
+
+      const path = opts.parentPath
+        ? `${opts.parentPath}.${prop}`
+        : (prop as string);
+
+      if (!(prop in obj)) {
+        throw new FlowTemplateRenderError(`undefined template var: ${path}`);
+      }
+
+      const value = obj[prop as string];
+
+      if (value === undefined) {
+        throw new FlowTemplateRenderError(`undefined template var: ${path}`);
+      }
+
+      if (opts.traceLog) {
+        opts.traceLog.debug({ path, value: previewValue(value) }, "resolved");
+      }
+
+      if (isPlainRecord(value)) {
+        return wrap(value, { parentPath: path, traceLog: opts.traceLog });
+      }
+
+      if (Array.isArray(value)) {
+        return value;
+      }
+
+      return value;
+    },
+    has(obj, prop) {
+      return prop in obj;
+    },
+  });
+}
+
+export type RenderOptions = {
+  logger?: TemplateLogger;
+  traceLog?: TemplateLogger;
+  maxLength?: number;
+};
+
+export function renderStrict(
+  template: string,
+  context: Record<string, unknown>,
+  opts: RenderOptions = {},
+): string {
+  if (template === "") return "";
+
+  opts.logger?.debug({ len: template.length }, "render start");
+
+  const view = wrap(context, {
+    parentPath: "",
+    traceLog: opts.traceLog,
+  });
+
+  try {
+    const protectedTemplate = protectDefaultExpressions(
+      template,
+      context,
+      opts,
+    );
+    const config = { escape: String };
+    const rendered =
+      opts.maxLength === undefined
+        ? Mustache.render(protectedTemplate.template, view, undefined, config)
+        : new BoundedTemplateWriter(
+            opts.maxLength +
+              protectedTemplate.resolutions.reduce(
+                (size, item) => size + item.placeholder.length,
+                0,
+              ),
+          ).render(protectedTemplate.template, view, undefined, config);
+    const result = restoreDefaultExpressions(
+      rendered,
+      protectedTemplate.resolutions,
+      opts.maxLength,
+    );
+    if (opts.maxLength !== undefined && result.length > opts.maxLength)
+      throw renderLimit();
+
+    return result;
+  } catch (err) {
+    if (err instanceof FlowTemplateRenderError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+
+    throw new FlowTemplateRenderError(`mustache render failed: ${msg}`, {
+      cause: err instanceof Error ? err : undefined,
+    });
+  }
+}

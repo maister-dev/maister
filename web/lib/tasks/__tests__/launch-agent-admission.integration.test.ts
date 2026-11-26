@@ -2403,6 +2403,7 @@ it("prepares and reuses the actual writable shared child tree while retaining it
       .select()
       .from(workspaces)
       .where(eq(workspaces.id, owner.id));
+    if (!workspace?.worktreePath) throw new Error("Expected a local fixture worktree");
     const inode = (await stat(workspace.worktreePath)).ino;
     const marker = path.join(workspace.worktreePath, "shared-owner-proof.txt");
 

@@ -142,6 +142,14 @@ and the ledger is what makes it answerable later.
 Reachable without any misconfiguration: `execution_events.run_id` cascades on
 delete, so deleting a run with events in flight lands in the same place.
 
+For an otherwise valid addressed workspace terminal envelope, ingest verifies
+the host and stream and checks the owning command. If it cannot match the
+immutable owner, it records `workspace_owner_unverified` in
+`execution_event_skips` with the command ID and wire digest. The contiguous
+cursor can advance. The envelope acquires no Run, projection, or command result.
+Replays must match the original position and digest. A failed ownership lookup
+due to a database error still retries without acknowledging that envelope.
+
 ## An event PostgreSQL cannot store
 
 `execution_events.payload` is `jsonb`, and `jsonb` cannot represent `U+0000` or
@@ -1018,6 +1026,30 @@ All nine prompts settled canonically, 3 agent runs `Done` and 6 flow runs
 soft at 203 s, hard at ~251 s, one stall, nine `producer-pause-exceeded`
 checkpoints — and, once nine producers waited at hard, a supervisor pegged at
 100% CPU by the capacity cascade of EDGE-EVT-14, fixed on the same branch.
+
+## Addressed host streams Stage C (Implemented)
+
+Use the existing host key and stream identity as the consumer scope for
+each configured endpoint. ACK the verified host after committing contiguous
+ingest and scheduling the matching consumer rows. Projection runs
+independently. Its owner-state write and projection cursor advance in
+the same transaction.
+
+The negotiated workspace envelope adds a flat version 2 event
+`workspace.command.terminal` with payload schema
+`maister.workspace.command.terminal.v1`. Its [schema](../api/stage-c-workspace.schema.yaml)
+uses the existing host key, boot/stream UUIDs and canonical sequence rules in the
+same outbox and continuity domain. The event carries only the owner, target,
+command ID, operation, phase and request/outcome digests. It never carries
+checkout paths or result bytes. To apply a terminal result, match the addressed
+receipt and applied owner against the event's host, stream, event ID and all
+payload fields. Preserve historical evidence under its original ownership and
+use the current owner CAS for effects.
+
+Host replacement cannot inherit an old identity's cursor. C-13 injects a
+held or poisoned projector after ingest, observes a contiguous ACK from that
+host and continues independent work on the other host. After repair, only
+the matching receipt is applied once without a new host event.
 
 ## Expectations
 

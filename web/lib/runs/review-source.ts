@@ -1,10 +1,16 @@
 import "server-only";
 
 import type { DiffFileEntry } from "@/lib/worktree";
+import type { Db } from "@/lib/execution-host/db";
+import type { workspaces } from "@/lib/db/schema";
+import type { WorkspaceGitReviewFile } from "../../../runtime/workspace-prepare";
 
 import { createHash } from "node:crypto";
 
 import { filterDiffByPath } from "@/lib/diff/sections";
+import { MaisterError } from "@/lib/errors";
+import { readAddressedWorkspaceReviewSnapshot } from "@/lib/execution-host/workspace-review";
+import { readAddressedWorkspaceReviewFingerprint } from "@/lib/execution-host/workspace-preparation";
 import {
   filterReviewableChangeEntries,
   isReviewableChangeEntry,
@@ -25,6 +31,57 @@ export interface ReviewSource {
   nameStatus: DiffFileEntry[];
   truncated: boolean;
   fingerprint: string;
+}
+
+function requireReviewBase(workspace: typeof workspaces.$inferSelect): string {
+  if (!workspace.baseCommit)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected workspace has no pinned review base",
+    );
+
+  return workspace.baseCommit;
+}
+
+/** Verify the current sealed snapshot without waiting on a projector that may need the Run lock. */
+export async function readAddressedReviewFingerprint(
+  db: Db,
+  workspace: typeof workspaces.$inferSelect,
+): Promise<Pick<ReviewSource, "scope" | "baseCommit" | "fingerprint">> {
+  const baseCommit = requireReviewBase(workspace);
+  const { sha256 } = await readAddressedWorkspaceReviewFingerprint(
+    db,
+    workspace,
+    baseCommit,
+  );
+
+  return { scope: "review", baseCommit, fingerprint: `sha256:${sha256}` };
+}
+
+export async function readAddressedReviewSource(
+  input: Readonly<{
+    db: Db;
+    workspace: typeof workspaces.$inferSelect;
+    signal: AbortSignal;
+  }>,
+): Promise<ReviewSource & { files: WorkspaceGitReviewFile[] }> {
+  const baseCommit = requireReviewBase(input.workspace);
+  const raw = await readAddressedWorkspaceReviewSnapshot({
+    ...input,
+    range: { base: baseCommit },
+  });
+  const files = filterReviewableChangeEntries(raw.files);
+  const diff = filterDiffByPath(raw.patch, (path, oldPath) =>
+    isReviewableChangeEntry({ path, oldPath }),
+  );
+  const source = { baseCommit, diff, nameStatus: files, truncated: false };
+
+  return {
+    scope: "review",
+    ...source,
+    files,
+    fingerprint: `sha256:${raw.sha256}`,
+  };
 }
 
 function canonicalNameStatus(

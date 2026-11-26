@@ -435,6 +435,124 @@ promotion is unchanged. The full state machine and crash windows live in
 Status: **Implemented (ADR-141)** — `ai_rebase_merge` in `web/lib/runs/promote.ts`
 delegating to the shared sync resolver core (`web/lib/runs/sync-target.ts`).
 
+## Git and terminal operations on the selected host Stage C (Implemented)
+
+Retain the selected workspace owner after execution assignment release.
+Web authorizes the operation and claims the existing lifecycle fence
+before the host mutates Git. Bind the target to the canonical configured
+remote/ref and expected prior SHA. Each host cache has its own private
+refs. The canonical target remains authoritative across hosts.
+
+On a publication timeout read back the actual target on the same host.
+If it equals the planned commit and the receipt's operation evidence
+matches, apply the completed publication once. A conflicting ref needs
+review. Unprovable effect retains the claim and prevents destructive
+cleanup. C-10 exercises a lost response after a real push, target
+divergence and competing preservation/deletion.
+
+Manual branch delivery for an addressed Run derives the dedicated branch
+from the Run's publication metadata and project policy. Web reads the
+approved repository's exact branch tip on the owning supervisor, then
+journals the clean HEAD and target lease before dispatch. An absent target
+allows creation. The canonical host receipt allows the promotion to settle
+and the same operator to replay the completed decision.
+
+Manual merge and rebase delivery with publication enabled bind both the
+reviewed source and the canonical target SHA. The supervisor builds a Git
+candidate in a temporary checkout and records the candidate in its private
+repository. It advances the approved target once under the expected SHA
+and reads it back. The original checkout remains at the approved source
+commit. A conflict preserves that checkout and leaves the Run in Review.
+The retained receipt stores both the reviewed source SHA and the verified
+target SHA, which may differ.
+
+Manual PR delivery binds the reviewed source HEAD to a dedicated public
+branch and binds the PR base to the reviewed canonical commit. The owning
+supervisor checks provider readiness before pushing, then confirms both
+branches immediately before creating the PR. It verifies the provider URL
+and number against the approved repository. If receipt persistence is
+interrupted, it can reuse the exact source and an existing matching PR
+even if the base has since advanced. If no PR exists, opening a new one
+requires the original base. An unconfirmed outcome holds the workspace
+fence for reconciliation. Web records the publication and the PR together
+under the original promotion claim.
+
+Updating a retained workspace can publish the resulting commit to the Run's
+dedicated branch. The existing publication enables this by default and the
+operator can decline it. Web records the exact publication lease separately
+from the sync target. Before moving the remote ref, the host proves the
+previous public commit is part of the original source and persists the
+candidate. It confirms the public ref before changing the checkout. Replay
+uses that same candidate and readback. An unverified remote outcome retains
+the claim. Web applies the new HEAD and publication evidence together.
+
+For a parked addressed Run, finalization compares the provider's current
+PR head to the original supervisor's checkout HEAD after the assignment is
+released. The supervisor checks the recorded repository, PR number and base
+ref and reads the checkout identity before and after the provider request.
+A stale head, closed or retargeted PR, or an unconfirmed provider read leaves
+the Run parked. Web verifies the same ownership when applying finalization.
+
+Dropping a parked addressed Run or discarding it through the existing
+workbench endpoint first seals the original supervisor's preserved Git tree.
+PostgreSQL migration `0398` requires matching preservation and release
+receipts for both operations. Web records removal and abandonment together
+under the held lifecycle claim. A completed Run keeps its `Done` status.
+Repeating the same disposal returns its recorded outcome without another
+release. Conflicting disposal intents refuse.
+
+### Addressed conflict resolver
+
+The conflict resolver keeps three Git effects under the existing Run sync
+claim. The Web manager authorizes the attempt for an eligible Run and pins the
+source HEAD, target branch and exact target SHA. Publication also pins the
+dedicated branch's expected old SHA. The original supervisor computes the
+mechanical candidate in a private checkout. A clean candidate settles through
+the existing sync command. An explicit mechanical conflict returns the
+conflicting paths and leaves the live checkout and publication intact.
+
+1. For an authorized AI resolve, the original supervisor records a private
+   checkpoint before materializing the conflict. The receipt binds the
+   checkpoint, paths and pinned commits to the workspace handle, generation,
+   original assignment and sync claim. The host persists this receipt before
+   Web can mint the resolver's next assignment on that same workspace. An
+   interrupted preparation is reconciled from the original command and Git
+   state. An unknown effect holds the claim and cannot launch the resolver.
+2. Web journals the resolved runner snapshot and starts an ACP session under
+   the existing `sync_resolver` prompt owner. A retry continues that exact
+   create or prompt. Web applies the result only after the owner has positively
+   retired the resolver's writer. Cancellation and interrupted sessions retain
+   the workspace while retirement is unknown. A proved abort restores the
+   original checkpoint on the supervisor and releases the Web claim.
+3. Before finalization the supervisor checks for a finished Git operation,
+   the expected target ancestry, no unresolved entries or conflict markers
+   in changed files, and a clean checkout at the resulting commit. It
+   publishes only against the approved lease and verifies the actual ref.
+   After a confirmed push, reconciliation applies the retained receipt.
+   It cannot restore an earlier checkout over that publication. The same
+   attempt and workspace claim settle together in PostgreSQL. Migration 0399
+   requires the exact predecessor and an increasing fence. A prepared conflict
+   holds the workspace until a verified or aborted receipt is applied.
+
+The Review Update action uses this contract for human-requested resolution.
+The reviewed `ai_rebase_merge` strategy retains the approved source and
+target through resolver dispatch. With `autoFinalize`, the manager rechecks
+publication authority and calls the addressed promotion boundary with the
+verified checkout and original target SHA. Flow conflict continuations still
+use the current autonomous grant and the exact provider wait, publication and
+original supervisor binding. The wait UUID also identifies the addressed sync
+attempt. The resolver runs once on the retained worktree without pushing.
+After verification, the original wait queues a new Flow epoch on that same
+supervisor. A changed publication or revoked grant holds the Run in Review
+for operator action.
+
+Qualification requires a conflict on a real Git remote, one fresh ACP
+resolver, a crash before a prepared reply or before ACP create, and a restart
+after a successful leased push. Also exercise a stale target or lease, a
+cancelled writer and a failed verification. Check the original dirty or
+conflicted bytes, exact resulting commit, single public ref update and no
+second writer. Run the legacy local sync scenarios against the same policy.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential

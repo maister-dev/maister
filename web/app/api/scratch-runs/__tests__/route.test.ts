@@ -306,7 +306,8 @@ vi.mock("@/lib/scheduler", () => ({
   assertScratchCapacityAvailableInTransaction:
     mocks.assertScratchCapacityAvailableInTransaction,
 }));
-vi.mock("@/lib/instance-config", () => ({
+vi.mock(import("@/lib/instance-config"), async (original) => ({
+  ...await original(),
   runtimeRoot: mocks.runtimeRoot,
   worktreesRoot: mocks.worktreesRoot,
 }));

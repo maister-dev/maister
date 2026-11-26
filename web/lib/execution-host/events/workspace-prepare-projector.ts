@@ -1,0 +1,591 @@
+import "server-only";
+
+import type { Db } from "../db";
+import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
+
+import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+
+import {
+  isWorkspaceTerminalPayload,
+  WORKSPACE_TERMINAL_EVENT,
+  workspaceEvidenceDigest,
+  workspaceCommandRequestDigest,
+  workspacePrepareRequestDigest,
+  workspaceTerminalOutcome,
+  type WorkspaceCommandBinding,
+  type WorkspaceRetainedBinding,
+  type WorkspacePublishReceipt,
+  type WorkspaceSyncReceipt,
+  type WorkspacePreserveReceipt,
+  type WorkspaceReleaseReceipt,
+} from "../../../../runtime/workspace-prepare";
+
+import {
+  releaseAssignmentForRun,
+  setAssignmentWorkspace,
+} from "../assignments";
+import {
+  casTransition,
+  getCommand,
+  markFailed,
+  markSucceeded,
+} from "../commands";
+import { defaultTransport } from "../default-transport";
+import {
+  resolveWorkspaceReceiptPeer,
+  retainedWorkspacePrepareRequest,
+  retainedWorkspaceMaterializeRequest,
+  retainedWorkspaceWorkloadRequest,
+  retainedWorkspaceCancellation,
+  retainedWorkspaceGitRequest,
+  retainedWorkspaceOperationRequest,
+} from "../workspace-prepare-delivery";
+import { WorkspaceCommandReceiptSchema } from "../workspace-prepare-schema";
+
+import { ExecutionEventProjectionError } from "./projector";
+import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
+
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+
+import {
+  executionAssignments,
+  executionCommands,
+  executionEventStreams,
+  runSyncAttempts,
+  runs,
+  workspaces,
+} from "@/lib/db/schema";
+
+function inconsistent(): ExecutionEventProjectionError {
+  return new ExecutionEventProjectionError(
+    "Workspace event and retained receipt evidence disagree",
+    true,
+  );
+}
+
+function matchesWorkspaceEvent(event: ExecutionEvent): boolean {
+  return (
+    event.eventType === WORKSPACE_TERMINAL_EVENT &&
+    event.source === "host" &&
+    event.ingestDisposition === "accepted"
+  );
+}
+
+const matchingCommandKind = {
+  stageCPrepare: "workspace.prepare",
+  stageCMaterialize: "workspace.materialize",
+  stageCRunWorkload: "workspace.run",
+  stageCCancelWorkload: "workspace.cancel",
+  stageCCheckpoint: "workspace.checkpoint",
+  stageCRestore: "workspace.restore",
+  stageCPublish: "workspace.publish",
+  stageCSync: "workspace.sync",
+  stageCPreserve: "workspace.preserve",
+  stageCRelease: "workspace.release",
+} as const satisfies Record<(WorkspaceCommandBinding | WorkspaceRetainedBinding)["operationId"], string>;
+
+/** Read the receipt outside the projection transaction. Event commit and ACK
+ * can finish while the supervisor is unavailable or this application retries. */
+export async function prepareWorkspaceEvidence(
+  db: Db,
+  event: ExecutionEvent,
+  signal: AbortSignal,
+): Promise<ExecutionEvent> {
+  if (!matchesWorkspaceEvent(event)) return event;
+  const payload = event.payload;
+  if (!isWorkspaceTerminalPayload(payload)) throw inconsistent();
+  const command = await getCommand(db, payload.commandId);
+  if (
+    !command ||
+    command.kind !== matchingCommandKind[payload.operationId] ||
+    command.executionHostId !== event.executionHostId ||
+    command.executionAssignmentId !== event.executionAssignmentId ||
+    command.assignmentEpoch !== event.assignmentEpoch
+  )
+    throw inconsistent();
+  const { host, transport } = await resolveWorkspaceReceiptPeer(
+    db,
+    command,
+    defaultTransport(),
+  );
+  let expectedDigest: string;
+  if (payload.operationId === "stageCPrepare") {
+    expectedDigest = workspacePrepareRequestDigest(
+      retainedWorkspacePrepareRequest(command, host.hostKey),
+    );
+  } else if (payload.operationId === "stageCPublish" || payload.operationId === "stageCSync" || payload.operationId === "stageCPreserve" || payload.operationId === "stageCRelease") {
+    const request = retainedWorkspaceOperationRequest(command, host.hostKey);
+    expectedDigest = workspaceCommandRequestDigest(request, {
+      operationId: payload.operationId,
+      target: { kind: "workspace", handle: request.owner.workspaceHandle, generation: request.owner.workspaceGeneration },
+    });
+    if (workspaceEvidenceDigest(request.owner) !== workspaceEvidenceDigest(payload.owner)) throw inconsistent();
+  } else {
+    if (!command.targetSessionId) throw inconsistent();
+    if (payload.operationId === "stageCCancelWorkload") {
+      const { request, targetCommandId } = retainedWorkspaceCancellation(
+        command,
+        host.hostKey,
+      );
+      expectedDigest = workspaceCommandRequestDigest(request, {
+        operationId: payload.operationId,
+        target: {
+          kind: "cancelWorkload",
+          handle: command.targetSessionId,
+          generation: request.payload.generation,
+          commandId: targetCommandId,
+        },
+      });
+    } else {
+      const request =
+        payload.operationId === "stageCMaterialize"
+          ? retainedWorkspaceMaterializeRequest(command, host.hostKey)
+          : payload.operationId === "stageCRunWorkload"
+            ? retainedWorkspaceWorkloadRequest(command, host.hostKey)
+            : retainedWorkspaceGitRequest(command, host.hostKey);
+      expectedDigest = workspaceCommandRequestDigest(request, {
+        operationId: payload.operationId,
+        target: {
+          kind: "workspace",
+          handle: command.targetSessionId,
+          generation: request.payload.generation,
+        },
+      });
+    }
+  }
+  signal.throwIfAborted();
+  const receipt = await transport.getWorkspaceCommandReceipt?.(command.id, event.id);
+  if (!receipt || receipt.phase === "accepted")
+    throw new ExecutionEventProjectionError(
+      "Workspace terminal receipt is temporarily unavailable",
+      false,
+    );
+  const [stream] =
+    event.eventStreamId === null
+      ? []
+      : await db
+          .select({ streamId: executionEventStreams.streamId })
+          .from(executionEventStreams)
+          .where(eq(executionEventStreams.id, event.eventStreamId));
+  if (
+    receipt.eventId !== event.id ||
+    receipt.streamId !== stream?.streamId ||
+    receipt.phase !== payload.phase ||
+    receipt.operationId !== payload.operationId ||
+    workspaceEvidenceDigest(receipt.target) !==
+      workspaceEvidenceDigest(payload.target) ||
+    receipt.requestSha256 !== payload.requestSha256 ||
+    receipt.requestSha256 !== expectedDigest ||
+    receipt.outcomeSha256 !== payload.outcomeSha256 ||
+    receipt.outcomeSha256 !==
+      workspaceEvidenceDigest(workspaceTerminalOutcome(receipt)) ||
+    workspaceEvidenceDigest(receipt.owner) !==
+      workspaceEvidenceDigest(payload.owner)
+  )
+    throw inconsistent();
+  signal.throwIfAborted();
+
+  return {
+    ...event,
+    payload: { ...payload, workspaceReceipt: receipt },
+    payloadBytes: Buffer.byteLength(
+      JSON.stringify({ ...payload, workspaceReceipt: receipt }),
+    ),
+  };
+}
+
+async function applyRetainedWorkspaceReceipt(
+  tx: Db,
+  event: ExecutionEvent,
+  command: ExecutionCommand,
+  receipt: Exclude<WorkspaceSyncReceipt | WorkspacePublishReceipt | WorkspacePreserveReceipt | WorkspaceReleaseReceipt, { phase: "accepted" }>,
+): Promise<void> {
+  const { owner, target } = receipt;
+  const request = retainedWorkspaceOperationRequest(command, owner.hostKey);
+  const [workspace] = await tx.select({ id: workspaces.id }).from(workspaces).where(and(
+    eq(workspaces.runId, event.runId), eq(workspaces.ownershipKind, "host_owned"),
+    eq(workspaces.executionHostId, command.executionHostId), eq(workspaces.executionWorkspaceId, target.handle),
+    eq(workspaces.workspaceGeneration, target.generation), isNull(workspaces.removedAt),
+    or(
+      and(eq(workspaces.promotionState, "claiming"), eq(workspaces.promotionAttemptId, owner.claimId)),
+      and(eq(workspaces.lifecycleOperationState, "claiming"), eq(workspaces.lifecycleOperationAttemptId, owner.claimId)),
+    ),
+  ));
+  if (!workspace || command.executionHostId !== event.executionHostId ||
+    workspaceEvidenceDigest(request.owner) !== workspaceEvidenceDigest(owner))
+    throw inconsistent();
+
+  if (receipt.phase === "rejected") {
+    await markFailed(tx, command.id, null, { ...receipt.refusal, eventId: event.id });
+    if (receipt.operationId === "stageCSync" && !command.payload.resolver)
+      await settleAddressedSyncAttempt(tx, workspace.id, receipt);
+
+    return;
+  }
+  if (receipt.phase === "indeterminate") {
+    await casTransition(tx, command.id, [command.state], command.attempts, {
+      transportState: "reconciliation_required",
+      lastError: { reason: receipt.condition, eventId: event.id },
+    });
+
+    return;
+  }
+  const { result } = receipt;
+  if (receipt.operationId === "stageCPublish") {
+    if (!("publication" in request.payload)) throw inconsistent();
+    const { expected, publication, integration } = request.payload;
+    const observed = receipt.result;
+    if (observed.publication !== publication || observed.git.generation !== target.generation ||
+      observed.git.head !== expected.head || observed.git.priorTarget !== expected.priorTarget ||
+      ((publication === "openPullRequest") !== !!observed.pullRequest) ||
+      (!integration && observed.git.observedTarget !== expected.head))
+      throw inconsistent();
+  } else if (receipt.operationId === "stageCSync") {
+    if (!("strategy" in request.payload) || !request.payload.expected.priorTarget ||
+      receipt.result.generation !== target.generation ||
+      receipt.result.priorTarget !== request.payload.expected.priorTarget ||
+      receipt.result.observedTarget !== request.payload.expected.priorTarget)
+      throw inconsistent();
+    const { publish } = request.payload;
+    const { behind, head, publication, conflictedFiles, resolverPrepared, resolverSettlement } = receipt.result;
+    if (conflictedFiles && (!request.payload.onConflict ||
+      head !== request.payload.expected.head || behind === 0 || publication || resolverSettlement))
+      throw inconsistent();
+    if (resolverPrepared && (!conflictedFiles || request.payload.onConflict !== "prepareResolver" ||
+      resolverPrepared.strategy !== request.payload.strategy ||
+      resolverPrepared.targetRef !== request.payload.expected.targetRef ||
+      workspaceEvidenceDigest(resolverPrepared.publish ?? null) !== workspaceEvidenceDigest(publish ?? null)))
+      throw inconsistent();
+    const action = request.payload.resolver?.action;
+    const expectedSettlement = action === "abort" ? "aborted" : action === "verify" ? "verified" : undefined;
+    if (resolverSettlement !== expectedSettlement ||
+      (resolverSettlement === "aborted" && head !== request.payload.expected.head))
+      throw inconsistent();
+    if ((!conflictedFiles && resolverSettlement !== "aborted" && Boolean(publish) && behind > 0) !== Boolean(publication) ||
+      (publication && (publication.targetRef !== publish?.targetRef ||
+        publication.priorTarget !== publish.priorTarget ||
+        publication.observedTarget !== head)))
+      throw inconsistent();
+  } else if (receipt.operationId === "stageCPreserve") {
+    if (receipt.result.generation !== target.generation || receipt.result.dispositionId !== command.id)
+      throw inconsistent();
+  } else if (!("dispositionId" in request.payload) ||
+    receipt.result.generation !== target.generation || receipt.result.handle !== target.handle ||
+    receipt.result.dispositionId !== request.payload.dispositionId)
+    throw inconsistent();
+  const transition = await markSucceeded(tx, command.id, null, {
+    ...result, eventId: event.id, outcomeSha256: receipt.outcomeSha256,
+  });
+  if (!transition.changed) throw inconsistent();
+  if (receipt.operationId === "stageCSync") {
+    if (receipt.result.conflictedFiles && (command.payload.resolverIntent || receipt.result.resolverPrepared)) {
+      const [attempt] = await tx.update(runSyncAttempts).set({
+        conflictedFiles: [...receipt.result.conflictedFiles], updatedAt: new Date(),
+      }).where(and(eq(runSyncAttempts.id, owner.claimId), eq(runSyncAttempts.workspaceId, workspace.id),
+        eq(runSyncAttempts.phase, "starting"))).returning({ id: runSyncAttempts.id });
+      if (!attempt) throw inconsistent();
+      return;
+    }
+    await settleAddressedSyncAttempt(tx, workspace.id, receipt);
+  }
+}
+
+async function settleAddressedSyncAttempt(
+  tx: Db,
+  workspaceId: string,
+  receipt: Extract<WorkspaceSyncReceipt, { phase: "rejected" | "completed" }>,
+): Promise<void> {
+  const { claimId } = receipt.owner;
+  const publication = receipt.phase === "completed" ? receipt.result.publication : undefined;
+  const conflictedFiles = receipt.phase === "completed" ? receipt.result.conflictedFiles : undefined;
+  const resolverSettlement = receipt.phase === "completed" ? receipt.result.resolverSettlement : undefined;
+  const [attempt] = await tx
+    .update(runSyncAttempts)
+    .set(receipt.phase === "completed"
+      ? { phase: conflictedFiles || resolverSettlement === "aborted" ? "aborted" : "succeeded", headShaAfter: receipt.result.head,
+          ...(conflictedFiles ? { conflictedFiles: [...conflictedFiles] } : {}), pushed: !!publication, updatedAt: new Date() }
+      : { phase: "failed", errorCode: receipt.refusal.code, errorMessage: receipt.refusal.message, updatedAt: new Date() })
+    .where(and(eq(runSyncAttempts.id, claimId), eq(runSyncAttempts.workspaceId, workspaceId),
+      resolverSettlement ? inArray(runSyncAttempts.phase, ["starting", "agent_running", "verifying"]) : eq(runSyncAttempts.phase, "starting")))
+    .returning({ id: runSyncAttempts.id });
+  const [released] = await tx
+    .update(workspaces)
+    .set({
+      ...RELEASED_LIFECYCLE_CLAIM,
+      ...(publication ? {
+        publishedRemote: "origin",
+        publishedBranch: publication.targetRef.slice("refs/heads/".length),
+        publishedAt: new Date(),
+      } : {}),
+    })
+    .where(and(eq(workspaces.id, workspaceId), eq(workspaces.lifecycleOperationName, "sync"),
+      eq(workspaces.lifecycleOperationState, "claiming"), eq(workspaces.lifecycleOperationAttemptId, claimId)))
+    .returning({ id: workspaces.id });
+  if (!attempt || !released) throw inconsistent();
+}
+
+export async function applyWorkspaceEvidence(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<void> {
+  if (!matchesWorkspaceEvent(event)) return;
+  const parsed = WorkspaceCommandReceiptSchema.safeParse(
+    event.payload?.workspaceReceipt,
+  );
+  if (!parsed.success || parsed.data.phase === "accepted") throw inconsistent();
+  const receipt = parsed.data;
+  const isPreparation =
+    receipt.operationId === "stageCPrepare" ||
+    receipt.operationId === "stageCMaterialize";
+  const [run] = await tx
+    .select()
+    .from(runs)
+    .where(eq(runs.id, event.runId))
+    .for("update");
+  if (
+    !run ||
+    (isPreparation && run.status !== "Pending") ||
+    (receipt.owner.kind === "assignment" && run.executionAssignmentId !== receipt.owner.assignmentId)
+  )
+    return;
+  const [command] = await tx
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, receipt.commandId))
+    .for("update");
+  if (
+    !command ||
+    command.kind !== matchingCommandKind[receipt.operationId] ||
+    !command.targetSessionId
+  )
+    throw inconsistent();
+  if (command.state === "succeeded" || command.state === "failed") return;
+  if (receipt.operationId === "stageCPublish" || receipt.operationId === "stageCSync" || receipt.operationId === "stageCPreserve" || receipt.operationId === "stageCRelease") {
+    await applyRetainedWorkspaceReceipt(tx, event, command, receipt);
+
+    return;
+  }
+  const [assignment] = await tx
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, receipt.owner.assignmentId))
+    .for("update");
+  if (
+    (!assignment || (assignment.state !== "active" && (
+      assignment.state !== "released" ||
+      (receipt.operationId !== "stageCRunWorkload" && receipt.operationId !== "stageCCancelWorkload")
+    ))) ||
+    assignment.epoch !== receipt.owner.assignmentEpoch ||
+    assignment.executionHostId !== event.executionHostId
+  )
+    return;
+
+  if (receipt.phase === "rejected") {
+    await markFailed(tx, command.id, null, {
+      ...receipt.refusal,
+      eventId: event.id,
+    });
+    return;
+  }
+  if (receipt.phase === "indeterminate") {
+    await casTransition(tx, command.id, [command.state], command.attempts, {
+      transportState: "reconciliation_required",
+      lastError: { reason: receipt.condition, eventId: event.id },
+    });
+    return;
+  }
+
+  if (receipt.operationId === "stageCCheckpoint" || receipt.operationId === "stageCRestore") {
+    const { target, result } = receipt;
+    const [workspace] = await tx.select({ id: workspaces.id }).from(workspaces).where(and(
+      eq(workspaces.runId, run.id), eq(workspaces.ownershipKind, "host_owned"),
+      eq(workspaces.executionHostId, assignment.executionHostId),
+      eq(workspaces.executionWorkspaceId, target.handle),
+      eq(workspaces.workspaceGeneration, target.generation),
+      isNull(workspaces.removedAt),
+    ));
+    if (!workspace || target.handle !== assignment.executionWorkspaceId || result.generation !== target.generation ||
+        result.checkpointId !== (receipt.operationId === "stageCCheckpoint" ? command.id : command.payload.checkpointId))
+      throw inconsistent();
+    if (receipt.operationId === "stageCCheckpoint" && result.resultingTree !== undefined) throw inconsistent();
+    if (receipt.operationId === "stageCRestore") {
+      const [original] = await tx.select({ result: executionCommands.result }).from(executionCommands)
+        .where(and(eq(executionCommands.id, result.checkpointId), eq(executionCommands.kind, "workspace.checkpoint"),
+          eq(executionCommands.runId, run.id), eq(executionCommands.executionHostId, assignment.executionHostId),
+          lte(executionCommands.assignmentEpoch, assignment.epoch),
+          eq(executionCommands.targetSessionId, target.handle), eq(executionCommands.state, "succeeded")));
+      const fresh = command.payload.policy === "fresh-attempt";
+      if (original?.result?.tree !== result.tree || original.result.generation !== target.generation ||
+          original.result.baseTree !== result.baseTree ||
+          (fresh !== (result.resultingTree !== undefined)) ||
+          (fresh && result.baseTree !== undefined && result.resultingTree !== result.baseTree))
+        throw inconsistent();
+    }
+    const transition = await markSucceeded(tx, command.id, null, { ...result, eventId: event.id, outcomeSha256: receipt.outcomeSha256 });
+    if (!transition.changed) throw inconsistent();
+
+    return;
+  }
+
+  if (
+    receipt.operationId === "stageCRunWorkload" ||
+    receipt.operationId === "stageCCancelWorkload"
+  ) {
+    if (
+      receipt.target.handle !== assignment.executionWorkspaceId ||
+      (receipt.operationId === "stageCRunWorkload"
+        ? receipt.result.generation !== receipt.target.generation ||
+          (receipt.result.setupReused && command.payload.workload !== "setup")
+        : receipt.result.targetCommandId !== receipt.target.commandId)
+    )
+      throw inconsistent();
+    if (receipt.result.quiescence !== "proved") {
+      await casTransition(tx, command.id, [command.state], command.attempts, {
+        transportState: "reconciliation_required",
+        lastError: { reason: "quiescence_unconfirmed", eventId: event.id },
+      });
+
+      return;
+    }
+    const transition = await markSucceeded(tx, command.id, null, {
+      ...receipt.result,
+      eventId: event.id,
+      outcomeSha256: receipt.outcomeSha256,
+    });
+    if (!transition.changed) throw inconsistent();
+    if (
+      receipt.operationId === "stageCRunWorkload" &&
+      (command.payload.workload === "requirementProbe" || command.payload.workload === "setup") &&
+      run.status === "Pending" &&
+      (receipt.result.processOutcome !== "exited" ||
+        receipt.result.exitCode !== 0)
+    ) {
+      if (!run.projectId) throw inconsistent();
+      const reason = command.payload.workload === "setup"
+        ? "workspace_setup_failed"
+        : "workspace_requirement_failed";
+      await tx
+        .update(runs)
+        .set({ status: "Failed", endedAt: new Date(event.occurredAt) })
+        .where(eq(runs.id, run.id));
+      await releaseAssignmentForRun(tx, run.id, reason);
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.failed",
+        projectId: run.projectId,
+        runId: run.id,
+        data: { errorCode: "PRECONDITION" },
+      });
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.failed",
+        ...runDomainEventScope(run),
+        runId: run.id,
+        taskId: run.taskId,
+        actor: { type: "system", id: null },
+        parentRunId: run.parentRunId,
+        cause: {
+          code: "PRECONDITION",
+          reason,
+          source: "reconcile",
+        },
+        payload: {
+          runId: run.id,
+          taskId: run.taskId,
+          flowId: run.flowId,
+          runKind: run.runKind,
+          reason: "PRECONDITION",
+        },
+      });
+    }
+
+    return;
+  }
+
+  if (receipt.operationId === "stageCMaterialize") {
+    const request = retainedWorkspaceMaterializeRequest(
+      command,
+      receipt.owner.hostKey,
+    );
+    const result = receipt.result;
+    if (
+      receipt.target.handle !== assignment.executionWorkspaceId ||
+      result.generation !== request.payload.generation ||
+      result.manifestDigest !== request.payload.manifestDigest
+    )
+      throw inconsistent();
+    const [applied] = await tx
+      .update(workspaces)
+      .set({ workspaceMaterializationGeneration: result.inputGeneration })
+      .where(
+        and(
+          eq(workspaces.runId, run.id),
+          eq(workspaces.ownershipKind, "host_owned"),
+          eq(workspaces.executionHostId, assignment.executionHostId),
+          eq(workspaces.preparationAssignmentId, assignment.id),
+          eq(workspaces.workspaceGeneration, result.generation),
+          isNull(workspaces.workspaceMaterializationGeneration),
+          isNull(workspaces.removedAt),
+        ),
+      )
+      .returning({ id: workspaces.id });
+    if (!applied) throw inconsistent();
+    const transition = await markSucceeded(tx, command.id, null, {
+      ...result,
+      eventId: event.id,
+      outcomeSha256: receipt.outcomeSha256,
+    });
+    if (!transition.changed) throw inconsistent();
+    return;
+  }
+
+  const request = retainedWorkspacePrepareRequest(
+    command,
+    receipt.owner.hostKey,
+  );
+  const { result } = receipt;
+  const payload = request.payload;
+  if (
+    result.inputDigest !== payload.inputDigest ||
+    result.workspace.mode !== payload.mode ||
+    ("commit" in payload && result.workspace.observedCommit !== payload.commit)
+  )
+    throw inconsistent();
+  const workspaceOwner = and(
+    eq(workspaces.id, command.targetSessionId),
+    eq(workspaces.runId, run.id),
+    eq(workspaces.ownershipKind, "host_owned"),
+    eq(workspaces.executionHostId, assignment.executionHostId),
+    eq(workspaces.preparationAssignmentId, assignment.id),
+    eq(workspaces.workspaceGeneration, result.workspace.generation),
+    eq(workspaces.workspaceInputDigest, result.inputDigest),
+    isNull(workspaces.executionWorkspaceId),
+    isNull(workspaces.removedAt),
+  );
+  const [candidate] = await tx
+    .select()
+    .from(workspaces)
+    .where(workspaceOwner)
+    .for("update");
+  if (
+    !candidate ||
+    (candidate.rootWorkspaceId !== null) !== (payload.mode === "sharedWorktree")
+  )
+    throw inconsistent();
+  if (candidate.rootWorkspaceId === null)
+    await tx
+      .update(workspaces)
+      .set({ executionWorkspaceId: result.workspace.handle })
+      .where(eq(workspaces.id, candidate.id));
+  await setAssignmentWorkspace(tx, assignment.id, result.workspace.handle);
+  const transition = await markSucceeded(tx, command.id, null, {
+    ...result,
+    eventId: event.id,
+    outcomeSha256: receipt.outcomeSha256,
+  });
+  if (!transition.changed) throw inconsistent();
+}

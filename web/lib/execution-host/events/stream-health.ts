@@ -32,6 +32,8 @@ export type StalledStream = {
 // normal is open work that should be producing events while none arrive — that
 // conjunction is the stall, and it is the same predicate the command-impasse
 // signal needs.
+// An accepted workspace shell emits its bounded output and terminal event
+// after exit. Receipt reconciliation owns it while the shell is quiet.
 export async function findStalledEventStreams(input: {
   db: Db;
   now?: Date;
@@ -52,6 +54,7 @@ export async function findStalledEventStreams(input: {
         select count(*)::int from ${executionCommands}
          where ${executionCommands.executionHostId} = ${executionEventStreams.executionHostId}
            and ${executionCommands.state} in ('delivering', 'accepted')
+           and not (${executionCommands.kind} = 'workspace.run' and ${executionCommands.state} = 'accepted')
       )`,
     })
     .from(executionEventStreams)

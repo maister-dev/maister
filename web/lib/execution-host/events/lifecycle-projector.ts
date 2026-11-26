@@ -3,6 +3,8 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { and, asc, eq, exists, inArray, ne, or, sql } from "drizzle-orm";
 import pino from "pino";
@@ -16,6 +18,7 @@ import { applyCreateAck } from "../create-ack";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import { runEventWakeBus } from "./run-wake";
+import { applyWorkspaceEvidence, prepareWorkspaceEvidence } from "./workspace-prepare-projector";
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
@@ -27,6 +30,7 @@ import {
   executionAssignments,
   executionCommands,
   executionEvents,
+  executionProjectionBackfills,
   runSessionIncarnations,
   runSessions,
   runs,
@@ -39,15 +43,53 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+const CRASH_REPAIR_TAG = "0378_reconcile_skipped_session_crashes";
+const CRASH_REPAIR_MARKER = `${CRASH_REPAIR_TAG}:post-cutover`;
+
+// Run after the old Web writers have stopped. Migration 0378 can otherwise
+// miss an event whose legacy lifecycle cursor advances during deployment.
+export async function reconcileSkippedSessionCrashes(db: Db): Promise<number> {
+  const count = await db.transaction(async (tx) => {
+    const marker = await tx
+      .insert(executionProjectionBackfills)
+      .values({
+        consumerName: CRASH_REPAIR_MARKER,
+        completedAt: sql`clock_timestamp()`,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (marker.length === 0) return null;
+    const migration = await readFile(
+      join(process.cwd(), "lib", "db", "migrations", `${CRASH_REPAIR_TAG}.sql`),
+      "utf8",
+    );
+    const repaired = await tx.execute(sql.raw(migration));
+
+    return repaired.rowCount ?? 0;
+  });
+
+  if (count !== null) {
+    log.info(
+      { migration: CRASH_REPAIR_TAG, repaired: count },
+      "[FIX] Reconciled skipped lifecycle crashes after Web cutover",
+    );
+  }
+
+  return count ?? 0;
+}
+
 export const canonicalLifecycleProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+  prepare: prepareWorkspaceEvidence,
   project: projectLifecycle,
   afterCommit(events) {
     const lifecycle = events.find(
       (event) =>
         event.eventType === "session.created" ||
         event.eventType === "session.exited" ||
-        event.eventType === "session.crashed",
+        event.eventType === "session.crashed" ||
+        event.eventType === "workspace.command.terminal",
     );
 
     if (lifecycle) runEventWakeBus.wake(lifecycle.runId);
@@ -352,6 +394,14 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
   if (incarnation.runId !== event.runId) {
     throw permanent("terminal session event has no matching incarnation");
   }
+  await applyTerminalToIncarnation(tx, event, incarnation);
+}
+
+async function applyTerminalToIncarnation(
+  tx: Db,
+  event: ExecutionEvent,
+  incarnation: RunSessionIncarnation,
+): Promise<void> {
   const checkpointed =
     event.eventType === "session.exited" &&
     event.payload?.reason === "checkpoint";
@@ -395,6 +445,52 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
       .where(eq(runSessionIncarnations.id, incarnation.id));
   }
   await bindEventToIncarnation(tx, event, incarnation.id);
+}
+
+async function projectReleasedSessionCrash(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<void> {
+  if (
+    event.source !== "host" ||
+    !event.executionHostId ||
+    !event.executionAssignmentId ||
+    event.assignmentEpoch === null ||
+    !event.hostSessionId
+  )
+    return;
+
+  const [incarnation] = await tx
+    .select()
+    .from(runSessionIncarnations)
+    .where(
+      and(
+        eq(runSessionIncarnations.runId, event.runId),
+        eq(runSessionIncarnations.executionHostId, event.executionHostId),
+        eq(
+          runSessionIncarnations.executionAssignmentId,
+          event.executionAssignmentId,
+        ),
+        eq(runSessionIncarnations.assignmentEpoch, event.assignmentEpoch),
+        eq(runSessionIncarnations.hostSessionId, event.hostSessionId),
+        inArray(runSessionIncarnations.state, [
+          "created",
+          "active",
+          "lost",
+          "crashed",
+        ]),
+      ),
+    )
+    .for("update");
+
+  if (!incarnation) return;
+  if (
+    event.runSessionIncarnationId !== null &&
+    event.runSessionIncarnationId !== incarnation.id
+  ) {
+    throw permanent("historical crash is bound to another incarnation");
+  }
+  await applyTerminalToIncarnation(tx, event, incarnation);
 }
 
 function ownedCheckpointReceipt(db: Db) {
@@ -577,6 +673,11 @@ export async function reconcileHistoricalAgentLifecycle(
 }
 
 async function projectLifecycle(tx: Db, event: ExecutionEvent): Promise<void> {
+  if (event.eventType === "workspace.command.terminal") {
+    await applyWorkspaceEvidence(tx, event);
+
+    return;
+  }
   if (
     event.eventType === "session.command" &&
     event.payload?.kind === "session.checkpoint" &&
@@ -594,7 +695,14 @@ async function projectLifecycle(tx: Db, event: ExecutionEvent): Promise<void> {
   ) {
     return;
   }
-  if (!(await currentCanonicalAssignment(tx, event))) return;
+  if (!(await currentCanonicalAssignment(tx, event))) {
+    // Ingest already accepted this event. A prompt owner may have released the
+    // assignment while this independent cursor was waiting to project it.
+    if (event.eventType === "session.crashed")
+      await projectReleasedSessionCrash(tx, event);
+
+    return;
+  }
   if (event.eventType === "session.created") {
     await projectCreated(tx, event);
 

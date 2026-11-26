@@ -2,6 +2,7 @@ import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { removeWorkspaceExecutionSchema } from "./legacy-host-state";
 import { HOST_STATE_FILE, openHostState } from "../../host-state";
 
 export const CORRUPT_PATH_QUERY =
@@ -55,6 +56,7 @@ export function seedRuntimeInventory(stateDir: string, count: number): string {
 
 /** Restore version 14 before the corrupt-path index and company workspace owner column. */
 export function restoreV14InventorySchema(db: DatabaseSync): void {
+  removeWorkspaceExecutionSchema(db);
   db.exec(`BEGIN IMMEDIATE;
     DROP INDEX runtime_objects_corrupt_path_idx;
     ALTER TABLE workspaces DROP COLUMN company_id;

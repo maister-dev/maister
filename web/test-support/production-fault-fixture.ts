@@ -188,10 +188,13 @@ export type ProductionFaultSuite = {
 
 /** Migrate once per suite; every stack receives its own unseeded database. */
 export async function startProductionFaultSuite(): Promise<ProductionFaultSuite> {
+  const storage = process.env.MAISTER_TEST_PRODUCTION_DB_STORAGE;
+  if (storage !== undefined && storage !== "tmpfs" && storage !== "volume")
+    throw new Error("MAISTER_TEST_PRODUCTION_DB_STORAGE must be tmpfs or volume");
   const template = await startMainAndBrainPostgresTestDbTemplate({
     databaseName: "s52_faults",
     // Successive full-schema clones and their WAL share the suite container.
-    storage: "volume",
+    storage: storage === "tmpfs" ? undefined : "volume",
   });
 
   return {

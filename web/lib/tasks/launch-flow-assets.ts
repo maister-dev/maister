@@ -112,11 +112,15 @@ export async function captureTaskLaunchFlowAssetsFromRevision(
 }
 
 type FlowIntent = typeof taskLaunchIntents.$inferSelect;
+type PreparationAssetOwner = Pick<
+  TaskLaunchFlowPreparationIdentity,
+  "runId" | "incarnationId"
+>;
 
 async function assetPaths(
   db: Db,
   intent: FlowIntent,
-  identity: TaskLaunchFlowPreparationIdentity,
+  identity: PreparationAssetOwner,
 ): Promise<
   Readonly<{ root: string; directory: string; assets: string; witness: string }>
 > {
@@ -170,7 +174,7 @@ function frozenAssets(intent: FlowIntent): TaskLaunchFlowAssetsSnapshot {
 async function assertCaptureOwner(
   db: Db,
   intent: FlowIntent,
-  identity: TaskLaunchFlowPreparationIdentity,
+  identity: PreparationAssetOwner,
 ): Promise<void> {
   const [owner] = await db
     .select({ id: intents.id })
@@ -197,7 +201,7 @@ async function assertCaptureOwner(
 async function verifyCapturedAssets(
   db: Db,
   intent: FlowIntent,
-  identity: TaskLaunchFlowPreparationIdentity,
+  identity: PreparationAssetOwner,
 ): Promise<string> {
   const expected = frozenAssets(intent);
   const paths = await assetPaths(db, intent, identity);
@@ -212,7 +216,7 @@ async function verifyCapturedAssets(
 
 async function assertAssetWitness(
   intent: FlowIntent,
-  identity: TaskLaunchFlowPreparationIdentity,
+  identity: PreparationAssetOwner,
   file: string,
 ): Promise<void> {
   const expected = frozenAssets(intent);
@@ -239,7 +243,7 @@ async function assertAssetWitness(
 export async function removeTaskLaunchFlowAssets(
   db: Db,
   intent: FlowIntent,
-  identity: TaskLaunchFlowPreparationIdentity,
+  identity: PreparationAssetOwner,
 ): Promise<void> {
   const [owner] = await db
     .select()
@@ -281,7 +285,7 @@ export async function removeTaskLaunchFlowAssets(
 export async function prepareTaskLaunchFlowAssets(
   db: Db,
   intent: FlowIntent,
-  identity: TaskLaunchFlowPreparationIdentity,
+  identity: PreparationAssetOwner,
 ): Promise<string> {
   await assertCaptureOwner(db, intent, identity);
   const expected = frozenAssets(intent);
@@ -346,7 +350,7 @@ export async function taskLaunchFlowAssetsPathForRun(
     intent.settingsSnapshot.kind !== "flow" ||
     intent.settingsSnapshot.flowRevisionId !== run.flowRevisionId ||
     !identity ||
-    identity.version !== 1 ||
+    (identity.version !== 1 && identity.version !== 3) ||
     identity.runId !== run.id
   )
     throw assetsChanged();

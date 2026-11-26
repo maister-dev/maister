@@ -56,6 +56,7 @@ export type RealSupervisorOptions = {
   workspaceRoots?: string[];
   fixture?: string;
   fixtureArgs?: string[];
+  fixtureArgsByAdapter?: Partial<Record<keyof typeof fixtureAdapterEnvironment, string[]>>;
   fixtureAdapters?: readonly (keyof typeof fixtureAdapterEnvironment)[];
   port?: number;
   env?: Record<string, string>;
@@ -116,9 +117,10 @@ async function writeAdapterWrapper(
   runtimeRoot: string,
   fixturePath: string,
   fixtureArgs: string[],
+  binaryName = "claude-agent-acp",
 ): Promise<string> {
   const binDir = path.join(runtimeRoot, "bin");
-  const wrapper = path.join(binDir, "claude-agent-acp");
+  const wrapper = path.join(binDir, binaryName);
   const quoted = fixtureArgs
     .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
     .join(" ");
@@ -231,12 +233,15 @@ async function startRealSupervisorAttempt(
     fixturePath,
     options.fixtureArgs ?? [],
   );
-  const fixtureOverrides = Object.fromEntries(
-    (options.fixtureAdapters ?? ["claude"]).map((adapter) => [
-      fixtureAdapterEnvironment[adapter],
-      wrapper,
-    ]),
-  );
+  const fixtureOverrides = Object.fromEntries(await Promise.all(
+    (options.fixtureAdapters ?? ["claude"]).map(async (adapter) => {
+      const args = options.fixtureArgsByAdapter?.[adapter];
+      return [
+        fixtureAdapterEnvironment[adapter],
+        args ? await writeAdapterWrapper(runtimeRoot, fixturePath, args, `fixture-${adapter}`) : wrapper,
+      ];
+    }),
+  ));
   const env: NodeJS.ProcessEnv = {
     ...scrubbedEnv(),
     NODE_ENV: "production",

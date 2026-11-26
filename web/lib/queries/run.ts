@@ -105,6 +105,7 @@ import {
 } from "@/lib/queries/run-cutover";
 import { type WorkbenchLifecycleAction } from "@/lib/queries/portfolio";
 import { loadWorkbenchGitFacts } from "@/lib/workbench-git/facts";
+import { workbenchClaimHoldsTree } from "@/lib/runs/lifecycle-claim";
 import {
   deriveWorkbenchGitActions,
   type WorkbenchGitPolicyInput,
@@ -129,6 +130,7 @@ const {
   assignmentEvents,
   assignments,
   capabilityImports,
+  executionHosts,
   flows,
   gateResults,
   hitlRequests,
@@ -289,6 +291,7 @@ export interface RunDetail {
   currentStepId: string | null;
   branch: string;
   worktreePath: string;
+  addressedCheckout?: Readonly<{ hostName: string; handle: string }>;
   agent: CapabilityAgent | null;
   // Run kind drives the Review surface: flow and worktree-agent runs use the
   // ReviewPanel; scratch runs keep their own promote affordance.
@@ -595,6 +598,9 @@ export const getRunDetail = cache(async function getRunDetail(
       projectMainBranch: projects.mainBranch,
       projectRepoPath: projects.repoPath,
       workspaceId: workspaces.id,
+      workspaceOwnership: workspaces.ownershipKind,
+      workspaceHandle: workspaces.executionWorkspaceId,
+      workspaceHostName: executionHosts.displayName,
       branch: workspaces.branch,
       worktreePath: workspaces.worktreePath,
       parentRepoPath: workspaces.parentRepoPath,
@@ -640,6 +646,7 @@ export const getRunDetail = cache(async function getRunDetail(
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .leftJoin(workspaces, eq(workspaces.runId, runs.id))
+    .leftJoin(executionHosts, eq(executionHosts.id, workspaces.executionHostId))
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
     .leftJoin(flows, eq(flows.id, runs.flowId))
     .where(eq(runs.id, runId));
@@ -921,6 +928,7 @@ export const getRunDetail = cache(async function getRunDetail(
     );
   }
 
+  const addressedWorkspace = row.workspaceOwnership === "host_owned";
   const gitFacts = await loadWorkbenchGitFacts({
     db: client,
     run: {
@@ -933,7 +941,7 @@ export const getRunDetail = cache(async function getRunDetail(
       rootRunId: row.rootRunId,
       parentRunId: row.parentRunId,
     },
-    workspace: row.workspaceId
+    workspace: row.workspaceId && !addressedWorkspace
       ? {
           branch: row.branch!,
           worktreePath: row.worktreePath!,
@@ -954,6 +962,16 @@ export const getRunDetail = cache(async function getRunDetail(
         }
       : null,
   });
+  const lifecycleFacts: Omit<WorkbenchGitPolicyInput, "viewerUserId"> = addressedWorkspace ? {
+    ...gitFacts.policy,
+    addressedWorkspace: true,
+    hasWorkspace: true,
+    promotionState: row.promotionState,
+    updateSupported: gitFacts.policy.updateSupported && !gitFacts.hasActiveAssignment,
+    worktreePresent: Boolean(row.workspaceHandle),
+    workspaceRemoved: row.removedAt !== null,
+    busy: gitFacts.hasLiveSharedSibling || (row.lifecycleOperationName !== "archive" && workbenchClaimHoldsTree(row)),
+  } : gitFacts.policy;
 
   // ADR-160: server-owned continuation availability. The eligibility + re-entry
   // resolution are only meaningful for a flow run that is in Review (claimable)
@@ -999,6 +1017,9 @@ export const getRunDetail = cache(async function getRunDetail(
     agentKind: row.agentKind,
     branch,
     worktreePath,
+    ...(row.workspaceOwnership === "host_owned" && row.workspaceHandle && row.workspaceHostName
+      ? { addressedCheckout: { hostName: row.workspaceHostName, handle: row.workspaceHandle } }
+      : {}),
     parentRepoPath,
     projectMainBranch: row.projectMainBranch,
     projectRepoPath: row.projectRepoPath,
@@ -1046,11 +1067,11 @@ export const getRunDetail = cache(async function getRunDetail(
     pruned: ttl.pruned,
     continuation,
     lifecycleActions: lifecycleActionsForViewer(
-      { lifecycleFacts: gitFacts.policy },
+      { lifecycleFacts },
       null,
     ),
     claimOwnerUserId: gitFacts.claimOwnerUserId,
-    lifecycleFacts: gitFacts.policy,
+    lifecycleFacts,
     runnerResolutionWarnings: runnerResolutionWarningRows.map((warningRow) => ({
       sessionName: warningRow.sessionName,
       warning: warningRow.warning as RunnerResolutionWarning,

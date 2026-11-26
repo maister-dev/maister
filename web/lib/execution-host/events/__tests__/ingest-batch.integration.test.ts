@@ -140,6 +140,59 @@ function envelope(
   };
 }
 
+it("quarantines an unowned workspace fact without stalling verified events", async () => {
+  const f = await fixture(1);
+  const commandId = randomUUID();
+  const handle = "ws_" + "1".repeat(32);
+  const unowned = {
+    envelopeVersion: 2,
+    eventId: randomUUID(),
+    hostKey: f.hostKey,
+    hostBootId: "8d1f7c52-2d4f-4f31-9a57-3f6f6f2a9d01",
+    streamId: f.streamId,
+    sequence: "1",
+    eventType: "workspace.command.terminal",
+    payloadSchema: "maister.workspace.command.terminal.v1",
+    occurredAt: "2026-09-25T00:00:00.000Z",
+    payload: {
+      commandId, requestSha256: "a".repeat(64), outcomeSha256: "b".repeat(64),
+      phase: "completed", operationId: "stageCPublish",
+      target: { kind: "workspace", handle, generation: 1 },
+      owner: { kind: "workspaceOperation", hostKey: f.hostKey, workspaceHandle: handle,
+        workspaceGeneration: 1, claimId: randomUUID(), fence: 1 },
+    },
+  };
+  const input = { db: testDatabase.db, executionHostId: f.hostId };
+  const result = await ingestRuntimeEventBatch({
+    ...input,
+    envelopes: [envelope(f, 0, 0), unowned, envelope(f, 2, 0)],
+  });
+  expect(result.results.map(({ disposition }) => disposition)).toEqual([
+    "accepted", "skipped_unverified_owner", "accepted",
+  ]);
+  expect(result.contiguousThrough).toBe("2");
+  const quarantine = await testDatabase.pool.query(
+    "select run_id, workspace_command_id, envelope_sha256, reason from execution_event_skips where event_id=$1",
+    [unowned.eventId],
+  );
+  expect(quarantine.rows).toEqual([{
+    run_id: null, workspace_command_id: commandId,
+    envelope_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    reason: "workspace_owner_unverified",
+  }]);
+  const canonical = await testDatabase.pool.query(
+    "select id from execution_events where id=$1", [unowned.eventId],
+  );
+  expect(canonical.rows).toEqual([]);
+  await expect(ingestRuntimeEvent({ ...input, envelope: unowned }))
+    .resolves.toMatchObject({ disposition: "duplicate", contiguousThrough: "2" });
+  await expect(ingestRuntimeEvent({ ...input, envelope: { ...unowned, eventId: randomUUID() } }))
+    .rejects.toMatchObject({ details: { reason: "event_identity_conflict" } });
+  await expect(ingestRuntimeEvent({ ...input, envelope: {
+    ...unowned, payload: { ...unowned.payload, outcomeSha256: "c".repeat(64) },
+  } })).rejects.toMatchObject({ details: { reason: "event_identity_conflict" } });
+});
+
 /** The same host-order input for two independent hosts. */
 function scenario(f: Fixture) {
   const held = envelope(f, 1, 2);

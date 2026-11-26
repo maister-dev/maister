@@ -721,7 +721,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     archivedBranch: row.archivedBranch,
     claimOwnerUserId: null,
     viewerUserId: null,
-    worktreePresent: presence.get(row.worktreePath) ?? false,
+    worktreePresent: row.worktreePath !== null && presence.get(row.worktreePath) === true,
     publishedBranch: row.publishedBranch,
     prUrl: row.prUrl,
     prState: row.prState ?? null,
@@ -783,6 +783,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         latestRun:
           run !== null &&
           run.removedAt === null &&
+          run.worktreePath !== null &&
           presence.get(run.worktreePath) === true
             ? {
                 id: run.runId,

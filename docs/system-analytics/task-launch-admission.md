@@ -384,6 +384,119 @@ No historic assessment/run receipt is rewritten. Writer floor fences v2 and inte
 | Request drift or uncertain response | Reject drift before writes. Replay the exact request with the same key, or read its receipt. A different payload under the same key conflicts. |
 | Scheduling or external API | These use their existing request shapes. The browser disables Schedule until one-run choices are removed. |
 
+## Requested execution host Stage C (Implemented)
+
+Operator-managed descriptors define which host IDs each project may use.
+A project admin with `editSettings` reads and updates its default through
+GET/PATCH `/api/projects/{slug}/settings/execution-host`. The request accepts
+an eligible host ID or null to inherit the instance default. Authenticate and
+authorize before parsing. GET returns a quoted ETag combining the project's
+preference revision and eligibility revision. PATCH compares the exact
+`If-Match` and current eligibility in its write transaction, then increments
+the preference revision. Missing, malformed or stale revision returns
+409 `CONFLICT` with `settings_revision_mismatch`. An ineligible ID returns
+409 `PRECONDITION` with `host_ineligible`. Neither refusal updates settings.
+The panel never receives peer URLs, host keys or transport credentials.
+
+The project default API and independent task intent selection are implemented
+for the single configured addressed supervisor. The manager calculates the
+eligibility revision from eligible host IDs. Transient liveness leaves that
+revision stable. The task and board options APIs accept `executionHostId`
+and return `executionHostSelection` with requested and effective IDs,
+provenance, and the eligibility revision. The settings token also binds the
+project preference revision. First acceptance checks both revisions and
+persists the selection in the intent and its settings digest. Replay checks
+the original request digest under current read authority. Dispatch checks
+current eligibility of the saved host. Direct project Flow launch checks the
+stored preference and configured project eligibility. The board picker lists
+the eligible display names with the default choice. Changing the host clears
+the effective preview until the server returns a token for the new selection.
+Interactive admission sends that token with the requested host ID. Entering
+the scheduling form returns to the default choice. Existing launch SSE shows
+the requested host separately from the first persisted dispatch. The board
+keeps the launch dialog open while the task changes columns. Closing it
+returns keyboard focus to the original control or to the board after that
+control leaves the page. The
+administrator's host list identifies the active registration bound to the
+configured stable key. A different registration does not satisfy the
+selection, even if its row is healthy.
+
+A shared Agent child inherits the ready root witness from its authorized
+server source. The stored selection uses `sharedRoot` provenance. A requested
+ID can equal the root owner, and a different ID fails with
+`shared_root_host_conflict`. A root with no materialized addressed checkout
+fails with `shared_root_host_unavailable`. Admission freezes the root row ID,
+host, handle, generation, branch and base commit. Changes to those values
+require a fresh decision.
+
+An addressed Agent reserves preparation identity version 4 with the
+selected host, resource incarnation and pinned revision. Its manager paths
+are null. Migration 0395 keeps version 2 receipts readable and validates new
+Agent dispatch receipts against the applied preparation, owning assignment,
+child handle and materialization generation. For a shared child it also
+checks the parent handle and generation in the retained preparation request.
+The supervisor gives each Run its own handle even when two handles refer
+to the same checkout. Per-Run input generations stay independent.
+An unavailable addressed endpoint leaves the queued intent on its saved
+identity with reason `launch_execution_host_unavailable`. The next eligible
+attempt keeps the same request and preparation identity.
+
+When the selected supervisor returns a terminal preparation refusal for the
+current assignment, the worker holds the bound intent with the localized
+`workspace_preparation_refused` reason. The Run and command keep their
+original owner and the failed receipt. The worker cannot dispatch a child
+under that intent.
+
+For an addressed selection the Flow preview reads up to 100 branch names
+from the approved source on that supervisor. The response exposes
+`branchesNextCursor`, and the next preview accepts it as `branchCursor`.
+The supervisor binds the cursor to its stable identity and repository ID.
+The preview uses the project checkout only for legacy placement.
+
+For a Flow pinned to an addressed supervisor, acceptance verifies the base
+and delivery refs against that supervisor's approved Git source. A historical
+base must be reachable from the advertised branch tip. The version 3
+preparation identity records the Run, source commit and selected host with
+null checkout paths. Migration 0385 checks the identity against the immutable
+intent and verifies host, active assignment and workspace when the Run binds.
+The host prepares that exact checkout. The scheduler waits for applied
+preparation and materialization before first dispatch.
+
+Task and Flow previews expose authorized choices. Bind the settings token
+to the actor, project, task and target revision, current input/settings
+digests, default preference revision, eligibility revision and effective host.
+The server refuses a stale token with `launch_settings_changed` before any
+write. Refresh the preview before retrying.
+Check current `launchRun`, eligibility and source authority at acceptance and
+again before dispatch.
+
+Independent work resolves explicit selection, then project default, then
+instance default. Shared children inherit the root's host and cannot override
+it. A known offline/draining choice stays pinned and shows its typed wait
+reason. An ineligible saved default is held for correction. Save the
+requested ID, effective ID and provenance on first acceptance. Include an
+explicit ID in the request digest. Exact replay under current read authority
+uses the saved selection and receipt even if preview or defaults changed.
+A different explicit ID under the same key returns 409. Launch, force,
+concurrent and replacement flows use the same selection and preview rules.
+Replacement uses a new intent key and requires quiescence of any prior owner.
+Revocation before dispatch holds the intent. A live revoked assignment can
+only reconcile or stop under its existing ownership and action authority.
+
+The picker shows the source of the suggested default before submission, keeps
+the saved choice while an intent is pending and exposes the actual host and
+epoch after dispatch. Use existing SSE refresh for pending reasons and actual
+placement. The intent read resolves the display name from the saved host ID.
+It reports actual placement only from the exact assignment and epoch in the
+Run's first-dispatch receipt, including after that assignment is released.
+Keep a single keyboard focus path through the picker and Launch
+dialog. Escape closes the open picker before the dialog. Cancel and submission
+return focus to the launching control or its stable replacement. Expose
+offline, stale preview and revoked permission reasons in EN/RU and announce
+relevant changes without duplicating status messages. C-11 verifies settings
+CAS and authority, stale refresh, exact replay, retained pins, shared-root
+inheritance and the keyboard journey.
+
 ## Expectations
 
 Before orchestrator rework rewinds or recreates a checkout, a short transaction

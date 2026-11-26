@@ -24,6 +24,8 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { WORKSPACE_FLOW_ASSET_DIRECTORY } from "../../../runtime/workspace-input-policy";
+
 import { requireReadyDeclaredFlowRunner } from "@/lib/acp-runners/declared-flow-runner";
 import { runnerAdmissionError } from "@/lib/flows/runner-admission-error";
 import { isAutomaticTaskLaunchDrain } from "@/lib/tasks/launch-capacity";
@@ -152,7 +154,21 @@ import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { localHost, mintPlacement } from "@/lib/execution-host";
+import { hostForSelection } from "@/lib/execution-host/resolver";
+import { transportForExecutionHost } from "@/lib/execution-host/default-transport";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
+import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import { assertBoundTaskLaunchHost, assertProjectExecutionHost } from "@/lib/execution-host/project-preference";
+import { captureWorkspaceBundles, captureWorkspaceFlowAssets } from "@/lib/execution-host/workspace-input-capture";
+import { captureAddressedFlowPersonas } from "@/lib/agents/addressed-flow-persona";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { captureAddressedFlowContexts } from "@/lib/context-mounts/addressed-capture";
+import { addressedFlowUsesPackageAssets, captureAddressedFlowWorkloads } from "@/lib/flows/addressed-workload-input";
+import {
+  observeSelectedWorkspaceRevision,
+  reserveHostWorkspace,
+  usesHostWorkspacePreparation,
+} from "@/lib/execution-host/workspace-preparation";
 import { fetchProjectRemote, listProjectRemotes } from "@/lib/git-remotes";
 import {
   addWorktree,
@@ -966,10 +982,18 @@ async function* executeFlowLaunch(
   // unreachable, refused (identity changed under live runs), or pre-ADR-166
   // supervisors all surface as EXECUTOR_UNAVAILABLE here. The host row is what
   // the launch tx places the run on.
-  const placementHost = await localHost({
-    db: _db as unknown as ExecutionDb,
-  });
+  const hostDb = _db as unknown as ExecutionDb;
+  const placementHostId = accepted
+    ? accepted.intent.effectiveExecutionHostId
+    : project.defaultExecutionHostId;
+  const placementHost = placementHostId
+    ? await hostForSelection(hostDb, placementHostId)
+    : await localHost({ db: hostDb, force: configuredSelectedExecutionEndpoint() !== null });
+  const placementTransport = transportForExecutionHost(placementHost);
+  if (!accepted) assertProjectExecutionHost(project, placementHost);
+  assertBoundTaskLaunchHost(accepted?.intent.effectiveExecutionHostId, placementHost);
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
+  const hostPreparesWorkspace = usesHostWorkspacePreparation(placementHost);
 
   // ADR-132 §a: validate the ephemeral per-run package pin as a cheap
   // deterministic precondition, hoisted BEFORE applyPackageVersionChoices so a
@@ -1181,7 +1205,7 @@ async function* executeFlowLaunch(
       ? { ...storedRevision, installedPath: accepted.flowAssetsPath }
       : storedRevision;
 
-    assertFlowLaunchable(flow.flowRefId, flow, revision ?? null);
+    assertFlowLaunchable(flow.flowRefId, flow, revision ?? null, hostPreparesWorkspace ? "selectedHost" : "manager");
     const projectFlowDefaultRunnerId = await requireReadyDeclaredFlowRunner(
       _db,
       flow.id,
@@ -1200,9 +1224,19 @@ async function* executeFlowLaunch(
     // exists — a missing binary fails clean as PRECONDITION here, not late
     // mid-run after token spend. Check-only: MAIster never auto-installs (trust);
     // each requirement's `hint` carries the remediation. No-op when none declared.
-    await checkFlowRequirements(manifest.requirements, project.repoPath);
+    if (!hostPreparesWorkspace)
+      await checkFlowRequirements(manifest.requirements, project.repoPath);
 
     const compiled = compileManifest(manifest);
+    const unsupportedNode = hostPreparesWorkspace
+      ? manifest.nodes.find((node) => node.type === "consensus")
+      : undefined;
+    if (unsupportedNode)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Consensus requires a manager-local workspace. Choose the local execution host or remove the consensus node.",
+        { details: { reason: "workspace_protocol_unsupported", nodeId: unsupportedNode.id } },
+      );
 
     const flowPublicationGrant =
       accepted?.settings.version === 2
@@ -1703,62 +1737,67 @@ async function* executeFlowLaunch(
       }),
     );
 
-    // Refresh origin (read-only: updates remote-tracking refs, never the working
-    // tree) so the branch allow-list and the base commit reflect the freshest
-    // remote state. Best-effort — offline / no origin is advisory, the launch
-    // continues from whatever refs exist locally.
-    try {
-      const remotes = await listProjectRemotes(project.repoPath);
-
-      if (remotes.some((r) => r.name === "origin")) {
-        await fetchProjectRemote({
-          project: { id: project.id, repoPath: project.repoPath },
-          name: "origin",
-        });
-      }
-    } catch (err) {
-      log.warn(
-        { taskId: task.id, err: (err as Error).message },
-        "pre-launch origin fetch failed (advisory)",
-      );
-    }
-
-    const knownBranches = new Set(
-      await listBranches(project.repoPath, { includeRemotes: true }),
-    );
-
-    if (!knownBranches.has(base)) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `base branch "${base}" does not exist in ${project.slug}`,
-      );
-    }
-    if (!knownBranches.has(target)) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `target branch "${target}" does not exist in ${project.slug}`,
-      );
-    }
-
     const requestedBaseCommit =
       input.baseCommit ?? taskAdmission.baseCommit ?? undefined;
-    const baseCommit =
-      requestedBaseCommit === undefined
-        ? await resolveBaseCommit({
-            projectRepoPath: project.repoPath,
-            baseRef: base,
-            // Fork from origin/<base> when present (just fetched) so runs start from
-            // the freshest remote state, not a stale local checkout; falls back to the
-            // local <base>.
-            preferRemote: "origin",
-          })
-        : await assertPinnedBaseCommitReachable({
-            projectId: project.id,
-            taskId: task.id,
-            projectRepoPath: project.repoPath,
-            baseRef: base,
-            baseCommit: requestedBaseCommit,
+    let baseCommit: string;
+    if (hostPreparesWorkspace) {
+      baseCommit = requestedBaseCommit ?? await observeSelectedWorkspaceRevision(project.id, base, placementTransport);
+    } else {
+      // Refresh origin (read-only: updates remote-tracking refs, never the working
+      // tree) so the branch allow-list and the base commit reflect the freshest
+      // remote state. Best-effort — offline / no origin is advisory, the launch
+      // continues from whatever refs exist locally.
+      try {
+        const remotes = await listProjectRemotes(project.repoPath);
+
+        if (remotes.some((r) => r.name === "origin")) {
+          await fetchProjectRemote({
+            project: { id: project.id, repoPath: project.repoPath },
+            name: "origin",
           });
+        }
+      } catch (err) {
+        log.warn(
+          { taskId: task.id, err: (err as Error).message },
+          "pre-launch origin fetch failed (advisory)",
+        );
+      }
+
+      const knownBranches = new Set(
+        await listBranches(project.repoPath, { includeRemotes: true }),
+      );
+
+      if (!knownBranches.has(base)) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `base branch "${base}" does not exist in ${project.slug}`,
+        );
+      }
+      if (!knownBranches.has(target)) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `target branch "${target}" does not exist in ${project.slug}`,
+        );
+      }
+
+      baseCommit =
+        requestedBaseCommit === undefined
+          ? await resolveBaseCommit({
+              projectRepoPath: project.repoPath,
+              baseRef: base,
+              // Fork from origin/<base> when present (just fetched) so runs start from
+              // the freshest remote state, not a stale local checkout; falls back to the
+              // local <base>.
+              preferRemote: "origin",
+            })
+          : await assertPinnedBaseCommitReachable({
+              projectId: project.id,
+              taskId: task.id,
+              projectRepoPath: project.repoPath,
+              baseRef: base,
+              baseCommit: requestedBaseCommit,
+            });
+    }
     const promotionMode: PromotionMode = legacyPromotionModeFromStrategy(
       deliveryPolicy.strategy,
     );
@@ -1866,10 +1905,12 @@ async function* executeFlowLaunch(
       });
     };
 
-    if (accepted) await accepted.prepareWorkspace(createWorkspace);
-    else await createWorkspace();
-    yield launchProgress("worktree_created");
-    createdWorktreePath = worktreePath;
+    if (!hostPreparesWorkspace) {
+      if (accepted) await accepted.prepareWorkspace(createWorkspace);
+      else await createWorkspace();
+      yield launchProgress("worktree_created");
+      createdWorktreePath = worktreePath;
+    }
 
     // The worktree now exists; this nested try compensates it (removeWorktree) on any
     // failure through the run-insert. The pin is compensated by the outer catch.
@@ -1925,7 +1966,8 @@ async function* executeFlowLaunch(
 
       // Cancel here (pre-commit) compensates the worktree via the inner catch.
       opts.signal?.throwIfAborted();
-      yield launchProgress("materializing", capabilityAgent);
+      if (!hostPreparesWorkspace)
+        yield launchProgress("materializing", capabilityAgent);
       // Deliver AIF capability bundles into the fresh worktree's .claude/ and
       // write the per-run .ai-factory/config.yaml git-ownership override. Gated
       // on >=1 Installed import so non-AIF projects never get a stray config.
@@ -1963,7 +2005,7 @@ async function* executeFlowLaunch(
         }
       };
 
-      if (accepted)
+      if (!hostPreparesWorkspace && accepted)
         await accepted.materialize((bundles) =>
           materializeWorkspace(() =>
             materializeCapabilityBundlesIntoWorktree({
@@ -1974,7 +2016,7 @@ async function* executeFlowLaunch(
             }),
           ),
         );
-      else
+      else if (!hostPreparesWorkspace)
         await materializeWorkspace(() =>
           materializeProjectBundlesIntoWorktree({
             runId,
@@ -1985,6 +2027,52 @@ async function* executeFlowLaunch(
           }),
         );
 
+      const setupRevisionId = hostPreparesWorkspace &&
+        (revision.setupStatus === "done" || revision.setupStatus === "pending")
+        ? revision.id : undefined;
+      const flowAssets = hostPreparesWorkspace &&
+        (setupRevisionId || addressedFlowUsesPackageAssets(compiled))
+        ? await captureWorkspaceFlowAssets(revision.installedPath)
+        : [];
+      if (setupRevisionId && (revision.execTrust !== "trusted" ||
+        !flowAssets.some(({ path }) => path === WORKSPACE_FLOW_ASSET_DIRECTORY + "/setup.sh")))
+        throw new MaisterError(
+          "PRECONDITION",
+          "Selected supervisor setup requires a trusted, frozen Flow setup.sh",
+          { details: { reason: "workspace_setup_unavailable" } },
+        );
+      const [parentCapture] = hostPreparesWorkspace && input.parentRunId
+        ? await (_db as ExecutionDb).select({ knowledgeAccess: runs.knowledgeAccess })
+            .from(runs).where(eq(runs.id, input.parentRunId))
+        : [];
+      const personaScope = input.specialistAssignment ||
+        usesStructuredKnowledgeContext({ resultContract, knowledgeAccess: parentCapture?.knowledgeAccess })
+        ? "structured" : "ordinary";
+      const workspaceInputs = hostPreparesWorkspace
+        ? [
+            ...captureAddressedFlowWorkloads(compiled, manifest.requirements, setupRevisionId),
+            ...flowAssets,
+            ...await captureAddressedFlowPersonas(
+              _db as ExecutionDb, project.id, compiled, agentId ?? null, personaScope,
+            ),
+            ...await captureAddressedFlowContexts(
+              _db as ExecutionDb,
+              Array.from(compiled.nodes.values(), (node) => ({
+                stepId: node.id,
+                repositories: capabilityBearingSettings(node.nodeType, node.settings)
+                  ?.context_repos,
+              })),
+              agentId ? null : ctx.actorUserId,
+              placementTransport,
+            ),
+            ...await captureWorkspaceBundles(_db as ExecutionDb, {
+              projectId: project.id,
+              runId,
+              intentId: accepted?.intent.id,
+              acceptedBundles: accepted?.settings.capabilityBundles,
+            }),
+          ]
+        : [];
       await _db.transaction(async (tx: any) => {
         await accepted?.beginBinding(tx);
         if (input.specialistAssignment && !agentId)
@@ -2302,7 +2390,7 @@ async function* executeFlowLaunch(
         // ADR-166 D3: epoch 1 of the run's driver ownership, in the SAME tx as
         // the run (no run ⇒ no assignment). Insert branch only — the ADR-150
         // adopted-run branch returned above without inserting anything.
-        await mintPlacement(tx as unknown as ExecutionDb, {
+        const placement = await mintPlacement(tx as unknown as ExecutionDb, {
           runId,
           reason: "launch",
           host: placementHost,
@@ -2319,18 +2407,42 @@ async function* executeFlowLaunch(
           });
         }
 
-        await tx.insert(workspaces).values({
-          id: randomUUID(),
-          runId,
+        const workspaceIdentity = {
           projectId: project.id,
           branch,
-          worktreePath,
-          parentRepoPath: project.repoPath,
           baseBranch: base,
           baseCommit,
           targetBranch: target,
           promotionMode,
-        });
+        };
+        if (hostPreparesWorkspace) {
+          await reserveHostWorkspace(
+            tx as ExecutionDb,
+            { host: placementHost, assignment: placement },
+            workspaceIdentity,
+            {
+              mode: "ownWorktree",
+              repositoryId: project.id,
+              commit: baseCommit,
+              inputDigest: accepted?.intent.inputDigest ?? contentDigest({
+                runId, baseCommit, resolvedCapabilitySet,
+              }),
+            },
+            workspaceInputs,
+            {
+              requirementProbeCount: manifest.requirements?.length ?? 0,
+              ...(setupRevisionId ? { flowSetupRevisionId: setupRevisionId } : {}),
+            },
+          );
+        } else {
+          await tx.insert(workspaces).values({
+            ...workspaceIdentity,
+            id: randomUUID(),
+            runId,
+            worktreePath,
+            parentRepoPath: project.repoPath,
+          });
+        }
         // ADR-119: attempt_number is allocated atomically up-front (sole writer);
         // the main tx only flips the one-way status latch. For a concurrent
         // relaunch the task is already InFlight, so this set is an idempotent
@@ -2395,7 +2507,7 @@ async function* executeFlowLaunch(
         await ctx.recordSuccessAudit?.(tx, runId);
       });
     } catch (err) {
-      if (accepted) throw redactQueryError(err);
+      if (accepted || hostPreparesWorkspace) throw redactQueryError(err);
       // Inner: a failure after the worktree was created. Remove the orphan worktree
       // so the next launch can recreate the same branch+path without a PRECONDITION
       // "already exists". The pin is re-pinned by the outer catch on rethrow.
@@ -2479,7 +2591,7 @@ async function* executeFlowLaunch(
     );
   }
 
-  if (accepted) return { runId, status: "Pending" };
+  if (accepted || hostPreparesWorkspace) return { runId, status: "Pending" };
 
   const startResult = await startAllocatedRun(_db, runId);
 

@@ -149,8 +149,7 @@ export async function captureTaskAgentPackage(
     release: () => Promise<void>;
   }>
 > {
-  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(run.id))
-    throw launchRefusal("launch_capture_path_invalid", "CONFIG");
+  assertAgentCaptureRunId(run.id);
   const definition = await frozenTaskAgentDefinition(db, run);
   const [intent] = await db
     .select()
@@ -165,9 +164,34 @@ export async function captureTaskAgentPackage(
     !settings.agentSnapshot
   )
     throw launchRefusal("launch_agent_snapshot_incomplete", "PRECONDITION");
+  return captureTaskAgentDefinition({
+    runId: run.id,
+    assignmentId: run.executionAssignmentId,
+    definition,
+    agentId: settings.agentId,
+    definitionSha256: settings.definitionSha256,
+    packageContentDigest: settings.agentSnapshot.packageContentDigest,
+  });
+}
+
+/** Copy the exact verified definition and its declared capability directories. */
+export async function captureTaskAgentDefinition(input: Readonly<{
+  runId: string;
+  assignmentId?: string | null;
+  definition: EffectiveAgentDefinition;
+  agentId: string;
+  definitionSha256: string;
+  packageContentDigest: string;
+}>): Promise<Readonly<{
+  definition: EffectiveAgentDefinition;
+  assertCurrentPath: () => Promise<void>;
+  release: () => Promise<void>;
+}>> {
+  const { runId, definition, agentId } = input;
+  assertAgentCaptureRunId(runId);
   await mkdir(runtimeRoot(), { recursive: true });
   const directory = await assertManagedCapturePath(
-    path.join(runtimeRoot(), ".maister", "accepted-agent-captures", run.id),
+    path.join(runtimeRoot(), ".maister", "accepted-agent-captures", runId),
   );
 
   await mkdir(directory, { recursive: true });
@@ -189,7 +213,7 @@ export async function captureTaskAgentPackage(
     const links = await captureAcceptedDirectory(
       definition.installedPath,
       capturedPath,
-      settings.agentSnapshot.packageContentDigest,
+      input.packageContentDigest,
     ).catch((cause: unknown) => {
       if (cause instanceof MaisterError) throw cause;
       throw taskAgentPackageChanged(cause);
@@ -203,18 +227,18 @@ export async function captureTaskAgentPackage(
           path.join(capability.path, kind),
         ]);
     }
-    const { stem } = splitQualifiedAgentId(settings.agentId);
+    const { stem } = splitQualifiedAgentId(agentId);
     const sourcePath = path.join(capturedPath, "maister-agents", `${stem}.md`);
     const parsed = parseAgentDefinition(
-      settings.agentId,
+      agentId,
       await readTaskAgentDefinitionSource(sourcePath),
     );
 
     await assertCurrentPath();
 
     if (
-      buildAgentActivitySnapshot(settings.agentId, { ...definition, parsed })
-        .definitionSha256 !== settings.definitionSha256
+      buildAgentActivitySnapshot(agentId, { ...definition, parsed })
+        .definitionSha256 !== input.definitionSha256
     )
       throw launchRefusal("launch_agent_definition_changed", "PRECONDITION");
 
@@ -230,14 +254,19 @@ export async function captureTaskAgentPackage(
     };
   } catch (error) {
     await releaseTaskAgentCaptureAfterFailure({ release }, error, {
-      runId: run.id,
-      ...(run.executionAssignmentId
-        ? { assignmentId: run.executionAssignmentId }
+      runId,
+      ...(input.assignmentId
+        ? { assignmentId: input.assignmentId }
         : {}),
       stage: "package_capture",
     });
     throw error;
   }
+}
+
+function assertAgentCaptureRunId(runId: string): void {
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(runId))
+    throw launchRefusal("launch_capture_path_invalid", "CONFIG");
 }
 
 /** Legacy and operational runs keep their existing readers; accepted agent runs require their exact snapshot. */

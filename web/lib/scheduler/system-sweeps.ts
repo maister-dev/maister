@@ -34,6 +34,8 @@ import {
 } from "@/lib/execution-host";
 import { getDb } from "@/lib/db/client";
 import { collectExecutionEventLag } from "@/lib/execution-host/events/lag-read-model";
+import { pinnedExecutionHostTransport } from "@/lib/execution-host/default-transport";
+import { configuredAdditionalExecutionEndpoints } from "@/lib/execution-host/selected-endpoint";
 import {
   recordHostPressureSample,
   type HostPressureObservation,
@@ -573,6 +575,8 @@ export async function runSystemSweep(
   try {
     executionHost = await executionCommandReconcilePass();
     errors.push(...executionHost.commands.errors);
+    const { recoverAddressedFlowStop } = await import("@/lib/runs/stop");
+    await recoverAddressedFlowStop(getDb());
   } catch (err) {
     const message = errorMessage(err);
 
@@ -584,6 +588,21 @@ export async function runSystemSweep(
   const workerHealth = durableWorkersHealth();
 
   log.info({ workers: workerHealth }, "system_sweep durable worker health");
+
+  for (const endpoint of configuredAdditionalExecutionEndpoints()) {
+    const sampledAt = new Date();
+    try {
+      const health = await pinnedExecutionHostTransport(endpoint).platformStatus();
+      if (health.kind === "ready" && health.health.host?.hostKey === endpoint.hostKey && health.health.stream) {
+        await recordHostPressureSample({
+          db: getDb(), hostKey: endpoint.hostKey, stream: health.health.stream, sampledAt, logger: log,
+        });
+      }
+    } catch (error) {
+      errors.push(`peer host pressure sample failed: ${errorMessage(error)}`);
+      log.warn({ hostKey: endpoint.hostKey, error: errorMessage(error) }, "peer host pressure sample failed");
+    }
+  }
 
   if (input.executionObservation) {
     const observationInput = input.executionObservation;

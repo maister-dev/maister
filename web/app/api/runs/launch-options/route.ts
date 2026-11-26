@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import { transportForSelectedHostId } from "@/lib/execution-host/default-transport";
 import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
 import type { CapabilityRefIdSets } from "@/lib/config";
@@ -9,6 +10,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
+import { bindTaskLaunchPlacementToken, resolveTaskLaunchPlacement } from "@/lib/execution-host/project-preference";
+import { listAddressedWorkspaceRefs } from "@/lib/execution-host/workspace-preparation";
 
 import {
   declaredFlowRunnerUnavailable,
@@ -108,6 +111,8 @@ const querySchema = z
   .object({
     taskId: z.string().min(1).max(256),
     flowId: z.string().min(1).max(256).optional(),
+    executionHostId: z.string().min(1).max(256).optional(),
+    branchCursor: z.string().min(1).max(512).optional(),
     runnerId: z.string().min(1).max(256).optional(),
     relaunchOfRunId: z.string().min(1).max(256).optional(),
     packageVersions: z.string().max(32768).optional(),
@@ -330,7 +335,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   } catch (err) {
     if (
       isMaisterError(err) &&
-      err.details?.reason === "flow_settings_enforcement_refused"
+      ["flow_settings_enforcement_refused", "host_ineligible"].includes(
+        String(err.details?.reason),
+      )
     )
       return taskLaunchErrorResponse(err);
 
@@ -372,7 +379,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 async function readLaunchOptions(
   client: Db,
   user: Awaited<ReturnType<typeof requireActiveSession>>,
-  selection: Partial<TaskLaunchRequest> & { taskId: string },
+  selection: Partial<TaskLaunchRequest> & { taskId: string; branchCursor?: string },
   surface?: "interactive",
 ) {
   const db = client as any;
@@ -407,6 +414,9 @@ async function readLaunchOptions(
           selection.flowRunnerDraft?.slots ? "editSettings" : "launchRun",
         )
       : await requireProjectAction(project.id, "launchRun");
+  const placement = await resolveTaskLaunchPlacement(client, project, selection.executionHostId);
+  if (selection.branchCursor !== undefined && !placement)
+    throw new MaisterError("CONFIG", "A branch cursor requires an addressed supervisor");
   const canConfigureRunnerBindings = projectRolesForActions([
     "editSettings",
   ]).includes(authorization.role);
@@ -885,6 +895,8 @@ async function readLaunchOptions(
   return {
     options,
     previewFence,
+    placement,
+    branchCursor: selection.branchCursor,
     projectId: project.id,
     repoPath: project.repoPath,
   };
@@ -895,14 +907,23 @@ async function finalizeLaunchOptions(
   {
     options,
     previewFence,
+    placement,
+    branchCursor,
     projectId,
     repoPath,
   }: Awaited<ReturnType<typeof readLaunchOptions>>,
 ) {
   // Only the trusted immutable reference leaves the transaction. Git/asset
   // reads cannot hold a database snapshot open.
-  const [branches, availablePackageVersions, assets] = await Promise.all([
-    listBranches(repoPath, { includeRemotes: true }),
+  const [branchPage, availablePackageVersions, assets] = await Promise.all([
+    placement
+      ? transportForSelectedHostId(db, placement.selection.effectiveExecutionHostId)
+        .then((transport) => listAddressedWorkspaceRefs(projectId, branchCursor, transport))
+        .then((page) => ({
+          branches: page.refs.map((ref) => ref.slice("refs/heads/".length)),
+          branchesNextCursor: page.nextCursor,
+        }))
+      : listBranches(repoPath, { includeRemotes: true }).then((branches) => ({ branches })),
     detectAvailablePackageVersions({ projectId, db: db as never }),
     previewFence?.revision
       ? captureTaskLaunchFlowAssetsFromRevision(previewFence.revision)
@@ -914,13 +935,19 @@ async function finalizeLaunchOptions(
       ...options,
       ...(previewFence
         ? {
-            settingsToken: composeTaskLaunchSettingsToken(
-              previewFence.metadataToken,
-              assets,
+            settingsToken: bindTaskLaunchPlacementToken(
+              composeTaskLaunchSettingsToken(previewFence.metadataToken, assets),
+              placement,
             ),
           }
         : {}),
-      branches,
+      ...(placement
+        ? {
+            executionHostSelection: placement.selection,
+            executionHostOptions: placement.hostOptions,
+          }
+        : {}),
+      ...branchPage,
       availablePackageVersions,
     },
     selectedFlowRevisionId: options.selectedFlowRevisionId,

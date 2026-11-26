@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
+import { EXECUTION_HOST_PERMANENTLY_LOST } from "./types";
 
 import {
   executionAssignments,
@@ -58,6 +59,8 @@ export type HostCapabilities = {
   protocolVersion: number;
   supervisorVersion: string;
   adapters: string[];
+  workspaceProtocol?: [1];
+  workspaceSyncResolver?: 1;
   dataPlane?: {
     version: "execution-host-data-plane.v1";
     eventStream: boolean;
@@ -71,6 +74,10 @@ export type HostCapabilities = {
   } | null;
 };
 
+export async function declareExecutionHostRegistryWriter(db: Pick<Db, "execute">): Promise<void> {
+  await db.execute(sql`select set_config('maister.execution_host_registry_writer', 'v2', true)`);
+}
+
 export async function findActiveLocalHost(
   db: Db,
 ): Promise<ExecutionHost | null> {
@@ -81,6 +88,7 @@ export async function findActiveLocalHost(
       and(
         eq(executionHosts.kind, LOCAL_DIRECT_KIND),
         isNull(executionHosts.retiredAt),
+        sql`coalesce(${executionHosts.transport}->>'role', 'default') = 'default'`,
       ),
     )
     .limit(1);
@@ -99,6 +107,7 @@ export async function lockActiveLocalHost(
       and(
         eq(executionHosts.kind, LOCAL_DIRECT_KIND),
         isNull(executionHosts.retiredAt),
+        sql`coalesce(${executionHosts.transport}->>'role', 'default') = 'default'`,
       ),
     )
     .for("update")
@@ -120,6 +129,16 @@ export async function getHostById(
   return rows[0] ?? null;
 }
 
+export async function getHostByKey(db: Db, hostKey: string): Promise<ExecutionHost | null> {
+  const [host] = await db.select().from(executionHosts).where(eq(executionHosts.hostKey, hostKey));
+  return host ?? null;
+}
+
+export async function lockHostByKey(tx: Db, hostKey: string): Promise<ExecutionHost | null> {
+  const [host] = await tx.select().from(executionHosts).where(eq(executionHosts.hostKey, hostKey)).for("update");
+  return host ?? null;
+}
+
 export async function insertLocalHost(
   tx: Db,
   input: {
@@ -127,11 +146,13 @@ export async function insertLocalHost(
     bootId: string;
     capabilities: HostCapabilities;
     displayName?: string;
+    role?: "secondary";
     now?: Date;
     logger?: Logger;
   },
 ): Promise<ExecutionHost> {
   const now = input.now ?? new Date();
+  await declareExecutionHostRegistryWriter(tx);
   const [row] = await tx
     .insert(executionHosts)
     .values({
@@ -139,7 +160,7 @@ export async function insertLocalHost(
       hostKey: input.hostKey,
       kind: LOCAL_DIRECT_KIND,
       displayName: input.displayName ?? "local supervisor",
-      transport: { kind: LOCAL_DIRECT_KIND },
+      transport: { kind: LOCAL_DIRECT_KIND, ...(input.role ? { role: input.role } : {}) },
       capabilities: input.capabilities,
       readiness: "ready",
       readinessReason: null,
@@ -168,6 +189,7 @@ export async function touchLocalHost(
   },
 ): Promise<ExecutionHost | null> {
   const now = patch.now ?? new Date();
+  await declareExecutionHostRegistryWriter(tx);
   const [row] = await tx
     .update(executionHosts)
     .set({
@@ -191,13 +213,16 @@ export async function markHostReadiness(
   reason: string | null,
   now: Date = new Date(),
 ): Promise<ExecutionHost | null> {
-  const [row] = await db
-    .update(executionHosts)
-    .set({ readiness, readinessReason: reason, updatedAt: now })
-    .where(eq(executionHosts.id, id))
-    .returning();
-
-  return row ?? null;
+  return db.transaction(async (tx) => {
+    await declareExecutionHostRegistryWriter(tx);
+    const [row] = await tx
+      .update(executionHosts)
+      .set({ readiness, readinessReason: reason, updatedAt: now })
+      .where(and(eq(executionHosts.id, id),
+        sql`${executionHosts.readinessReason} IS DISTINCT FROM ${EXECUTION_HOST_PERMANENTLY_LOST}`))
+      .returning();
+    return row ?? null;
+  });
 }
 
 export async function retireHost(
@@ -206,6 +231,7 @@ export async function retireHost(
   now: Date = new Date(),
   logger: Logger = defaultLog,
 ): Promise<ExecutionHost | null> {
+  await declareExecutionHostRegistryWriter(tx);
   const [row] = await tx
     .update(executionHosts)
     .set({ retiredAt: now, updatedAt: now })

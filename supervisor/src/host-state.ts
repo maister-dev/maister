@@ -10,6 +10,11 @@ import {
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { EXECUTION_HOST_KEY_PATTERN } from "../../runtime/execution-host-address";
+import { isWorkspaceCancelTarget, isWorkspaceGenerationTarget } from "../../runtime/workspace-prepare";
+import type { WorkspacePrepareInput, WorkspaceTerminalPayload } from "../../runtime/workspace-prepare";
+import { SupervisorError } from "./types";
+
 import { reuseSqliteStatements } from "./sqlite-statements";
 import {
   readHostProcessContext,
@@ -85,8 +90,9 @@ import {
 } from "./runtime-file-budget";
 import {
   buildRuntimeEventEnvelope,
+  deterministicRuntimeEventId,
   MAX_RUNTIME_EVENT_BYTES,
-  RuntimeEventEnvelopeSchema,
+  RuntimeEventWireEnvelopeSchema,
   type RuntimeEventDraft,
 } from "./runtime-events";
 
@@ -95,7 +101,7 @@ import {
 // the per-run fence high-water, adopted-workspace handles, and command
 // receipts. The web tier never reads it.
 
-export const HOST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+export const HOST_KEY_PATTERN = EXECUTION_HOST_KEY_PATTERN;
 export const HOST_STATE_FILE = "state.sqlite";
 // The compacted body of a retired receipt: disposition stays in `phase` /
 // `http_status`, so the tombstone needs no payload of its own.
@@ -125,7 +131,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 18;
+export const HOST_STATE_SCHEMA_VERSION = 22;
 
 /** Native retirement survives registry loss. Released identities share the receipt tombstone's permanent retention and cannot reactivate. */
 export type SessionProcessObligation = Readonly<{
@@ -232,6 +238,14 @@ export type CommandReceiptRow = {
   completedAt: string | null;
 };
 
+export function isUnconfirmedWorkspaceReceipt(row: CommandReceiptRow): boolean {
+  const body = row.body as { workspacePhase?: string; result?: { quiescence?: string } };
+
+  return (row.phase === "rejected" && body.workspacePhase === "indeterminate") ||
+    ((row.kind === "workspace.run" || row.kind === "workspace.cancel") && row.phase === "completed" &&
+      body.workspacePhase === "completed" && body.result?.quiescence === "uncertain");
+}
+
 export type SettledReceiptRow = CommandReceiptRow & {
   phase: Exclude<ReceiptPhase, "accepted">;
 };
@@ -259,6 +273,17 @@ export type WorkspaceWaitWitness = {
   generation: number;
   headSha: string;
 };
+
+export type WorkspaceExecutionState = Readonly<{
+  generation: number;
+  inputDigest: string | null;
+  preparationMode: WorkspacePrepareInput["mode"] | null;
+  materializationGeneration: number;
+  materializationDigest: string | null;
+  operationFence: number;
+  operationClaimId: string | null;
+  publicationFence: number;
+}>;
 
 // This row is deliberately supervisor-private. `privatePath` is never put in
 // an event, response, or manager-owned record; callers use only `id`.
@@ -321,11 +346,25 @@ export type RuntimeEventSpanPage =
       reason: RuntimeEventSpanUnavailableReason;
     }>;
 
-export type AppendRuntimeEventInput = {
-  draft: RuntimeEventDraft;
+type WorkspaceTerminalDraft = {
+  runId: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  hostSessionId: null;
+  eventType: "workspace.command.terminal";
+  occurredAt: string;
+  payload: WorkspaceTerminalPayload;
+};
+
+export type AppendRuntimeEventInput<
+  Draft extends RuntimeEventDraft | WorkspaceTerminalDraft = RuntimeEventDraft,
+> = {
+  draft: Draft;
   terminal?: boolean;
   funding?: EventFunding;
 };
+
+type OutboxEventInput = AppendRuntimeEventInput<RuntimeEventDraft | WorkspaceTerminalDraft>;
 
 export type RuntimeEventOutboxStats = {
   budget: OutboxBudgetSnapshot;
@@ -483,7 +522,32 @@ export type HostState = {
     request: CommandRetirementProof,
   ): ReceiptRetirementOutcome;
   findWorkspaceByRealPath(runId: string, realPath: string): WorkspaceRow | null;
+  activeWorkspacePathOwner(realPath: string): { runId: string } | null;
   getWorkspace(id: string): WorkspaceRow | null;
+  getWorkspaceExecutionState(id: string): WorkspaceExecutionState | null;
+  recordWorkspaceInput(id: string, generation: number, digest: string, mode: WorkspacePrepareInput["mode"]): void;
+  recordWorkspaceMaterialization(id: string, generation: number, digest: string): void;
+  recordWorkspaceWorkloadProcess(commandId: string, group: number, physicalKey: string): boolean;
+  recordWorkspaceWorkloadRetirement(commandId: string, group: number): void;
+  claimWorkspaceGitOperation(input: Readonly<{
+    commandId: string;
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    handle: string;
+    generation: number;
+    physicalKey: string;
+    retainedFence?: number;
+    requireExclusiveHandle?: true;
+  }>): boolean;
+  isWorkspaceWorkloadCancelled(input: Readonly<{
+    commandId: string;
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    handle: string;
+    generation: number;
+  }>): boolean;
   insertWorkspace(row: WorkspaceRow): void;
   releaseWorkspace(id: string, releasedAt: string): boolean;
   getWorkspaceWait(waitId: string): WorkspaceWaitWitness | null;
@@ -532,6 +596,10 @@ export type HostState = {
     receipt: CommandReceiptRow,
     event: AppendRuntimeEventInput,
     admission: ReceiptAdmission,
+  ): HostRuntimeEventRow;
+  putReceiptWithRuntimeEvent(
+    receipt: SettledReceiptRow,
+    event: AppendRuntimeEventInput<WorkspaceTerminalDraft>,
   ): HostRuntimeEventRow;
   putReceiptWithRuntimeEvent(
     receipt: SettledReceiptRow,
@@ -666,6 +734,66 @@ const WORKSPACE_WAIT_SCHEMA = `CREATE TABLE IF NOT EXISTS workspace_wait_witness
   head_sha TEXT NOT NULL
 );`;
 
+const WORKSPACE_EXECUTION_SCHEMA = `
+CREATE TABLE workspace_execution_state (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  generation INTEGER NOT NULL DEFAULT 1 CHECK (typeof(generation) = 'integer' AND generation > 0),
+  input_digest TEXT CHECK (input_digest IS NULL OR
+    (length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*')),
+  materialization_generation INTEGER NOT NULL DEFAULT 0 CHECK (typeof(materialization_generation) = 'integer' AND materialization_generation >= 0),
+  materialization_digest TEXT,
+  operation_fence INTEGER NOT NULL DEFAULT 0 CHECK (typeof(operation_fence) = 'integer' AND operation_fence >= 0),
+  operation_claim_id TEXT,
+  CHECK ((materialization_generation = 0 AND materialization_digest IS NULL)
+    OR (materialization_generation > 0 AND materialization_digest IS NOT NULL
+      AND length(materialization_digest) = 64 AND materialization_digest NOT GLOB '*[^0-9a-f]*')),
+  CHECK (operation_claim_id IS NULL OR (operation_fence > 0 AND length(operation_claim_id) = 36))
+);
+INSERT INTO workspace_execution_state(workspace_id) SELECT id FROM workspaces;
+CREATE TRIGGER seed_workspace_execution_state AFTER INSERT ON workspaces
+  BEGIN INSERT INTO workspace_execution_state(workspace_id) VALUES (NEW.id); END;
+`;
+
+const WORKSPACE_PREPARATION_MODE_SCHEMA = `
+ALTER TABLE workspace_execution_state ADD COLUMN preparation_mode TEXT CHECK (
+  preparation_mode IN ('ownWorktree', 'sharedWorktree', 'readOnlyCheckout', 'directory', 'emptyDirectory'));
+WITH verified AS (
+  SELECT w.id, min(json_extract(r.body_json, '$.result.workspace.mode')) AS mode
+  FROM command_receipts r
+  JOIN workspaces w ON w.run_id = r.run_id AND w.id = json_extract(r.body_json, '$.result.workspace.handle')
+  JOIN workspace_execution_state x ON x.workspace_id = w.id
+  JOIN host_identity h ON h.host_key = r.host_key
+  WHERE r.kind = 'workspace.prepare' AND r.phase = 'completed' AND r.retired_at IS NULL
+    AND r.request_schema = 'maister.workspace.command.request.v1'
+    AND json_extract(r.body_json, '$.result.workspace.generation') = x.generation
+    AND json_extract(r.body_json, '$.result.inputDigest') = x.input_digest
+    AND ((w.kind = 'git_worktree' AND json_extract(r.body_json, '$.result.workspace.mode') IN
+      ('ownWorktree', 'sharedWorktree', 'readOnlyCheckout'))
+      OR (w.kind = 'directory' AND json_extract(r.body_json, '$.result.workspace.mode') IN
+      ('directory', 'emptyDirectory')))
+  GROUP BY w.id HAVING count(DISTINCT json_extract(r.body_json, '$.result.workspace.mode')) = 1
+)
+UPDATE workspace_execution_state AS x SET preparation_mode = verified.mode
+  FROM verified WHERE verified.id = x.workspace_id;
+`;
+
+const WORKSPACE_CANCEL_FENCE_SCHEMA = `
+CREATE TABLE IF NOT EXISTS workspace_workload_cancel_fences (
+  target_command_id TEXT PRIMARY KEY,
+  cancellation_command_id TEXT NOT NULL UNIQUE REFERENCES command_receipts(command_id),
+  run_id TEXT NOT NULL,
+  assignment_id TEXT NOT NULL,
+  assignment_epoch INTEGER NOT NULL CHECK (assignment_epoch > 0),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  generation INTEGER NOT NULL CHECK (generation > 0)
+);
+`;
+
+const WORKSPACE_PUBLICATION_FENCE_SCHEMA = `
+ALTER TABLE workspace_execution_state ADD COLUMN publication_fence INTEGER NOT NULL DEFAULT 0
+  CHECK (typeof(publication_fence) = 'integer' AND publication_fence >= 0);
+`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_identity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -681,6 +809,7 @@ CREATE TABLE IF NOT EXISTS run_fences (
 CREATE TABLE IF NOT EXISTS workspaces (${WORKSPACES_COLUMNS},company_id TEXT CHECK ((company_id IS NULL AND project_slug <> '_company') OR (company_id IS NOT NULL AND length(company_id) BETWEEN 1 AND 128 AND project_slug='_company' AND kind='directory' AND repo_path IS NULL AND context_mounts IS NULL)));
 ${WORKSPACES_ACTIVE_INDEX};
 ${WORKSPACE_WAIT_SCHEMA}
+${WORKSPACE_EXECUTION_SCHEMA}
 CREATE TABLE IF NOT EXISTS command_receipts (
   command_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
@@ -704,6 +833,9 @@ CREATE TABLE IF NOT EXISTS command_receipts (
   retired_at TEXT
 );
 CREATE INDEX IF NOT EXISTS command_receipts_received_idx ON command_receipts (received_at);
+${WORKSPACE_PREPARATION_MODE_SCHEMA}
+${WORKSPACE_CANCEL_FENCE_SCHEMA}
+${WORKSPACE_PUBLICATION_FENCE_SCHEMA}
 ${SESSION_PROCESS_SCHEMA}
 CREATE TABLE IF NOT EXISTS runtime_objects (
   id TEXT PRIMARY KEY,
@@ -1049,6 +1181,7 @@ COMMIT;
 
 function applySchema(
   db: DatabaseSync,
+  userVersion: number,
   context: HostProcessContext,
   observedAt: string,
 ): void {
@@ -1060,43 +1193,48 @@ function applySchema(
       .get() === undefined;
 
   if (fresh) {
-    db.exec(SCHEMA);
-    db.exec(`PRAGMA user_version = ${HOST_STATE_SCHEMA_VERSION}`);
+    db.exec(
+      `BEGIN IMMEDIATE; ${SCHEMA} PRAGMA user_version = ${HOST_STATE_SCHEMA_VERSION}; COMMIT;`,
+    );
 
     return;
   }
 
-  const { user_version } = db.prepare("PRAGMA user_version").get() as {
-    user_version: number;
-  };
-
-  if (Number(user_version) > HOST_STATE_SCHEMA_VERSION) {
-    throw new HostRuntimeEventError(
-      "stream_corrupt",
-      "host state schema is newer than this supervisor",
-    );
-  }
-  if (Number(user_version) < 1) db.exec(MIGRATE_V0_TO_V1);
-  if (Number(user_version) < 2) db.exec(MIGRATE_V1_TO_V2);
-  if (Number(user_version) < 3) db.exec(MIGRATE_V2_TO_V3);
-  if (Number(user_version) < 4) db.exec(MIGRATE_V3_TO_V4);
-  if (Number(user_version) < 5) db.exec(MIGRATE_V4_TO_V5);
-  if (Number(user_version) < 6) db.exec(MIGRATE_V5_TO_V6);
-  if (Number(user_version) < 7) db.exec(MIGRATE_V6_TO_V7);
-  if (Number(user_version) < 8) db.exec(MIGRATE_V7_TO_V8);
-  if (Number(user_version) < 9) db.exec(MIGRATE_V8_TO_V9);
-  if (Number(user_version) < 10) db.exec(MIGRATE_V9_TO_V10);
-  if (Number(user_version) < 11) db.exec(MIGRATE_V10_TO_V11);
-  if (Number(user_version) < 12) db.exec(MIGRATE_V11_TO_V12);
-  if (Number(user_version) < 13) db.exec(MIGRATE_V12_TO_V13);
-  if (Number(user_version) < 14) migrateV13ToV14(db);
-  if (Number(user_version) < 15) db.exec(MIGRATE_V14_TO_V15);
-  if (Number(user_version) < 16) migrateV15ToV16(db, context, observedAt);
-  if (Number(user_version) < 17) db.exec(MIGRATE_V16_TO_V17);
-  if (Number(user_version) < 18)
+  if (userVersion < 1) db.exec(MIGRATE_V0_TO_V1);
+  if (userVersion < 2) db.exec(MIGRATE_V1_TO_V2);
+  if (userVersion < 3) db.exec(MIGRATE_V2_TO_V3);
+  if (userVersion < 4) db.exec(MIGRATE_V3_TO_V4);
+  if (userVersion < 5) db.exec(MIGRATE_V4_TO_V5);
+  if (userVersion < 6) db.exec(MIGRATE_V5_TO_V6);
+  if (userVersion < 7) db.exec(MIGRATE_V6_TO_V7);
+  if (userVersion < 8) db.exec(MIGRATE_V7_TO_V8);
+  if (userVersion < 9) db.exec(MIGRATE_V8_TO_V9);
+  if (userVersion < 10) db.exec(MIGRATE_V9_TO_V10);
+  if (userVersion < 11) db.exec(MIGRATE_V10_TO_V11);
+  if (userVersion < 12) db.exec(MIGRATE_V11_TO_V12);
+  if (userVersion < 13) db.exec(MIGRATE_V12_TO_V13);
+  if (userVersion < 14) migrateV13ToV14(db);
+  if (userVersion < 15) db.exec(MIGRATE_V14_TO_V15);
+  if (userVersion < 16) migrateV15ToV16(db, context, observedAt);
+  if (userVersion < 17) db.exec(MIGRATE_V16_TO_V17);
+  if (userVersion < 18)
     db.exec(
       `BEGIN IMMEDIATE; ${WORKSPACE_WAIT_SCHEMA} PRAGMA user_version = 18; COMMIT;`,
     );
+  if (userVersion < 19) {
+    db.exec(
+      `BEGIN IMMEDIATE; ${WORKSPACE_EXECUTION_SCHEMA} PRAGMA user_version = 19; COMMIT;`,
+    );
+  }
+  if (userVersion < 20) {
+    db.exec(
+      `BEGIN IMMEDIATE; ${WORKSPACE_PREPARATION_MODE_SCHEMA} PRAGMA user_version = 20; COMMIT;`,
+    );
+  }
+  if (userVersion < 21)
+    db.exec(`BEGIN IMMEDIATE; ${WORKSPACE_CANCEL_FENCE_SCHEMA} PRAGMA user_version = 21; COMMIT;`);
+  if (userVersion < 22)
+    db.exec(`BEGIN IMMEDIATE; ${WORKSPACE_PUBLICATION_FENCE_SCHEMA} PRAGMA user_version = 22; COMMIT;`);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -1126,6 +1264,18 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       stateDir ? path.join(stateDir, HOST_STATE_FILE) : ":memory:",
     );
     openedDatabase = db;
+    const { user_version: userVersion } = db
+      .prepare("PRAGMA user_version")
+      .get() as {
+      user_version: number;
+    };
+
+    if (userVersion > HOST_STATE_SCHEMA_VERSION) {
+      throw new HostRuntimeEventError(
+        "stream_corrupt",
+        "host state schema is newer than this supervisor",
+      );
+    }
     if (stateDir) {
       db.exec("PRAGMA journal_mode = WAL");
       // A command receipt and its durable event are a recovery boundary; NORMAL
@@ -1135,7 +1285,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     }
     db.exec("PRAGMA cache_size = -65536");
     db.exec("PRAGMA temp_store = MEMORY");
-    applySchema(db, processContext, now().toISOString());
+    applySchema(db, userVersion, processContext, now().toISOString());
+    if (userVersion > 0 && userVersion < HOST_STATE_SCHEMA_VERSION) {
+      log?.info(
+        { from: userVersion, to: HOST_STATE_SCHEMA_VERSION },
+        "host state schema upgraded",
+      );
+    }
     db.exec("BEGIN IMMEDIATE");
     try {
       seedMissingSessionProcesses(db, processContext, now().toISOString());
@@ -1802,7 +1958,12 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               AND (wallet.host_session_id IS NULL OR wallet.host_session_id=?)
               AND (receipt.host_session_id IS NULL OR receipt.host_session_id=?)
               AND (receipt.host_key IS NULL OR receipt.host_key=?)
-              AND fence.assignment_id=receipt.assignment_id AND fence.epoch=receipt.epoch`,
+              AND fence.assignment_id=receipt.assignment_id AND fence.epoch=receipt.epoch
+              AND NOT EXISTS (
+                SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+                JOIN workspace_execution_state operation ON operation.workspace_id=physical.id
+                WHERE owned.run_id=receipt.run_id AND operation.operation_claim_id IS NOT NULL
+              )`,
             )
             .get(
               input.commandId,
@@ -1964,7 +2125,30 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             assertPhysicalAdmission();
           db.exec("BEGIN IMMEDIATE");
           admitRuntimeReceipt(row, admission);
+          const dispositionId = (row.body as { archiveDispositionId?: unknown }).archiveDispositionId;
+          if (row.kind === "workspace.release" && row.phase === "accepted" && typeof dispositionId === "string" &&
+            db.prepare(`SELECT 1 FROM command_receipts WHERE kind='workspace.release'
+              AND command_id<>? AND json_extract(body_json, '$.archiveDispositionId')=?
+              AND (phase IN ('accepted','completed') OR json_extract(body_json, '$.workspacePhase')='indeterminate')`
+            ).get(row.commandId, dispositionId))
+            throw new SupervisorError("CONFLICT", "Another command owns this retained release", {
+              details: { reason: "workspace_writer_active" },
+            });
           writeReceiptRow(db, row);
+          if (row.kind === "workspace.cancel" && row.phase === "accepted") {
+            const target = (row.body as { workspaceTarget?: unknown }).workspaceTarget;
+            if (!row.assignmentId || !isWorkspaceCancelTarget(target))
+              throw new HostRuntimeEventError("command_invariant_conflict", "Invalid workspace cancellation owner");
+            db.prepare(`
+              INSERT INTO workspace_workload_cancel_fences (
+                target_command_id, cancellation_command_id, run_id, assignment_id,
+                assignment_epoch, workspace_id, generation
+              ) SELECT ?, ?, ?, ?, ?, ?, ?
+                WHERE NOT EXISTS (SELECT 1 FROM command_receipts WHERE command_id = ?)
+              ON CONFLICT(target_command_id) DO NOTHING
+            `).run(target.commandId, row.commandId, row.runId, row.assignmentId, row.epoch,
+              target.handle, target.generation, target.commandId);
+          }
           settleReceiptBudget(db, row);
           db.exec("COMMIT");
         } catch (error) {
@@ -2275,7 +2459,10 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             )
             .get(commandId);
 
-          if (openProducer || pendingProcess) return refuse("producer_open");
+          const workspaceWriter = db.prepare(
+            "SELECT 1 FROM workspace_execution_state WHERE operation_claim_id=?",
+          ).get(commandId);
+          if (openProducer || pendingProcess || workspaceWriter) return refuse("producer_open");
 
           if (row.request_version === 2) {
             if (row.terminal_sequence === null)
@@ -2323,10 +2510,153 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
       return row ? toWorkspaceRow(row) : null;
     },
+    activeWorkspacePathOwner(realPath) {
+      const row = db.prepare(
+        "SELECT run_id AS runId FROM workspaces WHERE real_path = ? AND released_at IS NULL LIMIT 1",
+      ).get(realPath) as { runId: string } | undefined;
+
+      return row ?? null;
+    },
     getWorkspace(id) {
       const row = db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id);
 
       return row ? toWorkspaceRow(row) : null;
+    },
+    getWorkspaceExecutionState(id) {
+      const row = db
+        .prepare(
+          `SELECT generation, input_digest AS inputDigest, preparation_mode AS preparationMode,
+          materialization_generation AS materializationGeneration,
+          materialization_digest AS materializationDigest,
+          operation_fence AS operationFence, operation_claim_id AS operationClaimId,
+          publication_fence AS publicationFence
+         FROM workspace_execution_state WHERE workspace_id = ?`,
+        )
+        .get(id) as WorkspaceExecutionState | undefined;
+
+      return row ?? null;
+    },
+    recordWorkspaceInput(id, generation, digest, mode) {
+      storage.write(() => {
+        const changed = db.prepare(
+          `UPDATE workspace_execution_state SET input_digest = ?, preparation_mode = ?
+             WHERE workspace_id = ? AND generation = ?
+               AND (input_digest IS NULL OR input_digest = ?)
+               AND (preparation_mode IS NULL OR preparation_mode = ?)`,
+        ).run(digest, mode, id, generation, digest, mode);
+        if (changed.changes !== 1)
+          throw new HostRuntimeEventError(
+            "command_invariant_conflict",
+            "workspace input does not match its retained generation",
+          );
+      });
+    },
+    recordWorkspaceWorkloadProcess(commandId, group, physicalKey) {
+      return storage.write(() => {
+        if (!Number.isSafeInteger(group) || group <= 0)
+          throw new HostRuntimeEventError("command_invariant_conflict", "Workload process group is invalid");
+        const process = {
+          group, physicalKey, osBootIdentity: processContext.osBootIdentity, pidNamespace: processContext.pidNamespace,
+        };
+        const updated = db.prepare(`
+          UPDATE command_receipts SET body_json=json_set(body_json, '$.workspaceProcess', json(?))
+          WHERE command_id=? AND kind='workspace.run' AND phase='accepted'
+            AND json_type(body_json, '$.workspaceProcess') IS NULL
+            AND EXISTS (SELECT 1 FROM run_fences
+              WHERE run_fences.run_id=command_receipts.run_id
+                AND run_fences.assignment_id=command_receipts.assignment_id
+                AND run_fences.epoch=command_receipts.epoch)
+            AND NOT EXISTS (
+              SELECT 1 FROM command_receipts active
+              WHERE active.command_id <> command_receipts.command_id AND active.kind='workspace.run'
+                AND json_extract(active.body_json, '$.workspaceProcess.physicalKey')=?
+                AND json_extract(active.body_json, '$.workspaceProcessRetired') IS NOT 1
+                AND json_extract(active.body_json, '$.result.quiescence') IS NOT 'proved'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+              JOIN workspace_execution_state operation ON operation.workspace_id=physical.id
+              WHERE owned.id=json_extract(command_receipts.body_json, '$.workspaceTarget.handle')
+                AND operation.operation_claim_id IS NOT NULL
+            )
+        `).run(JSON.stringify(process), commandId, physicalKey);
+
+        return updated.changes === 1;
+      });
+    },
+    recordWorkspaceWorkloadRetirement(commandId, group) {
+      storage.write(() => {
+        const updated = db.prepare(`
+          UPDATE command_receipts SET body_json=json_set(body_json, '$.workspaceProcessRetired', json('true'))
+          WHERE command_id=? AND kind='workspace.run' AND phase='accepted'
+            AND json_extract(body_json, '$.workspaceProcess.group')=?
+        `).run(commandId, group);
+
+        if (updated.changes !== 1)
+          throw new HostRuntimeEventError("command_invariant_conflict", "Workload retirement lost its recorded group");
+      });
+    },
+    claimWorkspaceGitOperation(input) {
+      return storage.write(() => db.prepare(`
+        UPDATE workspace_execution_state
+        SET operation_fence=operation_fence + (operation_claim_id IS NULL), operation_claim_id=?,
+            publication_fence=COALESCE(?, publication_fence)
+        WHERE workspace_id=? AND generation=? AND preparation_mode='ownWorktree'
+          AND (operation_claim_id IS NULL OR operation_claim_id=?)
+          AND (? IS NULL OR publication_fence<? OR (publication_fence=? AND operation_claim_id=?))
+          AND (?=0 OR NOT EXISTS (
+            SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+            WHERE owned.id=workspace_execution_state.workspace_id AND physical.id<>owned.id AND physical.released_at IS NULL
+          ))
+          AND EXISTS (
+            SELECT 1 FROM workspaces owned JOIN run_fences fence ON fence.run_id=owned.run_id
+            WHERE owned.id=workspace_execution_state.workspace_id AND owned.run_id=? AND owned.released_at IS NULL
+              AND fence.assignment_id=? AND fence.epoch=?
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+            JOIN workspace_execution_state other ON other.workspace_id=physical.id
+            WHERE owned.id=workspace_execution_state.workspace_id AND other.operation_claim_id IS NOT NULL
+              AND other.operation_claim_id<>?
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM workspaces owned JOIN workspaces physical ON physical.real_path=owned.real_path
+            JOIN session_process_obligations process ON process.run_id=physical.run_id
+            WHERE owned.id=workspace_execution_state.workspace_id AND process.phase<>'released'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM command_receipts workload WHERE workload.kind='workspace.run'
+              AND json_extract(workload.body_json, '$.workspaceProcess.physicalKey')=?
+              AND json_extract(workload.body_json, '$.workspaceProcessRetired') IS NOT 1
+              AND json_extract(workload.body_json, '$.result.quiescence') IS NOT 'proved'
+          )
+      `).run(input.commandId, input.retainedFence ?? null, input.handle, input.generation, input.commandId,
+        input.retainedFence ?? null, input.retainedFence ?? null, input.retainedFence ?? null, input.commandId,
+        input.requireExclusiveHandle ? 1 : 0,
+        input.runId, input.assignmentId, input.assignmentEpoch, input.commandId, input.physicalKey).changes === 1);
+    },
+    isWorkspaceWorkloadCancelled(input) {
+      return db.prepare(`
+        SELECT 1 FROM workspace_workload_cancel_fences
+        WHERE target_command_id = ? AND run_id = ? AND assignment_id = ?
+          AND assignment_epoch = ? AND workspace_id = ? AND generation = ?
+      `).get(input.commandId, input.runId, input.assignmentId, input.assignmentEpoch,
+        input.handle, input.generation) !== undefined;
+    },
+    recordWorkspaceMaterialization(id, generation, digest) {
+      storage.write(() => {
+        const changed = db.prepare(
+          `UPDATE workspace_execution_state
+             SET materialization_generation = 1, materialization_digest = ?
+           WHERE workspace_id = ? AND generation = ? AND input_digest IS NOT NULL
+             AND (materialization_digest IS NULL OR materialization_digest = ?)`,
+        ).run(digest, id, generation, digest);
+        if (changed.changes !== 1)
+          throw new HostRuntimeEventError(
+            "command_invariant_conflict",
+            "workspace materialization does not match its retained generation",
+          );
+      });
     },
     getWorkspaceWait(waitId) {
       return (
@@ -2354,6 +2684,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     insertWorkspace(row) {
       return storage.write(() => {
+        if (db.prepare(`SELECT 1 FROM workspaces physical
+          JOIN workspace_execution_state state ON state.workspace_id=physical.id
+          WHERE physical.real_path=? AND physical.released_at IS NULL AND state.operation_claim_id IS NOT NULL`
+        ).get(row.realPath))
+          throw new SupervisorError("CONFLICT", "A Git operation still owns this physical worktree", {
+            details: { reason: "workspace_writer_active" },
+          });
         db.prepare(
           `INSERT INTO workspaces
            (id, run_id, project_slug, kind, path, real_path, repo_path, run_dir, context_mounts, adopted_at, released_at, company_id)
@@ -2378,7 +2715,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       return storage.write(() => {
         const result = db
           .prepare(
-            "UPDATE workspaces SET released_at = ? WHERE id = ? AND released_at IS NULL",
+            `UPDATE workspaces SET released_at = ? WHERE id = ? AND released_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM workspace_execution_state WHERE workspace_id=workspaces.id AND operation_claim_id IS NOT NULL)`,
           )
           .run(releasedAt, id);
 
@@ -2570,7 +2908,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     putReceiptWithRuntimeEvent(
       receipt: CommandReceiptRow,
-      eventInput: AppendRuntimeEventInput,
+      eventInput: OutboxEventInput,
       admission?: ReceiptAdmission,
     ) {
       return storage.write(() => {
@@ -2585,6 +2923,16 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
         try {
           admitRuntimeReceipt(receipt, admission);
+          const prior = (receipt.body as { priorWorkspaceReceipt?: CommandReceiptRow }).priorWorkspaceReceipt;
+          if (prior) {
+            const current = state.getReceipt(receipt.commandId);
+            if (!current || current.eventId !== prior.eventId || !prior.eventId ||
+              current.requestDigest !== receipt.requestDigest ||
+              !isUnconfirmedWorkspaceReceipt(current) ||
+              receipt.phase === "accepted")
+              throw new HostRuntimeEventError("command_invariant_conflict",
+                "Workspace reconciliation lost its original terminal receipt");
+          }
           const event = appendRuntimeEventInTransaction(db, {
             limits,
             hostKey,
@@ -2603,7 +2951,32 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
                   terminalSequence: event.sequence,
                 }),
           });
+          if (prior)
+            db.prepare(`UPDATE command_receipts SET terminal_stream_id=?, terminal_sequence=?
+              WHERE command_id=? AND event_id=?`).run(event.streamId, event.sequence, receipt.commandId, event.eventId);
           settleReceiptBudget(db, receipt);
+          if (receipt.kind === "workspace.checkpoint" || receipt.kind === "workspace.restore" || receipt.kind === "workspace.publish" || receipt.kind === "workspace.sync") {
+            const body = receipt.body as { workspacePhase?: unknown; workspaceTarget?: unknown };
+            if ((body.workspacePhase === "completed" || body.workspacePhase === "rejected") && isWorkspaceGenerationTarget(body.workspaceTarget))
+              db.prepare(`UPDATE workspace_execution_state SET operation_claim_id=NULL
+                WHERE workspace_id=? AND generation=? AND operation_claim_id=?`)
+                .run(body.workspaceTarget.handle, body.workspaceTarget.generation, receipt.commandId);
+          }
+          if (receipt.kind === "workspace.release") {
+            const body = receipt.body as { workspacePhase?: unknown; workspaceTarget?: unknown; result?: { dispositionId?: string } };
+            if (body.workspacePhase === "completed" && isWorkspaceGenerationTarget(body.workspaceTarget)) {
+              const { handle, generation } = body.workspaceTarget;
+              const owner = db.prepare(`UPDATE workspace_execution_state SET operation_claim_id=NULL
+                WHERE workspace_id=? AND generation=? AND operation_claim_id=?`
+              ).run(handle, generation, body.result?.dispositionId ?? null);
+              const workspace = db.prepare(`UPDATE workspaces SET released_at=? WHERE id=? AND released_at IS NULL AND run_id=?`
+              ).run(receipt.completedAt, handle, receipt.runId);
+              if (owner.changes !== 1 || workspace.changes !== 1)
+                throw new SupervisorError("FENCED", "The archive owner changed before settling release", {
+                  details: { reason: "stale_workspace_claim" },
+                });
+            }
+          }
 
           db.exec("COMMIT");
           notifyCapacity();
@@ -3200,7 +3573,7 @@ function appendRuntimeEventInTransaction(
     hostKey: string;
     bootId: string;
     now: () => Date;
-    input: AppendRuntimeEventInput;
+    input: OutboxEventInput;
     limits: RuntimeLimits;
   },
 ): HostRuntimeEventRow {
@@ -3215,13 +3588,24 @@ function appendRuntimeEventInTransaction(
   }
 
   const sequenceText = sequence.toString();
-  const envelope = buildRuntimeEventEnvelope({
+  const identity = {
     hostKey: args.hostKey,
     hostBootId: args.bootId,
     streamId: stream.stream_id,
     sequence: sequenceText,
-    draft: args.input.draft,
-  });
+  };
+  const { draft } = args.input;
+  const envelope = draft.eventType === "workspace.command.terminal"
+    ? {
+        ...identity,
+        envelopeVersion: 2,
+        eventId: deterministicRuntimeEventId(identity),
+        eventType: draft.eventType,
+        occurredAt: draft.occurredAt,
+        payloadSchema: "maister.workspace.command.terminal.v1",
+        payload: draft.payload,
+      }
+    : buildRuntimeEventEnvelope({ ...identity, draft });
   const envelopeJson = JSON.stringify(envelope);
   const encodedBytes = Buffer.byteLength(envelopeJson, "utf8");
   const partition = spendEventCapacity(db, args.limits, {
@@ -3466,7 +3850,7 @@ function auditRuntimeEventState(db: DatabaseSync): void {
         "runtime event outbox sequences are not contiguous",
       );
     }
-    const envelope = RuntimeEventEnvelopeSchema.parse(
+    const envelope = RuntimeEventWireEnvelopeSchema.parse(
       JSON.parse(row.envelope_json),
     );
 

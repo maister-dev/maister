@@ -1,4 +1,5 @@
 openapi: 3.0.3
+x-designed-stage-c-workspace-profile: stage-c-workspace.schema.yaml
 info:
   title: MAIster Supervisor HTTP API
   version: "0.12.0"
@@ -39,6 +40,12 @@ info:
     pre-ADR-166 path field (`runId`, `projectSlug`, `worktreePath`,
     `repoPath`, `confineRoot`, `contextMounts`) is
     `409 PRECONDITION {reason: legacy_field, field}`.
+    A Web instance configured with a selected execution host pins its requests
+    using `X-Maister-Execution-Host-Key` after health discovery. A mismatched
+    key returns `409 EXECUTOR_UNAVAILABLE {reason: host_identity_mismatch}`
+    before reading a receipt or accepting a command. This header is optional
+    for existing local callers and is an identity check within the trusted
+    deployment network.
     Before admitting any executable command, the host confirms retirement of
     retained lower-epoch processes. An unconfirmed retirement returns
     `503 EXECUTOR_UNAVAILABLE` with `session_eviction_exit_unconfirmed`, retains
@@ -108,6 +115,461 @@ tags:
       composition can address this socket. Nothing here takes a filesystem path
       or an active assignment.
 paths:
+  /v1/repositories/{repositoryId}/refs:
+    parameters:
+      - { name: repositoryId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [execution-host]
+      operationId: stageCRepositoryRefs
+      summary: List branch refs from an approved supervisor Git source
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/RefQuery
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 512 } }
+      responses:
+        "200": { description: Up to 100 branch refs and the default ref. }
+        "400": { description: Invalid repository identifier or cursor. }
+        "404": { description: Approved repository is absent. }
+        "409": { description: Addressed host key mismatch. }
+        "503": { description: Upstream observation failed. }
+  /v1/repositories/resolve-revision:
+    post:
+      tags: [execution-host]
+      operationId: stageCResolveRevision
+      summary: Observe a full approved branch ref and exact commit
+      description: An optional pinnedCommit asks the host to expand a commit prefix and verify reachability from the advertised branch tip.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/SourceQuery
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [repositoryId, ref]
+              properties:
+                repositoryId: { type: string }
+                ref: { type: string }
+                pinnedCommit: { type: string, pattern: '^[0-9a-fA-F]{7,64}$' }
+      responses:
+        "200": { description: Approved repository ID and branch tip with the full verified pinnedCommit when requested. }
+        "400": { description: Invalid full ref or repository identifier. }
+        "404": { description: Approved repository is absent. }
+        "409": { description: Ref refusal or addressed host key mismatch. }
+        "503": { description: Upstream observation failed. }
+  /v1/workspaces/prepare:
+    post:
+      tags: [execution-host]
+      operationId: stageCPrepare
+      summary: Accept a fenced workspace preparation operation
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCPrepareRequest
+      description: The linked versioned profile defines the strict body and replay identity.
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: The exact accepted command. Its replay returns the same acceptance.
+          headers:
+            Location:
+              schema: { type: string }
+              description: The selected host's addressed command receipt resource.
+        "400": { description: Invalid payload or owner shape. }
+        "409": { description: "Command digest, assignment, source approval or host key mismatch." }
+        "503": { description: Workspace protocol or execution storage unavailable. }
+  /v1/workspaces/{id}/materialization:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [execution-host]
+      operationId: stageCMaterialize
+      summary: Accept a sealed input generation for an owned workspace
+      description: >
+        The first object is the sealed manifest. The remaining objects must
+        belong to the exact assignment and match the manifest. A Flow persona
+        entry binds the node, agent, installation and definition digest. At
+        session creation the host selects only the current node's subagent
+        from that verified generation.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCMaterializeRequest
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: The exact accepted command. Its replay returns the same acceptance.
+          headers:
+            Location:
+              schema: { type: string }
+              description: The selected host's addressed command receipt resource.
+        "400": { description: Invalid payload or owner shape. }
+        "409": { description: "Command digest, assignment, target or host key mismatch." }
+        "503": { description: Workspace protocol or execution storage unavailable. }
+  /v1/workspaces/{id}/commands:
+    post:
+      tags: [execution-host]
+      operationId: stageCRunWorkload
+      summary: Execute one declaration from the retained workspace input generation
+      description: >
+        A setup declaration runs the frozen package setup.sh in its host-local
+        package directory. Its distinct command can reuse the verified setup
+        for the same project, package revision and asset digest, returning
+        setupReused with no new process or output objects. Dependent actions
+        refuse with workspace_setup_unavailable when successful setup evidence
+        is missing or invalid.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCRunWorkloadRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects a retained receipt for output and process retirement.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid workload request. }
+        "409": { description: Workspace identity or owner mismatch. }
+  /v1/workspaces/{id}/commands/{commandId}/cancel:
+    post:
+      tags: [execution-host]
+      operationId: stageCCancelWorkload
+      summary: Cancel the exact workload and observe its group retirement
+      description: A cancellation can arrive first for the exact active workspace generation. Acceptance atomically persists a fence against late delivery of the same owned workload. Replay returns the original acceptance.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCCancelWorkloadRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: commandId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the cancellation receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid cancellation request. }
+        "409": { description: Retained workload or workspace owner does not match this cancellation. }
+  /v1/workspaces/{id}/checkpoint:
+    post:
+      tags: [execution-host]
+      operationId: stageCCheckpoint
+      summary: Capture the Git tree of an owned worktree
+      description: The current assignment and generation must match. A live process or an outstanding Git claim prevents capture. The completed receipt identifies the private Git tree without exposing its filesystem path.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCCheckpointRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the retained checkpoint receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid checkpoint request. }
+        "409": { description: Workspace identity or current owner mismatch. }
+  /v1/workspaces/{id}/restore:
+    post:
+      tags: [execution-host]
+      operationId: stageCRestore
+      summary: Restore a retained Git checkpoint on its owning generation
+      description: Restore requires a completed checkpoint for the retained workspace and generation. Rewind restores the captured snapshot. A fresh attempt resets to the checkpoint parent, removes unignored work and preserves ignored caches. Replay of a terminal command returns its original receipt. An interrupted mutation retains the writer fence until the resulting tree can be proved.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCRestoreRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the retained restore receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid restore request. }
+        "409": { description: Workspace identity or current owner mismatch. }
+  /v1/workspaces/{id}/publication-target:
+    get:
+      tags: [execution-host]
+      operationId: stageCGetPublicationTarget
+      summary: Observe an approved publication branch for a retained workspace
+      description: Reads the exact ref without mutating Git. A null prior target means the approved repository advertises no such branch.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/PublicationTargetQuery
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: generation, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: remoteId, in: query, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: targetRef, in: query, required: true, schema: { type: string, maxLength: 256 } }
+      responses:
+        "200":
+          description: The observed target witness.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [generation, remoteId, targetRef, priorTarget]
+                properties:
+                  generation: { type: integer, minimum: 1 }
+                  remoteId: { type: string }
+                  targetRef: { type: string }
+                  priorTarget: { type: string, nullable: true, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+        "400": { description: Invalid query. }
+        "404": { description: No retained workspace on this host. }
+        "409": { description: The repository or generation does not match the retained checkout. }
+        "503": { description: The approved repository could not be read. }
+  /v1/workspaces/{id}/pull-request:
+    get:
+      tags: [execution-host]
+      operationId: stageCGetWorkspacePullRequest
+      summary: Observe the provider PR and its retained checkout at the owning supervisor
+      description: Using the configured repository and host credentials, read the recorded PR number and verify its base. Return the provider head and the stable current checkout head. This operation has no Git or provider write effect.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/WorkspacePullRequestQuery
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: generation, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: remoteId, in: query, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: number, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 9007199254740991 } }
+        - { name: url, in: query, required: true, schema: { type: string, format: uri, maxLength: 2048 } }
+        - { name: baseRef, in: query, required: true, schema: { type: string, maxLength: 256 } }
+      responses:
+        "200": { description: The current provider and checkout evidence. }
+        "400": { description: Invalid query. }
+        "404": { description: No retained workspace on this host. }
+        "409": { description: The configured source or recorded provider identity could not be verified. }
+        "503": { description: The approved provider could not confirm the PR. }
+  /v1/workspaces/{id}:
+    delete:
+      tags: [execution-host]
+      operationId: stageCRelease
+      summary: Release a physically removed worktree after verified archival
+      description: Binds release to the original owner and archive. Changed tracked or unignored content refuses before removal. Replay after interruption verifies the retained ref and the physical absence of the original checkout.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCReleaseRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. Use the Location header to verify disposal.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid release request or owner. }
+        "409": { description: Different host or competing retained release. }
+  /v1/workspaces/{id}/preserve:
+    post:
+      tags: [execution-host]
+      operationId: stageCPreserve
+      summary: Preserve an owned worktree before archival release
+      description: Requires the retained workspace-operation owner and an exclusive physical worktree. The host commits the checkout snapshot to a private retained ref and keeps its writer claim until release.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCPreserveRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the verified archive receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid archive request or owner. }
+        "409": { description: Different host or command digest. }
+  /v1/workspaces/{id}/sync:
+    post:
+      tags: [execution-host]
+      operationId: stageCSync
+      summary: Sync a retained workspace to its approved Git target
+      description: |
+        The original supervisor compares the source HEAD and exact remote tip,
+        prepares a candidate away from the live checkout and applies it under a
+        retained workspace fence. A dedicated branch can be published under a
+        separate lease on the approved remote. A resolver may request conflict
+        preparation when addressed `/capabilities` advertises `workspaceSyncResolver: 1`. The
+        verification or abort command references the completed preparation,
+        original claim, workspace generation and a higher fence. Replay reads the
+        same preparation and publication evidence.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCSyncRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the verified sync receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: Invalid sync request or owner. }
+        "409": { description: Different host or command digest. }
+  /v1/workspaces/{id}/publication:
+    post:
+      tags: [execution-host]
+      operationId: stageCPublish
+      summary: Publish the approved commit from its retained workspace
+      description: The selected-host pilot accepts push, promote and openPullRequest with a workspaceOperation owner. A clean owned worktree, configured repository ID and exact prior target are required. A promotion can compute a merge or rebase candidate in a private ref and keep the reviewed checkout unchanged. An openPullRequest command binds distinct source and base refs and the reviewed base commit. The host verifies the push and uses its configured provider credentials before confirming the PR URL and number. Replay can settle the proved target and an existing PR after interrupted receipt persistence.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCPublishRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: Accepted. The Location header selects the retained publication receipt.
+          headers:
+            Location:
+              schema: { type: string }
+        "400": { description: "Invalid publication request, owner, or workspace generation." }
+        "409": { description: "Different host, command digest, or retained owner." }
+  /v1/workspaces/{id}/review-fingerprint:
+    get:
+      tags: [execution-host]
+      operationId: stageCGetReviewFingerprint
+      summary: Verify the current review fingerprint for a pinned workspace generation
+      description: Returns the SHA-256 of the same bounded Review snapshot used by the diff endpoint. This operation creates no runtime object or event.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/ReviewFingerprintQuery
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: generation, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: base, in: query, required: true, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' } }
+      responses:
+        "200":
+          description: The pinned base and verified snapshot digest.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [generation, baseCommit, sha256]
+                properties:
+                  generation: { type: integer, minimum: 1 }
+                  baseCommit: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+                  sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        "400": { description: Invalid handle or query. }
+        "404": { description: No retained workspace on this host. }
+        "409": { description: The retained generation or Git range cannot be verified. }
+  /v1/workspaces/{id}/diff:
+    get:
+      tags: [execution-host]
+      operationId: stageCGetWorkspaceDiff
+      summary: Seal a bounded Git patch from the retained workspace
+      description: A checkpoint ID selects the verified private snapshot for this exact retained owner and generation. Commit ranges must be reachable from the observed checkout. The sealed UTF-8 patch is limited to 64 KiB.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/DiffQuery
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: generation, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: base, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' } }
+        - { name: head, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' } }
+        - { name: checkpointId, in: query, schema: { type: string, format: uuid }, description: Exclusive of base and head. }
+        - { name: format, in: query, schema: { type: string, enum: [review] }, description: "Seals the patch and native Git file statistics together. Requires base or checkpointId and excludes head." }
+      responses:
+        "200": { description: Generation and sealed patch reference. A checkpoint request also returns the verified checkpoint commit. }
+        "400": { description: Invalid generation or diff parameters. }
+        "404": { description: No retained workspace on this host. }
+        "409": { description: "Unavailable or foreign range or checkpoint, or a patch above 64 KiB." }
+  /v1/workspaces/{id}/log:
+    get:
+      tags: [execution-host]
+      operationId: stageCGetWorkspaceLog
+      summary: Seal a bounded Git history page from the owned workspace
+      description: The cursor is scoped to the stable host identity, workspace, generation and observed HEAD. The result references a sealed UTF-8 JSON diagnostic up to 64 KiB.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/LogQuery
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: generation, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: cursor, in: query, schema: { type: string, minLength: 1, maxLength: 512 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: base, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }, description: Use with head for an explicit plain text commit set. }
+        - { name: head, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }, description: "Use with base. An explicit range excludes cursor and limit." }
+      responses:
+        "200":
+          description: Exact generation and sealed log reference.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [generation, object]
+                properties:
+                  generation: { type: integer, minimum: 1 }
+                  baseCommit: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+                  headCommit: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+                  object:
+                    type: object
+                    additionalProperties: false
+                    required: [objectId, sha256]
+                    properties:
+                      objectId: { type: string, format: uuid }
+                      sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        "400": { description: Invalid generation or pagination bounds. }
+        "404": { description: No retained workspace on this host. }
+        "409": { description: "Host, generation or cursor mismatch, unavailable Git history, or a page above 64 KiB." }
+  /v1/commands/{commandId}:
+    parameters:
+      - { name: commandId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [execution-host]
+      operationId: stageCGetCommandReceipt
+      summary: Retained accepted or terminal addressed workspace receipt
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/WorkspaceCommandReceipt
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - name: eventId
+          in: query
+          description: Return the exact terminal receipt for this event, including the original indeterminate receipt after reconciliation.
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Versioned receipt containing either the original acceptance or exact terminal evidence. }
+        "400": { description: Invalid event ID. }
+        "404": { description: No matching workspace receipt on this host. }
+        "409": { description: Addressed host key mismatch. }
   /capabilities:
     get:
       tags: [execution-host]
@@ -1573,6 +2035,11 @@ paths:
         `409 PRECONDITION missing_envelope`; a payload carrying a pre-ADR-166
         path field is `409 PRECONDITION legacy_field` naming the field
         (`details.field`).
+
+        An addressed read-only primary or sibling checkout is write-protected by
+        the supervisor's native process wrapper for the adapter and its
+        descendants. A missing runtime driver returns `EXECUTOR_UNAVAILABLE`
+        with reason `read_only_process_unavailable` before adapter start.
 
         (Designed — ADR-185/184) A personal-librarian session (`run_kind =
         librarian`, a `_librarian` directory handle) passes its OWN
@@ -3652,6 +4119,24 @@ components:
             Opaque `capability_instructions` object previously published under
             the same run and assignment fence. The host validates the kind and
             derives `MAISTER_CAPABILITY_INSTRUCTIONS_PATH` privately.
+        claudePermissions:
+          type: object
+          additionalProperties: false
+          description: >
+            Optional policy for an addressed Claude workspace. The host
+            builds native settings and requires mode acknowledgement before
+            dispatching a prompt. Read-only and strict tool arbitration take
+            precedence over bypassPermissions. Any path guard comes from the
+            existing hooksConfig and the host's packaged script.
+          properties:
+            allow:
+              type: array
+              minItems: 1
+              maxItems: 128
+              items: { type: string, minLength: 1, maxLength: 512 }
+            defaultMode:
+              type: string
+              enum: [default, plan, bypassPermissions]
         outputObjects:
           type: array
           maxItems: 32
@@ -4239,6 +4724,16 @@ components:
       required: [dataPlaneVersion, eventStream, asyncPrompt, runtimeObjects, limits]
       properties:
         dataPlaneVersion: { type: string, enum: ["execution-host-data-plane.v1"] }
+        workspaceProtocol:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items: { type: integer, enum: [1] }
+          description: Present for an addressed manager request when approved workspace sources are configured.
+        workspaceSyncResolver:
+          type: integer
+          enum: [1]
+          description: Supports retained Git conflict preparation, verification and abort on this host.
         eventStream: { type: boolean }
         asyncPrompt: { type: boolean }
         runtimeObjects: { type: boolean }
@@ -4383,6 +4878,33 @@ components:
         - unknown_workspace
         - workspace_released
         - workspace_rejected
+        - source_ref_unapproved
+        - source_commit_unavailable
+        - invalid_request
+        - request_too_large
+        - stale_assignment_epoch
+        - stale_workspace_generation
+        - workspace_preparation_pending
+        - workspace_input_changed
+        - read_only_process_unavailable
+        - workspace_diff_range_invalid
+        - workspace_diff_too_large
+        - workspace_log_cursor_invalid
+        - workspace_log_too_large
+        - workspace_template_context_invalid
+        - workspace_setup_unavailable
+        - workspace_checkpoint_unknown
+        - workspace_writer_active
+        - target_ref_changed
+        - publication_provider_unavailable
+        - publication_refused
+        - sync_conflict
+        - non_fast_forward
+        - head_changed
+        - stale_workspace_claim
+        - retained_disposition_required
+        - tool_not_declared
+        - workspace_protocol_unsupported
         - workspace_in_use
         - invalid_librarian_workspace
         - legacy_field

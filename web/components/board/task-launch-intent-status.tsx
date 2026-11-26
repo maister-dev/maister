@@ -84,6 +84,9 @@ export function TaskLaunchIntentStatus({
                 ? "running"
                 : (receipt?.state ?? "accepted");
   const deliveryStrategy = receipt?.snapshot.deliveryPolicy?.strategy;
+  const selectedHost = receipt?.executionHostSelection;
+  const observedHost = receipt?.executionHostPlacement;
+  const selectedHostName = observedHost?.savedDisplayName ?? selectedHost?.effectiveExecutionHostId;
   const deliveryKey =
     deliveryStrategy === "publish_branch"
       ? "strategyPublishBranch"
@@ -122,6 +125,26 @@ export function TaskLaunchIntentStatus({
               <dt className="text-mute">{t("admission.revision")}</dt>
               <dd>{receipt.taskRevision}</dd>
             </div>
+            {selectedHost && selectedHostName ? (
+              <>
+                <div>
+                  <dt className="text-mute">{t("admission.selectedSupervisor")}</dt>
+                  <dd className="break-words">
+                    {selectedHost.requestedExecutionHostId === null
+                      ? t("executionHostDefaultNamed", { name: selectedHostName })
+                      : selectedHostName}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-mute">{t("admission.actualSupervisor")}</dt>
+                  <dd className="break-words">
+                    {observedHost?.actual
+                      ? t("admission.actualSupervisorAtEpoch", observedHost.actual)
+                      : t("admission.supervisorAwaitingDispatch")}
+                  </dd>
+                </div>
+              </>
+            ) : null}
             {receipt.snapshot.flowRefId ? (
               <div>
                 <dt className="text-mute">{t("flow")}</dt>

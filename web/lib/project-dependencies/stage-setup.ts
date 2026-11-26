@@ -7,6 +7,7 @@ import type { PreparedCapability } from "@/lib/capabilities/import";
 
 import { runMaterialSetup, withSetupAuthority } from "./setup";
 
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import { requiresExplicitNativeFindingsEnablement } from "@/lib/flows/enablement-states";
 import { MaisterError } from "@/lib/errors";
 
@@ -21,11 +22,13 @@ async function settle(input: SetupMaterial, memberRef: string): Promise<void> {
 
 export async function stageFlowSetup(
   db: Db,
+  projectId: string,
   revision: InstalledRevision,
   memberRef: string,
   signal?: AbortSignal,
 ): Promise<void> {
   if (
+    projectFlowSetupOwner(projectId) === "selectedHost" ||
     revision.setupStatus !== "pending" ||
     requiresExplicitNativeFindingsEnablement(revision.manifest)
   )
@@ -64,13 +67,14 @@ export async function stageCapabilitySetup(
 
 export function settlePreparedPackageSetups(
   db: Db,
+  projectId: string,
   members: PreparedMembers,
   authorize: (tx: Db) => Promise<void>,
   signal?: AbortSignal,
 ): Promise<void> {
   return withSetupAuthority(db, authorize, async () => {
     for (const [ref, flow] of members.flows)
-      await stageFlowSetup(db, flow, ref, signal);
+      await stageFlowSetup(db, projectId, flow, ref, signal);
     for (const [ref, cap] of members.capabilities)
       await stageCapabilitySetup(db, cap, ref, signal);
   });

@@ -653,6 +653,34 @@ row is already `Done` with a deadline, which is what
 the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
 [`run-results.md`](run-results.md) and [`workspaces.md`](workspaces.md).
 
+## Host-owned disposal Stage C (Implemented)
+
+Acquire the current workspace operation claim before disposal. Use the
+retained host, handle and generation after assignment release. A preserved
+Git witness or a verified clean/empty resource must precede deletion.
+Persist the exact disposal receipt before finalizing the Web lifecycle.
+Keep pending, ambiguous and potentially dirty work discoverable in
+reconciliation. C-10 verifies the result against concurrent publication.
+
+Manual archive of a parked addressed Run uses the existing lifecycle claim,
+with PostgreSQL 0390 binding the released assignment, generation, preservation
+command and release command. The supervisor verifies writer retirement and
+aliases, captures tracked and unignored files under a private retained Git
+ref, and keeps the physical workspace claim. Release checks the current
+HEAD and captured tree again. Changed data keeps the worktree available.
+After an interrupted removal the supervisor requires the same retained
+archive and observes the checkout absent before settling. Web marks the
+worktree removed after the canonical release receipt.
+
+Retention GC selects expired addressed Git worktrees using the existing
+deadline, status and evaluation holds. The worker rechecks eligibility under
+the lifecycle claim, then sends preservation and release to the original
+supervisor. PostgreSQL 0392 rejects any addressed archive or retention
+tombstone that lacks the matching canonical release and retained commit.
+The local filesystem reconciler enumerates legacy path owners. A pending
+addressed operation remains bound to its receipt and is retried by the
+addressed retention sweep and command recovery.
+
 ## Expectations
 
 - Reconcile is **allow-list `Running`-only**: a row whose `runs.status` is

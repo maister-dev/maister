@@ -254,8 +254,16 @@ erDiagram
         text run_id FK
         text project_id FK
         text branch
-        text worktree_path UK "globally unique"
-        text parent_repo_path
+        text worktree_path UK "nullable for host_owned"
+        text parent_repo_path "nullable for host_owned"
+        text ownership_kind "legacy_path|host_owned"
+        text execution_host_id FK "addressed workspace owner"
+        text execution_workspace_id "opaque handle scoped to its host"
+        text preparation_assignment_id FK "owner bound to Run and host"
+        integer workspace_generation
+        integer workspace_materialization_generation
+        text workspace_input_digest
+        text root_workspace_id FK "shared root on the same host"
         timestamp created_at
         timestamp removed_at
         timestamp scheduled_removal_at "GC prune deadline"
@@ -837,7 +845,10 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   concatenation do not load the full transcript into the worker.
 - `scratch_capability_profiles.run_id` UNIQUE — run-scoped capability snapshot
   lookup.
-- `workspaces.worktree_path` UNIQUE — globally unique across the host.
+- `workspaces.worktree_path` UNIQUE — preserves uniqueness for legacy local
+  paths. Migration `0379` permits null on host-owned rows and scopes the
+  unique live Supervisor handle to its execution host. See
+  [execution host storage](execution-hosts-domain.md#stage-c-workspace-ownership-migration-implemented-adr-219).
 - **(ADR-140, migration 0105, Implemented)** `workspaces_pr_state_scan_idx` partial index
   on `(project_id) WHERE pr_url IS NOT NULL AND (pr_state IS NULL OR pr_state =
   'open')` — the `pr_state_scan` candidate query (open / never-checked PRs per

@@ -36,7 +36,10 @@ import type {
   RuntimeObjectState,
   WorkspaceKind,
 } from "./types";
-import type { RuntimeEventEnvelope } from "./runtime-events";
+import type { RuntimeEventWireEnvelope } from "./runtime-events";
+import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspaceRetainedRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../../runtime/workspace-prepare";
+import type { WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceCommandReceipt, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../../runtime/workspace-prepare";
+import type { WorkspacePullRequestQuery, WorkspacePullRequestStatus } from "../../../runtime/workspace-prepare";
 
 // ADR-166 D10: the typed boundary domain code addresses execution through.
 // `ExecutionHostTransport` is the replaceable wire (local-direct today); the
@@ -55,6 +58,8 @@ export type HostHealth =
 
 export type ExecutionHostDataPlaneCapabilities = {
   dataPlaneVersion: "execution-host-data-plane.v1";
+  workspaceProtocol?: [1];
+  workspaceSyncResolver?: 1;
   eventStream: boolean;
   asyncPrompt: boolean;
   runtimeObjects: boolean;
@@ -181,7 +186,7 @@ export type RuntimeEventSpanPage =
   | Readonly<{
       state: "complete" | "partial";
       nextAfter: string | null;
-      events: RuntimeEventEnvelope[];
+      events: RuntimeEventWireEnvelope[];
     }>
   | Readonly<{
       state: "unavailable";
@@ -286,7 +291,7 @@ export interface ExecutionHostTransport {
   streamRuntimeEvents(opts?: {
     afterSequence?: string;
     signal?: AbortSignal;
-  }): AsyncGenerator<RuntimeEventEnvelope, void, void>;
+  }): AsyncGenerator<RuntimeEventWireEnvelope, void, void>;
   acknowledgeRuntimeEvents(input: {
     streamId: string;
     throughSequence: string;
@@ -299,6 +304,22 @@ export interface ExecutionHostTransport {
     signal?: AbortSignal;
   }): Promise<RuntimeEventSpanPage>;
   getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
+  sendWorkspacePreparation?(request: WorkspacePrepareRequest): Promise<void>;
+  sendWorkspaceMaterialization?(handle: string, request: WorkspaceMaterializeRequest): Promise<void>;
+  sendWorkspaceWorkload?(handle: string, request: WorkspaceWorkloadRequest): Promise<void>;
+  cancelWorkspaceWorkload?(handle: string, targetCommandId: string, request: WorkspaceCancelWorkloadRequest): Promise<void>;
+  getWorkspaceCommandReceipt?(commandId: string, eventId?: string): Promise<WorkspaceCommandReceipt | null>;
+  getWorkspaceStatus?(handle: string, generation: number): Promise<WorkspaceStatus>;
+  getWorkspaceDiff?(handle: string, query: WorkspaceDiffQuery): Promise<WorkspaceEvidenceObject>;
+  getWorkspaceReviewFingerprint?(handle: string, input: { generation: number; base: string }): Promise<WorkspaceReviewFingerprint>;
+  getWorkspaceLog?(handle: string, query: WorkspaceLogQuery): Promise<WorkspaceEvidenceObject>;
+  sendWorkspaceGitCommand?(handle: string, request: WorkspaceCheckpointRequest | WorkspaceRestoreRequest): Promise<void>;
+  sendRetainedWorkspaceCommand?(request: WorkspaceRetainedRequest): Promise<void>;
+  getWorkspacePublicationTarget?(handle: string, input: Omit<WorkspacePublicationTarget, "priorTarget">): Promise<WorkspacePublicationTarget>;
+  getWorkspacePullRequest?(handle: string, input: WorkspacePullRequestQuery): Promise<WorkspacePullRequestStatus>;
+  observeWorkspaceRevision?(repositoryId: string, ref: string): Promise<string>;
+  resolveWorkspaceRevision?(repositoryId: string, ref: string, pinnedCommit?: string): Promise<WorkspaceRevisionObservation>;
+  listWorkspaceSourceRefs?(repositoryId: string, cursor?: string): Promise<WorkspaceSourceRefPage>;
   retireCommand(
     commandId: string,
     request: CommandRetirementRequest,

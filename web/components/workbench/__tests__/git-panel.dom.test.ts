@@ -832,7 +832,7 @@ describe("WorkbenchGitPanel — Update", () => {
     expect(refreshMock).toHaveBeenCalledTimes(1);
   });
 
-  it("offers the resolver in Review, on by default, with the runner and the project strategy", async () => {
+  it.each([false, true])("uses the Review resolver on the owning workspace (addressed: %s)", async (addressed) => {
     states = [
       gitState({
         runStatus: "Review",
@@ -841,6 +841,7 @@ describe("WorkbenchGitPanel — Update", () => {
         publishedRemote: "origin",
         publishedAt: new Date().toISOString(),
         upstream: { remote: "origin", branch: PUBLIC },
+        ...(addressed ? { workspaceStatus: { workingTree: "clean", headState: "detached" } } : {}),
         aheadBehind: {
           base: null,
           target: { ahead: 1, behind: 0 },
@@ -864,7 +865,8 @@ describe("WorkbenchGitPanel — Update", () => {
       "merge",
     );
     // A published branch pushes by default — the server's `push ?? published`.
-    expect(must<HTMLInputElement>("git-panel-update-push").checked).toBe(true);
+    if (addressed) expect(byTestId("git-panel-update-push")).toBeNull();
+    else expect(must<HTMLInputElement>("git-panel-update-push").checked).toBe(true);
 
     await choose(
       must<HTMLSelectElement>("git-panel-update-runner"),
@@ -876,7 +878,7 @@ describe("WorkbenchGitPanel — Update", () => {
     expect(posts()[0].body).toEqual({
       onto: "published",
       strategy: "merge",
-      push: true,
+      push: !addressed,
       agent: true,
       runnerId: "runner-1",
     });
@@ -1337,15 +1339,17 @@ describe("WorkbenchGitPanel — Pull request", () => {
 
   // D12: outside Review nothing asserts readiness, so the click is confirmed
   // through the shared destructive confirmation before anything is sent.
-  it("finalizes outside Review only after a confirmation, with no Review-only field", async () => {
+  it.each([false, true])("confirms PR finalization outside Review (addressed: %s)", async (addressed) => {
     states = [
       published({
         pr: { url: PR_URL, number: 42, state: "open", hasConflicts: null },
         actions: actions(["openPr", "finalizePr"]),
+        ...(addressed ? { workspaceStatus: { workingTree: "clean", headState: "detached" } } : {}),
       }),
     ];
     render();
     await settle();
+    if (addressed) expect(byTestId("git-panel-action-openPr")).toBeNull();
 
     await click(must("git-panel-action-finalizePr"));
 

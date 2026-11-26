@@ -95,6 +95,11 @@ the original script digest before starting another process.
 
 A missing required script produces `setup_material_changed` and identifies the member. Cancellation while the process is waiting for permission to run is retryable when the owner can prove the gate stayed closed. Trust and enablement apply to the Flow revision still attached when the decision commits. A global grant persists for an unattached package. Its setup starts with an eligible project attachment. A failed replacement in another project retains its own diagnostic and permits other current owners to proceed.
 
+For a project configured for selected-supervisor execution, Flow setup stays
+pending until a Run prepares that trusted revision on its owning supervisor.
+Dependency workers still validate the installed revision, authorization and
+runner references. Capability setup follows its existing installation contract.
+
 Flow links are published by member. PostgreSQL stores each pending link in the same transaction as the effective change. After a lost acknowledgement the worker reads the committed decision and the current project Flow before touching its link. A missing source does not prevent repair. An occupied path leaves the existing file intact. Package management returns the accepted mutation, member and operation ID, and retries publication after the obstruction clears.
 
 Admission, bundle capture and worktree preparation use the same effective,

@@ -1,4 +1,7 @@
-import type { TaskLaunchClaim } from "@/lib/tasks/launch-dispatch-claim";
+import type {
+  TaskLaunchClaim,
+  TaskLaunchFlowClaim,
+} from "@/lib/tasks/launch-dispatch-claim";
 
 import { randomUUID } from "node:crypto";
 import {
@@ -29,7 +32,10 @@ import {
   acceptInteractiveTaskLaunch,
   taskLaunchSettingsToken,
 } from "@/lib/tasks/launch-intent";
-import { claimTaskLaunchIntent } from "@/lib/tasks/launch-dispatch-claim";
+import {
+  assertTaskLaunchFlowClaim,
+  claimTaskLaunchIntent,
+} from "@/lib/tasks/launch-dispatch-claim";
 import { taskLaunchErrorResponse } from "@/lib/tasks/launch-http";
 import { acceptedTaskLaunchExecution } from "@/lib/tasks/launch-execution";
 import { launchAcceptedTaskRun } from "@/lib/services/runs";
@@ -166,7 +172,7 @@ afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-async function allocated(): Promise<TaskLaunchClaim> {
+async function allocated(): Promise<TaskLaunchFlowClaim> {
   const taskId = randomUUID();
   const db = database.db;
 
@@ -193,6 +199,7 @@ async function allocated(): Promise<TaskLaunchClaim> {
   const claim = await claimTaskLaunchIntent(db, accepted.intentId);
 
   if (!claim) throw new Error("Fixture did not claim the accepted launch");
+  assertTaskLaunchFlowClaim(claim);
 
   return claim;
 }

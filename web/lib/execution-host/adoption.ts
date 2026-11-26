@@ -9,6 +9,7 @@ import { stat } from "node:fs/promises";
 import { and, eq, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
+import { requireLegacyWorkspacePaths } from "./legacy-workspace";
 import { asExecutionWorkspaceId } from "./types";
 
 import { COMPANY_RUNTIME_NAMESPACE } from "@/lib/flow-paths";
@@ -337,7 +338,7 @@ export async function loadWorkspaceSpecInput(
       .where(eq(workspaces.runId, ownerRunId))
       .limit(1);
 
-    return row ?? null;
+    return row ? requireLegacyWorkspacePaths(row) : null;
   };
   let workspace = await workspaceFor(runId);
 

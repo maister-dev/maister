@@ -5,6 +5,10 @@
 import type { Db } from "@/lib/execution-host/db";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
+import { createServer } from "node:http";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+
 import { asc, eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 import {
@@ -17,12 +21,16 @@ import {
   vi,
 } from "vitest";
 
+import { EXECUTION_HOST_KEY_HEADER } from "../../../../runtime/execution-host-address";
+
 import * as fullSchema from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import {
   mintAssignment,
   releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
+import { createExecutionHosts } from "@/lib/execution-host/client";
+import { listCommandsForRun } from "@/lib/execution-host/commands";
 import {
   ensureLocalExecutionHost,
   resetRegistrarStateForTests,
@@ -30,6 +38,7 @@ import {
 import {
   hostForAssignment,
   localHost,
+  primeResolverForTests,
   resetResolverForTests,
 } from "@/lib/execution-host/resolver";
 import { resetRuntimeEventConsumersForTests } from "@/lib/execution-host/events/consumer";
@@ -166,6 +175,156 @@ describe("registrar (real supervisor)", () => {
     expect(rows[0].capabilities.protocolVersion).toBe(1);
     expect(rows[0].lastBootId).toBe(identity.bootId);
   });
+
+  it("C-04: addressed admission refuses an incompatible or replaced peer and recovers its receipt after a same-key boot", async () => {
+    const registered = await ensureLocalExecutionHost({ db });
+    if (registered.status !== "registered")
+      throw new Error("owner not registered");
+    const owner = registered.host;
+    const runId = await seedRun(testDatabase.db, {
+      projectId,
+      runKind: "flow",
+    });
+    const assignment = await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, {
+        runId,
+        hostId: owner.id,
+        reason: "legacy_backfill",
+      }),
+    );
+    const directory = join(sup.runtimeRoot, "addressed-c04");
+    await mkdir(directory);
+    const other = await startRealSupervisor();
+    let upstream = other.url;
+    let changeProtocol = false;
+    let disableAsyncPrompt = false;
+    const effectRequests: string[] = [];
+    const proxyErrors: Error[] = [];
+    const proxy = createServer(async (request, reply) => {
+      const method = request.method ?? "GET";
+      const path = request.url ?? "/";
+      if (method !== "GET") effectRequests.push(method + " " + path);
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const headers = new Headers();
+        for (const name of ["content-type", EXECUTION_HOST_KEY_HEADER]) {
+          const value = request.headers[name];
+          if (typeof value === "string") headers.set(name, value);
+        }
+        const response = await fetch(upstream + path, {
+          method,
+          headers,
+          body: method === "GET" ? undefined : Buffer.concat(chunks),
+        });
+        const body = await response.json();
+        if (changeProtocol && path.startsWith("/health")) {
+          body.host.protocolVersion = 2;
+        }
+        if (disableAsyncPrompt && path === "/capabilities") {
+          body.asyncPrompt = false;
+        }
+        reply.writeHead(response.status, {
+          "content-type": "application/json",
+        });
+        reply.end(JSON.stringify(body));
+      } catch (error) {
+        if (error instanceof Error) proxyErrors.push(error);
+        reply.destroy(error as Error);
+      }
+    });
+    await new Promise<void>((resolve, reject) => {
+      proxy.once("error", reject);
+      proxy.listen(0, "127.0.0.1", resolve);
+    });
+    const port = proxy.address();
+    if (!port || typeof port === "string")
+      throw new Error("proxy not listening");
+    const restore = useRealSupervisorUrl(`http://127.0.0.1:${port.port}`);
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", owner.hostKey);
+    const hosts = createExecutionHosts({ db });
+    const spec = {
+      runId,
+      projectSlug: "addressed",
+      kind: "directory" as const,
+      path: directory,
+    };
+    const attempt = async () =>
+      (await hosts.forAssignment(assignment)).adoptWorkspace(spec);
+
+    try {
+      // Exercise production admission and outbound command routing through a
+      // single stable endpoint whose upstream is switched between real peers.
+      primeResolverForTests(owner);
+      await expect(attempt()).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "host_identity_mismatch" },
+      });
+      expect(effectRequests).toEqual([]);
+      expect(await listCommandsForRun(db, runId)).toEqual([]);
+
+      upstream = sup.url;
+      changeProtocol = true;
+      await expect(attempt()).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "workspace_protocol_unsupported" },
+      });
+      expect(effectRequests).toEqual([]);
+
+      changeProtocol = false;
+      disableAsyncPrompt = true;
+      await expect(attempt()).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "workspace_protocol_unsupported" },
+      });
+      expect(effectRequests).toEqual([]);
+      disableAsyncPrompt = false;
+      const accepted = await attempt().catch((error: unknown) => {
+        throw new AggregateError(
+          [error, ...proxyErrors],
+          "workspace command failed through fixture proxy",
+        );
+      });
+      const [command] = await listCommandsForRun(db, runId);
+      expect(command.state).toBe("succeeded");
+      const receipt = await hosts.local().getCommandReceipt(command.id);
+      expect(receipt).toMatchObject({ commandId: command.id });
+      upstream = other.url;
+      await expect(
+        hosts.local().getCommandReceipt(command.id),
+      ).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "host_identity_mismatch" },
+      });
+      upstream = sup.url;
+      const previousBoot = (await healthIdentity(sup.url)).bootId;
+
+      sup = await sup.restart();
+      upstream = sup.url;
+      const rebound = await hosts.forAssignment(assignment);
+      const newBoot = (await healthIdentity(sup.url)).bootId;
+      expect(newBoot).not.toBe(previousBoot);
+      expect(rebound.host.lastBootId).toBe(newBoot);
+      expect(rebound.assignment.executionHostId).toBe(owner.id);
+      expect(await hosts.local().getCommandReceipt(command.id)).toEqual(
+        receipt,
+      );
+      expect(accepted.executionWorkspaceId).toMatch(/^ws_[0-9a-f]{32}$/);
+      expect(effectRequests).toEqual(["POST /workspaces/adopt"]);
+    } finally {
+      vi.unstubAllEnvs();
+      restore();
+      resetResolverForTests();
+      await db.transaction((tx) =>
+        releaseAssignmentForRun(tx as unknown as Db, runId, "completed"),
+      );
+      proxy.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        proxy.close((error) => (error ? reject(error) : resolve())),
+      );
+      await other.kill();
+    }
+  }, 120_000);
 
   it("G2: restart on the same state dir → same row, new boot id, restarted:true + execution-host-restarted, NO reconcile sweep", async () => {
     const [before] = await hostRows();

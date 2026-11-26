@@ -60,7 +60,7 @@ test("combined isolation validates three independent preflights and the exact ca
   assert.equal(combined.cases, 56);
   assert.equal(combined.preflights, 3);
   assert.equal(combined.stages.length, 6);
-  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [21, 24, 11]);
+  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [25, 7, 24]);
   assert.deepEqual(JSON.parse(await readFile(join(directory, "combined.json"), "utf8")), combined);
 });
 

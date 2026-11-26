@@ -30,9 +30,10 @@ concerns), nor typed artifact instances (**ADR-037/038**). The locked decision i
   carries the takeover columns `owner_user_id`, `base_ref`, `returned_commits`,
   `returned_diff` (raw `git log`/`git diff` text; nullable, populated only on
   return). See [`../db/runs-domain.md`](../db/runs-domain.md).
-- **Exposed worktree** — the existing `workspaces.worktree_path` on the existing
-  run branch `workspaces.branch`. No new branch/target is created. See
-  [`workspaces.md`](workspaces.md).
+- **Exposed worktree** — the existing checkout on `workspaces.branch`. Legacy
+  claims expose `workspaces.worktree_path`. Addressed claims expose the
+  execution host ID and opaque workspace handle. See
+  [selected supervisor ownership](execution-hosts.md#selected-supervisor-stage-c-implemented).
 - **Owner** — `users.id` recorded in `node_attempts.owner_user_id` at claim.
   The owner is any project member with the `answerHitl` action; role-gated
   claim belongs to the assignments slice (**ADR-040**).
@@ -86,8 +87,12 @@ sequenceDiagram
     W-->>U: 200 worktreePath / branch / ownerUserId
 ```
 
-The claim returns checkout context only; it creates **no** branch, worktree, PR,
-or supervisor deferred (no agent spawns — the human works locally). A lost CAS
+The claim returns context for the existing checkout. A selected-host claim
+shows the supervisor and its opaque workspace handle. Use the approved access
+path to that supervisor. An operator with access to its private state store
+can match the handle to the retained, unreleased workspace and provide access
+under the host's repository policy. Return uses that same checkout and expects
+clean committed changes. A lost CAS
 (concurrent claim) returns 409 `CONFLICT`; a wrong run state or non-`human_review`
 node returns 409 `PRECONDITION`.
 
@@ -172,9 +177,12 @@ linear run renders an empty-but-valid timeline (no crash).
 - The claim transition is a status-guarded CAS
   (`status='HumanWorking' WHERE status='NeedsInput'`); a concurrent loser →
   409 `CONFLICT`. No two claims succeed for one run.
-- The claim creates NO new branch, target, PR, remote, or supervisor deferred;
-  it exposes the EXISTING `workspaces.worktree_path` + `workspaces.branch` and
-  returns `{ worktreePath, branch, ownerUserId }`.
+- Claim returns the existing `branch` and `ownerUserId`. A legacy claim returns
+  the local `worktreePath`. An addressed claim returns a null path and adds
+  `executionHostId` and `workspaceHandle`. It requires current `readRepoFiles`,
+  an active assignment and a verified HEAD on the selected supervisor. The
+  claim transaction checks the same assignment and review node before
+  changing ownership.
 - `HumanWorking` counts toward `MAISTER_MAX_CONCURRENT_RUNS` exactly like
   `Running`/`NeedsInput` through BOTH scheduler cap-check predicates.
 - `HumanWorking` is session-less and is NEVER classified `Crashed` by

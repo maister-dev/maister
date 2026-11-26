@@ -200,21 +200,21 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
     ),
     ...classified(
       "lib/tasks/launch-agent-definition.ts",
-      "repository-worktree",
+      "manager-flow-state",
       "Agent package captures validate exact copied bytes and manager ancestry before consumption or release",
       [
         [
-          "captureTaskAgentPackage",
+          "captureTaskAgentDefinition",
           "lib/tasks/launch-capability-materialization.ts#captureAcceptedDirectory",
           "wrapper",
         ],
         [
-          "captureTaskAgentPackage",
+          "captureTaskAgentDefinition",
           "lib/tasks/launch-capability-materialization.ts#assertCapturedProjectionSymlinks",
           "wrapper",
         ],
         [
-          "captureTaskAgentPackage",
+          "captureTaskAgentDefinition",
           "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
           "wrapper",
         ],
@@ -291,8 +291,8 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Accepted package identity and private capture are resolved before model dispatch under the preparation owner",
       [
-        ["captureTaskAgentPackage", "node:fs/promises.mkdir", "write"],
-        ["captureTaskAgentPackage", "node:fs/promises.mkdtemp", "write"],
+        ["captureTaskAgentDefinition", "node:fs/promises.mkdir", "write"],
+        ["captureTaskAgentDefinition", "node:fs/promises.mkdtemp", "write"],
         ["release", "node:fs/promises.rm", "remove"],
         ["readTaskAgentDefinitionSource", "node:fs/promises.readFile", "read"],
       ],
@@ -1255,9 +1255,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [["readInstalledAgentDefinition", "node:fs/promises.readFile", "read"]],
     ),
     ...classified(
-      "lib/agents/facade-launch.ts",
+      "../runtime/facade-launch.ts",
       "repository-worktree",
-      "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
+      "Resolve the installed MCP facade within the current tier's deployment. Web uses this only for the co-located launcher.",
       [["resolveFacadeLaunch", "node:fs.existsSync", "stat"]],
     ),
     ...classified(
@@ -1497,7 +1497,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["ensureWorktreeGitExclude", "node:fs/promises.mkdir", "write"],
         ["ensureWorktreeGitExclude", "node:fs/promises.appendFile", "write"],
         ["<object>.materialize", "node:fs/promises.mkdir", "write"],
-        ["<object>.materialize", "lib/atomic.ts#atomicWriteJson", "wrapper"],
         ["<object>.materialize", "lib/atomic.ts#atomicWriteText", "wrapper"],
       ],
     ),
@@ -1694,6 +1693,35 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [["pathIsDirectory", "node:fs/promises.stat", "stat"]],
     ),
     ...classified(
+      "lib/execution-host/events/lifecycle-projector.ts",
+      "migration-tooling",
+      "Read the shipped migration SQL for the once-only PostgreSQL lifecycle repair after Web writer cutover.",
+      [["reconcileSkippedSessionCrashes", "node:fs/promises.readFile", "read"]],
+      {
+        authority: "operator CLI: pnpm db:migrate and the elected Web worker after old writers drain",
+        lifetime: "One durable post-cutover backfill per database",
+      },
+    ),
+    ...classified(
+      "lib/execution-host/workspace-input-capture.ts",
+      "manager-flow-state",
+      "Capture files from the manager's pinned package copy for bounded publication to the workspace owner.",
+      [
+        ["collect", "node:fs/promises.realpath", "stat"],
+        ["collect", "node:fs/promises.stat", "stat"],
+        ["collect", "node:fs/promises.readdir", "list"],
+        ["collect", "node:fs/promises.readFile", "read"],
+        ["captureWorkspaceFlowAssets", "node:fs/promises.realpath", "stat"],
+        ["collectRoot", "node:fs/promises.lstat", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/services/runs.ts",
+      "manager-flow-state",
+      "Read the retained revision installation resolved by admission for bounded workspace input capture.",
+      [["executeFlowLaunch", "lib/execution-host/workspace-input-capture.ts#captureWorkspaceFlowAssets", "wrapper"]],
+    ),
+    ...classified(
       "lib/execution-host/capability-profile.ts",
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
@@ -1803,7 +1831,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "flow-engine state the manager owns: installed package content, authored packages, run inputs/outputs under .maister/<slug>/runs",
       [
         [
-          "runMutationAssertionGate",
+          "legacyMutationEvidence",
           "lib/flows/graph/mutation-check.ts#readNodeStartHead",
           "wrapper",
         ],
@@ -2586,9 +2614,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [["CliPrAdapter.exec", "node:child_process.execFile", "spawn", null]],
     ),
     ...classified(
-      "lib/runs/pr-adapter.ts",
+      "../runtime/pull-request-state.ts",
       "repository-worktree",
-      "PR state reads through the provider CLIs (gh/glab)",
+      "Query the approved provider repository by identity without reading the selected host workspace.",
       [
         ["githubPrState", "node:child_process.execFile", "spawn", "gh"],
         ["gitlabPrState", "node:child_process.execFile", "spawn", "glab"],
@@ -3084,6 +3112,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "scripts/smoke-production-split-users.ts",
+      "build-tooling",
+      "CI provisions disposable Docker containers and verifies separate Linux service UIDs; never runs inside the web process",
+      [["docker", "node:child_process.execFile", "spawn", "docker"]],
+    ),
+    ...classified(
       "scripts/validate-authored-flow.ts",
       "manager-flow-state",
       "operator CLIs over manager-owned package artifacts (install/import/export/validate); never run inside the web process",
@@ -3139,6 +3173,9 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["captureTaskAgentPackage", false],
     ["frozenTaskAgentDefinition", false],
     ["pinnedTaskAgentDefinition", false],
+  ]),
+  ...wrappers("lib/tasks/launch-agent-definition.ts", "manager-flow-state", [
+    ["captureTaskAgentDefinition", false],
   ]),
   ...wrappers(
     "lib/tasks/launch-capability-materialization.ts",
@@ -3339,7 +3376,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["resolveEffectiveAgentDefinition", false],
     ["resolveInstalledAgentDefinition", false],
   ]),
-  ...wrappers("lib/agents/facade-launch.ts", "repository-worktree", [
+  ...wrappers("../runtime/facade-launch.ts", "repository-worktree", [
     ["resolveFacadeLaunch", false],
   ]),
   ...wrappers("lib/agents/finalization.ts", "repository-worktree", [
@@ -3498,6 +3535,13 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     "repository-worktree",
     [["publishCapabilityBundle", false]],
   ),
+  ...wrappers("lib/execution-host/events/lifecycle-projector.ts", "migration-tooling", [
+    ["reconcileSkippedSessionCrashes", false],
+  ]),
+  ...wrappers("lib/execution-host/workspace-input-capture.ts", "manager-flow-state", [
+    ["captureWorkspaceBundles", false],
+    ["captureWorkspaceFlowAssets", true],
+  ]),
   ...wrappers("lib/flows.ts", "manager-flow-state", [
     ["ensureSymlink", true],
     ["gitClone", true],
@@ -3729,7 +3773,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["applyNodeRestartCheckpoint", false],
     ["loadNodeRestartCheckpointPreview", false],
   ]),
-  ...wrappers("lib/runs/pr-adapter.ts", "repository-worktree", [
+  ...wrappers("../runtime/pull-request-state.ts", "repository-worktree", [
     ["getPrState", false],
   ]),
   ...wrappers("lib/scheduler/handlers/command.ts", "manager-flow-state", [
@@ -3780,6 +3824,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["readBlob", false],
     ["remoteBranchExists", false],
     ["remoteBranchHead", false],
+    ["inspectDeliveryBase", false],
     ["resolveBaseRef", false],
     ["resolveRefSha", false],
     ["restoreWorktreeToCommit", false],

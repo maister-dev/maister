@@ -7,6 +7,8 @@ import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { StepResult } from "../types";
 import type { CompiledNode } from "./compile";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+import type { RuntimeObjectTransportResolver } from "@/lib/execution-host/runtime-objects";
 
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -19,6 +21,7 @@ import { markNodeFailed } from "./ledger";
 
 import { resolveOutputResultSchemaWithIdentity } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
+import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
 import {
@@ -104,6 +107,44 @@ function parsePayload(
       reason: `${label} is not valid JSON: ${(err as Error).message}`,
     };
   }
+}
+
+export async function readSealedCliOutput(
+  input: Readonly<{
+    db: ExecutionDb;
+    runId: string;
+    objectId: string;
+    sha256: string;
+    signal?: AbortSignal;
+    transportForHost?: RuntimeObjectTransportResolver;
+  }>,
+): Promise<RawNodeOutputPayload> {
+  const { object, content } = await readRuntimeObjectContent({
+    db: input.db,
+    runId: input.runId,
+    objectId: input.objectId,
+    signal: input.signal,
+    transportForHost: input.transportForHost,
+  });
+  if (
+    object.kind !== "diagnostic" ||
+    object.logicalName !== "workload-result.json" ||
+    object.mimeType !== "application/json" ||
+    object.sha256 !== input.sha256
+  )
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "The sealed CLI result differs from its workload receipt",
+      {
+        details: { reason: "runtime_object_integrity_mismatch" },
+      },
+    );
+
+  return parsePayload(
+    Buffer.from(content.bytes).toString("utf8"),
+    nodeOutputMaxBytes(),
+    "sealed MAISTER_OUTPUT_FILE",
+  );
 }
 
 // Last PROPERLY-FENCED ```json maister:output block in the (1 MiB-capped)

@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 
 import { sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   getAdminExecutionHostStatus,
@@ -41,6 +49,10 @@ describe("execution host admin status", () => {
     await database?.stop();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("keeps manager evidence visible when the live host is unavailable", async () => {
     getPlatformStatusMock.mockResolvedValueOnce({
       kind: "unavailable",
@@ -51,6 +63,8 @@ describe("execution host admin status", () => {
     const bootId = randomUUID();
     const streamId = randomUUID();
     const host = await seedLocalHost(database.db, { bootId });
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://supervisor.test:7777");
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", host.hostKey);
 
     await database.db.execute(sql`
       INSERT INTO execution_event_streams (
@@ -76,6 +90,11 @@ describe("execution host admin status", () => {
         bootId,
       }),
     ]);
+    expect(status.selectedHost).toEqual({
+      kind: "registered",
+      hostKey: host.hostKey,
+      hostId: host.id,
+    });
     expect(availablePanel(status.lag).streams).toEqual([
       expect.objectContaining({
         streamId,
@@ -93,6 +112,21 @@ describe("execution host admin status", () => {
         },
       }),
     ]);
+
+    const expectedKey = `eh_${randomUUID().replace(/-/g, "")}`;
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", expectedKey);
+    getPlatformStatusMock.mockResolvedValueOnce({
+      kind: "unavailable",
+      reason: "supervisor_down",
+      message: "host is offline",
+      sessions: [],
+    });
+    const foreign = await getAdminExecutionHostStatus({ db: database.db });
+    expect(foreign.selectedHost).toEqual({
+      kind: "unregistered",
+      hostKey: expectedKey,
+    });
+    expect(foreign.hosts).toEqual(status.hosts);
   });
 
   it("D6: a collector failure degrades ONE panel, not the page", async () => {

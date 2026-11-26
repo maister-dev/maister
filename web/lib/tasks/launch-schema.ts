@@ -13,6 +13,7 @@ export const taskLaunchFieldsSchema = z
     flowId: identifier.optional(),
     agentId: identifier.optional(),
     workspace: z.enum(["none", "repo_read", "worktree"]).optional(),
+    executionHostId: identifier.optional(),
     relaunchOfRunId: identifier.optional(),
     runnerId: identifier.optional(),
     baseBranch: identifier.optional(),
@@ -127,10 +128,11 @@ export const interactiveTaskLaunchReplaceBodySchema = interactiveFields
 export const interactiveRunLaunchPreviewSchema = interactiveFields.pick({
   taskId: true,
   flowId: true,
+  executionHostId: true,
   relaunchOfRunId: true,
   packageVersions: true,
   flowRunnerDraft: true,
-});
+}).extend({ branchCursor: z.string().min(1).max(512).optional() });
 
 export type TaskLaunchRequest = z.infer<typeof interactiveTaskLaunchBodySchema>;
 
@@ -140,6 +142,7 @@ export const taskLaunchOptionsSchema = taskLaunchFieldsSchema
     flowId: true,
     agentId: true,
     workspace: true,
+    executionHostId: true,
     relaunchOfRunId: true,
     runnerId: true,
     packageVersions: true,

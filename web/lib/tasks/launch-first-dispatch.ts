@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { TaskLaunchDispatchReceipt } from "./launch-types";
 
 import { and, desc, eq, sql } from "drizzle-orm";
 
@@ -8,6 +9,7 @@ import { isAutomaticTaskLaunchDrain } from "./launch-capacity";
 import {
   assertFrozenTaskAgentCurrent,
   assertFrozenTaskAgentRepository,
+  assertBoundAddressedTaskAgentWorkspace,
   taskAgentPreparationWorkspace,
 } from "./launch-agent-execution";
 import {
@@ -21,6 +23,7 @@ import { launchRefusal } from "./launch-resolution";
 import { emitTaskLaunchChanged } from "./launch-events";
 
 import { takeSchedulerLock } from "@/lib/scheduler";
+import { workspacePreparationReadySql } from "@/lib/execution-host/workspace-preparation";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { agentPreparationResourceId } from "@/lib/agents/preparation-resource";
 import {
@@ -39,7 +42,7 @@ export type PreparedTaskLaunchDispatch = Readonly<{
   ownsCapacity: boolean;
   automaticDrain: boolean;
   apply: (tx: Db) => Promise<void>;
-  releaseCapacity: (tx: Db) => Promise<void>;
+  releaseCapacity: (tx: Db, reason?: string) => Promise<void>;
 }>;
 
 /** Repository probing precedes the short atomic dispatch transaction. */
@@ -47,7 +50,10 @@ export async function prepareTaskLaunchFirstDispatch(
   db: Db,
   runId: string,
 ): Promise<PreparedTaskLaunchDispatch | null> {
-  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  const [run] = await db
+    .select()
+    .from(runs)
+    .where(and(eq(runs.id, runId), workspacePreparationReadySql(sql`runs.id`)));
 
   if (!run?.taskLaunchIntentId) return null;
   const [intent] = await db
@@ -153,7 +159,7 @@ export async function prepareTaskLaunchFirstDispatch(
     basis: intent.basis.kind,
     ownsCapacity: intent.preparationIdentity !== null,
     automaticDrain: isAutomaticTaskLaunchDrain(intent),
-    releaseCapacity: async (tx) => {
+    releaseCapacity: async (tx, reason = "launch_capacity_wait") => {
       const current = await lockCurrent(tx);
 
       if (current.intent.dispatchCommittedAt) return;
@@ -170,7 +176,7 @@ export async function prepareTaskLaunchFirstDispatch(
         .set({
           state: "queued",
           stateVersion: current.intent.stateVersion + 1,
-          reason: "launch_capacity_wait",
+          reason,
           dueAt: sql`clock_timestamp()+interval '1 second'`,
           updatedAt: sql`clock_timestamp()`,
         })
@@ -187,36 +193,73 @@ export async function prepareTaskLaunchFirstDispatch(
       // Agent Running admits infrastructure preparation; its owned generation
       // commits first dispatch immediately before create/prompt.
       if (agent) return;
-      const time = await tx.execute<{ committedAt: string }>(
-        sql`SELECT to_char(date_trunc('milliseconds',clock_timestamp()) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "committedAt"`,
-      );
-      const committedAt = new Date(time.rows[0].committedAt);
-      const [committed] = await tx
-        .update(taskLaunchIntents)
-        .set({
-          dispatchCommittedAt: committedAt,
-          dispatchReceipt: {
-            version: 1,
-            runId,
-            assignmentId: current.assignment.id,
-            assignmentEpoch: current.assignment.epoch,
-            inputDigest: current.intent.inputDigest,
-            settingsDigest: current.intent.settingsDigest,
-            committedAt: committedAt.toISOString(),
-          },
-          stateVersion: current.intent.stateVersion + 1,
-          updatedAt: committedAt,
-        })
-        .where(eq(taskLaunchIntents.id, current.intent.id))
-        .returning();
-
-      await tx
-        .update(runs)
-        .set({ taskAdmissionCheckedAt: committedAt })
-        .where(eq(runs.id, runId));
-      await emitTaskLaunchChanged(tx, committed, { type: "system", id: null });
+      await recordFirstDispatch(tx, current.intent, current.assignment);
     },
   };
+}
+
+/** Commit the first addressed Agent dispatch against its sealed workspace and assignment. */
+export async function commitAddressedTaskAgentLaunchFirstDispatch(
+  db: Db,
+  input: Readonly<{ runId: string; assignmentId: string; intentId: string }>,
+): Promise<void> {
+  const [accepted] = await db.select().from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, input.intentId));
+  if (!accepted || accepted.runId !== input.runId)
+    throw launchRefusal("launch_worker_fenced");
+  if (!accepted.dispatchCommittedAt)
+    await assertFrozenTaskAgentRepository(db, accepted);
+
+  await db.transaction(async (tx) => {
+    await takeSchedulerLock(tx);
+    if (!accepted.dispatchCommittedAt)
+      await lockTaskLaunchExecutionParent(tx, accepted);
+    await lockTaskLaunchReservation(tx, accepted.taskId);
+    const [run] = await tx.select().from(runs)
+      .where(eq(runs.id, input.runId)).for("update");
+    const [assignment] = await tx.select().from(executionAssignments)
+      .where(eq(executionAssignments.id, input.assignmentId)).for("update");
+    const [intent] = await tx.select().from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, accepted.id)).for("update");
+    if (
+      run?.status !== "Running" ||
+      run.taskLaunchIntentId !== accepted.id ||
+      run.executionAssignmentId !== input.assignmentId ||
+      !assignment ||
+      assignment.runId !== run.id ||
+      assignment.state !== "active" ||
+      !intent ||
+      intent.state !== "run_bound" ||
+      intent.runId !== run.id ||
+      intent.originalRunId !== run.id
+    )
+      throw launchRefusal("launch_worker_fenced");
+    const workspace = await assertBoundAddressedTaskAgentWorkspace(tx, intent, assignment.id);
+    const handle = assignment.executionWorkspaceId;
+    if (
+      !handle ||
+      (workspace.rootWorkspaceId === null && workspace.executionWorkspaceId !== handle) ||
+      !workspace.workspaceGeneration ||
+      !workspace.workspaceMaterializationGeneration ||
+      assignment.addressedStopRequestedAt
+    )
+      throw launchRefusal("launch_agent_preparation_incomplete", "PRECONDITION");
+    if (intent.dispatchCommittedAt) {
+      if (!intent.dispatchReceipt)
+        throw launchRefusal("launch_input_snapshot_incomplete", "PRECONDITION");
+      return;
+    }
+    await assertFrozenTaskAgentCurrent(tx, intent);
+    await assertNoPriorAgentEffects(tx, run.id);
+    await recordFirstDispatch(tx, intent, assignment, {
+      addressedPreparation: {
+        workspaceId: workspace.id,
+        handle,
+        generation: workspace.workspaceGeneration,
+        materializationGeneration: workspace.workspaceMaterializationGeneration,
+      },
+    });
+  });
 }
 
 /** Commits the first agent model effect only after the current owned generation is materialized. */
@@ -350,47 +393,59 @@ export async function commitTaskAgentLaunchFirstDispatch(
       .where(eq(tasks.id, intent.taskId))
       .for("update");
     await assertFrozenTaskAgentCurrent(tx, intent);
-    const priorEffects = await tx.execute(
-      sql`SELECT 1 FROM execution_commands WHERE run_id=${run.id} AND kind IN ('session.create','session.prompt') LIMIT 1`,
-    );
-
-    if (priorEffects.rows.length)
-      throw launchRefusal("launch_dispatch_commit_unknown", "PRECONDITION");
-    const time = await tx.execute<{ committedAt: string }>(
-      sql`SELECT to_char(date_trunc('milliseconds',clock_timestamp()) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "committedAt"`,
-    );
-    const committedAt = new Date(time.rows[0].committedAt);
-    const [committed] = await tx
-      .update(taskLaunchIntents)
-      .set({
-        dispatchCommittedAt: committedAt,
-        dispatchReceipt: {
-          version: 1,
-          runId: run.id,
-          assignmentId: assignment.id,
-          assignmentEpoch: assignment.epoch,
-          inputDigest: intent.inputDigest,
-          settingsDigest: intent.settingsDigest,
-          committedAt: committedAt.toISOString(),
-          preparation: {
-            id: operation.id,
-            resourceId: operation.resourceId,
-            incarnation: operation.incarnation,
-            generation: baseline.generation,
-            baselineDigest: retryDigest(baseline),
-            materializationDigest: retryDigest(baseline.platform),
-          },
-        },
-        stateVersion: intent.stateVersion + 1,
-        updatedAt: committedAt,
-      })
-      .where(eq(taskLaunchIntents.id, intent.id))
-      .returning();
-
-    await tx
-      .update(runs)
-      .set({ taskAdmissionCheckedAt: committedAt })
-      .where(eq(runs.id, run.id));
-    await emitTaskLaunchChanged(tx, committed, { type: "system", id: null });
+    await assertNoPriorAgentEffects(tx, run.id);
+    await recordFirstDispatch(tx, intent, assignment, {
+      preparation: {
+        id: operation.id,
+        resourceId: operation.resourceId,
+        incarnation: operation.incarnation,
+        generation: baseline.generation,
+        baselineDigest: retryDigest(baseline),
+        materializationDigest: retryDigest(baseline.platform),
+      },
+    });
   });
+}
+
+async function assertNoPriorAgentEffects(tx: Db, runId: string): Promise<void> {
+  const priorEffects = await tx.execute(
+    sql`SELECT 1 FROM execution_commands WHERE run_id=${runId} AND kind IN ('session.create','session.prompt') LIMIT 1`,
+  );
+  if (priorEffects.rows.length)
+    throw launchRefusal("launch_dispatch_commit_unknown", "PRECONDITION");
+}
+
+
+async function recordFirstDispatch(
+  tx: Db,
+  intent: typeof taskLaunchIntents.$inferSelect,
+  assignment: typeof executionAssignments.$inferSelect,
+  preparation: Pick<TaskLaunchDispatchReceipt, "preparation" | "addressedPreparation"> = {},
+): Promise<void> {
+  const time = await tx.execute<{ committedAt: string }>(
+    sql`SELECT to_char(date_trunc('milliseconds',clock_timestamp()) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "committedAt"`,
+  );
+  const committedAt = new Date(time.rows[0].committedAt);
+  const [committed] = await tx.update(taskLaunchIntents)
+    .set({
+      dispatchCommittedAt: committedAt,
+      dispatchReceipt: {
+        version: 1,
+        runId: assignment.runId,
+        assignmentId: assignment.id,
+        assignmentEpoch: assignment.epoch,
+        inputDigest: intent.inputDigest,
+        settingsDigest: intent.settingsDigest,
+        committedAt: committedAt.toISOString(),
+        ...preparation,
+      },
+      stateVersion: intent.stateVersion + 1,
+      updatedAt: committedAt,
+    })
+    .where(eq(taskLaunchIntents.id, intent.id))
+    .returning();
+  await tx.update(runs)
+    .set({ taskAdmissionCheckedAt: committedAt })
+    .where(eq(runs.id, assignment.runId));
+  await emitTaskLaunchChanged(tx, committed, { type: "system", id: null });
 }

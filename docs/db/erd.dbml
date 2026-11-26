@@ -1640,14 +1640,18 @@ table execution_assignments {
   lease_expires_at "timestamp with time zone"
   superseded_by_id text
   released_reason text
+  addressed_stop_requested_at "timestamp with time zone"
+  addressed_stop_requested_by text
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
   ended_at "timestamp with time zone"
 
   indexes {
+    (id, run_id, execution_host_id) [name: 'execution_assignments_workspace_owner_uq', unique]
     (run_id, epoch) [name: 'execution_assignments_run_epoch_uq', unique]
     run_id [name: 'execution_assignments_run_active_uq', unique]
     (execution_host_id, state) [name: 'execution_assignments_host_state_idx']
+
 
 
 
@@ -1712,6 +1716,7 @@ table execution_commands {
 
     terminal_event_id [name: 'execution_commands_terminal_event_idx']
     execution_assignment_id [name: 'execution_commands_assignment_idx']
+    execution_assignment_id [name: 'execution_commands_workspace_materialize_uq', unique]
     (transport_state, next_attempt_at, id) [name: 'execution_commands_reconciliation_idx']
     (application_state, application_next_retry_at, application_claim_expires_at, id) [name: 'execution_commands_application_idx']
     (run_id, logical_operation_key) [name: 'execution_commands_prompt_logical_operation_uq', unique]
@@ -1796,13 +1801,16 @@ table execution_event_skips {
   execution_host_id text [not null]
   host_sequence bigint [not null]
   event_id text [not null]
-  run_id text [not null]
+  run_id text
+  workspace_command_id text
+  envelope_sha256 text
   event_type text [not null]
   reason text [not null]
   occurred_at "timestamp with time zone" [not null]
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
     (event_stream_id, host_sequence) [name: 'execution_event_skips_stream_sequence_unique', unique]
     event_id [name: 'execution_event_skips_event_unique', unique]
     (event_stream_id, host_sequence) [name: 'execution_event_skips_stream_scan_idx']
@@ -1872,10 +1880,24 @@ table execution_events {
   }
 }
 
+table execution_host_losses {
+  execution_host_id text [pk, not null]
+  host_key text [not null]
+  observed_boot_id text [not null]
+  operator_id text [not null]
+  isolation_evidence_ref text [not null]
+  recorded_at "timestamp with time zone" [not null, default: `now()`]
+}
+
 table execution_host_pressure {
   execution_host_id text [pk, not null]
   pressured_since "timestamp with time zone" [not null]
   unacknowledged_at_start integer
+}
+
+table execution_host_slot_reservations {
+  assignment_id text [pk, not null]
+  reserved_at "timestamp with time zone" [not null, default: `now()`]
 }
 
 table execution_hosts {
@@ -3013,6 +3035,8 @@ table projects {
   public_branch_template text [not null, default: 'feature/{task_key}-{slug}']
   maister_yaml_path text
   default_runner_id text
+  default_execution_host_id text
+  execution_host_preference_revision bigint [not null, default: 1]
   sync_strategy_default text [not null, default: 'rebase']
   sync_runner_id text
   promotion_mode text
@@ -3845,7 +3869,7 @@ table scratch_capability_profiles {
   id text [pk, not null]
   run_id text [not null, unique]
   profile_digest text [not null]
-  materialized_path text [not null]
+  materialized_path text
   selected_mcp_ids jsonb [not null, default: `[]`]
   selected_skill_ids jsonb [not null, default: `[]`]
   selected_rule_ids jsonb [not null, default: `[]`]
@@ -4553,6 +4577,10 @@ table task_launch_intents {
   input_snapshot jsonb [not null]
   settings_digest text [not null]
   settings_snapshot jsonb [not null]
+  requested_execution_host_id text
+  effective_execution_host_id text
+  execution_host_provenance text
+  execution_host_eligibility_revision text
   basis jsonb [not null]
   reservation_lane text [not null, default: 'ordinary']
   replaces_intent_id text
@@ -4578,6 +4606,7 @@ table task_launch_intents {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
     (principal_kind, principal_id, project_id, operation, request_key) [name: 'task_launch_intents_request_key_uq', unique]
     (project_id, cancellation_receipt) [name: 'task_launch_intents_cancel_key_uq', unique]
     task_id [name: 'task_launch_intents_active_task_uq', unique]
@@ -4897,6 +4926,15 @@ table webhook_subscriptions {
   }
 }
 
+table workspace_input_captures {
+  workspace_id text [pk, not null]
+  origin_user_id text
+  files jsonb [not null]
+  content_digest text [not null]
+  requirement_probe_count integer [not null, default: 0]
+  flow_setup_revision_id text
+}
+
 table workspace_reconciliation_findings {
   id text [pk, not null]
   identity_fingerprint text [not null, unique]
@@ -4942,8 +4980,17 @@ table workspaces {
   run_id text [not null]
   project_id text [not null]
   branch text [not null]
-  worktree_path text [not null, unique]
-  parent_repo_path text [not null]
+  worktree_path text [unique]
+  parent_repo_path text
+  ownership_kind text [not null, default: 'legacy_path']
+  execution_host_id text
+  execution_workspace_id text
+  preparation_assignment_id text
+  workspace_generation integer
+  workspace_materialization_generation integer
+  workspace_input_digest text
+  root_workspace_id text
+  legacy_host_adoption_issue text
   created_at "timestamp with time zone" [not null, default: `now()`]
   removed_at "timestamp with time zone"
   scheduled_removal_at "timestamp with time zone"
@@ -4980,6 +5027,13 @@ table workspaces {
   branch_delivery jsonb
 
   indexes {
+    (id, execution_host_id) [name: 'workspaces_host_scoped_identity_uq', unique]
+    (execution_host_id, execution_workspace_id) [name: 'workspaces_active_host_handle_uq', unique]
+    run_id [name: 'workspaces_active_host_run_uq', unique]
+
+
+
+
     (project_id, run_id, id) [name: 'workspaces_publication_owner_uq', unique]
     (lifecycle_operation_state, lifecycle_operation_lease_expires_at) [name: 'workspaces_lifecycle_claim_idx']
 
@@ -5711,7 +5765,11 @@ ref execution_events_execution_assignment_id_execution_assignments_id_fk: execut
 
 ref execution_events_run_session_incarnation_id_run_session_incarnations_id_fk: execution_events.run_session_incarnation_id > run_session_incarnations.id [delete: set null, update: no action]
 
+ref execution_host_losses_execution_host_id_execution_hosts_id_fk: execution_host_losses.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
 ref execution_host_pressure_execution_host_id_execution_hosts_id_fk: execution_host_pressure.execution_host_id > execution_hosts.id [delete: cascade, update: no action]
+
+ref execution_host_slot_reservations_assignment_id_execution_assignments_id_fk: execution_host_slot_reservations.assignment_id > execution_assignments.id [delete: cascade, update: no action]
 
 ref execution_runtime_objects_run_id_runs_id_fk: execution_runtime_objects.run_id > runs.id [delete: cascade, update: no action]
 
@@ -5934,6 +5992,8 @@ ref project_tokens_knowledge_node_attempt_id_node_attempts_id_fk: project_tokens
 ref project_tokens_created_by_users_id_fk: project_tokens.created_by > users.id [delete: set null, update: no action]
 
 ref project_tokens_librarian_turn_fk: project_tokens.librarian_turn_id > librarian_turns.id [delete: cascade, update: no action]
+
+ref projects_default_execution_host_id_execution_hosts_id_fk: projects.default_execution_host_id > execution_hosts.id [delete: restrict, update: no action]
 
 ref projects_sync_runner_id_platform_acp_runners_id_fk: projects.sync_runner_id > platform_acp_runners.id [delete: set null, update: no action]
 
@@ -6235,6 +6295,10 @@ ref task_launch_intents_task_id_tasks_id_fk: task_launch_intents.task_id > tasks
 
 ref task_launch_intents_actor_user_id_users_id_fk: task_launch_intents.actor_user_id > users.id [delete: restrict, update: no action]
 
+ref task_launch_intents_requested_execution_host_id_execution_hosts_id_fk: task_launch_intents.requested_execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
+ref task_launch_intents_effective_execution_host_id_execution_hosts_id_fk: task_launch_intents.effective_execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
 ref task_launch_intents_replaces_intent_id_task_launch_intents_id_fk: task_launch_intents.replaces_intent_id > task_launch_intents.id [delete: restrict, update: no action]
 
 ref task_launch_intents_source_run_id_runs_id_fk: task_launch_intents.source_run_id > runs.id [delete: restrict, update: no action]
@@ -6303,6 +6367,8 @@ ref webhook_subscriptions_project_id_projects_id_fk: webhook_subscriptions.proje
 
 ref webhook_subscriptions_owner_user_id_users_id_fk: webhook_subscriptions.owner_user_id > users.id [delete: cascade, update: no action]
 
+ref workspace_input_captures_workspace_id_workspaces_id_fk: workspace_input_captures.workspace_id > workspaces.id [delete: cascade, update: no action]
+
 ref workspace_reconciliation_findings_project_id_projects_id_fk: workspace_reconciliation_findings.project_id > projects.id [delete: set null, update: no action]
 
 ref workspace_reconciliation_findings_run_id_runs_id_fk: workspace_reconciliation_findings.run_id > runs.id [delete: set null, update: no action]
@@ -6313,4 +6379,10 @@ ref workspaces_run_id_runs_id_fk: workspaces.run_id > runs.id [delete: cascade, 
 
 ref workspaces_project_id_projects_id_fk: workspaces.project_id > projects.id [delete: cascade, update: no action]
 
+ref workspaces_execution_host_id_execution_hosts_id_fk: workspaces.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
 ref workspaces_promotion_owner_user_id_users_id_fk: workspaces.promotion_owner_user_id > users.id [delete: set null, update: no action]
+
+ref workspaces_preparation_assignment_fk: workspaces.(preparation_assignment_id, run_id, execution_host_id) > execution_assignments.(id, run_id, execution_host_id) [delete: no action, update: no action]
+
+ref workspaces_root_host_fk: workspaces.(root_workspace_id, execution_host_id) > workspaces.(id, execution_host_id) [delete: no action, update: no action]

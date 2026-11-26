@@ -694,7 +694,7 @@ it("DB02 upgrades immutable v1 intent history without inventing missing executio
     expect(
       (
         await partial.pool.query(
-          "SELECT to_jsonb(i)-ARRAY['preparation_identity','preparation_phase','cleanup_state','dispatch_receipt','parent_observed_version'] AS value FROM task_launch_intents i WHERE id=$1",
+          "SELECT to_jsonb(i)-ARRAY['preparation_identity','preparation_phase','cleanup_state','dispatch_receipt','parent_observed_version','requested_execution_host_id','effective_execution_host_id','execution_host_provenance','execution_host_eligibility_revision'] AS value FROM task_launch_intents i WHERE id=$1",
           [intentId],
         )
       ).rows[0].value,
@@ -933,7 +933,7 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
       ).rows[0].value,
       intent: (
         await partial.pool.query(
-          "SELECT to_jsonb(i)-'parent_observed_version' value FROM task_launch_intents i WHERE id=$1",
+          "SELECT to_jsonb(i)-ARRAY['parent_observed_version','requested_execution_host_id','effective_execution_host_id','execution_host_provenance','execution_host_eligibility_revision'] value FROM task_launch_intents i WHERE id=$1",
           [source.id],
         )
       ).rows[0].value,

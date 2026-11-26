@@ -2981,6 +2981,8 @@ export function memoryAssignment(input: {
     leaseExpiresAt: null,
     supersededById: null,
     releasedReason: null,
+    addressedStopRequestedAt: null,
+    addressedStopRequestedBy: null,
     createdAt: now,
     updatedAt: now,
     endedAt: null,

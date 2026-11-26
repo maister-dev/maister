@@ -2,23 +2,32 @@ import type { Db } from "./db";
 import type { ExecutionHost } from "@/lib/db/schema";
 import type { ExecutionHostTransport } from "./contracts";
 import type { HostCapabilities } from "./hosts";
+import type { AdditionalExecutionEndpoint, SelectedExecutionEndpoint } from "./selected-endpoint";
 
 import pino, { type Logger } from "pino";
+import { eq } from "drizzle-orm";
 
 import {
   countLiveAssignmentsForHost,
+  declareExecutionHostRegistryWriter,
   findActiveLocalHost,
+  getHostByKey,
   insertLocalHost,
   listLiveRunIdsForHost,
   lockActiveLocalHost,
+  lockHostByKey,
   markHostReadiness,
   retireHost,
   touchLocalHost,
 } from "./hosts";
-import { defaultTransport } from "./default-transport";
+import { defaultTransport, pinnedExecutionHostTransport } from "./default-transport";
+import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
+import { EXECUTION_HOST_PERMANENTLY_LOST, HOST_IDENTITY_MISMATCH_REASON } from "./types";
 
 import { getDb } from "@/lib/db/client";
+import { executionHosts } from "@/lib/db/schema";
 import { isUniqueViolation } from "@/lib/db/pg-error";
+import { MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -137,10 +146,11 @@ async function markUnavailable(
   message: string,
   now: Date,
   logger: Logger,
+  peer?: AdditionalExecutionEndpoint,
 ): Promise<RegistrationResult> {
-  const row = await findActiveLocalHost(db);
+  const row = peer ? await getHostByKey(db, peer.hostKey) : await findActiveLocalHost(db);
 
-  if (row) {
+  if (row && row.retiredAt === null && (!peer || row.transport.role === "secondary")) {
     // At most one readiness write per 30 s window (D1) — a down supervisor
     // must not turn every launch attempt into an UPDATE.
     if (!withinMarkWindow(row.id, now)) {
@@ -162,24 +172,56 @@ async function markUnavailable(
 export async function ensureLocalExecutionHost(
   opts: EnsureLocalHostOptions = {},
 ): Promise<RegistrationResult> {
+  return registerExecutionHost(opts, configuredSelectedExecutionEndpoint());
+}
+
+export function ensureAdditionalExecutionHost(
+  peer: AdditionalExecutionEndpoint,
+  opts: EnsureLocalHostOptions = {},
+): Promise<RegistrationResult> {
+  return registerExecutionHost(
+    { ...opts, transport: opts.transport ?? pinnedExecutionHostTransport(peer) },
+    peer,
+    peer,
+  );
+}
+
+async function registerExecutionHost(
+  opts: EnsureLocalHostOptions,
+  selected: SelectedExecutionEndpoint | null,
+  peer?: AdditionalExecutionEndpoint,
+): Promise<RegistrationResult> {
   const db = opts.db ?? getDb();
   const transport = opts.transport ?? defaultTransport();
   const logger = opts.logger ?? defaultLog;
   const now = opts.now ?? (() => new Date());
+  const unavailable = (reason: string, message: string): Promise<RegistrationResult> =>
+    markUnavailable(db, reason, message, now(), logger, peer);
   const health = await transport.health({
     timeoutMs: opts.healthTimeoutMs,
   });
 
   if (health.kind !== "ready") {
-    return markUnavailable(db, health.reason, health.message, now(), logger);
+    return unavailable(health.reason, health.message);
   }
   if (!health.identity) {
-    return markUnavailable(
-      db,
-      "no_identity",
+    return unavailable(
+      selected ? "workspace_protocol_unsupported" : "no_identity",
       "supervisor /health carries no execution-host identity (pre-ADR-166 supervisor)",
-      now(),
-      logger,
+    );
+  }
+  if (selected && selected.hostKey !== health.identity.hostKey) {
+    logger.debug(
+      {
+        expectedHostKey: selected.hostKey,
+        observedHostKey: health.identity.hostKey,
+      },
+      "execution-host-endpoint-identity-mismatch",
+    );
+
+    return unavailable(
+      HOST_IDENTITY_MISMATCH_REASON,
+      "selected supervisor endpoint is announcing a different host key",
     );
   }
 
@@ -190,14 +232,23 @@ export async function ensureLocalExecutionHost(
       timeoutMs: opts.healthTimeoutMs,
     });
   } catch (error) {
-    return markUnavailable(
-      db,
-      "capabilities_invalid",
+    return unavailable(
+      selected ? "workspace_protocol_unsupported" : "capabilities_invalid",
       error instanceof Error
         ? `supervisor capability discovery failed: ${error.message}`
         : "supervisor capability discovery failed",
-      now(),
-      logger,
+    );
+  }
+  if (
+    selected &&
+    (!dataPlane?.eventStream ||
+      !dataPlane.asyncPrompt ||
+      !dataPlane.runtimeObjects ||
+      (peer && dataPlane.workspaceProtocol?.[0] !== 1))
+  ) {
+    return unavailable(
+      "workspace_protocol_unsupported",
+      "selected supervisor lacks the durable execution data plane",
     );
   }
 
@@ -208,6 +259,12 @@ export async function ensureLocalExecutionHost(
       protocolVersion: health.identity.protocolVersion,
       supervisorVersion: health.version,
       adapters: [],
+      ...(selected && dataPlane?.workspaceProtocol
+        ? {
+          workspaceProtocol: dataPlane.workspaceProtocol,
+          ...(dataPlane.workspaceSyncResolver ? { workspaceSyncResolver: dataPlane.workspaceSyncResolver } : {}),
+        }
+        : {}),
       dataPlane: dataPlane
         ? {
             version: dataPlane.dataPlaneVersion,
@@ -223,7 +280,34 @@ export async function ensureLocalExecutionHost(
   const apply = async (): Promise<RegistrationResult> =>
     db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
-      const activeRow = await lockActiveLocalHost(txDb);
+      const activeRow = peer ? await lockHostByKey(txDb, peer.hostKey) : await lockActiveLocalHost(txDb);
+      const observedRow = activeRow?.hostKey === observed.hostKey
+        ? activeRow : await lockHostByKey(txDb, observed.hostKey);
+      if (observedRow?.readinessReason === EXECUTION_HOST_PERMANENTLY_LOST)
+        return {
+          status: "unavailable", reason: EXECUTION_HOST_PERMANENTLY_LOST,
+          host: observedRow, message: "This supervisor identity was permanently isolated",
+        };
+      if (!peer && !activeRow && selected && observedRow?.transport.role === "secondary" && !observedRow.retiredAt) {
+        // An operator can nominate an existing peer once no default is active.
+        // Keep the peer's ID and all its retained assignments and workspaces.
+        await declareExecutionHostRegistryWriter(txDb);
+        await tx.update(executionHosts).set({ transport: { kind: "local_direct" } })
+          .where(eq(executionHosts.id, observedRow.id));
+        const host = await touchLocalHost(txDb, observedRow.id, {
+          bootId: observed.bootId, capabilities: observed.capabilities, now: now(),
+        });
+        if (!host) throw new MaisterError("CONFLICT", "Registered execution host disappeared during promotion", {
+          details: { hostId: observedRow.id },
+        });
+        const restarted = observedRow.lastBootId !== observed.bootId;
+        return { status: "registered", host, action: restarted ? "restart" : "touch", restarted };
+      }
+      if (peer && activeRow && (activeRow.retiredAt !== null || activeRow.transport.role !== "secondary"))
+        return {
+          status: "unavailable", reason: HOST_IDENTITY_MISMATCH_REASON,
+          host: activeRow, message: "The configured peer key already belongs to a different registry role",
+        };
       const liveAssignments = activeRow
         ? await countLiveAssignmentsForHost(txDb, activeRow.id)
         : 0;
@@ -240,6 +324,7 @@ export async function ensureLocalExecutionHost(
             hostKey: observed.hostKey,
             bootId: observed.bootId,
             capabilities: observed.capabilities,
+            ...(peer ? { role: "secondary", displayName: peer.displayName } : {}),
             now: at,
             logger,
           });

@@ -286,11 +286,12 @@ async function pushWorkspacePublication(
   return { ...before, remoteHeadSha };
 }
 
-async function openWorkspacePullRequest(
+export async function openWorkspacePullRequest(
   handle: WorkspaceRow,
   request: Extract<WorkspacePublicationRequest, { action: "open_pr" }>,
   assertCurrentFence: () => void,
   logger: Logger,
+  assertApprovedTarget?: () => Promise<void>,
 ): Promise<WorkspacePublicationSnapshot> {
   const sourceBranch = request.headRef.slice("refs/heads/".length);
   const targetBranch = request.baseRef.slice("refs/heads/".length);
@@ -359,6 +360,7 @@ async function openWorkspacePullRequest(
       draft: request.draft,
       signal,
       beforeWrite: async () => {
+        await assertApprovedTarget?.();
         await observeExactSource();
       },
     });

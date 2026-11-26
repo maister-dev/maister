@@ -386,7 +386,10 @@ describe("runCliStep", () => {
   });
 
   describe("flow install dir (ADR-154)", () => {
-    const run = (command: string, extra: Partial<RunCliStepCtx> = {}) =>
+    const run = (
+      command: string,
+      extra: Pick<RunCliStepCtx, "flowInstallPath" | "attempt"> = {},
+    ) =>
       runCliStep(
         { id: "fdstep", type: "cli", command },
         {

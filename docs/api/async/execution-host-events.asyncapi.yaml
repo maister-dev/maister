@@ -93,9 +93,26 @@ components:
     RuntimeEvent:
       name: runtime.event
       title: Redacted durable execution-host event envelope
+      description: |
+        Envelope version 1 is the deployed session/object contract.
+        Stage C negotiates WorkspaceTerminalEvent version 2
+        from ../stage-c-workspace.schema.yaml on the same stream. The
+        manager ACKs committed contiguous ingest and consumer scheduling.
+        Domain application has its own cursor and cannot block this ACK.
+        Retained publication, preservation and release identify their
+        workspace-operation owner. The manager resolves their Run and
+        historical assignment from the exact command before storing the event.
       contentType: application/json
       payload:
-        $ref: "#/components/schemas/RuntimeEventEnvelope"
+        oneOf:
+          - $ref: "#/components/schemas/RuntimeEventEnvelope"
+          - type: object
+            required: [envelopeVersion, eventType, payloadSchema]
+            properties:
+              envelopeVersion: { type: integer, enum: [2] }
+              eventType: { type: string, enum: [workspace.command.terminal] }
+              payloadSchema: { type: string, enum: [maister.workspace.command.terminal.v1] }
+            x-stage-c-schema: ../stage-c-workspace.schema.yaml#/definitions/WorkspaceTerminalEvent
     RuntimeEventAck:
       name: runtime.event.ack
       title: Manager acknowledgement of contiguous persisted host events
@@ -271,6 +288,7 @@ components:
                 v1 payloads for kind `session.steer` carry the parent link in
                 `result.parentCommandId` / `error.details.parentCommandId`.
             stdoutSegment: { $ref: "#/components/schemas/StdoutSegmentMetadata" }
+            workspaceWorkloadCommandId: { type: string, format: uuid }
           additionalProperties: true
           description: Open JSON only after a known eventType/payloadSchema validator and deterministic redactor accepts it.
       example:

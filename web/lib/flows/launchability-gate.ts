@@ -25,6 +25,7 @@ export type FlowLaunchabilityFlow = {
 export type FlowLaunchabilityRevision = {
   packageStatus: string;
   setupStatus: string;
+  execTrust?: string | null;
   schemaVersion: number;
   engineMin: string | null;
   engineMax: string | null;
@@ -68,6 +69,7 @@ function refuse(
 export function evaluateFlowLaunchability(
   flow: FlowLaunchabilityFlow,
   revision: FlowLaunchabilityRevision | null,
+  setupOwner: "manager" | "selectedHost" = "manager",
 ): FlowLaunchabilityVerdict {
   if (!flow.enabledRevisionId) {
     return refuse("PRECONDITION", "no_enabled_revision", "");
@@ -88,7 +90,13 @@ export function evaluateFlowLaunchability(
       revision.packageStatus,
     );
   }
-  if (revision.setupStatus === "pending" || revision.setupStatus === "failed") {
+  const selectedSetup = setupOwner === "selectedHost";
+  if (
+    revision.setupStatus === "failed" ||
+    (revision.setupStatus === "pending" && !selectedSetup) ||
+    (selectedSetup && revision.setupStatus !== "not_required" &&
+      revision.execTrust !== "trusted")
+  ) {
     return refuse("PRECONDITION", "setup_incomplete", revision.setupStatus);
   }
   if (!isSchemaVersionSupported(revision.schemaVersion)) {
@@ -149,8 +157,9 @@ export function assertFlowLaunchable(
   flowRefId: string,
   flow: FlowLaunchabilityFlow,
   revision: FlowLaunchabilityRevision | null,
+  setupOwner: "manager" | "selectedHost" = "manager",
 ): void {
-  const verdict = evaluateFlowLaunchability(flow, revision);
+  const verdict = evaluateFlowLaunchability(flow, revision, setupOwner);
 
   if (verdict.ok) return;
 

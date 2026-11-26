@@ -31,6 +31,11 @@ Disposable PostgreSQL containers default to a 512 MiB `tmpfs` for their data
 directory. The installed Company Brain package qualification selects an
 anonymous Docker data volume for its real recursive session transcripts and
 execution events. Container teardown removes that volume.
+For a local production fault suite with a full Docker volume filesystem,
+`MAISTER_TEST_PRODUCTION_DB_STORAGE=tmpfs` places PostgreSQL's disposable data
+directory in the existing 512 MiB tmpfs. PostgreSQL remains up while the test
+kills Web or supervisor processes. Record this storage choice in the result.
+CI and tests of volume-backed capacity continue to use the Docker volume.
 Each container starts a fresh PostgreSQL 16/pgvector server, uses the existing
 allocation ownership and reaper lifecycle, and retains `fsync`,
 `full_page_writes` and `synchronous_commit` enabled. The helper promises data
@@ -482,7 +487,9 @@ invocation cleanup remains the crash backstop and still fails on any survivor.
 Ordinary PostgreSQL fixtures use this shared acquisition boundary. The native
 `reaper-database-worker.mjs` is an independent SDK/Ryuk witness: O-reaper
 deliberately leaves its first database alive after worker SIGKILL. It registers
-allocation and labels ownership before start, but does not claim the helper's
+allocation and labels ownership before start. The two throwaway database
+workers use 128 MiB tmpfs mounts for their data directories. The fixture leaves
+reaping and discovery of failed allocations to the owning runner instead of using the shared helper's
 immediate rejected-acquisition cleanup. If it fails before publishing readiness,
 strict terminal cleanup discovers any labelled survivor and fails the lane;
 containment never turns that failed control green.
@@ -617,13 +624,16 @@ serially on separate VMs. A full macOS `isolation` run selects all eight suites.
 The hosted Intel profile sets `MAISTER_PROJECTION_CONCURRENCY=1` to reduce
 background use of the shared database pool during foreground calls.
 
-The macOS split selects whole owning suites in their original order:
+The macOS split selects whole owning suites in manifest order. The
+process-death suite has a dedicated part after its cold build and case
+execution took 1,781 seconds against the 1,901 seconds available on an
+Intel runner in CI run 45222613398.
 
 | Part | Owning suites | Required cases |
 | --- | --- | --- |
-| 1 | Process cleanup, partitions | 15 + 6 = 21 |
-| 2 | Process death, isolation, durable-worker boot, durable-worker concurrency | 7 + 4 + 10 + 3 = 24 |
-| 3 | Scratch dispatch, capability finalization | 10 + 1 = 11 |
+| 1 | Process cleanup, partitions, isolation | 15 + 6 + 4 = 25 |
+| 2 | Process death | 7 |
+| 3 | Durable-worker boot, durable-worker concurrency, scratch dispatch, capability finalization | 10 + 3 + 10 + 1 = 24 |
 
 All matrix jobs run independently. `run-isolation-ci-stage.mjs`
 executes the selected stage through `runStageAbLane`, validates its exact case
@@ -1047,7 +1057,7 @@ runner uses Vitest project `integration`; no placeholder/todo cases are active.
 All five Linux controls are implemented and pass their native owning suite,
 including nested mounts, invalid restart, acquisition cancellation and process
 lifecycle cuts. The full selector requires 60 Linux cases and 56 Darwin cases,
-each with a separate preflight. Darwin CI runs parts of 21, 24 and 11 cases. Linux parts
+each with a separate preflight. Darwin CI runs parts of 25, 7 and 24 cases. Linux parts
 and unknown platforms refuse selection. The
 [final native qualification](../../.ai-factory/plans/s53a-linux-isolation.md#final-native-qualification)
 binds the corrective code to its whole-code SHA256 and exact reports. Native
@@ -1456,7 +1466,7 @@ AT-17. Browser half stays open under S5.3.
 - [Colima provisioning script](../../scripts/setup-isolation-ci-runtime.sh)
 - [feature specification](../../.ai-factory/specs/feature-unified-test-database-testcontainers.md)
 
-The mandatory workflow runs once per pull-request update and on master pushes, using the runtime matrix and disjoint A/B partitions specified above. Superseded runs are cancelled. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind the production server from `e2e/web-server.ts`; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. Browser and production-fixture lanes run sequentially on a host, with fixed sources for the duration of each run, because they share build artifacts and the configured resource budget. The isolation slice is wired to the mandatory three-part `execution-isolation` macOS Intel matrix (21/24/11 cases) and combined gate; each part retains the 39-minute production budget and independent preflight. Hosted qualification requires all three reports from the same source SHA. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
+The mandatory workflow runs once per pull-request update and on master pushes, using the runtime matrix and disjoint A/B partitions specified above. Superseded runs are cancelled. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind the production server from `e2e/web-server.ts`; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. Browser and production-fixture lanes run sequentially on a host, with fixed sources for the duration of each run, because they share build artifacts and the configured resource budget. The isolation slice is wired to the mandatory three-part `execution-isolation` macOS Intel matrix (25/7/24 cases) and combined gate; each part retains the 39-minute production budget and independent preflight. Hosted qualification requires all three reports from the same source SHA. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
 
 Admin browser specs are opt-in alternatives in `AUTHED_SPEC`; discovery is a
 contract because any omitted filename falls into the unauthenticated Chromium

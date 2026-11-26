@@ -14,6 +14,7 @@ import {
   flows,
   flowRevisions,
   capabilityRecords,
+  projects,
   runs,
 } from "@/lib/db/schema";
 import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
@@ -37,6 +38,17 @@ import { replaceTokenTaskLaunch } from "@/lib/tasks/launch-replace";
 import { issueToken } from "@/lib/tokens/issue";
 import { recordTokenAudit } from "@/lib/tokens/audit";
 import { MaisterError } from "@/lib/errors";
+import {
+  projectHostSettingsEtag,
+  readProjectHostSettings,
+  resolveTaskLaunchPlacement,
+  updateProjectHostSettings,
+} from "@/lib/execution-host/project-preference";
+import { assertTaskLaunchDispatchAuthority } from "@/lib/tasks/launch-dispatch-authority";
+import { taskLaunchOptionsSnapshot } from "@/lib/tasks/launch-options";
+import { ensureLocalExecutionHost } from "@/lib/execution-host/registrar";
+import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
+import { startRealSupervisor } from "@/test-support/real-supervisor";
 import { updateTask } from "@/lib/services/tasks";
 import {
   prepareTaskQualification,
@@ -248,6 +260,157 @@ it("LA01/02/04 accepts explicit manual intent without changing missing, negative
       ).rows[0],
     ).toEqual(before);
     await cancelFixture(database.db, receipt.intentId);
+  }
+});
+
+it("C-11 freezes a default or explicit placement across preview and replay", async () => {
+  const supervisor = await startRealSupervisor({
+    fixture: "mock-acp-librarian.mjs",
+    env: {
+      MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: repo }),
+    },
+  });
+  vi.stubEnv("MAISTER_SUPERVISOR_URL", supervisor.url);
+  const health = (await (await fetch(supervisor.url + "/health")).json()) as {
+    host: { hostKey: string };
+  };
+  vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", health.host.hostKey);
+  vi.stubEnv(
+    "MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS",
+    JSON.stringify([projectId]),
+  );
+  const registration = await ensureLocalExecutionHost({
+    db: database.db,
+    transport: createLocalDirectTransport(),
+  });
+  if (registration.status !== "registered")
+    throw new Error("fixture supervisor cannot register");
+  const hostId = registration.host.id;
+  const setDefault = async (
+    defaultExecutionHostId: string | null,
+  ): Promise<void> => {
+    const settings = await readProjectHostSettings(
+      database.db,
+      projectId,
+      userId,
+    );
+    await updateProjectHostSettings(database.db, {
+      projectId,
+      userId,
+      defaultExecutionHostId,
+      ifMatch: projectHostSettingsEtag(settings),
+    });
+  };
+  try {
+    const principal = await interactiveTaskLaunchPrincipal();
+    const taskId = await task();
+    const beforeDefault = await request(taskId);
+    await setDefault(hostId);
+    await expect(
+      acceptInteractiveTaskLaunch(
+        database.db,
+        principal,
+        beforeDefault,
+        randomUUID(),
+      ),
+    ).rejects.toMatchObject({ details: { reason: "launch_settings_changed" } });
+    const options = await taskLaunchOptionsSnapshot(database.db, projectId, {
+      taskId,
+    });
+    expect(options.executionHostSelection).toMatchObject({
+      effectiveExecutionHostId: hostId,
+      provenance: "projectDefault",
+    });
+    const input = {
+      ...(await request(taskId)),
+      expectedSettingsToken: options.settingsToken,
+    };
+    const key = randomUUID();
+    const first = await acceptInteractiveTaskLaunch(
+      database.db,
+      principal,
+      input,
+      key,
+    );
+    expect(first.executionHostSelection).toMatchObject({
+      requestedExecutionHostId: null,
+      effectiveExecutionHostId: hostId,
+      provenance: "projectDefault",
+    });
+    await setDefault(null);
+    expect(
+      await acceptInteractiveTaskLaunch(database.db, principal, input, key),
+    ).toEqual(first);
+    const [retained] = await database.db
+      .select()
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, first.intentId));
+    await assertTaskLaunchDispatchAuthority(database.db, retained);
+    await expect(
+      acceptInteractiveTaskLaunch(
+        database.db,
+        principal,
+        { ...input, executionHostId: hostId },
+        key,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const other = await task();
+    const override = { executionHostId: hostId };
+    const overrideKey = randomUUID();
+    const overrideInput = {
+      ...(await request(other)),
+      ...override,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        other,
+        override,
+      ),
+    };
+    const explicit = await acceptInteractiveTaskLaunch(
+      database.db,
+      principal,
+      overrideInput,
+      overrideKey,
+    );
+    expect(explicit.executionHostSelection).toMatchObject({
+      requestedExecutionHostId: hostId,
+      effectiveExecutionHostId: hostId,
+      provenance: "explicit",
+    });
+    const [currentProject] = await database.db.select().from(projects).where(eq(projects.id, projectId));
+    expect(await resolveTaskLaunchPlacement(database.db, currentProject, hostId, hostId))
+      .toMatchObject({ selection: {
+        requestedExecutionHostId: hostId,
+        effectiveExecutionHostId: hostId,
+        provenance: "sharedRoot",
+      } });
+    await expect(resolveTaskLaunchPlacement(database.db, currentProject, randomUUID(), hostId))
+      .rejects.toMatchObject({ details: { reason: "shared_root_host_conflict" } });
+    await expect(
+      acceptInteractiveTaskLaunch(
+        database.db,
+        principal,
+        {
+          ...overrideInput,
+          executionHostId: randomUUID(),
+        },
+        overrideKey,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS", "[]");
+    await expect(
+      taskLaunchSettingsToken(database.db, other, override),
+    ).rejects.toMatchObject({ details: { reason: "host_ineligible" } });
+    await expect(
+      assertTaskLaunchDispatchAuthority(database.db, retained),
+    ).rejects.toMatchObject({ details: { reason: "host_ineligible" } });
+  } finally {
+    await database.db
+      .update(projects)
+      .set({ defaultExecutionHostId: null, executionHostPreferenceRevision: 1 })
+      .where(eq(projects.id, projectId));
+    vi.unstubAllEnvs();
+    await supervisor.kill();
   }
 });
 

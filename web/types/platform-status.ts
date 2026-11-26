@@ -65,7 +65,11 @@ export type SupervisorHealth = {
 };
 
 export type PlatformUnavailableReason =
-  "network" | "timeout" | "http" | "malformed";
+  | "network"
+  | "timeout"
+  | "http"
+  | "malformed"
+  | "workspace_protocol_unsupported";
 
 export type PlatformLagSummary = Readonly<{
   scope: "host_backlog";

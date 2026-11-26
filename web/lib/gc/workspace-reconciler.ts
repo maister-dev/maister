@@ -12,6 +12,7 @@ import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { hasLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
 import { taskLaunchPreparationOwnsWorktree } from "@/lib/tasks/launch-preparation-ownership";
 import { CONFIG_PERSISTENCE_DIRECTORY } from "@/lib/project-config-persistence/review-files";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
@@ -370,10 +371,16 @@ async function listMissingWorkspaceCandidates(args: {
     })
     .from(workspaces)
     .innerJoin(runs, eq(workspaces.runId, runs.id))
-    .where(sql`coalesce(${runs.agentKind}, 'code_delivery') <> 'operational'`);
+    .where(
+      and(
+        eq(workspaces.ownershipKind, "legacy_path"),
+        sql`coalesce(${runs.agentKind}, 'code_delivery') <> 'operational'`,
+      ),
+    );
   const candidates: ReconciliationCandidate[] = [];
 
   for (const row of rows) {
+    if (!hasLegacyWorkspacePaths(row)) continue;
     const worktreePath = path.resolve(row.worktreePath);
 
     if (!isContainedPath(configuredRoot, worktreePath)) continue;
@@ -711,6 +718,7 @@ async function processTrustedCandidate(args: {
 
   if (workspace !== null) {
     const matchesWorkspace =
+      hasLegacyWorkspacePaths(workspace) &&
       workspace.projectId === provenance.projectId &&
       workspace.branch === provenance.branch &&
       path.resolve(workspace.parentRepoPath) ===

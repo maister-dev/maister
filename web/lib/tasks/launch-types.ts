@@ -13,6 +13,7 @@ import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskExecutionChildProof } from "./qualification-types";
 import type { FlowPublicationGrant } from "@/lib/workbench-git/flow-publication-grant";
 import type { CompletionGrant } from "@/lib/auto-promotion/completion-policy";
+import type { TaskLaunchHostSelection } from "@/lib/execution-host/project-preference";
 
 export const TASK_LAUNCH_STATES = [
   "queued",
@@ -127,8 +128,33 @@ export type TaskLaunchAgentPreparationIdentity = Readonly<{
   inputDigest: string;
   settingsDigest: string;
 }>;
+export type TaskLaunchAddressedFlowPreparationIdentity = Omit<
+  TaskLaunchFlowPreparationIdentity,
+  "version" | "parentRepoPath" | "worktreePath"
+> &
+  Readonly<{
+    version: 3;
+    executionHostId: string;
+    parentRepoPath: null;
+    worktreePath: null;
+  }>;
 export type TaskLaunchPreparationIdentity =
-  TaskLaunchFlowPreparationIdentity | TaskLaunchAgentPreparationIdentity;
+  | TaskLaunchFlowPreparationIdentity
+  | TaskLaunchAgentPreparationIdentity
+  | TaskLaunchAddressedFlowPreparationIdentity
+  | TaskLaunchAddressedAgentPreparationIdentity;
+
+export type TaskLaunchAddressedAgentPreparationIdentity = Omit<
+  TaskLaunchAgentPreparationIdentity,
+  "version" | "parentRepoPath" | "worktreePath" | "runtimePath"
+> &
+  Readonly<{
+    version: 4;
+    executionHostId: string;
+    parentRepoPath: null;
+    worktreePath: null;
+    runtimePath: null;
+  }>;
 
 export type TaskLaunchDispatchReceipt = Readonly<{
   version: 1;
@@ -138,6 +164,12 @@ export type TaskLaunchDispatchReceipt = Readonly<{
   inputDigest: string;
   settingsDigest: string;
   committedAt: string;
+  addressedPreparation?: Readonly<{
+    workspaceId: string;
+    handle: string;
+    generation: number;
+    materializationGeneration: number;
+  }>;
   preparation?: Readonly<{
     id: string;
     resourceId: string;
@@ -252,6 +284,15 @@ export type TaskLaunchReceipt = Readonly<{
   runStatus?: string;
   queuePosition?: number;
   queueReason?: string;
+  executionHostSelection?: TaskLaunchHostSelection;
+  executionHostPlacement?: Readonly<{
+    savedDisplayName: string | null;
+    actual: Readonly<{
+      executionHostId: string;
+      displayName: string;
+      assignmentEpoch: number;
+    }> | null;
+  }>;
   snapshot: Readonly<{
     kind: "flow" | "agent";
     workspace: "none" | "repo_read" | "worktree";

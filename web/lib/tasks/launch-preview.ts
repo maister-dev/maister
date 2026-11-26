@@ -4,14 +4,16 @@ import type { Db } from "@/lib/execution-host/db";
 import type { TaskLaunchRequest } from "./launch-schema";
 import type { TaskLaunchReceipt } from "./launch-types";
 import type { TaskQualificationSummary } from "./qualification-queries";
+import type { TaskLaunchHostSelection } from "@/lib/execution-host/project-preference";
 
 import { and, eq, inArray } from "drizzle-orm";
 
-import { taskLaunchReceipt } from "./launch-receipt";
-import { taskLaunchSettingsToken } from "./launch-resolution";
+import { readTaskLaunchReceipt } from "./launch-receipt";
+import { taskLaunchSettingsPreview } from "./launch-resolution";
 import { getTaskQualificationSummaries } from "./qualification-queries";
 
-import { runs, taskLaunchIntents } from "@/lib/db/schema";
+import { taskLaunchIntents } from "@/lib/db/schema";
+import { bindTaskLaunchPlacementToken } from "@/lib/execution-host/project-preference";
 
 /** Called after project launch authorization; exposes no input or principal credentials. */
 export async function taskLaunchPreview(
@@ -22,13 +24,18 @@ export async function taskLaunchPreview(
   settingsToken: string;
   qualification: TaskQualificationSummary | null;
   activeLaunch: TaskLaunchReceipt | null;
+  executionHostSelection?: TaskLaunchHostSelection;
 }> {
-  const [settingsToken, state] = await Promise.all([
-    taskLaunchSettingsToken(db, taskId, selection),
+  const [{ metadataToken, placement }, state] = await Promise.all([
+    taskLaunchSettingsPreview(db, taskId, selection),
     taskLaunchPreviewState(db, taskId),
   ]);
 
-  return { settingsToken, ...state };
+  return {
+    settingsToken: bindTaskLaunchPlacementToken(metadataToken, placement),
+    ...(placement ? { executionHostSelection: placement.selection } : {}),
+    ...state,
+  };
 }
 
 /** Shared read projection for a token already resolved by the selected target's authority. */
@@ -59,20 +66,8 @@ export async function taskLaunchPreviewState(
       .limit(1),
   ]);
   const intent = intents[0];
-  const [run] = intent?.runId
-    ? await db
-        .select({ status: runs.status })
-        .from(runs)
-        .where(eq(runs.id, intent.runId))
-    : [];
-
   return {
     qualification: qualifications.get(taskId) ?? null,
-    activeLaunch: intent
-      ? {
-          ...taskLaunchReceipt(intent),
-          ...(run ? { runStatus: run.status } : {}),
-        }
-      : null,
+    activeLaunch: intent ? await readTaskLaunchReceipt(db, intent) : null,
   };
 }

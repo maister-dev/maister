@@ -20,6 +20,10 @@ import { eq } from "drizzle-orm";
 
 import { taskLaunchFlowAssetsPathForRun } from "@/lib/tasks/launch-flow-assets";
 import { taskLaunchInputForRun } from "@/lib/tasks/launch-execution-input";
+import {
+  requireLegacyWorkspacePaths,
+  type LegacyWorkspacePaths,
+} from "@/lib/execution-host/legacy-workspace";
 import { MaisterError, isMaisterError } from "@/lib/errors";
 import {
   loadProjectAssignmentExecutionInput,
@@ -110,13 +114,23 @@ export type LoadedProjectRun = {
   // M42 (ADR-114): the run's session set keyed by session name; the per-node
   // dispatch resolves the node's session runner + resume handle from here.
   sessions: Map<string, LoadedRunSession>;
-  workspace: WorkspaceRow;
+  workspace: WorkspaceRow & LegacyWorkspacePaths;
   projectSlug: string;
   flowInstallPath: string;
   // M27/T-C8b: exec-trust of the pinned flow revision; gates stdio-MCP spawn.
   execTrust: FlowRevisionExecTrust;
   companyContext?: undefined;
 };
+
+export type LoadedAddressedProjectRun = Omit<LoadedProjectRun, "workspace"> & {
+  workspace: WorkspaceRow & {
+    ownershipKind: "host_owned";
+    worktreePath: null;
+    parentRepoPath: null;
+  };
+};
+
+export type LoadedRepositoryRun = LoadedProjectRun | LoadedAddressedProjectRun;
 
 export type LoadedCompanyRun = Omit<
   LoadedProjectRun,
@@ -129,7 +143,7 @@ export type LoadedCompanyRun = Omit<
   companyContext: CompanyFlowSessionContext;
 };
 
-export type LoadedRun = LoadedProjectRun | LoadedCompanyRun;
+export type LoadedRun = LoadedRepositoryRun | LoadedCompanyRun;
 
 /** The owner was read from the Run, but current company execution admission refused. */
 export class CompanyFlowLoadFailure extends MaisterError {
@@ -148,8 +162,9 @@ export function isCompanyFlowRun(
   return loaded.companyContext !== undefined;
 }
 
-/** Repository-only operations require an actual admitted project execution. */
-export function requireProjectFlowRun(loaded: LoadedRun): LoadedProjectRun {
+export function requireRepositoryFlowRun(
+  loaded: LoadedRun,
+): LoadedRepositoryRun {
   if (isCompanyFlowRun(loaded))
     throw new MaisterError(
       "PRECONDITION",
@@ -159,11 +174,22 @@ export function requireProjectFlowRun(loaded: LoadedRun): LoadedProjectRun {
   return loaded;
 }
 
+/** A path-taking repository operation needs a legacy local checkout. */
+export function requireProjectFlowRun(loaded: LoadedRun): LoadedProjectRun {
+  const project = requireRepositoryFlowRun(loaded);
+
+  return { ...project, workspace: requireLegacyWorkspacePaths(project.workspace) };
+}
+
 export async function loadProjectRun(
   db: Db,
   runId: string,
 ): Promise<LoadedProjectRun> {
   return requireProjectFlowRun(await loadRun(db, runId));
+}
+
+export async function loadRepositoryRun(db: Db, runId: string): Promise<LoadedRepositoryRun> {
+  return requireRepositoryFlowRun(await loadRun(db, runId));
 }
 
 export function resolveFlowRuntimeRoot(override?: string): string {
@@ -411,15 +437,15 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     .select()
     .from(workspaces)
     .where(eq(workspaces.runId, runId));
-  const workspace = workspaceRows[0];
+  const workspaceRow = workspaceRows[0];
 
-  if (!workspace) {
+  if (!workspaceRow) {
     throw new MaisterError(
       "PRECONDITION",
       `workspace not found for run ${runId}`,
     );
   }
-  if (workspace.removedAt) {
+  if (workspaceRow.removedAt) {
     throw new MaisterError(
       "PRECONDITION",
       `workspace already removed for run ${runId}`,
@@ -490,7 +516,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
       }
     : executionTaskInput(run, task);
 
-  return {
+  const common = {
     // project_id is guaranteed (a flow run always has a project; ADR-097).
     run: { ...run, projectId: requireRunProjectId(run.projectId, runId) },
     task: privateTask,
@@ -499,11 +525,27 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     executor,
     runner,
     sessions,
-    workspace,
     projectSlug,
     flowInstallPath,
     execTrust,
   };
+
+  if (
+    workspaceRow.ownershipKind === "host_owned" &&
+    workspaceRow.worktreePath === null &&
+    workspaceRow.parentRepoPath === null
+  )
+    return {
+      ...common,
+      workspace: {
+        ...workspaceRow,
+        ownershipKind: "host_owned",
+        worktreePath: null,
+        parentRepoPath: null,
+      },
+    };
+
+  return { ...common, workspace: requireLegacyWorkspacePaths(workspaceRow) };
 }
 
 /** The private witnessed request is execution input; the shared carrier remains safe metadata. */

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
@@ -13,13 +14,16 @@ import {
 } from "@/lib/assignments/service";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { runs } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { claimTakeover } from "@/lib/flows/graph/ledger";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import {
-  loadProjectRun as loadRun,
+  loadRepositoryRun as loadRun,
   loadRunProjectId,
 } from "@/lib/flows/graph/runner-core";
+import { requireFlowWorktree } from "@/lib/execution-host/legacy-workspace";
+import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
 import { captureClaimHead } from "@/lib/runs/claim-head";
 import { markHumanWorking } from "@/lib/runs/state-transitions";
 
@@ -47,6 +51,8 @@ function httpStatusForCode(code: string): number {
       return 409;
     case "CONFIG":
       return 400;
+    case "EXECUTOR_UNAVAILABLE":
+      return 503;
     default:
       return 500;
   }
@@ -166,14 +172,53 @@ export async function POST(
     // ADR-030 shares the ADR-160 claim-head capture: both hand the same worktree
     // to a human and both ask "did they commit anything" on return. Read before
     // the transaction — git I/O has no place inside one.
-    const claimHeadSha = await captureClaimHead({
-      worktreePath: loaded.workspace.worktreePath,
-      branch: loaded.workspace.branch,
-      runId,
-    });
+    const { workspace } = loaded;
+    const addressed = workspace.ownershipKind === "host_owned";
+    let claimHeadSha: string | null;
+    if (addressed) {
+      await requireProjectAction(projectId, "readRepoFiles");
+      if (!run.executionAssignmentId)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Takeover requires an active addressed assignment",
+        );
+      claimHeadSha = (await readAddressedWorkspaceStatus(db, workspace))
+        .workspace.observedCommit;
+      if (!claimHeadSha)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Takeover requires the selected workspace's verified HEAD",
+        );
+      await requireProjectAction(projectId, "readRepoFiles");
+    } else {
+      claimHeadSha = await captureClaimHead({
+        worktreePath: requireFlowWorktree(workspace.worktreePath),
+        branch: workspace.branch,
+        runId,
+      });
+    }
 
     const claimed: { ok: boolean; assignmentId: string | null } =
       await db.transaction(async (tx: Db) => {
+        if (addressed) {
+          const [current] = await tx
+            .select({
+              assignmentId: runs.executionAssignmentId,
+              stepId: runs.currentStepId,
+            })
+            .from(runs)
+            .where(eq(runs.id, runId))
+            .for("no key update");
+          if (
+            !current ||
+            current.assignmentId !== run.executionAssignmentId ||
+            current.stepId !== nodeId
+          )
+            throw new MaisterError(
+              "CONFLICT",
+              "The addressed takeover target changed while its HEAD was verified",
+            );
+        }
         const cas = await markHumanWorking(runId, user.id, { db: tx });
 
         if (!cas.ok) {
@@ -263,9 +308,15 @@ export async function POST(
 
     return NextResponse.json(
       {
-        worktreePath: loaded.workspace.worktreePath,
-        branch: loaded.workspace.branch,
+        worktreePath: workspace.worktreePath,
+        branch: workspace.branch,
         ownerUserId: user.id,
+        ...(addressed
+          ? {
+              executionHostId: workspace.executionHostId,
+              workspaceHandle: workspace.executionWorkspaceId,
+            }
+          : {}),
       },
       { status: 200 },
     );

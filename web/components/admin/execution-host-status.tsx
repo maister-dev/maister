@@ -127,15 +127,43 @@ function verdictTone(verdict: string): Tone {
 
 function HostsPanel({
   hosts,
+  selectedHost,
+  additionalHosts = [],
   format,
 }: {
   hosts: AdminExecutionHostStatus["hosts"];
+  selectedHost: AdminExecutionHostStatus["selectedHost"];
+  additionalHosts?: AdminExecutionHostStatus["additionalHosts"];
   format: Format;
 }): ReactElement {
   const { t, time } = format;
+  const configuredHosts = [selectedHost, ...additionalHosts];
 
   return (
     <Panel subtitle={t("hosts.subtitle")} title={t("hosts.title")}>
+      {selectedHost && selectedHost.kind !== "registered" ? (
+        <p className="px-5 py-3 text-sm text-amber" role="status">
+          {selectedHost.kind === "invalid_configuration"
+            ? t("hosts.invalidConfiguration")
+            : t(
+                selectedHost.kind === "unregistered"
+                  ? "hosts.awaitingRegistration"
+                  : "hosts.registrationUnavailable",
+                { hostKey: selectedHost.hostKey },
+              )}
+        </p>
+      ) : null}
+      {additionalHosts.map((host) =>
+        host.kind === "registered" ? null : (
+          <p key={host.kind === "invalid_configuration" ? host.kind : host.hostKey}
+            className="px-5 py-3 text-sm text-amber" role="status">
+            {host.kind === "invalid_configuration"
+              ? t("hosts.invalidAdditionalConfiguration")
+              : t(host.kind === "unregistered" ? "hosts.awaitingRegistration" : "hosts.registrationUnavailable",
+                  { hostKey: host.hostKey })}
+          </p>
+        ),
+      )}
       {isPanelUnavailable(hosts) ? (
         <PanelUnavailable t={t} />
       ) : (
@@ -155,8 +183,15 @@ function HostsPanel({
               {hosts.map((host: AdminExecutionHostRow) => (
                 <tr key={host.id} className="border-t border-line align-top">
                   <td className="px-5 py-3">
-                    <div className="font-semibold text-ink">
+                    <div className="flex flex-wrap items-center gap-2 font-semibold text-ink">
                       {host.displayName}
+                      {selectedHost?.kind === "registered" &&
+                      selectedHost.hostId === host.id ? (
+                        <Badge>{t("hosts.selected")}</Badge>
+                      ) : null}
+                      {additionalHosts.some((peer) => peer.kind === "registered" && peer.hostId === host.id) ? (
+                        <Badge>{t("hosts.additional")}</Badge>
+                      ) : null}
                     </div>
                     <div className="mt-1 font-mono text-[11px] text-mute">
                       {host.hostKey} · {host.id}
@@ -174,6 +209,15 @@ function HostsPanel({
                     <Badge tone={readinessTone(host.readiness)}>
                       {t(`readiness.${host.readiness}`)}
                     </Badge>
+                    {configuredHosts.map((entry) => entry?.kind === "registered" && entry.hostId === host.id &&
+                      (entry.draining || entry.maxConcurrentRuns !== undefined) ? (
+                      <div className="mt-1 flex flex-wrap items-center gap-1" key={entry.hostId}>
+                        {entry.draining ? <Badge>{t("hosts.draining")}</Badge> : null}
+                        {entry.maxConcurrentRuns === undefined ? null : (
+                          <span className="text-xs text-mute">{t("hosts.slotLimit", { count: entry.maxConcurrentRuns })}</span>
+                        )}
+                      </div>
+                    ) : null)}
                   </td>
                   <td className="px-3 py-3">{host.readinessReason ?? "—"}</td>
                   <td className="px-3 py-3 font-mono text-xs">
@@ -770,7 +814,12 @@ export async function ExecutionHostStatus({
 
   return (
     <div className="flex flex-col gap-5">
-      <HostsPanel format={format} hosts={status.hosts} />
+      <HostsPanel
+        additionalHosts={status.additionalHosts}
+        format={format}
+        hosts={status.hosts}
+        selectedHost={status.selectedHost}
+      />
 
       {lag === null ? (
         <Panel subtitle={t("streams.subtitle")} title={t("streams.title")}>
