@@ -538,7 +538,10 @@ export function startStubSupervisor(): Promise<Server> {
       return;
     }
 
-    if (req.method === "GET" && req.url === "/diagnostics") {
+    if (
+      req.method === "GET" &&
+      (req.url === "/diagnostics" || req.url?.startsWith("/diagnostics?"))
+    ) {
       const body = JSON.stringify(e2eSupervisorDiagnostics("e2e-stub"));
 
       res.writeHead(200, { "content-type": "application/json" });

@@ -441,7 +441,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
 
 ### Phase 3: Web memoization & diagnostics freshness. Exit: web unit + integration green
 
-- [ ] **Task 12: Decisions key, session and visible-project memoization (TDD)** (depends on 5)
+- [x] **Task 12: Decisions key, session and visible-project memoization (TDD)** (depends on 5)
   - New `web/test-support/react-cache-emulation.ts`. It emulates React's `cache` semantics with a positional `Object.is` argument trie and an explicit `withRender(fn)` scope. In vitest's node build React's `cache` passes through, so per-render behavior is unobservable without it.
   - **RED:** `web/lib/queries/__tests__/decisions-cache.test.ts` (unit, with `vi.mock("react")` using the emulation and a spy on `computeDecisionsQueue`):
     - MEMO-01: in one render, `getDecisionsCount(u, r)`, `getDecisionsQueue(u, r)`, `getDecisionsQueue(u, r, {})` and `getDecisionsQueue(u, r, { companyIds: ["b","a","a"] })` vs `["a","b"]` → computations equal to the number of distinct normalized keys (expected: 2);
@@ -461,7 +461,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
   - **LOGGING:** DEBUG `[decisions.cache] key { userId, projectId, companyKey }`. The existing `decisions queue` timing log stays and now fires once per render, which is the validation signal. Add DEBUG `[authz] loadUser { userId }` inside the cached loader, so it only fires on a miss.
   - Files: `web/lib/queries/decisions.ts`, `web/lib/authz.ts`, `web/auth.ts`, `web/lib/queries/visible-projects.ts`, `web/test-support/react-cache-emulation.ts`, the tests.
 
-- [ ] **Task 13: Diagnostics freshness classes on the web (TDD)** (depends on 3, 8)
+- [x] **Task 13: Diagnostics freshness classes on the web (TDD)** (depends on 3, 8)
   - **RED:** `web/lib/execution-host/__tests__/diagnostics-freshness.test.ts` (unit; DIAG-11). It statically scans `app/`, `lib/` and `components/` for `.diagnostics(` call sites and `getPlatformDiagnostics`/`getFreshPlatformDiagnostics` usages, and asserts that each is listed in a `{ file → "fresh" | "snapshot" }` table equal to D1's table. Fresh entries must pass `refresh: true`; snapshot entries must not. An unlisted call site fails, which forces every future caller to choose a class.
   - **RED:** `web/lib/__tests__/supervisor-client.test.ts`: `checkSupervisorDiagnostics({ refresh: true })` requests `/diagnostics?refresh=1`, and the default requests `/diagnostics` with no query.
   - **RED (parity, integration):** add one case to `web/lib/execution-host/__tests__/diagnostics-steering-wire.integration.test.ts` against the real supervisor: `diagnostics({ refresh: true })` returns `kind: "ready"` with a `checkedAt` later than the previous snapshot's. The e2e `test-supervisor.ts` and `stub-supervisor.ts` accept and ignore `refresh` (no behavior to test).

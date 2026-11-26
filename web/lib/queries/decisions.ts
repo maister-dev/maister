@@ -564,12 +564,77 @@ export function hitlDecisionsOf(
   return items.flatMap((item) => (item.kind === "hitl" ? [item.hitl] : []));
 }
 
+// One codec per `DecisionsScope` field: a new field fails typecheck until it has
+// a codec here, so adding one is a visible decision next to the key builder.
+const scopeKeyCodecs = {
+  projectId: (value?: string): string => value ?? "",
+  companyIds: (value?: readonly string[]): string =>
+    value === undefined ? "*" : JSON.stringify([...new Set(value)].sort()),
+} satisfies Record<keyof DecisionsScope, (value: never) => string>;
+
 /**
- * React-`cache`d so every server component of ONE render reads the same answer
- * (ATN-05) — the same mechanism `getPlatformStatus` uses for the chrome. The
- * layout, the home page and the inbox page each call it; the work happens once.
+ * Normalizes a `DecisionsScope` into primitive positional React-`cache()` keys
+ * (ATN-05 / MEMO-01 / MEMO-02). `companyIds: []` (explicit project-only) MUST
+ * NOT collapse into `"*"` (all companies) — see EDGE-ATN-09.
  */
-export const getDecisionsQueue = cache(computeDecisionsQueue);
+export function decisionsCacheKey(
+  scope?: DecisionsScope,
+): readonly [projectId: string, companyKey: string] {
+  return [
+    scopeKeyCodecs.projectId(scope?.projectId),
+    scopeKeyCodecs.companyIds(scope?.companyIds),
+  ];
+}
+
+export function decodeDecisionsScope(
+  projectId: string,
+  companyKey: string,
+): DecisionsScope {
+  const scope: DecisionsScope = {};
+
+  if (projectId !== "") scope.projectId = projectId;
+  if (companyKey !== "*") {
+    scope.companyIds = JSON.parse(companyKey) as string[];
+  }
+
+  return scope;
+}
+
+const getDecisionsQueueCached = cache(
+  (
+    userId: string,
+    globalRole: GlobalRole,
+    projectId: string,
+    companyKey: string,
+  ): Promise<DecisionsQueue> =>
+    computeDecisionsQueue(
+      userId,
+      globalRole,
+      decodeDecisionsScope(projectId, companyKey),
+    ),
+);
+
+/**
+ * Per-render memoized decision queue (ATN-05 / MEMO-01..03). Equivalent scopes
+ * share one computation within a render; an explicit `client` bypasses the
+ * render cache.
+ */
+export function getDecisionsQueue(
+  userId: string,
+  globalRole: GlobalRole,
+  scope?: DecisionsScope,
+  client?: NodePgDatabase<typeof schema>,
+): Promise<DecisionsQueue> {
+  if (client !== undefined) {
+    return computeDecisionsQueue(userId, globalRole, scope, client);
+  }
+
+  const [projectId, companyKey] = decisionsCacheKey(scope);
+
+  log.debug({ userId, projectId, companyKey }, "[decisions.cache] key");
+
+  return getDecisionsQueueCached(userId, globalRole, projectId, companyKey);
+}
 
 // Every reader this queue admits holds `readRepoFiles` exactly when this is
 // true, so a queue surface may render repository-content affordances from it
@@ -585,7 +650,7 @@ export function decisionQueueReadsRepoFiles(): boolean {
 export async function getDecisionsCount(
   userId: string,
   globalRole: GlobalRole,
-  scope: DecisionsScope = {},
+  scope?: DecisionsScope,
 ): Promise<number> {
   return (await getDecisionsQueue(userId, globalRole, scope)).count;
 }

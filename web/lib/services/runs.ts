@@ -1592,7 +1592,10 @@ async function* executeFlowLaunch(
           settings,
           agent: capabilityAgent,
           permissionPolicy: runnerResolution.runnerSnapshot.permissionPolicy,
-          checkDiagnostics: () => transportForExecutionHost(placementHost).diagnostics(),
+          checkDiagnostics: () =>
+            transportForExecutionHost(placementHost).diagnostics({
+              refresh: true,
+            }),
         });
       }
 

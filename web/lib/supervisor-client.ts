@@ -982,10 +982,17 @@ export async function checkSupervisorHealth(
   return { kind: "ready", health: parsed.data, lag };
 }
 
+function diagnosticsUrl(refresh?: boolean): string {
+  const path = refresh ? "/diagnostics?refresh=1" : "/diagnostics";
+
+  return `${baseUrl()}${path}`;
+}
+
 export async function checkSupervisorDiagnostics(
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; refresh?: boolean } = {},
 ): Promise<SupervisorDiagnosticsStatus> {
-  const url = `${baseUrl()}/diagnostics`;
+  const refresh = Boolean(opts.refresh);
+  const url = diagnosticsUrl(refresh);
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
@@ -993,7 +1000,7 @@ export async function checkSupervisorDiagnostics(
   );
   let res: Response;
 
-  logger.debug({ url }, "checkSupervisorDiagnostics");
+  logger.debug({ url, refresh }, "checkSupervisorDiagnostics");
 
   try {
     res = await fetchSupervisor(url, {

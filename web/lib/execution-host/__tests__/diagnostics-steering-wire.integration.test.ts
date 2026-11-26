@@ -66,4 +66,23 @@ describe("supervisor /diagnostics steering evidence on the wire (ADR-182)", () =
     });
     expect(steering("codex")).toEqual({ supported: null, checkedAt: null });
   });
+
+  it("DIAG-11 refresh: true against the real supervisor returns a newer checkedAt than the cached snapshot", async () => {
+    const initial = await checkSupervisorDiagnostics();
+    const cached = await checkSupervisorDiagnostics();
+
+    expect(initial.kind).toBe("ready");
+    expect(cached.kind).toBe("ready");
+    if (initial.kind !== "ready" || cached.kind !== "ready") return;
+    expect(cached.diagnostics.checkedAt).toBe(initial.diagnostics.checkedAt);
+
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    const refreshed = await checkSupervisorDiagnostics({ refresh: true });
+
+    expect(refreshed.kind).toBe("ready");
+    if (refreshed.kind !== "ready") return;
+    expect(Date.parse(refreshed.diagnostics.checkedAt)).toBeGreaterThan(
+      Date.parse(initial.diagnostics.checkedAt),
+    );
+  });
 });

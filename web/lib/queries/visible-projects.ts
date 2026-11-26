@@ -23,6 +23,7 @@ import "server-only";
 
 import type { GlobalRole, ProjectRole } from "@/lib/db/schema";
 
+import { cache } from "react";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
@@ -86,10 +87,10 @@ export interface VisibleProject {
   name: string;
 }
 
-export async function getVisibleProjects(
+async function loadVisibleProjects(
   userId: string,
   globalRole: GlobalRole,
-  client: VisibleProjectsClient = getDb(),
+  client: VisibleProjectsClient,
 ): Promise<VisibleProject[]> {
   const columns = { id: projects.id, slug: projects.slug, name: projects.name };
   const rows =
@@ -116,6 +117,25 @@ export async function getVisibleProjects(
   return visible;
 }
 
+const getVisibleProjectsCached = cache(
+  (userId: string, globalRole: GlobalRole): Promise<VisibleProject[]> =>
+    loadVisibleProjects(userId, globalRole, getDb()),
+);
+
+export async function getVisibleProjects(
+  userId: string,
+  globalRole: GlobalRole,
+  client?: VisibleProjectsClient,
+): Promise<VisibleProject[]> {
+  if (client !== undefined) {
+    return loadVisibleProjects(userId, globalRole, client);
+  }
+
+  // Return a fresh array on every call so caller mutations cannot poison the
+  // per-render cache (MEMO-05).
+  return [...(await getVisibleProjectsCached(userId, globalRole))];
+}
+
 /**
  * The projects a reader can ACT in, not merely read (ADR-169 D7).
  *
@@ -129,10 +149,10 @@ export async function getVisibleProjects(
  *
  * A global `admin` acts everywhere by role, exactly as they see everywhere.
  */
-export async function getActionableProjectIds(
+async function loadActionableProjectIds(
   userId: string,
   globalRole: GlobalRole,
-  client: VisibleProjectsClient = getDb(),
+  client: VisibleProjectsClient,
 ): Promise<string[]> {
   if (globalRole === "admin") {
     return getVisibleProjectIds(userId, globalRole, client);
@@ -163,10 +183,29 @@ export async function getActionableProjectIds(
   return actionable;
 }
 
+const getActionableProjectIdsCached = cache(
+  (userId: string, globalRole: GlobalRole): Promise<string[]> =>
+    globalRole === "admin"
+      ? getVisibleProjectIds(userId, globalRole)
+      : loadActionableProjectIds(userId, globalRole, getDb()),
+);
+
+export async function getActionableProjectIds(
+  userId: string,
+  globalRole: GlobalRole,
+  client?: VisibleProjectsClient,
+): Promise<string[]> {
+  if (client !== undefined) {
+    return loadActionableProjectIds(userId, globalRole, client);
+  }
+
+  return [...(await getActionableProjectIdsCached(userId, globalRole))];
+}
+
 export async function getVisibleProjectIds(
   userId: string,
   globalRole: GlobalRole,
-  client: VisibleProjectsClient = getDb(),
+  client?: VisibleProjectsClient,
 ): Promise<string[]> {
   const visible = await getVisibleProjects(userId, globalRole, client);
 

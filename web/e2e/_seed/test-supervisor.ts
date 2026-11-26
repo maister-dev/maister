@@ -1436,7 +1436,10 @@ export async function startTestSupervisor(
       return;
     }
 
-    if (method === "GET" && url === "/diagnostics") {
+    if (
+      method === "GET" &&
+      (url === "/diagnostics" || url.startsWith("/diagnostics?"))
+    ) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(e2eSupervisorDiagnostics("e2e-test-supervisor")));
 

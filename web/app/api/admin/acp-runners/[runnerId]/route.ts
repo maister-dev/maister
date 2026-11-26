@@ -180,7 +180,7 @@ async function parseJson(req: NextRequest): Promise<unknown> {
 async function loadDiagnosticsForReadiness(): Promise<{
   diagnostics: SupervisorDiagnostics | null;
 }> {
-  const status = await executionHosts.local().diagnostics();
+  const status = await executionHosts.local().diagnostics({ refresh: true });
 
   return {
     diagnostics: status.kind === "ready" ? status.diagnostics : null,

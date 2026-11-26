@@ -63,7 +63,11 @@ export type {
   PreparedInput,
 } from "./client";
 export { createExecutionHosts, executionHosts } from "./client";
-export { getPlatformDiagnostics, getPlatformStatus } from "./platform-status";
+export {
+  getFreshPlatformDiagnostics,
+  getPlatformDiagnostics,
+  getPlatformStatus,
+} from "./platform-status";
 export type { PromptHandle, PromptQueryResult } from "./deliverer";
 export {
   COMMAND_POLICY,

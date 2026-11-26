@@ -25,7 +25,7 @@ import {
   worktreesRoot,
 } from "@/lib/instance-config";
 import {
-  getPlatformDiagnostics,
+  getFreshPlatformDiagnostics,
   type SupervisorDiagnosticsStatus,
 } from "@/lib/execution-host";
 
@@ -41,7 +41,7 @@ export default async function SettingsPage(): Promise<ReactElement> {
   const isAdmin = user !== null && hasActiveGlobalRole(user, "admin");
 
   const tools = isAdmin ? await hostToolStatus() : [];
-  const diagnostics = isAdmin ? await getPlatformDiagnostics() : null;
+  const diagnostics = isAdmin ? await getFreshPlatformDiagnostics() : null;
   const runtime = isAdmin ? await loadPlatformRuntimeView(diagnostics) : null;
   const unavailableAdapters =
     diagnostics?.kind === "ready"

@@ -270,9 +270,11 @@ export interface ExecutionHostTransport {
     timeoutMs?: number;
   }): Promise<ExecutionHostDataPlaneCapabilities | null>;
   // The host's adapter diagnostics (smoke evidence) — a read-only admin
-  // surface like `health`, never fenced.
+  // surface like `health`, never fenced. Pass `refresh: true` for fresh-class
+  // callers (ADR-224, docs/system-analytics/host-diagnostics.md).
   diagnostics(opts?: {
     timeoutMs?: number;
+    refresh?: boolean;
   }): Promise<SupervisorDiagnosticsStatus>;
   // ADR-179: host env-var PRESENCE by name, for MCP readiness. Accepts ANY
   // number of names — the transport dedupes, chunks by the route cap and merges

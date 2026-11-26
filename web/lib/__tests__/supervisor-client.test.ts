@@ -1036,6 +1036,31 @@ describe("checkSupervisorDiagnostics", () => {
       reason: "malformed",
     });
   });
+
+  it("DIAG-11 appends ?refresh=1 when refresh: true and omits the query by default", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(diagnostics), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(diagnostics), { status: 200 }),
+      );
+
+    await checkSupervisorDiagnostics();
+    await checkSupervisorDiagnostics({ refresh: true });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(/\/diagnostics$/),
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/\/diagnostics\?refresh=1$/),
+      expect.any(Object),
+    );
+  });
 });
 
 describe("streamSession", () => {

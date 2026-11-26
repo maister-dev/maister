@@ -14,3 +14,8 @@ export const getPlatformStatus = cache(() =>
 export const getPlatformDiagnostics = cache(() =>
   executionHosts.local().diagnostics(),
 );
+
+// ADR-224: fresh-class caller for `/settings` default-runner reconcile.
+export const getFreshPlatformDiagnostics = cache(() =>
+  executionHosts.local().diagnostics({ refresh: true }),
+);

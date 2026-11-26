@@ -4,11 +4,11 @@ import type { GlobalRole } from "@/lib/db/schema";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
-import { eq } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
 import { authConfig } from "@/auth.config";
+import { loadUserCached } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { verifyCredentialAccount } from "@/lib/users";
@@ -57,15 +57,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
       }
 
       if (typeof token.id === "string") {
-        const rows = await db()
-          .select({
-            role: users.role,
-            mustChangePassword: users.mustChangePassword,
-            accountStatus: users.accountStatus,
-          })
-          .from(users)
-          .where(eq(users.id, token.id));
-        const row = rows[0];
+        const row = await loadUserCached(token.id);
 
         if (!row) {
           log.warn(
