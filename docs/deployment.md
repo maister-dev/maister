@@ -768,6 +768,35 @@ The PostgreSQL-only Compose files provide the database for these
 service units. Use the [Stage C acceptance plan](../.ai-factory/plans/feature-stage-c-selected-supervisor.md)
 to track the remaining lifecycle and multi-host rollout evidence.
 
+#### Local two-supervisor pilot
+
+Start a second supervisor with its own network namespace, service identity,
+SQLite directory and workspace root. Give it a separate approved checkout
+or Git source for the same project. Record its stable key from `/health` and
+set `MAISTER_ADDITIONAL_EXECUTION_HOSTS` on Web. The operator supplies its
+private origin, stable key, display name and optional project allowlist and
+concurrency limit. The board can select either eligible supervisor. The admin
+screen displays each registered identity, its last observation and drain state.
+
+Before enabling the second supervisor, apply PostgreSQL migrations `0387`
+and `0388` and drain Web processes using the older singleton registry writer.
+Retain both endpoint descriptors while either host has retained work. To drain
+new work on B, set its descriptor's `draining` field to `true` and reload Web.
+Existing work stays with its owner. If the host becomes unreachable, restore
+the configured endpoint with the original SQLite and workspace bytes to
+reconcile delayed receipts. A new key requires operator review and cannot
+take over retained work from the old key.
+
+Take backups during a maintenance window after both hosts have drained and
+Web and supervisors have stopped writing. Capture PostgreSQL and each host's
+SQLite, repository, workspaces and runtime objects as one coordinated set.
+Retain the original host names, paths and configuration with the backup.
+Restore the set to an isolated network first. Verify both stable keys and
+their distinct boot IDs, original assignments, command receipts, retained
+Review and dirty work before resuming writes. Reconcile any external Git
+publication before restoring an older set. The registry fences software that
+only supports a singleton while a peer is active or retains ownership.
+
 ## 14. Stage B execution-data cut-over (upgrade from Stage A)
 
 **(Implemented — S4.1–S4.7; procedure D9 in

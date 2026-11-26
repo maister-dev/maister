@@ -941,7 +941,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
 
 ### C5–C7 — separately shippable two-host pilot
 
-- [ ] **T12 · Registry / transport (after local G1).** Extend T04 to two configured endpoints. Activate the G2 PostgreSQL constraint change after draining incompatible registrars. Bind each descriptor to its observed key and distinguish restart from replacement. Update registrar, resolver, client, default transport, event-plane activation, admin status and recovery. Keep one legacy default and require compatible Web writers before enabling a second entry. Start independent event consumers/cursors/ACKs per host. Hold a projector after ingest and confirm its host still receives the ACK. Then prove identical command IDs or cursors cannot cross identities and an unreachable A leaves B usable. Log per-host negotiation, lag, drain and last seen.
+- [x] **T12 · Registry / transport (after local G1).** Extend T04 to two configured endpoints. Activate the G2 PostgreSQL constraint change after draining incompatible registrars. Bind each descriptor to its observed key and distinguish restart from replacement. Update registrar, resolver, client, default transport, event-plane activation, admin status and recovery. Keep one legacy default and require compatible Web writers before enabling a second entry. Start independent event consumers/cursors/ACKs per host. Hold a projector after ingest and confirm its host still receives the ACK. Then prove identical command IDs or cursors cannot cross identities and an unreachable A leaves B usable. Log per-host negotiation, lag, drain and last seen.
 
   C-13 RED registered only A. GREEN on Darwin arm64 and Node 24.15.0 used
   two real supervisor processes with separate stores. Each checked out the
@@ -955,7 +955,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   when a launch selects a host explicitly. The fixture now receives the
   original preparation refusal and holds the launch. The same-path
   container witness and full two-host board run are pending.
-- [ ] **T13 · Scheduler / quiescence (after T12).** Reserve host capacity atomically in addition to the global limit; enforce adapter/project/host eligibility and shared-root affinity. Integrate pressure, bounded retries and stale-owner fencing with the existing scheduler. Interrupt during acceptance, heartbeat timeout and cancellation; prove two distinct launches cannot exceed a single slot, old host effects cannot race a new owner, and pinned work never silently relocates. Expose waiting reason and operator recovery. Log reservation, last observed health and quiescence witness.
+- [x] **T13 · Scheduler / quiescence (after T12).** Reserve host capacity atomically in addition to the global limit; enforce adapter/project/host eligibility and shared-root affinity. Integrate pressure, bounded retries and stale-owner fencing with the existing scheduler. Interrupt during acceptance, heartbeat timeout and cancellation; prove two distinct launches cannot exceed a single slot, old host effects cannot race a new owner, and pinned work never silently relocates. Expose waiting reason and operator recovery. Log reservation, last observed health and quiescence witness.
 
   C-14 RED admitted two concurrent launches against B's single slot. GREEN
   used competing PostgreSQL connections and a real B workload. Web released
@@ -966,10 +966,27 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   pressure checks deferred new admissions. After recovery, one competing
   launch received the slot, and the next eligible Run followed queue order.
   The populated 0388 migration preserved assignment history and reserved the
-  running owner without claiming the pending Run. The final split-user
-  acceptance repeats cancellation and ownership checks on the G2 candidate.
+  running owner without claiming the pending Run. The split-user candidate
+  below also stopped an accepted workload and proved retirement of its group.
 
 - [ ] **T14 · Pilot / G2 (after T12–13).** Qualify the two-host matrix below and reconcile actual wire/schema versions, admin guide, metrics, test topology, deployment and error taxonomy. Validate migration/journal against latest master and reject rollback to a singleton writer while a second host owns work. Document shutdown/drain and coordinated restore. Release the pilot only for configurations matching its evidence. **Checkpoint 4:** two-host placement and recovery.
+
+  The C-15 Chrome fixture passed against the capacity-phase production build
+  `sha256:431a4e1ff1055b8688be48f31c752059e22445a76909ff595d2bdc6b4c5aefb6`
+  (Linux arm64, Node 24.22.2, Chrome 158.0.8127.38). Web ran as UID 1001,
+  with UID 1002 on A and UID 1003 in B's distinct network namespace. Both
+  supervisors owned the same lexical managed repository path in separate
+  stores, with distinct stable keys and workspace handles. Chrome selected B
+  from the board and showed the actual assignment. B accepted the pinned
+  Next.js command, then lost the network. A independently reached Review
+  while B was offline. B's SQLite recorded one terminal result
+  `976c4de0-32bb-5d18-917f-b58fe8df437c`; PostgreSQL had zero copies before
+  reconnect and one after. A recorded no workload receipt for B's Run.
+  Chrome displayed B's sealed result and diff. A separate restored database
+  from `pg_dump` and both filesystem snapshots reproduced the old host keys,
+  new boot IDs, same command/assignment/workspace and exact dirty diff in
+  Review. The G2 release gate still requires the final T09/G1 revision and
+  matching durability coverage.
 
 ### Proposed commit checkpoints
 

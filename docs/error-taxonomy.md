@@ -966,6 +966,10 @@ and grants no delivery authority.
 | --- | --- |
 | `workspace_preparation_pending` | Session creation returns `PRECONDITION` and leaves the reserved Run without a child until the selected host's input receipt is applied. |
 | `workspace_preparation_refused` | The accepted board launch is held after its selected supervisor returns a terminal preparation refusal. The original command and ownership record remain available for diagnosis. |
+| `launch_execution_host_capacity` | The selected supervisor has no free Run slot. The launch retains that supervisor and remains eligible when its slot is released. |
+| `launch_execution_host_draining` | The selected supervisor is draining. Existing assignments continue to completion or reconciliation. Reload Web with drain cleared to accept new work. |
+| `launch_execution_host_unavailable` | The selected identity cannot currently admit work. Restore the original supervisor and its retained state to continue. |
+| `execution_host_quiescence_pending` | A previous assignment still has an unsettled physical effect. A new assignment waits for an owning-host terminal or cancellation witness. |
 | `workspace_requirements_pending` | Workload and session admission wait until the selected host's required successful probe receipts have been applied. |
 | `workspace_requirement_failed` | A required probe failed and its process group retired. The Run records `PRECONDITION`, releases the assignment and retains diagnostic objects. |
 | `workspace_diff_range_invalid` | The owning supervisor cannot verify the requested ancestry or retained checkout. No diff object is returned. |

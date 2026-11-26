@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
 import { chromium, expect, type Browser } from "@playwright/test";
+import { Pool } from "pg";
 
 import { readLaunchResult } from "../e2e/_seed/launch-stream";
 import { readTaskLaunchReceipt } from "../e2e/_seed/task-launch";
@@ -15,12 +16,13 @@ const image = process.argv[2];
 
 assert(
   image,
-  "usage: smoke-production-split-users.ts IMAGE [--chrome] [--second-supervisor] [--addressed-build]",
+  "usage: smoke-production-split-users.ts IMAGE [--chrome] [--second-supervisor] [--addressed-build | --addressed-two-host]",
 );
 
 const useChrome = process.argv.includes("--chrome");
-const useSecondSupervisor = process.argv.includes("--second-supervisor");
-const addressedBuild = process.argv.includes("--addressed-build");
+const addressedTwoHost = process.argv.includes("--addressed-two-host");
+const useSecondSupervisor = addressedTwoHost || process.argv.includes("--second-supervisor");
+const addressedBuild = addressedTwoHost || process.argv.includes("--addressed-build");
 const addressedStopTaskTitle = "Stop an accepted private workload";
 const addressedReworkTaskTitle = "Restore the selected workspace for rework";
 
@@ -57,6 +59,7 @@ const network = "maister-s53-" + randomUUID().slice(0, 8);
 // Each disposable container gets its own writable filesystem and enough room
 // for the supervisor's SQLite reserve and the Next.js build.
 const fixtureMount = "/s53:rw,exec,size=2147483648,mode=0755";
+const temporaryMount = "/tmp:rw,exec,size=268435456,mode=1777";
 const db = await startMainAndBrainPostgresTestDb({
   databaseName: "s53_split_uid",
 });
@@ -91,6 +94,8 @@ try {
     network,
     "--tmpfs",
     fixtureMount,
+    "--tmpfs",
+    temporaryMount,
     "-p",
     "127.0.0.1::3000",
     "--user",
@@ -179,6 +184,10 @@ ${adapterScript}EOF
 test "$(cat acp-marker)" = 'written by addressed ACP'
 ln -s /app/web/node_modules node_modules
 node /app/web/node_modules/typescript/bin/tsc --noEmit
+if [ -f /s53/hold-peer-build ]; then
+  printf '%s %s\\n' "$$" "$(ps -o pgid= -p "$$" | tr -d ' ')" > /s53/host/build-accepted
+  while [ ! -f /s53/host/build-release ]; do sleep 0.1; done
+fi
 NEXT_TELEMETRY_DISABLED=1 node /app/web/node_modules/next/dist/bin/next build --webpack
 test -s .next/BUILD_ID
 git add -- acp-marker tsconfig.json
@@ -276,6 +285,13 @@ printf 'reviewed change\\n' > abandoned-attempt.txt`)}},transitions:{success:"re
               "MAISTER_SELECTED_EXECUTION_HOST_KEY=" + initialHost.hostKey,
             ]
           : []),
+        ...(addressedTwoHost && secondHost ? [
+          "--env",
+          "MAISTER_ADDITIONAL_EXECUTION_HOSTS=" + JSON.stringify([{
+            url: peerEndpoint, hostKey: secondHost.hostKey, displayName: "Build host B",
+            projectIds: [witness.projectId], maxConcurrentRuns: 1,
+          }]),
+        ] : []),
         "--env",
         "MAISTER_API_BASE_URL=" + origin,
         "--env",
@@ -373,6 +389,8 @@ printf 'reviewed change\\n' > abandoned-attempt.txt`)}},transitions:{success:"re
       network,
       "--tmpfs",
       fixtureMount,
+      "--tmpfs",
+      temporaryMount,
       "--network-alias",
       "s53-host-b",
       "--user",
@@ -386,24 +404,22 @@ printf 'reviewed change\\n' > abandoned-attempt.txt`)}},transitions:{success:"re
   }
   const secondary = peerContainer
     ? {
-        root: "/s53/host-b",
+        root: addressedTwoHost ? primary.root : "/s53/host-b",
         port: 7778,
         user: "1003:1001",
-        workspaceRoot: "/s53/host-b/workspaces",
+        workspaceRoot: addressedTwoHost ? primary.workspaceRoot : "/s53/host-b/workspaces",
         target: peerContainer,
       }
     : null;
   const peerEndpoint = "http://s53-host-b:7778";
   const gate = primary.root + "/release-adapter";
+  const repositoryEnvironment = [
+    "--env", "MAISTER_WORKSPACE_REPOSITORIES=" + JSON.stringify({ [witness.projectId]: witness.repoPath }),
+    "--env", "MAISTER_ADAPTER_BINARY_CODEX=/s53/fixture",
+  ];
   await startSupervisor(
     addressedBuild
-      ? [
-          "--env",
-          "MAISTER_WORKSPACE_REPOSITORIES=" +
-            JSON.stringify({ [witness.projectId]: witness.repoPath }),
-          "--env",
-          "MAISTER_ADAPTER_BINARY_CODEX=/s53/fixture",
-        ]
+      ? repositoryEnvironment
       : [
           "--env",
           "MOCK_ACP_REQUEST_PERMISSION=1",
@@ -425,18 +441,32 @@ printf 'reviewed change\\n' > abandoned-attempt.txt`)}},transitions:{success:"re
         "sh",
         "-ec",
         `
-      useradd -u 1003 -g 1001 -d /s53/host-b/home -s /usr/sbin/nologin maister-s53-host-b
+      useradd -u 1003 -g 1001 -d "$1/home" -s /usr/sbin/nologin maister-s53-host-b
       install -d -m 0755 /s53
-      install -d -o 1003 -g 1001 -m 0700 /s53/host-b /s53/host-b/home /s53/host-b/journal /s53/host-b/workspaces
+      install -d -o 1003 -g 1001 -m 0700 "$1" "$1/home" "$1/journal" "$1/workspaces"
       cat > /s53/fixture <<'EOF'
 ${adapterScript}EOF
       chmod 0755 /s53/fixture
     `,
+        "sh", secondary.root,
       ],
       [],
       secondary.target,
     );
-    await startSupervisor([], secondary);
+    if (addressedTwoHost) {
+      const bundle = await inContainer(primary.user, ["sh", "-ec", `
+        git -C "$1" bundle create /s53/host/source.bundle --all
+        base64 -w0 /s53/host/source.bundle
+      `, "sh", witness.repoPath]);
+      await inContainer("0", ["sh", "-ec", `
+        printf '%s' "$1" | base64 -d > /s53/source.bundle
+        chmod 0644 /s53/source.bundle
+        touch /s53/hold-peer-build
+      `, "sh", bundle], [], secondary.target);
+      await inContainer(secondary.user, ["git", "clone", "--quiet", "/s53/source.bundle", witness.repoPath], [], secondary.target);
+      await inContainer(secondary.user, ["git", "-C", witness.repoPath, "remote", "remove", "origin"], [], secondary.target);
+    }
+    await startSupervisor(addressedTwoHost ? repositoryEnvironment : [], secondary);
     secondHost = await poll(
       () => readHost(peerEndpoint),
       30_000,
@@ -447,7 +477,7 @@ ${adapterScript}EOF
     assert.equal(
       await inContainer(
         "0",
-        ["sh", "-ec", 'ps -o uid= -p "$(cat /s53/host-b/pid)" | tr -d " "'],
+        ["sh", "-ec", 'ps -o uid= -p "$(cat "$1/pid")" | tr -d " "', "sh", secondary.root],
         [],
         secondary.target,
       ),
@@ -463,7 +493,8 @@ ${adapterScript}EOF
       [
         "sh",
         "-ec",
-        "test -r /s53/host-b/state/state.sqlite && test ! -e /s53/host",
+        'test -r "$1/state/state.sqlite" && test ! -e /s53/web',
+        "sh", secondary.root,
       ],
       [],
       secondary.target,
@@ -606,29 +637,28 @@ ${adapterScript}EOF
       const preview = await expectedPreview;
       assert.equal(preview.status(), 200, await preview.text());
       const options = (await preview.json()) as {
-        executionHostOptions?: { hosts: Array<{ id: string }> };
+        executionHostOptions?: { defaultExecutionHostId: string; hosts: Array<{ id: string; displayName: string }> };
       };
-      assert(
-        options.executionHostOptions?.hosts.some(
-          ({ id }) => id === selectedHost.id,
-        ),
-      );
+      const hosts = options.executionHostOptions;
+      assert(hosts && hosts.hosts.some(({ id }) => id === selectedHost.id));
+      const defaultHost = hosts.hosts.find(({ id }) => id === hosts.defaultExecutionHostId);
+      assert(defaultHost);
       const picker = dialog
         .locator('button[aria-haspopup="listbox"]')
-        .filter({ hasText: selectedHost.displayName });
+        .filter({ hasText: defaultHost.displayName });
       await expect(picker).toBeVisible();
       await picker.focus();
       await page.keyboard.press("ArrowDown");
-      await expect(
-        page.getByRole("option", {
-          name: selectedHost.displayName,
-          exact: true,
-        }),
-      ).toBeVisible();
-      await page.keyboard.press("End");
+      const target = page.getByRole("option", { name: selectedHost.displayName, exact: true });
+      await expect(target).toBeVisible();
+      const ordered = await page.getByRole("option").allTextContents();
+      const option = ordered.findIndex((name) => name.trim() === selectedHost.displayName);
+      assert(option >= 0);
+      await page.keyboard.press("Home");
+      for (let index = 0; index < option; index++) await page.keyboard.press("ArrowDown");
       await page.keyboard.press("Enter");
-      await expect(picker).toContainText(selectedHost.displayName);
-      await expect(picker).toBeFocused();
+      await expect(dialog.locator('button[aria-haspopup="listbox"]')
+        .filter({ hasText: selectedHost.displayName })).toBeFocused();
     }
     const accepted = page.waitForResponse(
       (response) =>
@@ -687,20 +717,21 @@ ${adapterScript}EOF
       witness.repoPath,
       primary.root,
     ]);
-    const selectedHost = await poll(
+    const registeredHost = (identity: HostIdentity) => poll(
       async () => {
         const { rows } = await db.pool.query<{
           id: string;
           displayName: string;
         }>(
           'select id, display_name as "displayName" from execution_hosts where host_key=$1 and retired_at is null',
-          [initialHost.hostKey],
+          [identity.hostKey],
         );
         return rows[0] ?? null;
       },
       30_000,
       "registered private supervisor",
     );
+    const selectedHost = await registeredHost(initialHost);
     note("addressed-board-launch", {
       ...initialHost,
       hostId: selectedHost.id,
@@ -708,6 +739,7 @@ ${adapterScript}EOF
     });
     const ownedCheckoutForRun = async (
       runId: string,
+      owner = primary,
     ): Promise<{
       handle: string;
       path: string;
@@ -720,27 +752,27 @@ ${adapterScript}EOF
       const handle = rows[0]?.handle;
       if (!handle) return null;
       const checkout = JSON.parse(
-        await inContainer(primary.user, [
+        await inContainer(owner.user, [
           "node",
           "--input-type=module",
           "-e",
           `import { DatabaseSync } from "node:sqlite";
            const db = new DatabaseSync(process.argv[1], { readOnly: true });
            console.log(JSON.stringify(db.prepare("select real_path as path, repo_path as repository from workspaces where id=? and released_at is null").get(process.argv[2]) ?? null));`,
-          primary.root + "/state/state.sqlite",
+          owner.root + "/state/state.sqlite",
           handle,
-        ]),
+        ], [], owner.target),
       ) as { path: string; repository: string } | null;
 
       return checkout ? { ...checkout, handle } : null;
     };
-    const verifyBuild = async (
+    const startBoardBuild = async (
       taskId: string,
-      expectedCommit: string,
+      host: typeof selectedHost,
       title?: string,
       language: "en" | "ru" = "en",
-    ): Promise<{ runId: string; patch: string }> => {
-      const runId = await launchFromBoard(taskId, selectedHost, title, language);
+    ): Promise<string> => {
+      const runId = await launchFromBoard(taskId, host, title, language);
       await page.goto("/runs/" + runId);
       const allow = page
         .getByTestId("pending-input-card")
@@ -748,6 +780,15 @@ ${adapterScript}EOF
       await expect(allow).toBeVisible({ timeout: 30_000 });
       await allow.click();
       await expect(allow).toBeHidden({ timeout: 30_000 });
+      return runId;
+    };
+    const verifyRunBuild = async (
+      runId: string,
+      expectedCommit: string,
+      host = selectedHost,
+      identity = initialHost,
+      owner = primary,
+    ): Promise<{ runId: string; patch: string }> => {
       const completed = await poll(
         async () => {
           const { rows } = await db.pool.query<{
@@ -779,10 +820,11 @@ ${adapterScript}EOF
         180_000,
         "addressed ACP edit and build reached Review",
       );
-      assert.equal(completed.execution_host_id, selectedHost.id);
+      assert.equal(completed.execution_host_id, host.id);
       assert.equal(completed.base_commit, expectedCommit);
       assert.equal(completed.worktree_path, null);
       assert.equal(completed.parent_repo_path, null);
+      if (new URL(page.url()).pathname !== `/runs/${runId}`) await page.goto(`/runs/${runId}`);
       await expect(page.getByTestId("run-header-status")).toContainText(
         /review/i,
       );
@@ -800,7 +842,7 @@ ${adapterScript}EOF
       const { rows } = await db.pool.query<{ id: string }>(
         `select id from execution_runtime_objects where run_id=$1 and execution_host_id=$2
        and logical_name='workload-result.json' and state='available'`,
-        [runId, selectedHost.id],
+        [runId, host.id],
       );
       assert.equal(rows.length, 1);
       const response = await api(
@@ -811,12 +853,12 @@ ${adapterScript}EOF
         build: "passed",
         typecheck: "passed",
       });
-      const logfile = await inContainer(primary.user, [
+      const logfile = await inContainer(owner.user, [
         "tail",
         "-n",
         "250",
-        primary.root + "/boot.log",
-      ]);
+        owner.root + "/boot.log",
+      ], [], owner.target);
       const workload = logfile
         .split("\n")
         .find(
@@ -830,7 +872,7 @@ ${adapterScript}EOF
         quiescence: string;
         processGroup: number;
       };
-      assert.equal(processWitness.hostKey, initialHost.hostKey);
+      assert.equal(processWitness.hostKey, identity.hostKey);
       assert.equal(processWitness.exitCode, 0);
       assert.equal(processWitness.quiescence, "proved");
       assert(
@@ -840,8 +882,8 @@ ${adapterScript}EOF
       note("addressed-build-reached-review", {
         runId,
         baseCommit: expectedCommit,
-        hostId: selectedHost.id,
-        ...initialHost,
+        hostId: host.id,
+        ...identity,
         processGroup: processWitness.processGroup,
         resultObjectId: rows[0].id,
         webRepositoryAccess: "EACCES",
@@ -849,6 +891,8 @@ ${adapterScript}EOF
 
       return { runId, patch };
     };
+    const verifyBuild = async (taskId: string, expectedCommit: string, title?: string, language?: "en" | "ru") =>
+      verifyRunBuild(await startBoardBuild(taskId, selectedHost, title, language), expectedCommit);
     assert(witness.baseCommit);
     const first = await verifyBuild(witness.taskId, witness.baseCommit);
     const nextCommit = await inContainer(primary.user, [
@@ -879,6 +923,170 @@ ${adapterScript}EOF
       secondRunId: second.runId,
       nextCommit,
     });
+    let restorePeerPilot: (() => Promise<void>) | undefined;
+    if (addressedTwoHost) {
+      assert(secondary && secondHost && witness.baseCommit);
+      const peer = secondary;
+      const peerIdentity = secondHost;
+      const peerHost = await registeredHost(peerIdentity);
+      const copyTask = async (title: string): Promise<string> => {
+        const id = randomUUID();
+        const created = await db.pool.query(
+          `insert into tasks (id,project_id,number,title,prompt,flow_id)
+           select $1,t.project_id,(select max(number)+1 from tasks where project_id=t.project_id),$2,t.prompt,t.flow_id
+           from tasks t where t.id=$3`,
+          [id, title, witness.taskId],
+        );
+        assert.equal(created.rowCount, 1);
+        return id;
+      };
+      const peerTitle = "Private Next build pinned to B";
+      const peerRunId = await startBoardBuild(await copyTask(peerTitle), peerHost, peerTitle);
+      const privateCheckout = await poll(
+        () => ownedCheckoutForRun(peerRunId, peer), 30_000, "B owns its private checkout",
+      );
+      const primaryCheckout = await ownedCheckoutForRun(first.runId, primary);
+      assert(primaryCheckout);
+      assert.equal(privateCheckout.repository, primaryCheckout.repository);
+      assert.notEqual(privateCheckout.handle, primaryCheckout.handle);
+      assert.equal(await ownedCheckoutForRun(peerRunId, primary), null);
+      const witnessPath = peer.root + "/build-accepted";
+      const [pid, pgid] = (await poll(async () => {
+        const output = await inContainer(peer.user, ["sh", "-ec", 'if [ -s "$1" ]; then cat "$1"; fi', "sh", witnessPath], [], peer.target);
+        return /^\d+ \d+$/u.test(output) ? output : null;
+      }, 45_000, "B accepted the real Next build command")).split(" ");
+      const cgroup = await inContainer(peer.user, ["cat", `/proc/${pid}/cgroup`], [], peer.target);
+      const peerCommand = await poll(async () => {
+        const { rows } = await db.pool.query<{ id: string; execution_host_id: string; assignment_epoch: number }>(
+          "select id,execution_host_id,assignment_epoch from execution_commands where run_id=$1 and kind='workspace.run' and state='accepted'",
+          [peerRunId],
+        );
+        return rows[0] ?? null;
+      }, 20_000, "Web recorded the accepted B command");
+      assert.equal(peerCommand.execution_host_id, peerHost.id);
+      note("peer-build-accepted", { runId: peerRunId, commandId: peerCommand.id, ...peerIdentity, pid, pgid, cgroup, repository: privateCheckout.repository });
+      await docker(["network", "disconnect", network, peer.target]);
+      assert.equal(await readHost(peerEndpoint), null);
+      const independentTitle = "Private Next build on A during B partition";
+      const independent = await verifyBuild(await copyTask(independentTitle), nextCommit, independentTitle);
+      assert.equal(await readHost(peerEndpoint), null);
+      const countPeerTerminal = async () => (await db.pool.query<{ count: number }>(
+        `select count(*)::int as count from execution_events where run_id=$1 and execution_host_id=$2
+         and event_type='workspace.command.terminal' and payload->>'commandId'=$3`,
+        [peerRunId, peerHost.id, peerCommand.id],
+      )).rows[0].count;
+      const receiptsFor = async (owner: typeof primary) => JSON.parse(await inContainer(owner.user, [
+        "node", "--input-type=module", "-e",
+        `import { DatabaseSync } from 'node:sqlite';
+         const db=new DatabaseSync(process.argv[1],{readOnly:true});
+         console.log(JSON.stringify(db.prepare("select command_id as id,phase,event_id as eventId from command_receipts where run_id=? and kind='workspace.run'").all(process.argv[2])));`,
+        owner.root + "/state/state.sqlite", peerRunId,
+      ], [], owner.target)) as Array<{ id: string; phase: string; eventId: string | null }>;
+      assert.deepEqual(await receiptsFor(primary), []);
+      await inContainer(peer.user, ["touch", peer.root + "/build-release"], [], peer.target);
+      const terminal = await poll(async () => {
+        const receipts = await receiptsFor(peer);
+        assert.equal(receipts.length, 1);
+        return receipts[0].phase === "completed" ? receipts[0] : null;
+      }, 120_000, "B completed Next while disconnected");
+      assert.equal(terminal.id, peerCommand.id);
+      assert(terminal.eventId);
+      assert.equal(await countPeerTerminal(), 0);
+      const pinned = await db.pool.query<{ status: string; execution_host_id: string; epoch: number }>(
+        `select r.status,a.execution_host_id,a.epoch from runs r join execution_assignments a on a.id=r.execution_assignment_id where r.id=$1`,
+        [peerRunId],
+      );
+      assert.deepEqual(pinned.rows, [{ status: "Running", execution_host_id: peerHost.id, epoch: peerCommand.assignment_epoch }]);
+      note("peer-partition-builds-settled", { peerRunId, independentRunId: independent.runId, terminalEventId: terminal.eventId, canonicalEventCount: 0 });
+      await docker(["network", "connect", "--alias", "s53-host-b", network, peer.target]);
+      assert.deepEqual(await poll(() => readHost(peerEndpoint), 30_000, "B reconnected"), peerIdentity);
+      const peerBuild = await verifyRunBuild(peerRunId, witness.baseCommit, peerHost, peerIdentity, peer);
+      assert.equal(await countPeerTerminal(), 1);
+      assert.deepEqual(await receiptsFor(peer), [terminal]);
+      assert.deepEqual(await receiptsFor(primary), []);
+      note("peer-replay-applied-once", {
+        runId: peerRunId, ...peerIdentity, commandId: terminal.id, terminalEventId: terminal.eventId, canonicalEventCount: 1,
+      });
+      restorePeerPilot = async () => {
+        const dirtyFile = privateCheckout.path + "/restore-witness.txt";
+        const dirtyBytes = "private B edit retained with its original owner";
+        await inContainer(peer.user, ["sh", "-ec", 'printf "%s" "$2" > "$1"', "sh", dirtyFile, dirtyBytes], [], peer.target);
+        const before = await api(`/api/runs/${peerRunId}/diff?scope=run`);
+        assert.equal(before.status, 200, await before.clone().text());
+        const { diff: dirtyPatch } = (await before.json()) as { diff: string };
+        assert.notEqual(dirtyPatch, peerBuild.patch);
+        assert(dirtyPatch.includes("+" + dirtyBytes));
+        const web = { ...primary, root: "/s53/web", user: "1001:1001" };
+        await page.goto("/login");
+        const stopService = async (service: typeof primary): Promise<void> => {
+          const pidFile = service.root + "/pid";
+          await inContainer(service.user, ["sh", "-ec", 'kill -TERM "$(cat "$1")"', "sh", pidFile], [], service.target);
+          await poll(async () => {
+            const status = await inContainer(service.user, [
+              "sh", "-ec", 'if ! kill -0 "$(cat "$1")" 2>/dev/null; then printf stopped; fi', "sh", pidFile,
+            ], [], service.target);
+            return status === "stopped" ? true : null;
+          }, 30_000, `service at ${service.root} quiesced`);
+        };
+        await stopService(web);
+        await Promise.all([stopService(primary), stopService(peer)]);
+        // Move every fixture store aside and reopen the restored bytes at its original address.
+        const restoreFiles = (owner: typeof primary, names: string[]): Promise<string> =>
+          inContainer("0", ["sh", "-ec", `
+            install -d -m 0700 /s53/pre-restore
+            tar -czf /s53/checkpoint.tgz -C /s53 "$@"
+            mv "$@" /s53/pre-restore/
+            tar -xzf /s53/checkpoint.tgz -C /s53
+          `, "sh", ...names], ["--workdir", "/s53"], owner.target);
+        const restoredName = "s53_restored";
+        const restorePostgres = async (): Promise<void> => {
+          const dbTarget = db.container.getId();
+          await docker(["exec", dbTarget, "sh", "-ec", `
+            pg_dump -U "$POSTGRES_USER" -Fc "$1" > "$PGDATA/s53-checkpoint.dump"
+            createdb -U "$POSTGRES_USER" "$2"
+            pg_restore --exit-on-error --no-owner -U "$POSTGRES_USER" -d "$2" "$PGDATA/s53-checkpoint.dump"
+          `, "sh", db.container.getDatabase(), restoredName]);
+        };
+        await Promise.all([restorePostgres(), restoreFiles(primary, ["web", "host", "shared"]), restoreFiles(peer, ["host"])]);
+        const restoredDns = new URL(fixtureEnvironment.DB_URL);
+        restoredDns.pathname = "/" + restoredName;
+        fixtureEnvironment.DB_URL = restoredDns.href;
+        const restoredLocal = new URL(db.databaseUrl);
+        restoredLocal.pathname = "/" + restoredName;
+        const restoredPool = new Pool({ connectionString: restoredLocal.href });
+        try {
+          const ledger = await restoredPool.query(
+            `select r.status, w.execution_host_id, w.execution_workspace_id, c.state, c.assignment_epoch,
+              (select count(*)::int from execution_events where id=$3) as event_count
+             from runs r join workspaces w on w.run_id=r.id join execution_commands c on c.run_id=r.id
+             where r.id=$1 and c.id=$2`,
+            [peerRunId, peerCommand.id, terminal.eventId],
+          );
+          assert.deepEqual(ledger.rows, [{ status: "Review", execution_host_id: peerHost.id,
+            execution_workspace_id: privateCheckout.handle, state: "succeeded", assignment_epoch: peerCommand.assignment_epoch,
+            event_count: 1 }]);
+        } finally {
+          await restoredPool.end();
+        }
+        assert.equal(await inContainer(peer.user, ["cat", dirtyFile], [], peer.target), dirtyBytes);
+        assert.deepEqual(await receiptsFor(peer), [terminal]);
+        await Promise.all([startSupervisor(repositoryEnvironment, primary), startSupervisor(repositoryEnvironment, peer)]);
+        const restoredA = await poll(readHost, 30_000, "restored A supervisor");
+        const restoredB = await poll(() => readHost(peerEndpoint), 30_000, "restored B supervisor");
+        assert.equal(restoredA.hostKey, initialHost.hostKey);
+        assert.equal(restoredB.hostKey, peerIdentity.hostKey);
+        assert.notEqual(restoredA.bootId, initialHost.bootId);
+        assert.notEqual(restoredB.bootId, peerIdentity.bootId);
+        await startWeb();
+        await ready();
+        const diff = await api(`/api/runs/${peerRunId}/diff?scope=run`);
+        assert.equal(diff.status, 200, await diff.clone().text());
+        assert.equal((await diff.json()).diff, dirtyPatch);
+        await page.goto(`/runs/${peerRunId}#review-panel`);
+        await expect(page.getByTestId("review-panel").getByText("acp-marker", { exact: true }).first()).toBeVisible();
+        note("peer-coordinated-restore-verified", { peerRunId, restoredA, restoredB, terminalEventId: terminal.eventId, dirtyEditRetained: true });
+      };
+    }
     await page.goto(`/runs/${second.runId}#review-panel`);
     const reviewPanel = page.getByTestId("review-panel");
     await expect(
@@ -1210,6 +1418,7 @@ ${adapterScript}EOF
       checkpointRef: restored.checkpoint_ref,
       restoreCommandId: restored.command_id,
     });
+    await restorePeerPilot?.();
   } else {
     const runStatus = page.getByRole("main").getByTestId("run-header-status");
     const allow = page

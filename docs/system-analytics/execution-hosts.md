@@ -961,7 +961,7 @@ Stage C endpoints are operator-controlled and confined to the trusted
 deployment network. Redirects and caller-supplied endpoint addresses are
 refused. The user sees ID, label and permitted readiness information.
 Project eligibility, capabilities, liveness, capacity and drain have
-separate decisions. The [scheduler](scheduler.md#addressed-placement-stage-c-designed)
+separate decisions. The [scheduler](scheduler.md#addressed-placement-stage-c)
 owns capacity and lease transitions.
 
 ### Workspace protocol 1
