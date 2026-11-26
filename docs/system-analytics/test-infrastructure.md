@@ -487,7 +487,9 @@ invocation cleanup remains the crash backstop and still fails on any survivor.
 Ordinary PostgreSQL fixtures use this shared acquisition boundary. The native
 `reaper-database-worker.mjs` is an independent SDK/Ryuk witness: O-reaper
 deliberately leaves its first database alive after worker SIGKILL. It registers
-allocation and labels ownership before start, but does not claim the helper's
+allocation and labels ownership before start. The two throwaway database
+workers use 128 MiB tmpfs mounts for their data directories. The fixture leaves
+reaping and discovery of failed allocations to the owning runner instead of using the shared helper's
 immediate rejected-acquisition cleanup. If it fails before publishing readiness,
 strict terminal cleanup discovers any labelled survivor and fails the lane;
 containment never turns that failed control green.

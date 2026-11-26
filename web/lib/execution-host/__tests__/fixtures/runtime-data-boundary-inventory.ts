@@ -200,21 +200,21 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
     ),
     ...classified(
       "lib/tasks/launch-agent-definition.ts",
-      "repository-worktree",
+      "manager-flow-state",
       "Agent package captures validate exact copied bytes and manager ancestry before consumption or release",
       [
         [
-          "captureTaskAgentPackage",
+          "captureTaskAgentDefinition",
           "lib/tasks/launch-capability-materialization.ts#captureAcceptedDirectory",
           "wrapper",
         ],
         [
-          "captureTaskAgentPackage",
+          "captureTaskAgentDefinition",
           "lib/tasks/launch-capability-materialization.ts#assertCapturedProjectionSymlinks",
           "wrapper",
         ],
         [
-          "captureTaskAgentPackage",
+          "captureTaskAgentDefinition",
           "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
           "wrapper",
         ],
@@ -291,8 +291,8 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Accepted package identity and private capture are resolved before model dispatch under the preparation owner",
       [
-        ["captureTaskAgentPackage", "node:fs/promises.mkdir", "write"],
-        ["captureTaskAgentPackage", "node:fs/promises.mkdtemp", "write"],
+        ["captureTaskAgentDefinition", "node:fs/promises.mkdir", "write"],
+        ["captureTaskAgentDefinition", "node:fs/promises.mkdtemp", "write"],
         ["release", "node:fs/promises.rm", "remove"],
         ["readTaskAgentDefinitionSource", "node:fs/promises.readFile", "read"],
       ],
@@ -1412,7 +1412,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["collect", "node:fs/promises.readdir", "list"],
         ["collect", "node:fs/promises.readFile", "read"],
         ["captureWorkspaceFlowAssets", "node:fs/promises.realpath", "stat"],
-        ["captureWorkspaceBundles", "node:fs/promises.lstat", "stat"],
+        ["collectRoot", "node:fs/promises.lstat", "stat"],
       ],
     ),
     ...classified(
@@ -2255,9 +2255,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [["CliPrAdapter.exec", "node:child_process.execFile", "spawn", null]],
     ),
     ...classified(
-      "lib/runs/pr-adapter.ts",
+      "../runtime/pull-request-state.ts",
       "repository-worktree",
-      "PR state reads through the provider CLIs (gh/glab)",
+      "Query the approved provider repository by identity without reading the selected host workspace.",
       [
         ["githubPrState", "node:child_process.execFile", "spawn", "gh"],
         ["gitlabPrState", "node:child_process.execFile", "spawn", "glab"],
@@ -2822,6 +2822,9 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["frozenTaskAgentDefinition", false],
     ["pinnedTaskAgentDefinition", false],
   ]),
+  ...wrappers("lib/tasks/launch-agent-definition.ts", "manager-flow-state", [
+    ["captureTaskAgentDefinition", false],
+  ]),
   ...wrappers(
     "lib/tasks/launch-capability-materialization.ts",
     "repository-worktree",
@@ -3382,7 +3385,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["applyNodeRestartCheckpoint", false],
     ["loadNodeRestartCheckpointPreview", false],
   ]),
-  ...wrappers("lib/runs/pr-adapter.ts", "repository-worktree", [
+  ...wrappers("../runtime/pull-request-state.ts", "repository-worktree", [
     ["getPrState", false],
   ]),
   ...wrappers("lib/scheduler/handlers/command.ts", "manager-flow-state", [
