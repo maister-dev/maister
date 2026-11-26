@@ -7,6 +7,7 @@ import type { SessionContentReference } from "./runtime-events";
 import { z } from "zod";
 
 import { COMMAND_KINDS } from "../../runtime/command-kinds";
+import { CLAUDE_NATIVE_MODES } from "../../runtime/claude-native-permissions";
 
 import { NEW_WORK_REFUSALS, type OutboxLimit } from "./host-runtime-errors";
 import { RuntimeEventSequenceSchema } from "./runtime-events";
@@ -258,6 +259,7 @@ const mcpServerFields = {
 } as const;
 
 type McpServerShape = {
+  platformOrigin?: "maister_facade";
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
@@ -277,7 +279,7 @@ function refineMcpServerFields(
   const remote = value.transport === "sse" || value.transport === "http";
 
   if (!remote) {
-    if (!value.command) {
+    if (!value.command && value.platformOrigin !== "maister_facade") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "stdio MCP server requires a command",
@@ -498,6 +500,10 @@ export const StartSessionRequestSchema = z
       .optional(),
     capabilityProfileObjectId: z.string().guid().optional(),
     capabilityInstructionsObjectId: z.string().guid().optional(),
+    claudePermissions: z.object({
+      allow: z.array(z.string().min(1).max(512).regex(/^[^\p{Cc}]+$/u)).min(1).max(128).optional(),
+      defaultMode: z.enum(CLAUDE_NATIVE_MODES).optional(),
+    }).strict().optional(),
     outputObjects: z.array(RuntimeObjectOutputBindingSchema).max(32).optional(),
     adapterLaunch: AdapterLaunchSchema.optional(),
     mcpServers: z.array(McpServerInputSchema).max(64).optional(),
@@ -712,6 +718,31 @@ export const REASON_TOKENS = [
   "workspace_in_use",
   "invalid_librarian_workspace",
   "workspace_rejected",
+  "source_ref_unapproved",
+  "source_commit_unavailable",
+  "invalid_request",
+  "stale_assignment_epoch",
+  "stale_workspace_generation",
+  "workspace_preparation_pending",
+  "workspace_input_changed",
+  "read_only_process_unavailable",
+  "workspace_diff_range_invalid",
+  "workspace_diff_too_large",
+  "workspace_log_cursor_invalid",
+  "workspace_log_too_large",
+  "workspace_template_context_invalid",
+  "workspace_setup_unavailable",
+  "workspace_checkpoint_unknown",
+  "workspace_writer_active",
+  "target_ref_changed",
+  "publication_provider_unavailable",
+  "sync_conflict",
+  "non_fast_forward",
+  "head_changed",
+  "stale_workspace_claim",
+  "retained_disposition_required",
+  "tool_not_declared",
+  "workspace_protocol_unsupported",
   "legacy_field",
   "missing_envelope",
   "health_query_invalid",
@@ -1447,6 +1478,7 @@ export type SessionRecord = {
   // via hooksConfig — read-only is the mount's whole point) and the prompt
   // preamble. Absent/empty → both are inert.
   contextMounts?: ContextMount[];
+  workspacePackageInstructions?: string;
   runtimeOutputObjectIds?: string[];
   // ADR-157: the mount preamble is rendered onto the FIRST prompt of this
   // session only. A resume rebuilds this record, so a respawn re-grounds.

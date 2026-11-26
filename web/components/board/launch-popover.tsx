@@ -1,7 +1,8 @@
 "use client";
 
 import type { FlowRunnerDraft } from "@/lib/tasks/launch-schema";
-import type { Key, ReactElement } from "react";
+import type { TaskLaunchHostOptions } from "@/lib/execution-host/project-preference";
+import type { Key, ReactElement, ReactNode, Ref } from "react";
 import type { FlowRunnerSlotPreview } from "@/lib/acp-runners/flow-preflight";
 import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import type {
@@ -33,6 +34,8 @@ import {
 } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import {
+  createContext,
+  useContext,
   useEffect,
   useId,
   useMemo,
@@ -145,6 +148,7 @@ type LaunchVerdict = {
 
 type LaunchOptions = {
   enforcementRefusal?: NodeEnforcementRefusal | null;
+  executionHostOptions?: TaskLaunchHostOptions;
   primarySessionName?: string;
   launchability: {
     launchable: boolean;
@@ -228,6 +232,7 @@ const LAUNCH_UNAVAILABLE_REASON_KEY: Record<string, string> = {
 type LaunchPreviewSelection = {
   flowId: string;
   runnerId: string;
+  executionHostId?: string;
   packageVersions?: string;
   draftKey?: string;
 };
@@ -239,6 +244,7 @@ export function launchPreviewMatches(
   return (
     preview?.flowId === selection.flowId &&
     preview.runnerId === selection.runnerId &&
+    preview.executionHostId === selection.executionHostId &&
     (preview.packageVersions ?? "") === (selection.packageVersions ?? "") &&
     (preview.draftKey ?? "") === (selection.draftKey ?? "")
   );
@@ -635,21 +641,110 @@ export function BudgetScopeFields(props: {
   );
 }
 
-export function LaunchPopover({
+type BoardLaunchDialog = Readonly<{
+  props: LaunchPopoverProps;
+  opener: HTMLButtonElement | null;
+  board: HTMLElement | null;
+}>;
+const BoardLaunchContext = createContext<((dialog: BoardLaunchDialog) => void) | null>(
+  null,
+);
+
+/** Board cards can change columns while admission is still being observed. */
+export function BoardLaunchDialogs({ children }: { children: ReactNode }): ReactElement {
+  const [dialog, setDialog] = useState<BoardLaunchDialog | null>(null);
+  const close = (): void => {
+    if (dialog?.opener?.isConnected) dialog.opener.focus();
+    else dialog?.board?.focus();
+    setDialog(null);
+  };
+  return (
+    <BoardLaunchContext.Provider value={setDialog}>
+      {children}
+      {dialog ? <LaunchPopoverContent {...dialog.props} dismissBoardDialog={close} /> : null}
+    </BoardLaunchContext.Provider>
+  );
+}
+
+type LaunchTriggerProps = Pick<LaunchPopoverProps, "label" | "disabledLabel" | "disabledReason" | "forceRelaunch"> & {
+  disabled: boolean;
+  buttonRef: Ref<HTMLButtonElement>;
+  error?: string | null;
+  onOpen: () => void;
+};
+
+function LaunchPopoverTrigger({
+  label, disabledLabel, disabledReason, forceRelaunch,
+  disabled, buttonRef, error, onOpen,
+}: LaunchTriggerProps): ReactElement {
+  return (
+    <span title={error ?? disabledReason}>
+      <Button
+        ref={buttonRef}
+        className={clsx(
+          "gap-1 border-transparent px-[9px] py-[5px] font-mono text-[10px] font-bold uppercase leading-none tracking-[0.06em] text-amber",
+          "group-hover/task:border-amber-line group-hover/task:bg-amber-soft",
+          "hover:!border-amber hover:!bg-amber hover:!text-white",
+          disabled && "opacity-60",
+        )}
+        isDisabled={disabled}
+        size="sm"
+        type="button"
+        variant="outline"
+        onClick={onOpen}
+      >
+        {forceRelaunch ? <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" /> : null}
+        {error ?? (disabledReason ? disabledLabel : label)}
+      </Button>
+    </span>
+  );
+}
+
+function BoardLaunchTrigger(
+  { props, open }: { props: LaunchPopoverProps; open: (dialog: BoardLaunchDialog) => void },
+): ReactElement {
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const intent = useTaskLaunchIntent(props.taskId, props.forceRelaunch ? "concurrent" : "ordinary");
+  const isClient = useIsClient();
+  const tracking = intent.receipt !== null || intent.uncertain;
+
+  return (
+    <LaunchPopoverTrigger
+      {...props}
+      buttonRef={opener}
+      disabled={!isClient || intent.busy || (Boolean(props.disabledReason) && !tracking)}
+      onOpen={() => open({
+        props,
+        opener: opener.current,
+        board: opener.current?.closest<HTMLElement>("[data-board]") ?? null,
+      })}
+    />
+  );
+}
+
+export function LaunchPopover(props: LaunchPopoverProps): ReactElement {
+  const open = useContext(BoardLaunchContext);
+  return open
+    ? <BoardLaunchTrigger props={props} open={open} />
+    : <LaunchPopoverContent {...props} />;
+}
+
+function LaunchPopoverContent({
   taskId,
   label,
   disabledLabel,
   disabledReason,
   hasRuns = true,
   forceRelaunch = false,
-}: LaunchPopoverProps): ReactElement {
+  dismissBoardDialog,
+}: LaunchPopoverProps & { dismissBoardDialog?: () => void }): ReactElement {
   const t = useTranslations("launch");
   const tRun = useTranslations("run");
   const isClient = useIsClient();
   const statusUnavailableMessage = t("admission.reason.statusUnavailable");
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(dismissBoardDialog));
   const [localBusy, setBusy] = useState(false);
   const intent = useTaskLaunchIntent(
     taskId,
@@ -706,6 +801,7 @@ export function LaunchPopover({
     Record<string, "saving" | "saved" | "failed" | "unknown">
   >({});
   const [flowId, setFlowId] = useState("");
+  const [executionHostId, setExecutionHostId] = useState<string>();
   const [flowRunnerDraft, setFlowRunnerDraft] =
     useState<FlowRunnerDraft | null>(null);
   const draftKey = flowRunnerDraft ? JSON.stringify(flowRunnerDraft) : "";
@@ -715,8 +811,10 @@ export function LaunchPopover({
     setBindingFeedback({});
     setOptions(null);
     setPreviewSelection(null);
+    setExecutionHostId(undefined);
     setScheduleMode(false);
     setOpen(false);
+    dismissBoardDialog?.();
   };
   const runnerId =
     flowRunnerDraft?.primaryRunnerId ?? options?.selectedRunnerId ?? "";
@@ -904,6 +1002,7 @@ export function LaunchPopover({
       launchPreviewMatches(previewSelection, {
         flowId,
         runnerId,
+        executionHostId,
         packageVersions: packagePreview,
         draftKey,
       })
@@ -914,6 +1013,7 @@ export function LaunchPopover({
     const query = new URLSearchParams({ taskId });
 
     if (flowId) query.set("flowId", flowId);
+    if (executionHostId) query.set("executionHostId", executionHostId);
     if (packagePreview) query.set("packageVersions", packagePreview);
 
     const request = flowRunnerDraft
@@ -923,6 +1023,7 @@ export function LaunchPopover({
           body: JSON.stringify({
             taskId,
             flowId,
+            ...(executionHostId ? { executionHostId } : {}),
             ...(packagePreview
               ? { packageVersions: JSON.parse(packagePreview) }
               : {}),
@@ -964,6 +1065,7 @@ export function LaunchPopover({
         setPreviewSelection({
           flowId,
           runnerId: resolvedRunnerId,
+          executionHostId,
           packageVersions: packagePreview,
           draftKey,
         });
@@ -979,6 +1081,7 @@ export function LaunchPopover({
     previewSelection,
     flowId,
     runnerId,
+    executionHostId,
     packagePreview,
     draftKey,
     flowRunnerDraft,
@@ -1104,6 +1207,7 @@ export function LaunchPopover({
     !launchPreviewMatches(previewSelection, {
       flowId,
       runnerId,
+      executionHostId,
       packageVersions: packagePreview,
       draftKey,
     });
@@ -1371,6 +1475,7 @@ export function LaunchPopover({
 
     await intent.submit(endpoint, {
       ...selection,
+      ...(executionHostId ? { executionHostId } : {}),
       ...(flowRunnerDraft ? { flowRunnerDraft } : {}),
       ...(allowFlowPublication ? { allowFlowPublication } : {}),
       expectedTaskRevision: options.task.revision,
@@ -1436,7 +1541,7 @@ export function LaunchPopover({
         return;
       }
 
-      setOpen(false);
+      closeLaunch();
       startTransition(() => router.refresh());
     } catch {
       setError(t("scheduleError"));
@@ -1467,6 +1572,23 @@ export function LaunchPopover({
     : [];
   const branchOptions: Array<SelectOption<string>> =
     options?.branches.map((branch) => ({ id: branch, label: branch })) ?? [];
+  const defaultHost = options?.executionHostOptions?.hosts.find(
+    ({ id }) => id === options.executionHostOptions?.defaultExecutionHostId,
+  );
+  const hostOptions: Array<SelectOption<string>> = options?.executionHostOptions
+    ? [
+        {
+          id: "default",
+          label: defaultHost
+            ? t("executionHostDefaultNamed", { name: defaultHost.displayName })
+            : t("executionHostDefault"),
+        },
+        ...options.executionHostOptions.hosts.map(({ id, displayName }) => ({
+          id,
+          label: displayName,
+        })),
+      ]
+    : [];
   const strategyOptions: Array<SelectOption<DeliveryPolicyStrategy>> = [
     { id: "merge", label: t("strategyMerge") },
     { id: "rebase_merge", label: t("strategyRebaseMerge") },
@@ -1615,30 +1737,21 @@ export function LaunchPopover({
 
   return (
     <>
-      <span title={error ?? disabledReason}>
-        <Button
-          ref={openerRef}
-          className={clsx(
-            "gap-1 border-transparent px-[9px] py-[5px] font-mono text-[10px] font-bold uppercase leading-none tracking-[0.06em] text-amber",
-            "group-hover/task:border-amber-line group-hover/task:bg-amber-soft",
-            "hover:!border-amber hover:!bg-amber hover:!text-white",
-            disabled && "opacity-60",
-          )}
-          isDisabled={disabled}
-          size="sm"
-          type="button"
-          variant="outline"
-          onClick={() => {
+      {dismissBoardDialog ? null : (
+        <LaunchPopoverTrigger
+          label={label}
+          disabledLabel={disabledLabel}
+          disabledReason={disabledReason}
+          forceRelaunch={forceRelaunch}
+          error={error}
+          buttonRef={openerRef}
+          disabled={disabled}
+          onOpen={() => {
             if (!options) setOptionsError(false);
             setOpen(true);
           }}
-        >
-          {forceRelaunch ? (
-            <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
-          ) : null}
-          {error ?? (disabledReason ? disabledLabel : label)}
-        </Button>
-      </span>
+        />
+      )}
 
       {open && typeof document !== "undefined"
         ? createPortal(
@@ -1861,6 +1974,23 @@ export function LaunchPopover({
                     ) : null}
 
                     <div className="grid gap-3 md:grid-cols-2">
+                      {hostOptions.length > 1 && !scheduleMode ? (
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <span className={fieldLabelClass}>
+                            {t("executionHost")}
+                          </span>
+                          <LaunchSelect
+                            disabled={busy || pending || savingBinding !== null}
+                            label={t("executionHost")}
+                            options={hostOptions}
+                            value={executionHostId ?? "default"}
+                            onChange={(value) => {
+                              setOptionsError(false);
+                              setExecutionHostId(value === "default" ? undefined : value);
+                            }}
+                          />
+                        </div>
+                      ) : null}
                       <label className="flex flex-col gap-1">
                         <span className={fieldLabelClass}>
                           {t("flow")}
@@ -2715,6 +2845,7 @@ export function LaunchPopover({
                           if (scheduleMode) {
                             void scheduleLaunch();
                           } else {
+                            setExecutionHostId(undefined);
                             setScheduleMode(true);
                           }
                         }}

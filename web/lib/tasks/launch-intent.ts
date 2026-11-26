@@ -14,6 +14,7 @@ import type {
 } from "./launch-types";
 import type { TaskLaunchRequest } from "./launch-schema";
 import type { TokenTaskLaunchPrincipal } from "./launch-token";
+import type { TaskLaunchPlacement } from "@/lib/execution-host/project-preference";
 
 import { randomUUID } from "node:crypto";
 
@@ -64,7 +65,7 @@ import {
   taskLaunchTokenActorUserId,
 } from "./launch-token";
 import { lockTaskLaunchReservation } from "./launch-locks";
-import { taskLaunchReceipt } from "./launch-receipt";
+import { taskLaunchReceipt, taskLaunchSettingsDigest } from "./launch-receipt";
 import { taskLaunchReservationConflict } from "./launch-conflict";
 
 import { recordTaskAgentTriggerIntentAccepted } from "@/lib/agents/task-trigger-reservation";
@@ -77,6 +78,10 @@ import { retryDigest } from "@/lib/agents/retry-guards";
 import { requiresLaunchUnattended } from "@/lib/runs/execution-policy";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
+import {
+  bindTaskLaunchPlacementToken,
+  resolveTaskLaunchPlacement,
+} from "@/lib/execution-host/project-preference";
 
 export { taskLaunchSettingsToken } from "./launch-resolution";
 export { taskLaunchReceipt } from "./launch-receipt";
@@ -222,6 +227,7 @@ export type PreparedTaskLaunch = Readonly<{
   projectId: string;
   resolved: ResolvedTaskLaunchSettings;
   metadataToken: string;
+  placement: TaskLaunchPlacement | null;
   baseCommit: string | null;
   currentBaseCommit: string | null;
 }>;
@@ -396,13 +402,21 @@ export async function serverTaskLaunchRequest(
           flowRevisionId: settings.flowRevisionId,
         })
       : null;
+  const placement = await resolveTaskLaunchPlacement(
+    db,
+    current.project,
+    parsed.data.executionHostId,
+    settings.kind === "agent" ? settings.agentSnapshot?.sharedRoot?.address?.hostId : undefined,
+  );
 
   return {
     ...parsed.data,
-    expectedSettingsToken:
+    expectedSettingsToken: bindTaskLaunchPlacementToken(
       settings.kind === "flow"
         ? composeTaskLaunchSettingsToken(settings.resolutionToken, flowAssets)
         : settings.resolutionToken,
+      placement,
+    ),
   };
 }
 
@@ -601,10 +615,25 @@ export async function prepareTaskLaunchRequest(
         : await captureTaskLaunchCapabilityBundles(db, initial.project.id),
   };
 
-  if (resolved.resolutionToken !== request.expectedSettingsToken)
+  const placement = await resolveTaskLaunchPlacement(
+    db,
+    initial.project,
+    request.executionHostId,
+    resolved.kind === "agent" ? resolved.agentSnapshot?.sharedRoot?.address?.hostId : undefined,
+  );
+  if (
+    bindTaskLaunchPlacementToken(resolved.resolutionToken, placement) !==
+    request.expectedSettingsToken
+  )
     throw launchRefusal("launch_settings_changed");
   const { baseCommit, currentBaseCommit: resourceCommit } =
-    await resolveTaskLaunchBase(db, initial.project, resolved, request);
+    await resolveTaskLaunchBase(
+      db,
+      initial.project,
+      resolved,
+      request,
+      placement?.selection.effectiveExecutionHostId,
+    );
   const currentBaseCommit =
     acceptanceAuthority.basisKind === "automatic" &&
     initial.task.qualificationMode !== "execution_child" &&
@@ -613,6 +642,7 @@ export async function prepareTaskLaunchRequest(
           db,
           initial.project,
           request.taskId,
+          placement?.selection.effectiveExecutionHostId,
         )
       : resourceCommit;
 
@@ -631,6 +661,7 @@ export async function prepareTaskLaunchRequest(
     projectId: initial.project.id,
     resolved,
     metadataToken: target.resolutionToken,
+    placement,
     baseCommit,
     currentBaseCommit,
   };
@@ -795,6 +826,14 @@ export async function applyPreparedTaskLaunch(
   if ((await getOpenRelationBlockers([locked.id], tx)).get(locked.id)?.length)
     throw launchRefusal("blocked", "PRECONDITION");
   const beforeConfiguration = await scopedTask(tx, locked.id);
+  const placement = await resolveTaskLaunchPlacement(
+    tx,
+    beforeConfiguration.project,
+    request.executionHostId,
+    resolved.kind === "agent" ? resolved.agentSnapshot?.sharedRoot?.address?.hostId : undefined,
+  );
+  if (retryDigest(placement) !== retryDigest(prepared.placement))
+    throw launchRefusal("launch_settings_changed");
   const currentResolution = await resolvePreparedSettingsForAuthority(
     tx,
     locked,
@@ -912,8 +951,22 @@ export async function applyPreparedTaskLaunch(
       inputRevision: launchTask.qualificationInputRevision,
       inputDigest: retryDigest(snapshot),
       inputSnapshot: snapshot,
-      settingsDigest: retryDigest(settings),
+      settingsDigest: taskLaunchSettingsDigest(
+        settings,
+        placement?.selection ?? null,
+      ),
       settingsSnapshot: settings,
+      ...(placement
+        ? {
+            requestedExecutionHostId:
+              placement.selection.requestedExecutionHostId,
+            effectiveExecutionHostId:
+              placement.selection.effectiveExecutionHostId,
+            executionHostProvenance: placement.selection.provenance,
+            executionHostEligibilityRevision:
+              placement.selection.eligibilityRevision,
+          }
+        : {}),
       basis,
       dueAt: sql`clock_timestamp()`,
     })

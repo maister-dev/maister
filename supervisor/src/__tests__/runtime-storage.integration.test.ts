@@ -17,6 +17,7 @@ import { DatabaseSync } from "node:sqlite";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
+import { removeWorkspaceExecutionSchema } from "./_fixtures/legacy-host-state";
 import {
   openHostState,
   type CommandReceiptRow,
@@ -510,6 +511,7 @@ describe("AT-02 physical runtime storage", () => {
       const db = new DatabaseSync(join(stateDir, "state.sqlite"));
 
       try {
+        removeWorkspaceExecutionSchema(db);
         db.exec(`UPDATE runtime_event_outbox SET acknowledged_at = (
           SELECT a.acknowledged_at FROM runtime_event_ack_ranges a WHERE a.stream_id = runtime_event_outbox.stream_id
             AND a.first_sort_key <= runtime_event_outbox.sequence_sort_key AND a.through_sort_key >= runtime_event_outbox.sequence_sort_key);

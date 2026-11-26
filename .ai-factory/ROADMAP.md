@@ -11,6 +11,9 @@
 
 ## Milestones
 
+- [ ] **Run board tasks on a selected supervisor (Stage C)** — Web records the selected host. Its supervisor fetches the pinned revision, owns the worktree, executes the agent and checks, and returns the diff and evidence to the board. Qualify one supervisor and then two isolated supervisors on the development machine. Confirm the same workflow on two trusted physical hosts before declaring physical-host support. [Implementation plan](plans/feature-stage-c-selected-supervisor.md) · [Planning request](reviews/stage-c-workspace-multihost-aif-plan-prompt.md).
+- [ ] **Connect developer execution hosts to an existing Web instance (Stage D)** — A developer pairs a laptop or server over an outbound authenticated connection. Authorized board users can assign it work and see its availability and results across disconnects. Design the host connection independently of the workload backend so a supervisor can later manage containerized agents in Kubernetes. [Target architecture and acceptance](reviews/stage-c-workspace-multihost-aif-plan-prompt.md).
+
 - [x] **CB0. Structured Company Brain** — Native company/project records, evidence and proposal review, with locally qualified GLM-5.3 retrieval and depth-two reduction on pinned `rah/v1.0.9`. [Contract and qualification evidence](../docs/system-analytics/company-brain.md).
 - [x] **CB1. Specialist assignments and governed stand maintenance** — Locally qualified on current master and with the pinned GLM-5.3 stand package. The pilot passed clarification, coordinator and specialist interruption, lost restart replies, authorized recovery, independent verification and governed write-back. [Implementation and qualification plan](plans/codex-company-brain-specialist-assignments.md).
 

@@ -7,7 +7,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { LaunchPopover } from "@/components/board/launch-popover";
+import { BoardLaunchDialogs, LaunchPopover } from "@/components/board/launch-popover";
 import { TaskLaunchHoldControl } from "@/components/board/task-launch-hold-control";
 
 const { router } = vi.hoisted(() => ({
@@ -17,8 +17,10 @@ const { router } = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("next-intl", () => ({
   useLocale: () => "en",
-  useTranslations: (namespace: string) => (key: string) =>
-    `${namespace}.${key}`,
+  useTranslations: (namespace: string) => (key: string, values?: Record<string, string | number>) =>
+    key === "admission.actualSupervisorAtEpoch" && values
+      ? `${values.displayName} (${values.assignmentEpoch})`
+      : `${namespace}.${key}`,
 }));
 
 class AttentionSource extends EventTarget {
@@ -339,6 +341,68 @@ it("refreshes an accepted request on an attention tick and shows a changed queue
   expect(document.body.textContent).toContain("launch.admission.held");
   expect(document.body.textContent).toContain("launch.admission.replace");
   expect(router.push).not.toHaveBeenCalled();
+});
+
+it("shows the actual supervisor after the launch card moves to another board column", async () => {
+  const executionHostSelection = {
+    requestedExecutionHostId: "host-b",
+    effectiveExecutionHostId: "host-b",
+  };
+  const fetcher = vi.fn(async (url: string) => {
+    if (url.startsWith("/api/runs/launch-options?"))
+      return Response.json(options);
+    if (url === "/api/task-launch-intents")
+      return Response.json({ ...receipt, executionHostSelection }, { status: 202 });
+    if (url === "/api/task-launch-intents/intent-1")
+      return Response.json({
+        ...receipt,
+        state: "run_bound",
+        stateVersion: 2,
+        runId: "run-1",
+        runStatus: "Pending",
+        executionHostSelection,
+        executionHostPlacement: {
+          savedDisplayName: "Build supervisor",
+          actual: {
+            executionHostId: "host-b",
+            displayName: "Build supervisor",
+            assignmentEpoch: 1,
+          },
+        },
+      });
+
+    throw new Error(`Unexpected request ${url}`);
+  });
+
+  const renderBoard = (backlog: boolean) => act(async () => {
+    root.render(createElement(BoardLaunchDialogs, {
+      children: createElement("section", {
+        "data-board": "",
+        tabIndex: -1,
+      }, backlog
+        ? createElement(LaunchPopover, {
+            taskId: "task-1", label: "Launch", disabledLabel: "Unavailable",
+          })
+        : createElement("article", null, "The Run is in production")),
+    }));
+  });
+  vi.stubGlobal("fetch", fetcher);
+  await renderBoard(true);
+  await click("Launch");
+  await click("launch.createRun");
+  const facts = () => Array.from(document.querySelectorAll("dd"), (item) => item.textContent);
+  expect(facts()).toEqual(
+    expect.arrayContaining(["host-b", "launch.admission.supervisorAwaitingDispatch"]),
+  );
+  await renderBoard(false);
+  await act(async () => AttentionSource.instances[0].tick());
+  expect(facts()).toEqual(
+    expect.arrayContaining(["Build supervisor", "Build supervisor (1)"]),
+  );
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  });
+  expect(document.activeElement).toBe(document.querySelector("[data-board]"));
 });
 
 it("uses the dedicated intentional concurrent launch operation rather than a bypass flag", async () => {

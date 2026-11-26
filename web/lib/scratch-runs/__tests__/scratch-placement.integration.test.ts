@@ -42,6 +42,10 @@ import {
 } from "@/lib/scratch-runs/create-continuation";
 import { readCreateIntent } from "@/lib/execution-host/create-intent";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { createExecutionHosts } from "@/lib/execution-host/client";
+import { listCommandsForRun } from "@/lib/execution-host/commands";
+import { readyExecutionHostCapabilities } from "@/test-support/supervisor-health-fixture";
 import {
   createFakeExecutionHost,
   definitiveUnavailableError,
@@ -1682,4 +1686,56 @@ describe("a quarantined scratch turn fails visibly (ADR-184 amendment)", () => {
       }));
     }
   }, 90_000);
+});
+
+describe("Addressed Scratch preparation", () => {
+  it("C-05 scratch: reserves preparation without adoption or a child", async () => {
+    const discovery = vi.spyOn(fake.transport, "capabilities").mockResolvedValue({
+      ...readyExecutionHostCapabilities(),
+      workspaceProtocol: [1],
+    });
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", fake.identity.hostKey);
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://127.0.0.1:1");
+    resetResolverForTests();
+
+    try {
+      const selectedHosts = createExecutionHosts({
+        db,
+        transport: {
+          ...fake.transport,
+          async observeWorkspaceRevision(repositoryId, ref) {
+            expect(repositoryId).toBe(projectId);
+            return (await git(join(tmpRoot, "repo"), "rev-parse", ref)).trim();
+          },
+        },
+      });
+      const gen = launchScratchRunStaged(
+        { body: launchBody(), userId: USER_ID },
+        { executionHosts: selectedHosts },
+      );
+      const stages: string[] = [];
+      let step = await gen.next();
+      while (!step.done) {
+        stages.push(step.value.stage);
+        step = await gen.next();
+      }
+      const id = step.value.runId;
+      const [workspace] = await db.select().from(schema.workspaces).where(eq(schema.workspaces.runId, id));
+      expect(step.value.status.runStatus).toBe("Pending");
+      expect(stages).toEqual(["precondition"]);
+      expect(workspace).toMatchObject({
+        ownershipKind: "host_owned",
+        worktreePath: null,
+        executionWorkspaceId: null,
+      });
+      expect(await listCommandsForRun(db, id)).toEqual([
+        expect.objectContaining({ kind: "workspace.prepare", state: "queued" }),
+      ]);
+      expect(fake.callsOf("createSession").filter((call) => call.envelope?.fence.runId === id)).toEqual([]);
+    } finally {
+      discovery.mockRestore();
+      vi.unstubAllEnvs();
+      resetResolverForTests();
+    }
+  });
 });

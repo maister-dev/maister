@@ -16,11 +16,17 @@ import * as schema from "@/lib/db/schema";
 import { projects, runs, workspaces } from "@/lib/db/schema";
 import { parseDiffLineIndex } from "@/lib/diff/line-index";
 import { filterDiffByPath } from "@/lib/diff/sections";
+import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
+import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
+import { readAddressedWorkspacePatch } from "@/lib/execution-host/workspace-review";
 import { MaisterError } from "@/lib/errors";
 import { computePlacement } from "@/lib/review-comments/anchor";
 import { listThreads } from "@/lib/review-comments/service";
 import { type RunDiffScope } from "@/lib/runs/diff-scopes";
-import { readReviewSource } from "@/lib/runs/review-source";
+import {
+  readAddressedReviewSource,
+  readReviewSource,
+} from "@/lib/runs/review-source";
 import { isReviewableChangeEntry } from "@/lib/runs/reviewable-changes";
 import {
   diffRunWorkspace,
@@ -168,7 +174,17 @@ export async function computeRunDiff(
   dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
 ): Promise<DiffLineIndex> {
-  const { workspace, project } = await loadReviewDiffRows(dbh, run);
+  const { workspace: retained, project } = await loadReviewDiffRows(dbh, run);
+  if (retained.ownershipKind === "host_owned") {
+    const source = await readAddressedReviewSource({
+      db: dbh,
+      workspace: retained,
+      signal: AbortSignal.timeout(12_000),
+    });
+
+    return parseDiffLineIndex(source.diff, source.truncated);
+  }
+  const workspace = requireLegacyWorkspacePaths(retained);
 
   const base =
     workspace.baseCommit ??
@@ -191,7 +207,13 @@ async function computeUncommittedReviewDiff(
   run: RunDiffSourceRef,
 ): Promise<DiffLineIndex> {
   const { workspace } = await loadReviewDiffRows(dbh, run);
-  const { text, truncated } = await diffWorkingTree(workspace.worktreePath);
+  const source =
+    workspace.ownershipKind === "host_owned"
+      ? await readAddressedUncommittedDiff(dbh, workspace)
+      : await diffWorkingTree(
+          requireLegacyWorkspacePaths(workspace).worktreePath,
+        );
+  const { text, truncated } = source;
   const reviewableDiff = filterDiffByPath(text, (path, oldPath) =>
     isReviewableChangeEntry({ path, oldPath }),
   );
@@ -199,11 +221,44 @@ async function computeUncommittedReviewDiff(
   return parseDiffLineIndex(reviewableDiff, truncated);
 }
 
+async function readAddressedUncommittedDiff(
+  dbh: NodePgDatabase<typeof schema>,
+  workspace: WorkspaceRow,
+): Promise<{ text: string; truncated: false }> {
+  const { workspace: status } = await readAddressedWorkspaceStatus(
+    dbh,
+    workspace,
+  );
+  if (!status.observedCommit)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected supervisor has no verified HEAD",
+    );
+  const { patch } = await readAddressedWorkspacePatch({
+    db: dbh,
+    workspace,
+    range: { base: status.observedCommit },
+    signal: AbortSignal.timeout(12_000),
+  });
+
+  return { text: patch, truncated: false };
+}
+
 async function computeCurrentReviewDiff(
   dbh: NodePgDatabase<typeof schema>,
   run: RunDiffSourceRef,
 ): Promise<DiffLineIndex> {
-  const { workspace, project } = await loadReviewDiffRows(dbh, run);
+  const { workspace: retained, project } = await loadReviewDiffRows(dbh, run);
+  if (retained.ownershipKind === "host_owned") {
+    const source = await readAddressedReviewSource({
+      db: dbh,
+      workspace: retained,
+      signal: AbortSignal.timeout(12_000),
+    });
+
+    return parseDiffLineIndex(source.diff, source.truncated);
+  }
+  const workspace = requireLegacyWorkspacePaths(retained);
   const baseCommit =
     workspace.baseCommit ??
     (await resolveBaseRef({

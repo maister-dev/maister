@@ -21,7 +21,7 @@ import {
   parseObjectContentRange,
 } from "../../../runtime/object-integrity";
 
-import { defaultTransport } from "./default-transport";
+import { transportForExecutionHost } from "./default-transport";
 import { verifyRuntimeObjectResponse } from "./runtime-object-response";
 
 import { executionHosts, executionRuntimeObjects, runs } from "@/lib/db/schema";
@@ -396,5 +396,5 @@ function defaultRuntimeObjectTransport(
     );
   }
 
-  return defaultTransport();
+  return transportForExecutionHost(host);
 }

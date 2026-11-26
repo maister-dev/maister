@@ -7,8 +7,15 @@ import type { DiffChangeStatEntry } from "@/lib/worktree";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
+import { requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
+import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
+import {
+  addressedCheckpointId,
+  readAddressedWorkspaceReviewSnapshot,
+} from "@/lib/execution-host/workspace-review";
 import { MaisterError } from "@/lib/errors";
 import {
   isRunDiffScope,
@@ -16,7 +23,10 @@ import {
   type RunDiffScope,
 } from "@/lib/runs/diff-scopes";
 import { filterReviewableChangeEntries } from "@/lib/runs/reviewable-changes";
-import { readReviewSource } from "@/lib/runs/review-source";
+import {
+  readAddressedReviewSource,
+  readReviewSource,
+} from "@/lib/runs/review-source";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import {
   diffChangeStats,
@@ -94,15 +104,7 @@ type LoadedRun = {
 // getRunChangeSummary rejects the project-less local-package variant, ADR-097).
 type LoadedRunWithProject = LoadedRun & { projectId: string };
 
-type LoadedWorkspace = {
-  branch: string;
-  worktreePath: string;
-  parentRepoPath: string;
-  baseBranch: string | null;
-  baseCommit: string | null;
-  targetBranch: string | null;
-  removedAt: Date | null;
-};
+type LoadedWorkspace = typeof workspaces.$inferSelect;
 
 type LoadedProject = {
   id: string;
@@ -171,18 +173,7 @@ async function loadWorkspaceProject(
   run: LoadedRunWithProject,
 ): Promise<{ workspace: LoadedWorkspace; project: LoadedProject }> {
   const [workspaceRows, projectRows] = await Promise.all([
-    client
-      .select({
-        branch: workspaces.branch,
-        worktreePath: workspaces.worktreePath,
-        parentRepoPath: workspaces.parentRepoPath,
-        baseBranch: workspaces.baseBranch,
-        baseCommit: workspaces.baseCommit,
-        targetBranch: workspaces.targetBranch,
-        removedAt: workspaces.removedAt,
-      })
-      .from(workspaces)
-      .where(eq(workspaces.runId, run.id)),
+    client.select().from(workspaces).where(eq(workspaces.runId, run.id)),
     client
       .select({
         id: projects.id,
@@ -419,7 +410,8 @@ async function getScratchChangeSummary(input: {
   run: LoadedRunWithProject;
   scope: RunChangeSummaryScope;
 }): Promise<RunChangeSummaryResponse> {
-  const { workspace } = await loadWorkspaceProject(input.client, input.run);
+  const loaded = await loadWorkspaceProject(input.client, input.run);
+  const workspace = requireLegacyWorkspacePaths(loaded.workspace);
   const scratch = await loadScratch(input.client, input.run.id);
   const scopes = scratchScopeAvailability();
 
@@ -466,15 +458,102 @@ async function getScratchChangeSummary(input: {
   });
 }
 
-async function getFlowChangeSummary(input: {
+type FlowSummaryInput = {
   client: NodePgDatabase<typeof schema>;
   run: LoadedRunWithProject;
   scope: RunChangeSummaryScope;
-}): Promise<RunChangeSummaryResponse> {
-  const { workspace, project } = await loadWorkspaceProject(
+  signal: AbortSignal;
+};
+
+async function getAddressedChangeSummary(
+  input: FlowSummaryInput,
+  workspace: LoadedWorkspace,
+  project: LoadedProject,
+): Promise<RunChangeSummaryResponse> {
+  const [priorTip, lastRef] = await Promise.all([
+    loadPriorReviewTipSha(input.client, input.run.id),
+    loadLastNodeCheckpointRef(input.client, input.run.id),
+  ]);
+  const checkpointId = addressedCheckpointId(lastRef);
+  const available = Boolean(workspace.baseCommit);
+  const scopes = {
+    run: { available },
+    review: { available },
+    "since-last-review": {
+      available: Boolean(priorTip),
+      reason: "workspace_diff_range_invalid",
+    },
+    "last-node": {
+      available: Boolean(checkpointId),
+      reason: "workspace_checkpoint_unavailable",
+    },
+    uncommitted: { available: true },
+  };
+  assertScopeAvailable(input.scope, scopes);
+  await requireProjectAction(workspace.projectId, "readRepoFiles");
+  const sourceInput = { db: input.client, workspace, signal: input.signal };
+  const targetBranch =
+    workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch;
+  if (input.scope === "review") {
+    const source = await readAddressedReviewSource(sourceInput);
+    await requireProjectAction(workspace.projectId, "readRepoFiles");
+
+    return buildResponse({
+      runId: input.run.id,
+      scope: input.scope,
+      scopes,
+      baseCommit: source.baseCommit,
+      sourceBranch: workspace.branch,
+      targetBranch,
+      reviewSourceFingerprint: source.fingerprint,
+      files: source.files,
+    });
+  }
+  const base =
+    input.scope === "uncommitted"
+      ? (await readAddressedWorkspaceStatus(input.client, workspace)).workspace
+          .observedCommit
+      : input.scope === "since-last-review"
+        ? priorTip
+        : workspace.baseCommit;
+  const range =
+    input.scope === "last-node" && checkpointId
+      ? { checkpointId }
+      : base
+        ? { base }
+        : null;
+  if (!range)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected supervisor has no verified base commit",
+    );
+  const snapshot = await readAddressedWorkspaceReviewSnapshot({
+    ...sourceInput,
+    range,
+  });
+  await requireProjectAction(workspace.projectId, "readRepoFiles");
+
+  return buildResponse({
+    runId: input.run.id,
+    scope: input.scope,
+    scopes,
+    baseCommit: snapshot.baseCommit,
+    sourceBranch: workspace.branch,
+    targetBranch,
+    files: filterReviewableChangeEntries(snapshot.files),
+  });
+}
+
+async function getFlowChangeSummary(
+  input: FlowSummaryInput,
+): Promise<RunChangeSummaryResponse> {
+  const { workspace: retained, project } = await loadWorkspaceProject(
     input.client,
     input.run,
   );
+  if (retained.ownershipKind === "host_owned")
+    return getAddressedChangeSummary(input, retained, project);
+  const workspace = requireLegacyWorkspacePaths(retained);
   const availability = await flowScopeAvailability(
     input.client,
     input.run.id,
@@ -563,6 +642,7 @@ async function getFlowChangeSummary(input: {
 export async function getRunChangeSummary(input: {
   runId: string;
   scope: RunChangeSummaryScope;
+  signal?: AbortSignal;
 }): Promise<RunChangeSummaryResponse | null> {
   const client = db();
   const run = await loadRun(client, input.runId);
@@ -584,6 +664,7 @@ export async function getRunChangeSummary(input: {
             client,
             run: runWithProject,
             scope: input.scope,
+            signal: input.signal ?? AbortSignal.timeout(12_000),
           });
 
     log.info(

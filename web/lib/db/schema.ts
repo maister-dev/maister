@@ -463,6 +463,18 @@ export const projects = pgTable(
     // maister.yaml on disk; the manifest is optional at manual registration).
     maisterYamlPath: text("maister_yaml_path"),
     defaultRunnerId: text("default_runner_id"),
+    defaultExecutionHostId: text("default_execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    executionHostPreferenceRevision: bigint(
+      "execution_host_preference_revision",
+      {
+        mode: "number",
+      },
+    )
+      .notNull()
+      .default(1),
     // ADR-141 (migration 0106): branch-sync defaults. `sync_strategy_default` is
     // the project's default rebase|merge strategy; `sync_runner_id` is the resolver
     // runner (nullable FK, SET NULL on runner delete — mirrors
@@ -519,6 +531,10 @@ export const projects = pgTable(
     check(
       "projects_config_export_revision_check",
       sql`${t.configExportRevision} >= 0`,
+    ),
+    check(
+      "projects_execution_host_preference_revision_check",
+      sql`${t.executionHostPreferenceRevision} BETWEEN 1 AND 9007199254740991`,
     ),
   ],
 );
@@ -2972,8 +2988,10 @@ export const executionHosts = pgTable(
     hostKey: text("host_key").notNull().unique(),
     kind: text("kind", { enum: EXECUTION_HOST_KINDS }).notNull(),
     displayName: text("display_name").notNull(),
-    // {kind:'local_direct'} — the URL is env, never a column.
-    transport: jsonb("transport").$type<{ kind: "local_direct" }>().notNull(),
+    // The operator configures addresses outside the database.
+    transport: jsonb("transport")
+      .$type<{ kind: "local_direct"; role?: "secondary" }>()
+      .notNull(),
     capabilities: jsonb("capabilities")
       .$type<Record<string, unknown>>()
       .notNull()
@@ -2996,10 +3014,10 @@ export const executionHosts = pgTable(
     retiredAt: timestamp("retired_at", { withTimezone: true, mode: "date" }),
   },
   (t) => ({
-    // E-EH-01: at most one non-retired local host.
+    // E-EH-01: at most one live legacy default.
     uniqLocalActive: uniqueIndex("execution_hosts_local_active_uq")
       .on(t.kind)
-      .where(sql`${t.kind} = 'local_direct' AND ${t.retiredAt} IS NULL`),
+      .where(sql`${t.kind} = 'local_direct' AND ${t.retiredAt} IS NULL AND coalesce(${t.transport}->>'role', 'default') = 'default'`),
     kindCheck: check(
       "execution_hosts_kind_check",
       inLiteralList(t.kind, EXECUTION_HOST_KINDS),
@@ -3070,6 +3088,11 @@ export const executionAssignments = pgTable(
       { onDelete: "set null" },
     ),
     releasedReason: text("released_reason"),
+    addressedStopRequestedAt: timestamp("addressed_stop_requested_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    addressedStopRequestedBy: text("addressed_stop_requested_by"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -3079,6 +3102,11 @@ export const executionAssignments = pgTable(
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
   },
   (t) => ({
+    workspaceOwner: unique("execution_assignments_workspace_owner_uq").on(
+      t.id,
+      t.runId,
+      t.executionHostId,
+    ),
     // E-EH-02: a mint never reuses an epoch (race backstop, 23505 → CONFLICT).
     uniqRunEpoch: unique("execution_assignments_run_epoch_uq").on(
       t.runId,
@@ -3096,6 +3124,10 @@ export const executionAssignments = pgTable(
       "execution_assignments_epoch_check",
       sql`${t.epoch} >= 1`,
     ),
+    addressedStopCheck: check(
+      "execution_assignments_addressed_stop_check",
+      sql`((${t.addressedStopRequestedAt} IS NULL AND ${t.addressedStopRequestedBy} IS NULL) OR (${t.addressedStopRequestedAt} IS NOT NULL AND char_length(${t.addressedStopRequestedBy}) BETWEEN 1 AND 128)) IS TRUE`,
+    ),
     stateCheck: check(
       "execution_assignments_state_check",
       inLiteralList(t.state, ASSIGNMENT_STATES),
@@ -3110,6 +3142,18 @@ export const executionAssignments = pgTable(
       sql`(${t.state} = 'active') = (${t.endedAt} IS NULL)`,
     ),
   }),
+);
+
+export const executionHostSlotReservations = pgTable(
+  "execution_host_slot_reservations",
+  {
+    assignmentId: text("assignment_id")
+      .primaryKey()
+      .references(() => executionAssignments.id, { onDelete: "cascade" }),
+    reservedAt: timestamp("reserved_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
 );
 
 export const executionCommands = pgTable(
@@ -3379,6 +3423,9 @@ export const executionCommands = pgTable(
     idxAssignment: index("execution_commands_assignment_idx").on(
       t.executionAssignmentId,
     ),
+    uniqWorkspaceMaterialization: uniqueIndex("execution_commands_workspace_materialize_uq")
+      .on(t.executionAssignmentId)
+      .where(sql`${t.kind} = 'workspace.materialize'`),
     idxReconciliation: index("execution_commands_reconciliation_idx")
       .on(t.transportState, t.nextAttemptAt, t.id)
       .where(
@@ -3537,6 +3584,20 @@ export const taskLaunchIntents = pgTable(
     settingsSnapshot: jsonb("settings_snapshot")
       .$type<TaskLaunchSettingsSnapshot>()
       .notNull(),
+    requestedExecutionHostId: text("requested_execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    effectiveExecutionHostId: text("effective_execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    executionHostProvenance: text("execution_host_provenance", {
+      enum: ["explicit", "projectDefault", "instanceDefault", "sharedRoot"],
+    }),
+    executionHostEligibilityRevision: text(
+      "execution_host_eligibility_revision",
+    ),
     basis: jsonb("basis").$type<TaskLaunchBasis>().notNull(),
     reservationLane: text("reservation_lane", {
       enum: ["ordinary", "concurrent"],
@@ -3593,6 +3654,22 @@ export const taskLaunchIntents = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    hostSelectionShape: check(
+      "task_launch_intents_host_selection_shape_check",
+      sql`(
+        (${t.requestedExecutionHostId} IS NULL AND ${t.effectiveExecutionHostId} IS NULL
+          AND ${t.executionHostProvenance} IS NULL AND ${t.executionHostEligibilityRevision} IS NULL)
+        OR
+        (${t.effectiveExecutionHostId} IS NOT NULL
+          AND ${t.executionHostEligibilityRevision} ~ '^[0-9a-f]{64}$'
+          AND ((${t.executionHostProvenance} = 'explicit'
+              AND ${t.requestedExecutionHostId} = ${t.effectiveExecutionHostId})
+            OR (${t.executionHostProvenance} IN ('projectDefault', 'instanceDefault')
+              AND ${t.requestedExecutionHostId} IS NULL)
+            OR (${t.executionHostProvenance} = 'sharedRoot'
+              AND (${t.requestedExecutionHostId} IS NULL OR ${t.requestedExecutionHostId} = ${t.effectiveExecutionHostId}))))
+      ) IS TRUE`,
+    ),
     requestKeyUnique: unique("task_launch_intents_request_key_uq").on(
       t.principalKind,
       t.principalId,
@@ -3666,7 +3743,10 @@ export const taskLaunchIntents = pgTable(
         AND length(${t.preparationIdentity}->>'runId') BETWEEN 1 AND 256
         AND jsonb_typeof(${t.preparationIdentity}->'taskAttemptNumber')='number' AND (${t.preparationIdentity}->>'taskAttemptNumber')::numeric>0 AND (${t.preparationIdentity}->>'taskAttemptNumber')::numeric=trunc((${t.preparationIdentity}->>'taskAttemptNumber')::numeric)
         AND ${t.preparationIdentity}->>'resourceId' ~ '^[0-9a-f]{64}$' AND length(${t.preparationIdentity}->>'incarnationId') BETWEEN 1 AND 256
-        AND jsonb_typeof(${t.preparationIdentity}->'worktreePath')='string' AND length(${t.preparationIdentity}->>'worktreePath') BETWEEN 1 AND 4096
+        AND (
+          ${t.preparationIdentity}->'version' IN ('3'::jsonb,'4'::jsonb) AND ${t.preparationIdentity}->'worktreePath'='null'::jsonb
+          OR jsonb_typeof(${t.preparationIdentity}->'worktreePath')='string' AND length(${t.preparationIdentity}->>'worktreePath') BETWEEN 1 AND 4096
+        )
         AND (${t.preparationIdentity}->>'baseCommit' IS NOT DISTINCT FROM ${t.settingsSnapshot}->>'baseCommit')
         AND ${t.preparationIdentity}->>'inputDigest'=${t.inputDigest} AND ${t.preparationIdentity}->>'settingsDigest'=${t.settingsDigest}
         AND (${t.preparationIdentity}->'version'='1'::jsonb AND ${t.settingsSnapshot}->>'kind'='flow'
@@ -3678,7 +3758,22 @@ export const taskLaunchIntents = pgTable(
           AND (${t.preparationIdentity}->>'workspace'='none' AND ${t.preparationIdentity}->'parentRepoPath'='null'::jsonb AND ${t.preparationIdentity}->'branch'='null'::jsonb AND ${t.preparationIdentity}->'baseCommit'='null'::jsonb
             OR ${t.preparationIdentity}->>'workspace' IN ('repo_read','worktree') AND jsonb_typeof(${t.preparationIdentity}->'parentRepoPath')='string'
               AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
-              AND (${t.preparationIdentity}->>'workspace'='repo_read' AND ${t.preparationIdentity}->'branch'='null'::jsonb OR ${t.preparationIdentity}->>'workspace'='worktree' AND jsonb_typeof(${t.preparationIdentity}->'branch')='string')))
+              AND (${t.preparationIdentity}->>'workspace'='repo_read' AND ${t.preparationIdentity}->'branch'='null'::jsonb OR ${t.preparationIdentity}->>'workspace'='worktree' AND jsonb_typeof(${t.preparationIdentity}->'branch')='string'))
+          OR ${t.preparationIdentity}->'version'='3'::jsonb AND ${t.settingsSnapshot}->>'kind'='flow'
+          AND ${t.preparationIdentity}->'parentRepoPath'='null'::jsonb AND ${t.preparationIdentity}->'worktreePath'='null'::jsonb
+          AND jsonb_typeof(${t.preparationIdentity}->'executionHostId')='string'
+          AND ${t.preparationIdentity}->>'executionHostId'=${t.effectiveExecutionHostId}
+          AND jsonb_typeof(${t.preparationIdentity}->'branch')='string' AND length(${t.preparationIdentity}->>'branch') BETWEEN 1 AND 256
+          AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+          OR ${t.preparationIdentity}->'version'='4'::jsonb AND ${t.preparationIdentity}->>'kind'='agent' AND ${t.settingsSnapshot}->>'kind'='agent'
+          AND ${t.preparationIdentity}->>'workspace'=${t.settingsSnapshot}->>'workspace'
+          AND ${t.preparationIdentity}->'parentRepoPath'='null'::jsonb AND ${t.preparationIdentity}->'worktreePath'='null'::jsonb AND ${t.preparationIdentity}->'runtimePath'='null'::jsonb
+          AND jsonb_typeof(${t.preparationIdentity}->'executionHostId')='string'
+          AND ${t.preparationIdentity}->>'executionHostId'=${t.effectiveExecutionHostId}
+          AND (${t.preparationIdentity}->>'workspace'='none' AND ${t.preparationIdentity}->'baseCommit'='null'::jsonb AND ${t.preparationIdentity}->'branch'='null'::jsonb
+            OR ${t.preparationIdentity}->>'workspace' IN ('repo_read','worktree') AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+              AND (${t.preparationIdentity}->>'workspace'='repo_read' AND ${t.preparationIdentity}->'branch'='null'::jsonb
+                OR ${t.preparationIdentity}->>'workspace'='worktree' AND jsonb_typeof(${t.preparationIdentity}->'branch')='string' AND length(${t.preparationIdentity}->>'branch') BETWEEN 1 AND 256)))
         AND ${t.preparationPhase} IN ('reserved','checkout_ready','materializing','materialized','run_bound') AND octet_length(${t.preparationIdentity}::text)<=16384
       )) IS TRUE AND (${t.cleanupState} IS NULL OR ${t.cleanupState} IN ('pending','removed','retained'))`,
     ),
@@ -5531,7 +5626,7 @@ export const executionEvents = pgTable(
     ),
     protocolBoundsCheck: check(
       "execution_events_protocol_bounds_check",
-      sql`(${t.hostSequence} IS NULL OR ${t.hostSequence} >= 0) AND (${t.runSequence} IS NULL OR ${t.runSequence} >= 0) AND (${t.assignmentEpoch} IS NULL OR ${t.assignmentEpoch} >= 1) AND (${t.payloadBytes} IS NULL OR ${t.payloadBytes} BETWEEN 0 AND 1048576) AND (${t.source} <> 'host' OR (${t.executionHostId} IS NOT NULL AND ${t.hostBootId} IS NOT NULL AND ${t.envelopeVersion} = 1))`,
+      sql`(${t.hostSequence} IS NULL OR ${t.hostSequence} >= 0) AND (${t.runSequence} IS NULL OR ${t.runSequence} >= 0) AND (${t.assignmentEpoch} IS NULL OR ${t.assignmentEpoch} >= 1) AND (${t.payloadBytes} IS NULL OR ${t.payloadBytes} BETWEEN 0 AND 1048576) AND (${t.source} <> 'host' OR (${t.executionHostId} IS NOT NULL AND ${t.hostBootId} IS NOT NULL AND (${t.envelopeVersion} = 1 OR (${t.envelopeVersion} = 2 AND ${t.eventType} = 'workspace.command.terminal' AND ${t.payloadSchema} = 'maister.workspace.command.terminal.v1'))))`,
     ),
   }),
 );
@@ -5972,8 +6067,26 @@ export const workspaces = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     branch: text("branch").notNull(),
-    worktreePath: text("worktree_path").notNull().unique(),
-    parentRepoPath: text("parent_repo_path").notNull(),
+    worktreePath: text("worktree_path").unique(),
+    parentRepoPath: text("parent_repo_path"),
+    ownershipKind: text("ownership_kind", {
+      enum: ["legacy_path", "host_owned"],
+    })
+      .notNull()
+      .default("legacy_path"),
+    executionHostId: text("execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    executionWorkspaceId: text("execution_workspace_id"),
+    preparationAssignmentId: text("preparation_assignment_id"),
+    workspaceGeneration: integer("workspace_generation"),
+    workspaceMaterializationGeneration: integer("workspace_materialization_generation"),
+    workspaceInputDigest: text("workspace_input_digest"),
+    rootWorkspaceId: text("root_workspace_id"),
+    legacyHostAdoptionIssue: text("legacy_host_adoption_issue", {
+      enum: ["owner_unverified"],
+    }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -6056,6 +6169,59 @@ export const workspaces = pgTable(
     }>(),
   },
   (t) => ({
+    hostScopedIdentity: unique("workspaces_host_scoped_identity_uq").on(
+      t.id,
+      t.executionHostId,
+    ),
+    activeHostHandle: uniqueIndex("workspaces_active_host_handle_uq")
+      .on(t.executionHostId, t.executionWorkspaceId)
+      .where(
+        sql`${t.removedAt} IS NULL AND ${t.executionWorkspaceId} IS NOT NULL`,
+      ),
+    activeHostRun: uniqueIndex("workspaces_active_host_run_uq")
+      .on(t.runId)
+      .where(sql`${t.removedAt} IS NULL AND ${t.ownershipKind} = 'host_owned'`),
+    preparationAssignment: foreignKey({
+      name: "workspaces_preparation_assignment_fk",
+      columns: [t.preparationAssignmentId, t.runId, t.executionHostId],
+      foreignColumns: [
+        executionAssignments.id,
+        executionAssignments.runId,
+        executionAssignments.executionHostId,
+      ],
+    }),
+    rootWorkspace: foreignKey({
+      name: "workspaces_root_host_fk",
+      columns: [t.rootWorkspaceId, t.executionHostId],
+      foreignColumns: [t.id, t.executionHostId],
+    }),
+    hostOwnershipShape: check(
+      "workspaces_host_ownership_shape_check",
+      sql`(
+        (${t.ownershipKind} = 'legacy_path'
+          AND ${t.worktreePath} IS NOT NULL AND ${t.parentRepoPath} IS NOT NULL
+          AND ${t.executionHostId} IS NULL AND ${t.executionWorkspaceId} IS NULL
+          AND ${t.preparationAssignmentId} IS NULL AND ${t.workspaceGeneration} IS NULL
+          AND ${t.workspaceInputDigest} IS NULL AND ${t.rootWorkspaceId} IS NULL
+          AND (${t.legacyHostAdoptionIssue} IS NULL OR ${t.legacyHostAdoptionIssue} = 'owner_unverified'))
+        OR
+        (${t.ownershipKind} = 'host_owned'
+          AND ${t.worktreePath} IS NULL AND ${t.parentRepoPath} IS NULL
+          AND ${t.executionHostId} IS NOT NULL AND ${t.preparationAssignmentId} IS NOT NULL
+          AND ${t.legacyHostAdoptionIssue} IS NULL
+          AND ${t.workspaceGeneration} > 0 AND ${t.workspaceInputDigest} ~ '^[0-9a-f]{64}$'
+          AND (${t.executionWorkspaceId} IS NULL OR ${t.executionWorkspaceId} ~ '^ws_[0-9a-f]{32}$')
+          AND (${t.rootWorkspaceId} IS NULL
+            OR (${t.rootWorkspaceId} <> ${t.id} AND ${t.executionWorkspaceId} IS NULL)))
+      ) IS TRUE`,
+    ),
+    hostMaterializationShape: check(
+      "workspaces_host_materialization_shape_check",
+      sql`${t.workspaceMaterializationGeneration} IS NULL OR (
+        ${t.ownershipKind} = 'host_owned' AND ${t.workspaceMaterializationGeneration} > 0
+        AND (${t.executionWorkspaceId} IS NOT NULL OR ${t.rootWorkspaceId} IS NOT NULL)
+      )`,
+    ),
     publicationOwner: unique("workspaces_publication_owner_uq").on(
       t.projectId,
       t.runId,
@@ -6113,6 +6279,29 @@ export const workspaces = pgTable(
       .where(
         sql`${t.prUrl} is not null and (${t.prState} is null or ${t.prState} = 'open')`,
       ),
+  }),
+);
+
+export const workspaceInputCaptures = pgTable(
+  "workspace_input_captures",
+  {
+    workspaceId: text("workspace_id").primaryKey()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    originUserId: text("origin_user_id"),
+    files: jsonb("files").$type<readonly { path: string; base64: string; executable?: true }[]>().notNull(),
+    contentDigest: text("content_digest").notNull(),
+    requirementProbeCount: integer("requirement_probe_count").default(0).notNull(),
+    flowSetupRevisionId: text("flow_setup_revision_id"),
+  },
+  (t) => ({
+    boundedFiles: check("workspace_input_captures_files_check", sql`
+      CASE WHEN jsonb_typeof(${t.files}) = 'array'
+        THEN jsonb_array_length(${t.files}) <= 255 AND octet_length(${t.files}::text) <= 90 * 1024 * 1024
+        ELSE false
+      END`),
+    digestShape: check("workspace_input_captures_digest_check", sql`${t.contentDigest} ~ '^[a-f0-9]{64}$'`),
+    boundedProbes: check("workspace_input_captures_probe_count_check", sql`${t.requirementProbeCount} BETWEEN 0 AND 128`),
+    setupRevisionShape: check("workspace_input_captures_setup_revision_check", sql`${t.flowSetupRevisionId} ~ '^[A-Za-z0-9_-]{1,128}$'`),
   }),
 );
 
@@ -6697,7 +6886,7 @@ export const scratchCapabilityProfiles = pgTable(
       .unique()
       .references(() => scratchRuns.runId, { onDelete: "cascade" }),
     profileDigest: text("profile_digest").notNull(),
-    materializedPath: text("materialized_path").notNull(),
+    materializedPath: text("materialized_path"),
     selectedMcpIds: jsonb("selected_mcp_ids")
       .$type<string[]>()
       .notNull()

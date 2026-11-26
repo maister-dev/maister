@@ -28,6 +28,7 @@ import { safeDownloadHeaders } from "../../runtime/safe-download";
 import { objectDigest, objectEtag } from "../../runtime/object-integrity";
 import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
+import { EXECUTION_HOST_KEY_HEADER } from "../../runtime/execution-host-address";
 
 import {
   reconcileRunSessionProcesses,
@@ -59,6 +60,7 @@ import {
   type CommandOutcome,
 } from "./command-receipts";
 import { takeContextMountPreamble } from "./context-mounts";
+import { addressedClaudeSettings } from "./claude-tool-arbitration";
 import {
   StandDispatchPayloadSchema,
   StandLogsSelectorSchema,
@@ -82,6 +84,18 @@ import {
 } from "./execution-fence";
 import { finishProgressTurn } from "./guardrail-progress";
 import { executionHostCapabilities } from "./data-plane-capabilities";
+import {
+  configuredWorkspaceSources,
+  listWorkspaceSourceRefs,
+  observeWorkspaceSource,
+  WorkspaceRefListingQuery,
+  WorkspaceRepositoryId,
+  WorkspaceSourceQuery,
+} from "./workspace-source";
+import { verifyWorkspaceSourcePin } from "./prepare-owned-workspace";
+import { registerWorkspacePreparation } from "./workspace-prepare-api";
+import { workspaceSessionMcpServers } from "./workspace-session-inputs";
+import { verifyWorkspaceSessionInputs } from "./workspace-input-materialization";
 import { outboxLimitOf } from "./host-runtime-errors";
 import {
   EXECUTION_HOST_PROTOCOL_VERSION,
@@ -335,6 +349,14 @@ function receiptAdmission(
       };
     case "session.prompt":
     case "workspace.adopt":
+    case "workspace.prepare":
+    case "workspace.materialize":
+    case "workspace.run":
+    case "workspace.checkpoint":
+    case "workspace.restore":
+    case "workspace.sync":
+    case "workspace.publish":
+    case "workspace.preserve":
     case "workspace.publication":
     case "runtime_object.reserve":
     case "runtime_object.upload":
@@ -352,6 +374,7 @@ function receiptAdmission(
         walletId: context.entry?.record.createdByCommandId,
       };
     case "workspace.release":
+    case "workspace.cancel":
     case "runtime_object.delete":
       return { kind: "teardown" };
   }
@@ -656,6 +679,19 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   if (!hostState) {
     throw new Error("registerRoutes requires an execution-host state store");
   }
+
+  app.addHook("onRequest", async (req, reply) => {
+    const expected = req.headers[EXECUTION_HOST_KEY_HEADER];
+
+    if ((expected !== undefined || req.url.startsWith("/v1/")) &&
+        expected !== hostState.hostKey) {
+      await reply.status(409).send({
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "addressed request belongs to a different execution host",
+        details: { reason: "host_identity_mismatch" },
+      });
+    }
+  });
 
   app.addContentTypeParser("application/octet-stream", (_request, body, done) =>
     done(null, body),
@@ -1634,6 +1670,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     if (chatHitlId) entry.emitter.on(SESSION_EVENT_CHANNEL, chatListener);
     entry.record.readOnlyTurn = body.readOnlyTurn === true;
     const mountPreamble = takeContextMountPreamble(entry.record);
+    const workspacePreamble = entry.record.workspacePackageInstructions;
+    entry.record.workspacePackageInstructions = undefined;
+    const preamble = [mountPreamble, workspacePreamble].filter(Boolean).join("\n\n");
 
     if (mountPreamble) {
       logger.info(
@@ -1659,7 +1698,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           stepId: body.stepId,
           prompt: body.prompt,
           contentBlocks,
-          preamble: mountPreamble ?? undefined,
+          preamble: preamble || undefined,
           isUserCancel: () => entry.record.cancelRequested === true,
           checkpointStopReason: () =>
             entry.intentionalShutdown &&
@@ -1957,7 +1996,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(200).send(body);
   });
 
-  app.get("/capabilities", async (_req, reply) => {
+  app.get("/capabilities", async (req, reply) => {
     const capabilities = executionHostCapabilities();
 
     logger.info(
@@ -1968,7 +2007,64 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       },
       "execution-host-capabilities-read",
     );
-    reply.status(200).send(capabilities);
+    const canPrepare = req.headers[EXECUTION_HOST_KEY_HEADER] === hostState.hostKey &&
+      (workspaceSources.size > 0 || process.env.MAISTER_WORKSPACE_DIRECTORIES);
+
+    reply.status(200).send({
+      ...capabilities,
+      ...(canPrepare ? { workspaceProtocol: [1], workspaceSyncResolver: 1 } : {}),
+    });
+  });
+
+  const workspaceSources = configuredWorkspaceSources();
+  registerWorkspacePreparation({
+    app, state: hostState, registry: workspaces, objects: runtimeObjects, events: runtimeEvents, runtimeRoot,
+    sources: workspaceSources, logger,
+  });
+  app.get<{ Params: { repositoryId: string } }>("/v1/repositories/:repositoryId/refs", async (req, reply) => {
+    const repository = WorkspaceRepositoryId.safeParse(req.params.repositoryId);
+    const query = WorkspaceRefListingQuery.safeParse(req.query);
+    if (!repository.success || !query.success)
+      return reply.status(400).send({
+        code: "PRECONDITION",
+        message: "Invalid repository ref listing request",
+        details: { reason: "invalid_request" },
+      });
+    const source = workspaceSources.get(repository.data);
+    if (!source)
+      return reply.status(404).send({
+        code: "NOT_FOUND",
+        message: "approved repository not found",
+        details: { reason: "resource_not_found" },
+      });
+
+    return reply.status(200).send(await listWorkspaceSourceRefs(source, {
+      repositoryId: repository.data,
+      hostKey: hostState.hostKey,
+      cursor: query.data.cursor,
+    }));
+  });
+  app.post("/v1/repositories/resolve-revision", async (req, reply) => {
+    const query = WorkspaceSourceQuery.safeParse(req.body);
+    if (!query.success) {
+      return reply.status(400).send({
+        code: "PRECONDITION",
+        message: "a repository ID and exact full branch ref are required",
+        details: { reason: "invalid_request" },
+      });
+    }
+    const source = workspaceSources.get(query.data.repositoryId);
+    if (!source)
+      return reply.status(404).send({
+        code: "NOT_FOUND",
+        message: "approved repository not found",
+        details: { reason: "resource_not_found" },
+      });
+    const commit = await observeWorkspaceSource(source, query.data.ref);
+
+    const { repositoryId, ref, pinnedCommit: pin } = query.data;
+    const pinnedCommit = pin ? await verifyWorkspaceSourcePin({ runtimeRoot, source, commit, pin }) : null;
+    return reply.status(200).send({ repositoryId, ref, commit, ...(pinnedCommit ? { pinnedCommit } : {}) });
   });
 
   function runtimeObjectEvent(
@@ -2899,9 +2995,31 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           // ADR-166 D7: cwd, confinement roots, run dir, and mounts all derive
           // from the adopted handle (server state) — the single path-derivation
           // site.
-          const workspace: WorkspaceResolution = workspaces.resolveForSession(
+          const resolvedWorkspace = workspaces.resolveForSession(
             request.executionWorkspaceId,
             { stepId: request.stepId },
+          );
+          const workspaceInputs = await verifyWorkspaceSessionInputs(
+            hostState, request.executionWorkspaceId, runtimeRoot, request.stepId,
+          );
+          const workspace: WorkspaceResolution = workspaceInputs === undefined
+            ? resolvedWorkspace
+            : { ...resolvedWorkspace, ...workspaceInputs };
+          const adapter = request.runner?.adapter ?? request.executor.agent;
+          const addressedClaude = workspace.ownershipKind === "host_owned" && adapter === "claude";
+          if ((request.claudePermissions || workspace.claudeSubagent) && !addressedClaude)
+            throw new SupervisorError("PRECONDITION", "Native Claude permissions require an addressed Claude workspace", {
+              details: { reason: "command_invariant_conflict" },
+            });
+          const claudeSettings = addressedClaude ? addressedClaudeSettings({
+            permissions: request.claudePermissions,
+            allowedPaths: request.hooksConfig?.pathGuard?.allowedPaths,
+            mustArbitrate: Boolean(request.enforcementProfile || request.readOnlySession ||
+              workspace.readOnlyCheckout || workspace.contextMounts?.length ||
+              request.hooksConfig?.pathGuard),
+          }) : undefined;
+          const mcpServers = workspaceSessionMcpServers(
+            hostState, request.executionWorkspaceId, request.mcpServers,
           );
           const sessionId = randomUUID();
           const outputPaths: Partial<
@@ -3061,9 +3179,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               record,
               emitter,
               logger,
-              adapter: request.runner?.adapter ?? request.executor.agent,
+              adapter,
+              claudeSettings,
+              claudeSubagent: workspace.claudeSubagent,
               model: request.runner?.model ?? request.executor.model,
-              mcpServers: request.mcpServers,
+              mcpServers,
               resumeSessionId: request.resumeSessionId,
               runner: request.runner,
             });

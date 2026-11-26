@@ -47,7 +47,7 @@ import {
   invalidateAdapterReadOnlySmokeCache,
   writeAdapterSmokeCache,
 } from "../src/adapter-smoke-cache";
-import { withAdapterSmokeCacheLock } from "../src/adapter-smoke-cache-lock";
+import { withSqliteFileLock as withAdapterSmokeCacheLock } from "../src/sqlite-file-lock";
 import { provisionRunnerLaunch } from "../src/runner-provisioner";
 import { buildChildEnv } from "../src/spawn";
 import { readSessionModels } from "../src/session-models";

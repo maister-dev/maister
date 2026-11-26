@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ACP_CONTEXT_UPDATE_TYPES } from "../../../runtime/acp-context";
 import { parseCommandEventPayloadV2 } from "../../../runtime/command-evidence";
 import { containsHostFilesystemPath } from "../../../runtime/host-path-safety";
+import { isWorkspaceTerminalEnvelope, type WorkspaceTerminalEnvelope } from "../../../runtime/workspace-prepare";
 
 /** Exact host-owned session payload; the reference event is availability evidence. */
 export const SessionContentReferenceSchema = z
@@ -405,7 +406,19 @@ export const RuntimeEventEnvelopeSchema = z
     }
   });
 
-export type RuntimeEventEnvelope = z.infer<typeof RuntimeEventEnvelopeSchema>;
+export const RuntimeEventWireEnvelopeSchema = z.union([
+  RuntimeEventEnvelopeSchema,
+  z.custom<WorkspaceTerminalEnvelope>(isWorkspaceTerminalEnvelope),
+]);
+export type RuntimeEventWireEnvelope = z.infer<typeof RuntimeEventWireEnvelopeSchema>;
+export type RuntimeEventEnvelope =
+  | z.infer<typeof RuntimeEventEnvelopeSchema>
+  | (WorkspaceTerminalEnvelope & Readonly<{
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    hostSessionId: null;
+  }>);
 
 export const RuntimeEventAckSchema = z
   .object({
@@ -438,7 +451,7 @@ const RUNTIME_EVENT_SPAN_BOUNDS = {
 };
 
 const RUNTIME_EVENT_SPAN_PAGE = z
-  .array(RuntimeEventEnvelopeSchema)
+  .array(RuntimeEventWireEnvelopeSchema)
   .min(1)
   .max(500);
 

@@ -19,7 +19,7 @@ const log = pino({
 
 // Bounded so a hanging probe (e.g. a network call) cannot wedge the launch
 // path. Probes are meant to be fast presence/version checks.
-const PROBE_TIMEOUT_MS = 10_000;
+export const FLOW_REQUIREMENT_TIMEOUT_MS = 10_000;
 const MAX_BUFFER = 1024 * 1024;
 
 export type RequirementFailure = {
@@ -52,7 +52,7 @@ export async function checkFlowRequirements(
     try {
       await execFileAsync("bash", ["-c", req.probe], {
         cwd,
-        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        signal: AbortSignal.timeout(FLOW_REQUIREMENT_TIMEOUT_MS),
         maxBuffer: MAX_BUFFER,
         // ADR-153: probes get the same allow-listed env as cli children —
         // never the web tier's secrets.
@@ -66,7 +66,7 @@ export async function checkFlowRequirements(
       failures.push({
         name: req.name,
         reason: timedOut
-          ? `probe timed out after ${PROBE_TIMEOUT_MS}ms`
+          ? `probe timed out after ${FLOW_REQUIREMENT_TIMEOUT_MS}ms`
           : "probe exited non-zero",
         ...(req.hint ? { hint: req.hint } : {}),
       });

@@ -19,6 +19,7 @@ import {
   projectPackageAttachments,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import { runRevisionSetup } from "@/lib/flows";
 import { runCapabilityRevisionSetup } from "@/lib/capabilities/import";
 import { settleTrustedPackageSetup } from "@/lib/packages/attach";
@@ -138,6 +139,13 @@ export async function executeTrustedSetup(
     let status: Awaited<ReturnType<typeof runRevisionSetup>>;
 
     if (target.kind === "flow") {
+      if (projectFlowSetupOwner(claim.projectId) === "selectedHost") {
+        await db.transaction(async (tx) => {
+          await authorize(tx);
+          await reconcileDependencyCatalog(tx, claim.projectId);
+        });
+        return;
+      }
       const [flow] = await db
         .select()
         .from(flowRevisions)

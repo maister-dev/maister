@@ -526,6 +526,48 @@ flowchart LR
     Pruned -- yes --> PrunedInd[pruned indication]
 ```
 
+## Host-owned workspaces Stage C (Designed)
+
+[ADR-219](../decisions/adr-219.md) separates the project source, host-local
+materialization, logical Run workspace and physical incarnation. Web first
+commits owner and frozen input under an assignment. The host canonicalizes
+the physical root, checks the source and exact commit, and accepts at most one
+writer for the root. Its successful receipt supplies an opaque handle.
+
+| Mode | Physical ownership and compatibility |
+|---|---|
+| Own Git worktree | Private project/host cache and a fresh writable Run branch at the pinned commit. A moved ref is irrelevant to that Run. An unavailable commit prevents checkout. |
+| Shared child | The root retains the host and physical ownership. The child uses that handle via the existing writer exclusion. An explicit conflicting host selection refuses before effects. |
+| Read-only checkout/context | Each mount pins its authorized project and commit, with read-only permissions enforced by the host. No independent writer is admitted on that handle. |
+| Plain directory/scratch | Reuse the applicable host-managed workspace mode. An operator-provided directory is eligible only through a host-approved local provisioning record. |
+| Workspace-less | Preserve empty-directory execution and current scratch, company and librarian semantics. When a directory is needed for execution the selected host creates it. |
+| Pre-cutover path | Preserve historical associations. Adopt the workspace under the original known host after identity and canonical path checks. Conflicting or absent ownership produces a repair finding. |
+
+The logical reservation advances from preparing to ready only after Web
+applies the matching receipt. A lost response or failed apply leaves the
+original owner in reconciliation. Completion retains the owner through
+Review and later operations. Delete only after fenced disposition.
+Compare a physical writer by host and canonical root, including aliases.
+Different hosts may use the same path string. Validate both cases with
+independent real stores in C-02, C-06 and C-13.
+
+The addressed status operation checks the retained generation on the owner.
+For Git it verifies the worktree identity and current HEAD around a bounded
+status read. The result exposes the observed commit, branch versus detached
+state and clean versus dirty state without exposing the private path.
+The Run Git panel reads those fields through the existing project-authorized
+Git state endpoint. A host-owned workspace has no manager Git path to inspect.
+
+The host produces review patches from the prepared handle and a reachable
+base and head. A working tree patch uses a temporary index to include
+non-ignored untracked files. The supervisor ages the copied index so Git
+checks file contents when cached size and modification time still match.
+The host seals at most 64 KiB through the
+runtime object plane. The Run diff route verifies the catalogue, checks
+current `readRepoFiles` before capture and before response, and renders the
+same bounded bytes. Review-source and checkpoint scopes require their own
+owner evidence.
+
 ## Expectations
 
 - Exactly one worktree per run, rooted at

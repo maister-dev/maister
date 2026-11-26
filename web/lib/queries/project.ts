@@ -247,6 +247,7 @@ export async function listLaunchableFlowSummaries(
         packageStatus: flowRevisions.packageStatus,
         schemaVersion: flowRevisions.schemaVersion,
         setupStatus: flowRevisions.setupStatus,
+        execTrust: flowRevisions.execTrust,
       })
       .from(flows)
       .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
@@ -259,6 +260,7 @@ export async function listLaunchableFlowSummaries(
   return rows
     .filter((row) =>
       isProjectFlowLaunchable({
+        projectId,
         enabledRevisionId: row.enabledRevisionId,
         enablementState: row.enablementState,
         hasReadyRunner: hasReadyRunner && !row.runnerUnavailable,
@@ -271,6 +273,7 @@ export async function listLaunchableFlowSummaries(
               packageStatus: row.packageStatus ?? "",
               schemaVersion: row.schemaVersion ?? 0,
               setupStatus: row.setupStatus ?? "",
+              execTrust: row.execTrust,
             }
           : null,
         trustStatus: row.trustStatus,
@@ -460,6 +463,7 @@ export async function getProjectPageData(
             packageStatus: flowRevisions.packageStatus,
             schemaVersion: flowRevisions.schemaVersion,
             setupStatus: flowRevisions.setupStatus,
+            execTrust: flowRevisions.execTrust,
           })
           .from(flowRevisions)
           .where(inArray(flowRevisions.id, enabledRevisionIds))
@@ -484,6 +488,7 @@ export async function getProjectPageData(
     id: f.id,
     enabled: f.enabledRevisionId !== null,
     launchable: isProjectFlowLaunchable({
+      projectId: project.id,
       enabledRevisionId: f.enabledRevisionId,
       enablementState: f.enablementState,
       hasReadyRunner: hasReadyRunner && !f.runnerUnavailable,

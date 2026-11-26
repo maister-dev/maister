@@ -20,7 +20,11 @@ import {
   type ComposeRootComment,
   type ComposeThread,
 } from "@/lib/review-comments/serialize";
-import { readReviewSource, type ReviewSource } from "@/lib/runs/review-source";
+import {
+  readAddressedReviewFingerprint,
+  readReviewSource,
+  type ReviewSource,
+} from "@/lib/runs/review-source";
 import { resolveBaseRef } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -252,11 +256,12 @@ async function loadReviewThreads(
 async function readCurrentReviewSource(
   db: Db,
   runId: string,
-): Promise<ReviewSource> {
-  const [runRows, workspaceRows] = await Promise.all([
-    db.select().from(runs).where(eq(runs.id, runId)),
-    db.select().from(workspaces).where(eq(workspaces.runId, runId)),
-  ]);
+): Promise<ReviewFeedbackPreview["reviewSource"]> {
+  const runRows = await db.select().from(runs).where(eq(runs.id, runId));
+  const workspaceRows = await db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.runId, runId));
   const run = runRows[0];
   const workspace = workspaceRows[0];
 
@@ -272,6 +277,8 @@ async function readCurrentReviewSource(
       "review feedback is available only for Flow runs",
     );
   }
+  if (workspace.ownershipKind === "host_owned")
+    return readAddressedReviewFingerprint(db, workspace);
 
   const projectRows = await db
     .select({ mainBranch: projects.mainBranch })
@@ -308,10 +315,11 @@ export async function buildReviewFeedbackPacket(input: {
 }): Promise<ReviewFeedbackPacket> {
   const gate = await loadReviewGate(input.db, input.runId, input.hitlRequestId);
   const reviewResponse = deriveReviewResponseInput(gate.schema, input.response);
-  const [threadState, chatMessages] = await Promise.all([
-    loadReviewThreads(input.db, input.runId),
-    loadCompletedGateChatMessages(input.db, input.hitlRequestId),
-  ]);
+  const threadState = await loadReviewThreads(input.db, input.runId);
+  const chatMessages = await loadCompletedGateChatMessages(
+    input.db,
+    input.hitlRequestId,
+  );
   const { openThreads, resolvedThreadCount } = threadState;
   const payload = composeReworkPayload(
     reviewResponse.summary,
@@ -341,10 +349,8 @@ export async function buildReviewFeedbackPreview(input: {
   hitlRequestId: string;
   response: unknown;
 }): Promise<ReviewFeedbackPreview> {
-  const [reviewSource, feedback] = await Promise.all([
-    readCurrentReviewSource(input.db, input.runId),
-    buildReviewFeedbackPacket(input),
-  ]);
+  const reviewSource = await readCurrentReviewSource(input.db, input.runId);
+  const feedback = await buildReviewFeedbackPacket(input);
 
   return {
     reviewSource: {

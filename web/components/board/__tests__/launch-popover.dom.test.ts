@@ -112,6 +112,49 @@ function serveLaunchResponse(payload: object, status = 202): void {
 }
 
 describe("launch destination", () => {
+  it("only submits an explicit supervisor with its refreshed preview token", async () => {
+    const request = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.startsWith("/api/runs/launch-options?")) {
+        const requested = new URL(url, "https://local.example").searchParams.get("executionHostId");
+
+        return Response.json({
+          ...launchOptions,
+          settingsToken: requested ? `settings-${requested}` : "settings-default",
+          executionHostOptions: {
+            defaultExecutionHostId: "host-a",
+            hosts: [
+              { id: "host-a", displayName: "Main supervisor" },
+              { id: "host-b", displayName: "Build supervisor" },
+            ],
+          },
+        });
+      }
+      if (url === "/api/task-launch-intents")
+        return Response.json({ details: { reason: "launch_settings_changed" } }, { status: 409 });
+      throw new Error(`Unexpected launch request: ${url}`);
+    });
+    vi.stubGlobal("fetch", request);
+    await clickButton("Launch");
+    const label = [...document.querySelectorAll("span")].find(
+      (element) => element.id && element.textContent === "launch.executionHost",
+    );
+    expect(label).toBeDefined();
+    const select = [...document.querySelectorAll("select")].find((element) =>
+      element.querySelector('option[value="host-b"]'),
+    );
+    if (!select) throw new Error("The supervisor selector is missing");
+    await act(async () => {
+      select.value = "host-b";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await clickButton("launch.createRun");
+    const submitted = request.mock.calls.find(([url]) => url === "/api/task-launch-intents")?.[1];
+    expect(JSON.parse(String(submitted?.body))).toMatchObject({
+      executionHostId: "host-b",
+      expectedSettingsToken: "settings-host-b",
+    });
+  });
+
   it.each(["Running", "NeedsInput", "Pending"])(
     "keeps an accepted %s launch visible with the correct run destination",
     async (status) => {

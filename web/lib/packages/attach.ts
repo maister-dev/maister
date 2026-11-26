@@ -34,6 +34,7 @@ import { requireDependencyAdmin } from "@/lib/project-dependencies/claims";
 import { lockProjectWriteGrant } from "@/lib/project-action-authority";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { configuredSelectedExecutionEndpoint, projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import {
   localDirectoryContentDigest,
   installFlowPlugin,
@@ -1445,6 +1446,7 @@ export async function prepareManualPackageMutation(
   if (install.trustStatus !== "untrusted")
     await settlePreparedPackageSetups(
       db,
+      opts.projectId,
       members,
       async (tx) => {
         await assertCurrent(tx);
@@ -2257,8 +2259,8 @@ export async function settleTrustedPackageSetup(
       );
 
     for (const rev of revRows) {
-      const rerun =
-        rev.setupStatus === "pending" || rev.setupStatus === "failed";
+      const rerun = projectFlowSetupOwner(projectId) === "manager" &&
+        (rev.setupStatus === "pending" || rev.setupStatus === "failed");
       const setupStatus = rerun
         ? await runRevisionSetup({
             revisionId: rev.id,
@@ -2306,10 +2308,12 @@ async function enableReadyTrustedPackageFlows(
         eq(schemaModule.flows.enablementState, "Installed"),
       ),
     );
+  const selectedHostSetup = projectFlowSetupOwner(projectId) === "selectedHost";
   const ready = candidates
     .filter(
       ({ revision }) =>
-        isReadyFlowRevision(revision) &&
+        (isReadyFlowRevision(revision) || (selectedHostSetup &&
+          revision.packageStatus === "Installed" && revision.setupStatus === "pending")) &&
         !requiresExplicitNativeFindingsEnablement(
           revision.manifest as InstallResult["manifest"],
         ),

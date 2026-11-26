@@ -10,6 +10,7 @@ import pino from "pino";
 import {
   acceptedTaskAgentLaunchExecution,
   taskAgentPreparationWorkspace,
+  assertBoundAddressedTaskAgentWorkspace,
 } from "./launch-agent-execution";
 import {
   claimTaskLaunchIntent,
@@ -20,7 +21,7 @@ import {
   acceptedTaskLaunchExecution,
   assertTaskLaunchBoundWorkspace,
 } from "./launch-execution";
-import { taskLaunchReceipt } from "./launch-receipt";
+import { readTaskLaunchReceipt } from "./launch-receipt";
 import { emitTaskLaunchChanged } from "./launch-events";
 import {
   lockTaskLaunchReservation,
@@ -33,7 +34,9 @@ import {
   launchAcceptedTaskAgentRun,
   startAgentSession,
 } from "@/lib/agents/launch";
-import { runs, taskLaunchIntents } from "@/lib/db/schema";
+import { runs, taskLaunchIntents, workspaces } from "@/lib/db/schema";
+import { advanceAddressedWorkspaceAdmission } from "@/lib/execution-host/workspace-dispatch";
+import { workspacePreparationReadySql } from "@/lib/execution-host/workspace-preparation";
 import { acquireRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { withoutGitOwnership } from "@/lib/project-config-persistence/git-process";
 import { launchAcceptedTaskRun } from "@/lib/services/runs";
@@ -61,15 +64,7 @@ async function currentReceipt(
     .where(eq(taskLaunchIntents.id, intentId));
 
   if (!intent) throw launchRefusal("launch_not_found", "PRECONDITION");
-  const receipt = taskLaunchReceipt(intent);
-
-  if (!intent.runId) return receipt;
-  const [run] = await db
-    .select({ status: runs.status })
-    .from(runs)
-    .where(eq(runs.id, intent.runId));
-
-  return { ...receipt, ...(run ? { runStatus: run.status } : {}) };
+  return readTaskLaunchReceipt(db, intent);
 }
 
 /** Fences a failed current owner; a stale callback never mutates its successor. */
@@ -78,7 +73,7 @@ async function settlePreparationFailure(
   claim: TaskLaunchClaim,
   error: unknown,
 ): Promise<void> {
-  const reason =
+  const causeReason =
     isMaisterError(error) && typeof error.details?.reason === "string"
       ? error.details.reason
       : "launch_preparation_failed";
@@ -91,7 +86,7 @@ async function settlePreparationFailure(
       "timeout",
       "http",
       "launch_runner_unavailable",
-    ].includes(reason);
+    ].includes(causeReason);
   const transient =
     !isMaisterError(error) ||
     error.code === "EXECUTOR_UNAVAILABLE" ||
@@ -114,6 +109,10 @@ async function settlePreparationFailure(
       .for("update");
 
     if (!current) return;
+    const reason = current.effectiveExecutionHostId &&
+      ["network", "timeout", "http", "host_missing", "host_not_ready"].includes(causeReason)
+      ? "launch_execution_host_unavailable"
+      : causeReason;
     const attempts = current.attempts + (busy || !transient ? 0 : 1);
     const retry = busy || (transient && attempts < 3);
     const [next] = await tx
@@ -150,6 +149,7 @@ async function settlePreparationFailure(
         state: next.state,
         attempts,
         reason,
+        causeReason,
         integrityLimit,
         causeChain: operationalCauseChain(error),
         ...queryErrorDiagnostics(error),
@@ -283,7 +283,19 @@ async function startBoundTaskLaunch(db: Db, intentId: string): Promise<void> {
     // A Running agent's preparation/continuation already owns its effects.
     if (bound?.status !== "Pending") return;
   }
-  const fence = intent.preparationIdentity.parentRepoPath
+  const [workspace] = await db
+    .select({
+      ownershipKind: workspaces.ownershipKind,
+      ready: sql<boolean>`${workspacePreparationReadySql(sql`${intent.runId}`)}`,
+    })
+    .from(workspaces)
+    .where(eq(workspaces.runId, intent.runId));
+  if (workspace?.ownershipKind === "host_owned" && !workspace.ready) {
+    await advanceAddressedWorkspaceAdmission(db, intent.runId);
+
+    return;
+  }
+  const fence = workspace?.ownershipKind !== "host_owned" && intent.preparationIdentity.parentRepoPath
     ? await acquireRepositoryMutationFence(
         intent.preparationIdentity.parentRepoPath,
       )
@@ -508,7 +520,13 @@ async function prepareClaimedTaskLaunchIntent(
             .where(eq(runs.id, execution.intent.runId));
 
           if (!bound) throw launchRefusal("launch_worker_fenced");
-          await taskAgentPreparationWorkspace(db, bound);
+          if (claim.identity.version === 4) {
+            if (!bound.executionAssignmentId)
+              throw launchRefusal("launch_worker_fenced");
+            await assertBoundAddressedTaskAgentWorkspace(
+              db, execution.intent, bound.executionAssignmentId,
+            );
+          } else await taskAgentPreparationWorkspace(db, bound);
           await db.transaction(async (tx) => {
             await execution.beginBinding(tx);
             await execution.bindRun(tx);

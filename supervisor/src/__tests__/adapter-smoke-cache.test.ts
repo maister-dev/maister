@@ -16,7 +16,7 @@ import {
   writeAdapterSmokeCache,
   type AdapterSmokeCacheRead,
 } from "../adapter-smoke-cache";
-import { withAdapterSmokeCacheLock } from "../adapter-smoke-cache-lock";
+import { withSqliteFileLock as withAdapterSmokeCacheLock } from "../sqlite-file-lock";
 
 const checkedAt = "2026-07-07T09:00:00.000Z";
 const evaluatedAt = new Date("2026-07-11T09:00:00.000Z");

@@ -180,6 +180,7 @@ beforeEach(() => {
       runId: "run-1",
       branch: "maister/feature",
       worktreePath: "/tmp/wt",
+      parentRepoPath: "/tmp/repo",
       baseCommit: "abc123",
       removedAt: null,
     },

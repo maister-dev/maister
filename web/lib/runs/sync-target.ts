@@ -26,6 +26,7 @@ import {
 } from "@/lib/runs/flow-pr-conflict";
 import { flowConflictSyncAttemptId } from "@/lib/flows/graph/finish-continuation";
 import { syncShapeRefusal } from "@/lib/runs/sync-shape";
+import { syncAddressedWorkspace } from "@/lib/runs/sync-addressed-workspace";
 import {
   resolveSyncRef,
   type SyncOnto,
@@ -170,6 +171,8 @@ export type SyncRunInput = {
   // Persisted on the attempt; on a verified agent resolution the resolver
   // best-effort chains `promoteRun(rebase_merge)` to Done (default OFF).
   autoFinalize?: boolean;
+  // Addressed promotion delegates only its previously approved Git endpoints.
+  approvedPromotion?: { head: string; targetBranch: string; targetSha: string };
   flowConflictWaitId?: string;
   actor: SyncActor;
   db?: Db;
@@ -889,6 +892,21 @@ export async function syncRunTarget(
     workspace,
     admission,
   );
+
+  if (workspace.ownershipKind === "host_owned") {
+    const project = await loadProject(db, run.projectId ?? null);
+    return syncAddressedWorkspace({
+      db,
+      operation: input,
+      expectedStatus: run.status,
+      strategy: input.strategy ?? project?.syncStrategyDefault ?? "rebase",
+      target: resolveSyncRef(input.onto ?? "target", runId, {
+        ...workspace,
+        targetBranch: input.approvedPromotion?.targetBranch ?? workspace.targetBranch,
+      }, project),
+      mainBranch: project?.mainBranch ?? null,
+    });
+  }
 
   if (admission === "workbench") {
     await requireUpdateAllowed(db, run, workspace, input.actor);

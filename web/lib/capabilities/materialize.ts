@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { CapabilityAgent } from "@/lib/config.schema";
+import type { ClaudeNativePermissions } from "../../../runtime/claude-native-permissions";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type {
   CapabilityProfileEntry,
@@ -9,6 +10,7 @@ import type {
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { HooksConfig } from "@/lib/flows/hooks-config";
+import type { CapabilityBundleContent } from "@/lib/execution-host/capability-profile";
 
 import { execFile } from "node:child_process";
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
@@ -27,7 +29,7 @@ import {
   assertSafeAgentMaterializationPath,
   materializeWithAgentLease,
 } from "@/lib/agents/materialization-manifest";
-import { atomicWriteJson, atomicWriteText } from "@/lib/atomic";
+import { atomicWriteText } from "@/lib/atomic";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -83,6 +85,49 @@ export type MaterializedCapabilityProfile = {
   materializedFiles: string[];
   adapterLaunch: ScratchAdapterLaunch;
 };
+
+function renderCapabilityBundle({
+  profile,
+  executor,
+  workMode,
+  reasoningEffort,
+}: Pick<MaterializeCapabilityProfileArgs, "profile" | "executor" | "workMode" | "reasoningEffort">): CapabilityBundleContent {
+  const materialized = {
+    ...redactProfileForDisk(profile),
+    executor: executor ?? null,
+    workMode: workMode ?? profile.workMode,
+    reasoningEffort: reasoningEffort ?? profile.reasoningEffort,
+  };
+
+  return {
+    profile: JSON.stringify(materialized, null, 2),
+    instructions: `${instructionLines(materialized).join("\n")}\n`,
+  };
+}
+
+export function prepareAddressedCapabilityProfile(
+  args: Omit<MaterializeCapabilityProfileArgs, "worktreePath">,
+): {
+  capabilityContent: CapabilityBundleContent;
+  mcpServers: AgentMcpServer[];
+  claudePermissions?: ClaudeNativePermissions;
+} {
+  const agent = args.profile.executorAgent;
+  // The addressed supervisor pins the explicit Claude model through its
+  // native launch environment and ACP session options.
+  const artifacts = mapProfileToAgentArtifacts({
+    profile: args.profile,
+    agent,
+    tools: args.tools,
+    permissionMode: args.permissionMode,
+  });
+
+  return {
+    capabilityContent: renderCapabilityBundle(args),
+    mcpServers: artifacts.mcpServers,
+    claudePermissions: artifacts.settingsLocal?.permissions,
+  };
+}
 
 export function capabilityMaterializationRootPath(
   worktreePath: string,
@@ -266,12 +311,7 @@ export async function materializeCapabilityProfile(
 
   const profilePath = path.join(rootPath, "profile.json");
   const instructionsPath = path.join(rootPath, "instructions.md");
-  const materializedProfile = {
-    ...redactProfileForDisk(args.profile),
-    executor: args.executor ?? null,
-    workMode: args.workMode ?? args.profile.workMode,
-    reasoningEffort: args.reasoningEffort ?? args.profile.reasoningEffort,
-  };
+  const bundle = renderCapabilityBundle(args);
 
   const rootRelativePath = path.relative(worktreePath, rootPath);
 
@@ -297,11 +337,8 @@ export async function materializeCapabilityProfile(
       await recordIntent([rootPath]);
       await mkdir(rootPath, { recursive: true });
       await assertSafeAgentMaterializationPath(worktreePath, rootRelativePath);
-      await atomicWriteJson(profilePath, materializedProfile);
-      await atomicWriteText(
-        instructionsPath,
-        `${instructionLines(materializedProfile).join("\n")}\n`,
-      );
+      await atomicWriteText(profilePath, bundle.profile);
+      await atomicWriteText(instructionsPath, bundle.instructions);
 
       return [rootPath];
     },

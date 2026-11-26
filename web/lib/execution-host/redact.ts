@@ -41,6 +41,60 @@ function countOf(value: unknown): number {
 }
 
 const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
+  // The preparation protocol carries IDs and a digest. Keeping exactly these
+  // fields allows recovery without persisting locations, inputs or credentials.
+  "workspace.prepare": (payload) =>
+    pickScalars(payload, [
+      "mode",
+      "repositoryId",
+      "commit",
+      "parentHandle",
+      "parentGeneration",
+      "directoryProfileId",
+      "inputDigest",
+    ]),
+  "workspace.materialize": (payload) => ({
+    ...pickScalars(payload, ["generation", "manifestDigest"]),
+    objects: Array.isArray(payload.objects)
+      ? payload.objects.map((value) => pickScalars(asObject(value), ["objectId", "sha256"]))
+      : [],
+  }),
+  "workspace.run": (payload) => ({
+    ...pickScalars(payload, ["generation", "workload", "declarationId", "inputGeneration", "inputDigest"]),
+    ...(payload.templateContext === undefined ? {} : {
+      templateContext: pickScalars(asObject(payload.templateContext), ["objectId", "sha256"]),
+    }),
+  }),
+  "workspace.cancel": (payload) => pickScalars(payload, ["generation", "targetCommandId"]),
+  "workspace.checkpoint": (payload) => pickScalars(payload, ["generation"]),
+  "workspace.restore": (payload) => pickScalars(payload, ["generation", "checkpointId", "policy"]),
+  "workspace.preserve": (payload) => pickScalars(payload, ["generation", "claimId", "fence", "disposition", "quiescenceId"]),
+  "workspace.sync": (payload) => ({
+    ...pickScalars(payload, ["generation", "claimId", "fence", "strategy", "onConflict", "resolverProbeId"]),
+    expected: pickScalars(asObject(payload.expected), ["head", "remoteId", "targetRef", "priorTarget"]),
+    ...(payload.publish === undefined ? {} : {
+      publish: {
+        ...pickScalars(asObject(payload.publish), ["targetRef", "priorTarget"]),
+        ...(asObject(payload.publish).priorTarget === null ? { priorTarget: null } : {}),
+      },
+    }),
+    ...(payload.resolver === undefined ? {} : { resolver: pickScalars(asObject(payload.resolver), ["commandId", "action"]) }),
+    ...(payload.resolverIntent === undefined ? {} : { resolverIntent: { runnerId: pickScalars(asObject(payload.resolverIntent), ["runnerId"]).runnerId ?? null } }),
+  }),
+  "workspace.publish": (payload) => {
+    const expected = asObject(payload.expected);
+
+    return {
+      ...pickScalars(payload, ["generation", "claimId", "fence", "publication", "integration"]),
+      expected: {
+        ...pickScalars(expected, ["head", "remoteId", "targetRef", "priorTarget"]),
+        ...(expected.priorTarget === null ? { priorTarget: null } : {}),
+      },
+      ...(payload.publication === "openPullRequest"
+        ? { pullRequest: pickScalars(asObject(payload.pullRequest), ["baseRef", "baseCommit", "title", "body", "draft"]) }
+        : {}),
+    };
+  },
   "workspace.adopt": (p) => ({
     ...pickScalars(p, ["runId", "projectSlug", "kind"]),
     ...(asObject(p.owner).kind === "company"
@@ -51,7 +105,9 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
       : {}),
     contextMountCount: countOf(p.contextMounts),
   }),
-  "workspace.release": () => ({}),
+  "workspace.release": (payload) => typeof payload.claimId === "string"
+    ? pickScalars(payload, ["generation", "claimId", "fence", "dispositionId", "quiescenceId"])
+    : {},
   "workspace.publication": (payload) =>
     pickScalars(payload, [
       "action",

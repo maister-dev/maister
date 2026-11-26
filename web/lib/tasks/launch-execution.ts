@@ -1,11 +1,12 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import { transportForSelectedHostId } from "@/lib/execution-host/default-transport";
 import type { CapabilityBundleSource } from "@/lib/capabilities/materialize-bundle";
 import type { TaskAdmissionSnapshot } from "./qualification-types";
 import type {
   TaskLaunchClaim,
-  TaskLaunchFlowClaim,
+  TaskLaunchFlowPreparationClaim,
 } from "./launch-dispatch-claim";
 import type { TaskLaunchSettingsV2Snapshot } from "./launch-types";
 
@@ -22,7 +23,7 @@ import {
   captureTaskLaunchRelaunchSource,
 } from "./launch-continuation";
 import {
-  assertTaskLaunchFlowClaim,
+  assertTaskLaunchFlowPreparationClaim,
   lockedTaskLaunchClaim,
   advanceTaskLaunchPreparation,
 } from "./launch-dispatch-claim";
@@ -81,6 +82,11 @@ import { runtimeRoot } from "@/lib/runtime-root";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { MaisterError } from "@/lib/errors";
 import { runtimeFileUrl } from "@/lib/runtime-file-url";
+import {
+  observeSelectedWorkspaceRevision,
+  readAddressedWorkspaceStatus,
+  resolveAddressedWorkspaceRevision,
+} from "@/lib/execution-host/workspace-preparation";
 
 const executionAuthority = Symbol("accepted task launch execution");
 
@@ -89,7 +95,7 @@ type FlowSettings = Extract<TaskLaunchSettingsV2Snapshot, { kind: "flow" }>;
 /** This context is constructed from a current DB claim, never decoded from a request. */
 export type AcceptedTaskLaunchExecution = Readonly<{
   [executionAuthority]: true;
-  claim: TaskLaunchFlowClaim;
+  claim: TaskLaunchFlowPreparationClaim;
   flowAssetsPath: string;
   intent: typeof taskLaunchIntents.$inferSelect;
   settings: FlowSettings;
@@ -210,7 +216,12 @@ export async function assertFrozenTaskLaunchCurrent(
 
   if (!flow || !revision || revision.flowRefId !== settings.flowRefId)
     throw launchRefusal("flow_unavailable", "PRECONDITION");
-  assertFlowLaunchable(settings.flowRefId, flow, revision);
+  assertFlowLaunchable(
+    settings.flowRefId,
+    flow,
+    revision,
+    intent.effectiveExecutionHostId ? "selectedHost" : "manager",
+  );
   const manifest = parseExecutableStoredFlowManifest(revision.manifest, {
     code: "CONFIG",
     surface: "launch-service",
@@ -270,18 +281,40 @@ export async function assertFrozenTaskLaunchRepository(
     .where(eq(projects.id, intent.projectId));
 
   if (!project) throw launchRefusal("launch_task_missing", "PRECONDITION");
-  if (
-    intent.preparationIdentity &&
-    (await realpath(project.repoPath)) !==
-      intent.preparationIdentity.parentRepoPath
-  )
+  const [bound] = intent.runId
+    ? await db
+        .select({ ownershipKind: workspaces.ownershipKind, executionHostId: workspaces.executionHostId })
+        .from(workspaces)
+        .where(eq(workspaces.runId, intent.runId))
+    : [];
+  const selectedHostId = intent.effectiveExecutionHostId ??
+    (bound?.ownershipKind === "host_owned" ? bound.executionHostId : null);
+  const transport = selectedHostId ? await transportForSelectedHostId(db, selectedHostId) : undefined;
+  const pinned = intent.effectiveExecutionHostId
+    ? await resolveAddressedWorkspaceRevision(
+        intent.projectId,
+        settings.baseBranch,
+        settings.baseCommit,
+        transport,
+      )
+    : null;
+  if (pinned && pinned.pinnedCommit !== settings.baseCommit)
     throw launchRefusal("launch_workspace_changed", "PRECONDITION");
-  await assertBaseCommitReachable({
-    projectRepoPath: project.repoPath,
-    baseRef: settings.baseBranch,
-    baseCommit: settings.baseCommit,
-    preferRemote: "origin",
-  });
+  const addressed = pinned !== null || bound?.ownershipKind === "host_owned";
+  if (!addressed) {
+    if (
+      intent.preparationIdentity &&
+      (await realpath(project.repoPath)) !==
+        intent.preparationIdentity.parentRepoPath
+    )
+      throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+    await assertBaseCommitReachable({
+      projectRepoPath: project.repoPath,
+      baseRef: settings.baseBranch,
+      baseCommit: settings.baseCommit,
+      preferRemote: "origin",
+    });
+  }
   if (
     retryDigest(
       await captureTaskLaunchCapabilityBundles(db, intent.projectId),
@@ -289,11 +322,19 @@ export async function assertFrozenTaskLaunchRepository(
   )
     throw launchRefusal("launch_capabilities_changed");
   if (intent.basis.kind === "automatic") {
-    const currentHead = await resolveBaseCommit({
-      projectRepoPath: project.repoPath,
-      baseRef: settings.baseBranch,
-      preferRemote: "origin",
-    });
+    const currentHead =
+      pinned?.commit ??
+      (addressed
+        ? await observeSelectedWorkspaceRevision(
+            intent.projectId,
+            settings.baseBranch,
+            transport,
+          )
+        : await resolveBaseCommit({
+            projectRepoPath: project.repoPath,
+            baseRef: settings.baseBranch,
+            preferRemote: "origin",
+          }));
     const [task] = await db
       .select()
       .from(tasks)
@@ -372,7 +413,7 @@ export async function assertTaskLaunchMaterializationReceipt(
 ): Promise<void> {
   const identity = intent.preparationIdentity;
 
-  if (!identity)
+  if (!identity || identity.version !== 1)
     throw launchRefusal("launch_input_snapshot_incomplete", "PRECONDITION");
   const { receiptPath } = await taskLaunchPreparationReceiptPath(db, intent);
   const receipt = materializationReceiptSchema.parse(
@@ -406,8 +447,37 @@ export async function assertTaskLaunchBoundWorkspace(
     .from(workspaces)
     .where(eq(workspaces.runId, identity.runId));
 
+  if (workspace?.ownershipKind === "host_owned") {
+    if (
+      workspace.projectId !== intent.projectId ||
+      workspace.removedAt ||
+      (identity.version === 3 &&
+        workspace.executionHostId !== identity.executionHostId) ||
+      workspace.branch !== identity.branch ||
+      workspace.baseCommit !== identity.baseCommit
+    )
+      throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+    if (!workspace.workspaceMaterializationGeneration)
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "The selected supervisor is still preparing the workspace",
+        {
+          details: { reason: "workspace_preparation_pending" },
+        },
+      );
+    const observed = await readAddressedWorkspaceStatus(db, workspace);
+    if (
+      observed.workspace.mode !== "ownWorktree" ||
+      observed.workspace.observedCommit !== identity.baseCommit ||
+      observed.workingTree !== "clean"
+    )
+      throw launchRefusal("launch_workspace_changed", "PRECONDITION");
+
+    return;
+  }
   if (
     !workspace ||
+    identity.version === 3 ||
     workspace.removedAt ||
     workspace.worktreePath !== identity.worktreePath ||
     workspace.parentRepoPath !== identity.parentRepoPath ||
@@ -423,8 +493,9 @@ export async function acceptedTaskLaunchExecution(
   db: Db,
   claim: TaskLaunchClaim,
 ): Promise<AcceptedTaskLaunchExecution> {
-  assertTaskLaunchFlowClaim(claim);
+  assertTaskLaunchFlowPreparationClaim(claim);
   const intent = await lockedTaskLaunchClaim(db, claim);
+  const { identity } = claim;
 
   await assertFrozenTaskLaunchCurrent(db, intent);
   await assertFrozenTaskLaunchRepository(db, intent);
@@ -491,18 +562,20 @@ export async function acceptedTaskLaunchExecution(
     },
     assertCurrent,
     prepareWorkspace: async (effect) => {
+      if (identity.version !== 1)
+        throw launchRefusal("workspace_protocol_unsupported", "PRECONDITION");
       const current = await lockedTaskLaunchClaim(db, claim);
 
       if (current.preparationPhase === "reserved") {
-        const existing = (
-          await listWorktrees(claim.identity.parentRepoPath)
-        ).find((worktree) => worktree.path === claim.identity.worktreePath);
+        const existing = (await listWorktrees(identity.parentRepoPath)).find(
+          (worktree) => worktree.path === identity.worktreePath,
+        );
 
         if (!existing) {
           if (
             await localBranchHead({
-              projectRepoPath: claim.identity.parentRepoPath,
-              branch: claim.identity.branch,
+              projectRepoPath: identity.parentRepoPath,
+              branch: identity.branch,
             })
           )
             throw launchRefusal("launch_workspace_changed", "PRECONDITION");
@@ -512,7 +585,7 @@ export async function acceptedTaskLaunchExecution(
         await verifyWorkspace();
         if (
           (
-            await statusPorcelain({ worktreePath: claim.identity.worktreePath })
+            await statusPorcelain({ worktreePath: identity.worktreePath })
           ).trim()
         )
           throw launchRefusal("launch_workspace_changed", "PRECONDITION");
@@ -521,6 +594,8 @@ export async function acceptedTaskLaunchExecution(
       await assertCurrent(db);
     },
     materialize: async (effect) => {
+      if (identity.version !== 1)
+        throw launchRefusal("workspace_protocol_unsupported", "PRECONDITION");
       const current = await lockedTaskLaunchClaim(db, claim);
 
       if (current.preparationPhase === "materialized") {
@@ -556,9 +631,7 @@ export async function acceptedTaskLaunchExecution(
         intentId: intent.id,
         incarnationId: claim.identity.incarnationId,
         settingsDigest: intent.settingsDigest,
-        contentDigest: await localDirectoryContentDigest(
-          claim.identity.worktreePath,
-        ),
+        contentDigest: await localDirectoryContentDigest(identity.worktreePath),
       });
       await advanceTaskLaunchPreparation(db, claim, "materialized");
     },

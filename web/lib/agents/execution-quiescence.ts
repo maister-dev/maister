@@ -8,7 +8,7 @@ import type {
 } from "@/lib/db/schema";
 import type { BoundClient, ExecutionHosts } from "@/lib/execution-host";
 
-import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { isSessionCreateQuiescence } from "../../../runtime/session-create-quiescence";
@@ -278,6 +278,8 @@ async function hasAssignmentDispatchEvidence(
         eq(executionCommands.runId, assignment.runId),
         eq(executionCommands.executionAssignmentId, assignment.id),
         inArray(executionCommands.kind, ["session.create", "session.prompt"]),
+        sql`NOT ((${executionCommands.state} = 'failed' AND ${executionCommands.attempts} = 0
+          AND ${executionCommands.lastError}->>'reason' = 'addressed_stop_before_session_delivery') IS TRUE)`,
       ),
     )
     .limit(1);

@@ -19,6 +19,9 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { isUniqueViolation } from "@/lib/db/pg-error";
 
+import { declareExecutionHostRegistryWriter } from "./hosts";
+import { assertCapacityOwnerQuiescent } from "./host-capacity";
+
 const defaultLog = pino({
   name: "execution-host",
   level: process.env.LOG_LEVEL ?? "info",
@@ -138,6 +141,7 @@ export async function mintAssignment(
   // handle is harmless: the host answers `unknown_workspace` and the client
   // re-adopts once.
   const previous = await getLatestAssignment(tx, input.runId);
+  if (previous) await assertCapacityOwnerQuiescent(tx, input.runId);
   const inherited =
     previous && previous.executionHostId === input.hostId
       ? {
@@ -170,6 +174,7 @@ export async function mintAssignment(
   let row: ExecutionAssignment;
 
   try {
+    await declareExecutionHostRegistryWriter(tx);
     [row] = await tx
       .insert(executionAssignments)
       .values({

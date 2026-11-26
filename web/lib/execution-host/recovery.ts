@@ -32,7 +32,10 @@ import { lostStreamHostIds } from "./events/stream-health";
 import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
-import { defaultTransport } from "./default-transport";
+import { defaultTransport, transportForExecutionHost } from "./default-transport";
+import { isAddressedRetainedWorkspaceCommand, recoverWorkspacePreparation } from "./workspace-prepare-delivery";
+import { recoverWorkspaceInputCaptures, recoverWorkspacePreflight } from "./workspace-input-recovery";
+import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { reportLegacyActiveRuns } from "./legacy";
 import {
   reportUnreconciledCommands,
@@ -54,6 +57,7 @@ import {
 import { parseRuntimeObjectWireMetadata } from "@/lib/supervisor-client";
 import { executionAssignments, runs } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
+import { MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -478,7 +482,7 @@ export async function recoverExecutionCommands(
   opts: RecoveryOptions = {},
 ): Promise<ExecutionCommandRecoverySummary> {
   const db = opts.db ?? getDb();
-  const transport = opts.transport ?? defaultTransport();
+  const defaultHostTransport = opts.transport ?? defaultTransport();
   const logger = opts.logger ?? defaultLog;
   const now = opts.now ?? (() => new Date());
   const graceMs = opts.graceMs ?? DELIVERING_IN_FLIGHT_GRACE_MS;
@@ -493,6 +497,25 @@ export async function recoverExecutionCommands(
     errors: [],
   };
   const hosts = new Map<string, ExecutionHost | null>();
+  if (configuredSelectedExecutionEndpoint() && defaultHostTransport.sendWorkspaceMaterialization) {
+    await recoverWorkspaceInputCaptures(db, defaultHostTransport, (runId, error) => {
+      const reason = error instanceof MaisterError ? error.details?.reason : undefined;
+
+      logger.warn(
+        { runId, reason, code: error instanceof MaisterError ? error.code : undefined },
+        "workspace-input-recovery-failed",
+      );
+      summary.errors.push(`workspace inputs ${runId}: ${reason ?? "unexpected_error"}`);
+    });
+  }
+  if (configuredSelectedExecutionEndpoint() && defaultHostTransport.sendWorkspaceWorkload) {
+    await recoverWorkspacePreflight(db, (runId, error) => {
+      const reason = error instanceof MaisterError ? error.details?.reason : undefined;
+
+      logger.warn({ runId, reason }, "workspace-requirement-recovery-failed");
+      summary.errors.push(`workspace requirements ${runId}: ${reason ?? "unexpected_error"}`);
+    });
+  }
   const hostFor = async (id: string) => {
     if (!hosts.has(id)) hosts.set(id, await getHostById(db, id));
 
@@ -511,8 +534,25 @@ export async function recoverExecutionCommands(
 
       return;
     }
-    if (ageMs(row, at) < graceMs) {
+    const addressedWorkspaceCommand =
+      row.kind === "workspace.prepare" || row.kind === "workspace.materialize" ||
+      row.kind === "workspace.run" || row.kind === "workspace.cancel" ||
+      row.kind === "workspace.checkpoint" || row.kind === "workspace.restore" ||
+      isAddressedRetainedWorkspaceCommand(row);
+    const unattempted = row.state === "queued" && row.attempts === 0;
+    if (ageMs(row, at) < graceMs && !(addressedWorkspaceCommand && unattempted)) {
       summary.skippedInFlight += 1;
+
+      return;
+    }
+    if (addressedWorkspaceCommand) {
+      if (row.nextAttemptAt && row.nextAttemptAt > at) {
+        summary.skippedInFlight += 1;
+
+        return;
+      }
+      const sent = await recoverWorkspacePreparation(db, row, defaultHostTransport, at);
+      summary[sent ? "redelivered" : "skippedInFlight"] += 1;
 
       return;
     }
@@ -541,6 +581,7 @@ export async function recoverExecutionCommands(
       return;
     }
 
+    const transport = transportForExecutionHost(host, defaultHostTransport);
     const redeliver = async (queued: ExecutionCommand): Promise<void> => {
       const send = queued.driverless ? driverlessSend(queued, transport) : null;
 

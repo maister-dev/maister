@@ -130,9 +130,21 @@ shared-root layout does not enforce that isolation boundary. What must stay true
 roots differ: the supervisor identity must still read the web's runtime root
 where read-only context mounts are materialized (ADR-157) and write the
 shared worktrees root; `MAISTER_WORKSPACE_ROOTS` must list every root the web
-creates worktrees or local packages under. A separate-user deployment with a
-`0700` supervisor root has not been qualified on Linux yet (S5.3); until it
-is, treat the shared-user layout as the supported one.
+creates worktrees or local packages under.
+
+S5.3 qualifies a Linux container layout with distinct Web and supervisor
+users. Give the supervisor a private `0700` runtime root with its SQLite
+state inside it. Make the Stage B project repositories and worktrees
+accessible through a shared service group and set-GID directories, with
+`umask 0002` for both service processes. Both identities still need access
+to the shared Git data they use. Keep operator Git trust and credentials
+scoped to their intended service user. The packaged browser smoke exercises
+the production application under Web UID 1001 and supervisor UID 1002
+with those permissions and checks that Web receives `EACCES` when opening
+the live supervisor SQLite store. It also checks the board launch, SSE,
+permission checkpoint and resume, restart, cancellation and active content
+download through the same two processes. Systemd installation below uses
+the existing shared-user units.
 
 **Execution-host state (Implemented — [ADR-166](decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces)).**
 The supervisor keeps a private `node:sqlite` state store under
@@ -445,9 +457,17 @@ git pull --ff-only
 pnpm install --frozen-lockfile
 pnpm --filter maister-web build
 set -a; . /etc/maister/maister.env; set +a
+sudo systemctl stop maister-web
 pnpm --filter maister-web db:migrate
-sudo systemctl start maister-supervisor maister-web
+sudo systemctl restart maister-supervisor
+sudo systemctl start maister-web
 ```
+
+Stop every Web replica on the database before the execution-plane cutover.
+On its first boot after migration `0376`, the new Web rechecks the exact
+released-session crashes before it starts its projectors. This also repairs
+crashes an old Web projector skipped between migration and shutdown. The
+repair and its completion marker commit together.
 
 Migrations 0369–0371 transfer package export ownership to project declarations and validate stored dependency sources. Stop old CLI and web writers before applying them. When new declarations exist, rollback requires the matching pre-cutover database backup. If source validation fails, use the reported project, declaration or attachment ID to repair the stored coordinates and retry.
 
@@ -723,12 +743,69 @@ or database credentials.
   group, an empty new registry and unstamped historical receipts leave the
   original create unresolved. Follow the [supervisor receipt recovery contract](supervisor.md#command-envelope-fences-and-receipts-implemented--adr-166);
   restarting again or deleting the checkout does not establish retirement.
-- **Single host only.** The web tier needs no supervisor runtime-data mount:
+- **Default single-host deployment.** The web tier needs no supervisor runtime-data mount:
   events replay from the host outbox into canonical Postgres state and runtime
-  bytes use opaque object APIs. Repository/worktree placement remains local;
-  multi-host placement and remote trust/relay belong to Stage C/D
-  ([ADR-167](decisions/adr-167.md)).
+  bytes use opaque object APIs. The selected-supervisor pilot qualifies a
+  limited path from board launch through Review. See the
+  [local pilot configuration](#selected-supervisor-local-pilot) and
+  [ADR-167](decisions/adr-167.md).
 - **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)). Git auth is **host-ambient** — ssh-agent/keys, the credential helper, optional `gh`, and the one-off Add-project token (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). **Persist-config push and remote push/fetch reuse this same host-ambient auth** — there is no managed credential store, and on an auth failure the action returns an advisory without rolling back the local commit / DB state.
+
+### Selected supervisor local pilot
+
+The local Chrome fixture qualifies one pinned endpoint for independent project
+Flows through Review on a disposable Web instance with one project. It starts
+Web and the selected supervisor under separate Linux service identities. Keep
+the endpoint private to the control plane.
+
+1. Start the supervisor using `deploy/maister-supervisor.service` and its own
+   `supervisor/.env`. Set `MAISTER_RUNTIME_ROOT` and
+   `MAISTER_EXECUTION_HOST_STATE_DIR` to private durable directories. For an
+   explicit `MAISTER_WORKSPACE_ROOTS`, include an existing private ancestor
+   of the managed workspace root. The supervisor must be able to write there.
+2. Put the project ID and the approved source in the supervisor's
+   `MAISTER_WORKSPACE_REPOSITORIES` map. Set up Git access under its OS account.
+   Record `host.hostKey` from its `GET /health` response.
+3. Set the Web unit's `MAISTER_SUPERVISOR_URL` to that HTTP(S) origin and set
+   `MAISTER_SELECTED_EXECUTION_HOST_KEY` to the recorded key. Use
+   `MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS` to select the pilot project
+   IDs. Apply required PostgreSQL migrations before starting Web.
+4. Launch an eligible project Flow from the board and select the supervisor.
+   In the local fixture, Web received `EACCES` on the repository and host
+   runtime directories and still displayed the sealed result and diff.
+
+The PostgreSQL-only Compose files provide the database for these
+service units. Use the [Stage C acceptance plan](../.ai-factory/plans/feature-stage-c-selected-supervisor.md)
+to track the remaining lifecycle and multi-host rollout evidence.
+
+#### Local two-supervisor pilot
+
+Start a second supervisor with its own network namespace, service identity,
+SQLite directory and workspace root. Give it a separate approved checkout
+or Git source for the same project. Record its stable key from `/health` and
+set `MAISTER_ADDITIONAL_EXECUTION_HOSTS` on Web. The operator supplies its
+private origin, stable key, display name and optional project allowlist and
+concurrency limit. The board can select either eligible supervisor. The admin
+screen displays each registered identity, its last observation and drain state.
+
+Before enabling the second supervisor, apply PostgreSQL migrations `0394`
+and `0395` and drain Web processes using the older singleton registry writer.
+Retain both endpoint descriptors while either host has retained work. To drain
+new work on B, set its descriptor's `draining` field to `true` and reload Web.
+Existing work stays with its owner. If the host becomes unreachable, restore
+the configured endpoint with the original SQLite and workspace bytes to
+reconcile delayed receipts. A new key requires operator review and cannot
+take over retained work from the old key.
+
+Take backups during a maintenance window after both hosts have drained and
+Web and supervisors have stopped writing. Capture PostgreSQL and each host's
+SQLite, repository, workspaces and runtime objects as one coordinated set.
+Retain the original host names, paths and configuration with the backup.
+Restore the set to an isolated network first. Verify both stable keys and
+their distinct boot IDs, original assignments, command receipts, retained
+Review and dirty work before resuming writes. Reconcile any external Git
+publication before restoring an older set. The registry fences software that
+only supports a singleton while a peer is active or retains ownership.
 
 ## 14. Stage B execution-data cut-over (upgrade from Stage A)
 

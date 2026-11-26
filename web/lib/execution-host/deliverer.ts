@@ -67,6 +67,60 @@ export type KindPolicy = {
 };
 
 export const COMMAND_POLICY: Readonly<Record<CommandKind, KindPolicy>> = {
+  "workspace.prepare": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 10_000,
+  },
+  "workspace.materialize": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 10_000,
+  },
+  "workspace.run": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 10_000,
+  },
+  "workspace.cancel": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 10_000,
+  },
+  "workspace.checkpoint": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 10_000,
+  },
+  "workspace.restore": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 10_000,
+  },
+  "workspace.publish": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: true,
+    timeoutMs: 10_000,
+  },
+  "workspace.sync": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: true,
+    timeoutMs: 10_000,
+  },
+  "workspace.preserve": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: true,
+    timeoutMs: 10_000,
+  },
   "workspace.adopt": {
     maxAttempts: 3,
     backoffBaseMs: 500,

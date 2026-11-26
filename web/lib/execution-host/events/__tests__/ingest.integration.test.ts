@@ -13,11 +13,16 @@ import {
 } from "@/lib/execution-host/events/projector";
 import { depositPromptReceipt } from "@/lib/execution-host/prompt-evidence";
 import { projectCanonicalPromptCommands } from "@/lib/execution-host/events/prompt-projector";
-import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
+import {
+  canonicalLifecycleProjector,
+  projectCanonicalSessionLifecycle,
+  reconcileSkippedSessionCrashes,
+} from "@/lib/execution-host/events/lifecycle-projector";
 import { projectCanonicalRuntimeObjects } from "@/lib/execution-host/events/runtime-object-projector";
 import { streamCanonicalSessionEvents } from "@/lib/execution-host/events/session-stream";
 import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
 import {
+  applyMainMigration,
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -1193,7 +1198,15 @@ describe("runtime event ingestion", () => {
     expect(exitedIncarnation.rows).toEqual([{ state: "exited", ended: true }]);
   });
 
-  it("admits a concurrent substep session under its own logical name, and a reused name supersedes the older incarnation instead of wedging the stream", async () => {
+  const crashProjectionScenarios = [
+    "live projector",
+    "0369 before old cursor advance",
+  ] as const;
+
+  async function verifyReleasedSessionCrash(
+    mode: (typeof crashProjectionScenarios)[number],
+  ): Promise<void> {
+    const oldWriter = mode === "0369 before old cursor advance";
     const overlapRunId = randomUUID();
     const overlapHostId = randomUUID();
     const overlapAssignmentId = randomUUID();
@@ -1246,7 +1259,11 @@ describe("runtime event ingestion", () => {
       eventType: "session.created",
       occurredAt: "2026-09-15T00:00:00.000Z",
       payloadSchema: "maister.session.created.v1",
-      payload: { sessionName, adapter: "claude", acpSessionId: hostSessionId },
+      payload: {
+        sessionName,
+        adapter: "claude",
+        acpSessionId: hostSessionId,
+      },
     });
     const project = () =>
       projectCanonicalSessionLifecycle({
@@ -1343,7 +1360,170 @@ describe("runtime event ingestion", () => {
         },
       ]),
     );
-  });
+
+    // The crash arrives while the session owns epoch 1. The independent owner
+    // can release it and install epoch 2 before the lifecycle cursor runs.
+    const crashed = {
+      ...created("4", collidingSessionId, "default"),
+      eventType: "session.crashed",
+      payloadSchema: "maister.session.crashed.v1",
+      payload: { signal: "SIGKILL", exitCode: null },
+    };
+
+    expect(
+      await ingestRuntimeEvent({
+        db: testDatabase.db,
+        executionHostId: overlapHostId,
+        envelope: crashed,
+      }),
+    ).toMatchObject({ disposition: "accepted" });
+    await testDatabase.pool.query(
+      `update execution_assignments set state = 'released', ended_at = now(),
+         released_reason = 'crashed' where id = $1`,
+      [overlapAssignmentId],
+    );
+    const successorAssignmentId = randomUUID();
+    const successorSessionId = randomUUID();
+
+    await testDatabase.pool.query(
+      `insert into execution_assignments
+         (id, run_id, execution_host_id, epoch, state, placement_reason)
+       values ($1, $2, $3, 2, 'active', 'launch')`,
+      [successorAssignmentId, overlapRunId, overlapHostId],
+    );
+    await testDatabase.pool.query(
+      `update runs set execution_assignment_id = $1 where id = $2`,
+      [successorAssignmentId, overlapRunId],
+    );
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: overlapHostId,
+      envelope: {
+        ...created("5", successorSessionId, "default"),
+        assignmentId: successorAssignmentId,
+        assignmentEpoch: 2,
+      },
+    });
+    if (oldWriter) {
+      await applyMainMigration(
+        testDatabase.db,
+        "0378_reconcile_skipped_session_crashes",
+      );
+      expect(
+        await projectExecutionEvents({
+          db: testDatabase.db,
+          runId: overlapRunId,
+          projector: {
+            ...canonicalLifecycleProjector,
+            project: async (tx, event) => {
+              if (event.id !== crashed.eventId) {
+                await canonicalLifecycleProjector.project(tx, event);
+              }
+            },
+          },
+        }),
+      ).toMatchObject({ projected: 2, poisoned: false });
+    } else {
+      expect(await project()).toMatchObject({
+        projected: 2,
+        poisoned: false,
+      });
+    }
+    expect(await incarnations()).toEqual(
+      expect.arrayContaining([
+        {
+          host_session_id: collidingSessionId,
+          state: oldWriter ? "lost" : "crashed",
+          session_name: "default",
+        },
+        {
+          host_session_id: successorSessionId,
+          state: "active",
+          session_name: "default",
+        },
+      ]),
+    );
+
+    // Recreate what the old code left after consuming the crash and advancing
+    // its cursor. The forward repair must work after the successor is live.
+    expect(
+      await ingestRuntimeEvent({
+        db: testDatabase.db,
+        executionHostId: overlapHostId,
+        envelope: {
+          ...crashed,
+          eventId: randomUUID(),
+          sequence: "6",
+          hostSessionId: substepSessionId,
+        },
+      }),
+    ).toMatchObject({ disposition: "stale_epoch" });
+    if (!oldWriter) {
+      await testDatabase.pool.query(
+        `update run_session_incarnations set state = 'lost',
+       terminal_reason = '{"reason":"assignment_superseded"}'::jsonb
+     where host_session_id = $1`,
+        [collidingSessionId],
+      );
+      await testDatabase.pool.query(
+        `update execution_events set run_session_incarnation_id = null where id = $1`,
+        [crashed.eventId],
+      );
+    }
+    const readEvidence = () =>
+      testDatabase.pool.query(
+        `select i.state, i.terminal_reason, i.id = e.run_session_incarnation_id as bound
+     from run_session_incarnations i join execution_events e on e.id = $1
+     where i.host_session_id = $2`,
+        [crashed.eventId, collidingSessionId],
+      );
+    const readUntouched = () =>
+      testDatabase.pool.query(
+        `select * from run_session_incarnations where host_session_id in ($1, $2)
+     order by host_session_id`,
+        [successorSessionId, substepSessionId],
+      );
+    const untouchedBeforeRepair = await readUntouched();
+
+    if (oldWriter) {
+      expect((await readEvidence()).rows).toEqual([
+        {
+          state: "lost",
+          terminal_reason: { reason: "assignment_superseded" },
+          bound: null,
+        },
+      ]);
+      expect(await project()).toMatchObject({
+        projected: 0,
+        poisoned: false,
+      });
+      const attempts = await Promise.all([
+        reconcileSkippedSessionCrashes(testDatabase.db),
+        reconcileSkippedSessionCrashes(testDatabase.db),
+      ]);
+
+      expect(attempts.sort()).toEqual([0, 1]);
+    } else {
+      await applyMainMigration(
+        testDatabase.db,
+        "0378_reconcile_skipped_session_crashes",
+      );
+      await applyMainMigration(
+        testDatabase.db,
+        "0378_reconcile_skipped_session_crashes",
+      );
+    }
+    expect((await readEvidence()).rows).toEqual([
+      { state: "crashed", terminal_reason: crashed.payload, bound: true },
+    ]);
+    expect((await readUntouched()).rows).toEqual(untouchedBeforeRepair.rows);
+    expect(await project()).toMatchObject({ projected: 0, poisoned: false });
+  }
+
+  it.each(crashProjectionScenarios)(
+    "keeps logical sessions distinct and settles the exact released crash (%s)",
+    verifyReleasedSessionCrash,
+  );
 
   it("accepts a late terminal event for its exact released-assignment command while quarantining unrelated stale events", async () => {
     const lateRunId = randomUUID();

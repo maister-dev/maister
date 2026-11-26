@@ -8,8 +8,9 @@ import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino, { type Logger } from "pino";
 
 import { getHostById } from "./hosts";
-import { ensureLocalExecutionDataPlane } from "./event-plane";
-import { ensureLocalExecutionHost } from "./registrar";
+import { ensureAdditionalExecutionDataPlane, ensureLocalExecutionDataPlane } from "./event-plane";
+import { ensureAdditionalExecutionHost, ensureLocalExecutionHost } from "./registrar";
+import { configuredAdditionalExecutionEndpoints, configuredExecutionEndpointForHost, configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { HOST_IDENTITY_MISMATCH_REASON } from "./types";
 
 import { MaisterError } from "@/lib/errors";
@@ -148,6 +149,32 @@ export function hostIdentityMismatchError(args: {
   );
 }
 
+/** Re-attest the stored host chosen for new work before minting its assignment. */
+export async function hostForSelection(
+  db: Db,
+  hostId: string,
+  opts: Omit<ResolveHostOptions, "db" | "force"> = {},
+): Promise<ExecutionHost> {
+  const host = await getHostById(db, hostId);
+  if (!host || host.retiredAt || !configuredExecutionEndpointForHost(host.hostKey))
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "The selected execution host is no longer configured", {
+      details: { reason: HOST_IDENTITY_MISMATCH_REASON, hostId },
+    });
+  const peer = configuredAdditionalExecutionEndpoints().find((endpoint) => endpoint.hostKey === host.hostKey);
+  const transactional = is(db, NodePgTransaction);
+  const result = peer
+    ? await (transactional ? ensureAdditionalExecutionHost : ensureAdditionalExecutionDataPlane)(
+        peer, { db, now: opts.now, logger: opts.logger },
+      )
+    : await (transactional ? ensureLocalExecutionHost : ensureLocalExecutionDataPlane)({ ...opts, db });
+  if (result.status !== "registered") throw hostUnavailableError(result);
+  if (result.host.id !== host.id)
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "The selected execution host changed identity", {
+      details: { reason: HOST_IDENTITY_MISMATCH_REASON, hostId },
+    });
+  return result.host;
+}
+
 // ADR-166 X-EH-02: the host an assignment was placed on, verified against the
 // host the registrar last observed. A retired row, a row refused for
 // `identity_changed`, or a key that differs from the live local host all
@@ -176,6 +203,50 @@ export async function hostForAssignment(
       assignmentHostKey: host.hostKey,
       observedHostKey: null,
     });
+  }
+
+  if (host.transport.role === "secondary") {
+    const peer = configuredAdditionalExecutionEndpoints().find((candidate) => candidate.hostKey === host.hostKey);
+    if (!peer)
+      throw hostIdentityMismatchError({
+        assignmentId: assignment.id, assignmentHostKey: host.hostKey, observedHostKey: null,
+      });
+    const result = await ensureAdditionalExecutionHost(peer, {
+      db, now: opts.now, logger: opts.logger,
+    });
+    if (result.status !== "registered") throw hostUnavailableError(result);
+    if (result.host.id !== host.id)
+      throw hostIdentityMismatchError({
+        assignmentId: assignment.id, assignmentHostKey: host.hostKey, observedHostKey: result.host.hostKey,
+      });
+    return result.host;
+  }
+
+  const selected = configuredSelectedExecutionEndpoint();
+
+  if (selected) {
+    if (selected.hostKey !== host.hostKey) {
+      throw hostIdentityMismatchError({
+        assignmentId: assignment.id,
+        assignmentHostKey: host.hostKey,
+        observedHostKey: selected.hostKey,
+      });
+    }
+
+    // A memoized readiness check cannot attest the peer receiving a command
+    // or a receipt read. A restart updates the stored boot on the same row.
+    const observed = await ensureLocalExecutionHost({ ...opts, db });
+
+    if (observed.status !== "registered") throw hostUnavailableError(observed);
+    if (observed.host.id !== host.id) {
+      throw hostIdentityMismatchError({
+        assignmentId: assignment.id,
+        assignmentHostKey: host.hostKey,
+        observedHostKey: observed.host.hostKey,
+      });
+    }
+
+    return observed.host;
   }
 
   let live: ExecutionHost | null = null;

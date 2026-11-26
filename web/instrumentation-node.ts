@@ -99,6 +99,10 @@ export async function registerNodeRuntime(): Promise<void> {
     // S4.7: the other direction — a schema from a newer release refuses this
     // binary before it can write a row the newer invariants exist to refuse.
     await assertDatabaseNotAheadOfBinary(db);
+    const { reconcileSkippedSessionCrashes } =
+      await import("@/lib/execution-host/events/lifecycle-projector");
+
+    await reconcileSkippedSessionCrashes(db);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(

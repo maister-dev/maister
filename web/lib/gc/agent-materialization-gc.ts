@@ -67,12 +67,14 @@ export async function discoverAgentMaterializationCandidateRoots(
     db.select({ workingDir: localPackages.workingDir }).from(localPackages),
   ])) as unknown as [
     Array<{ readonly slug: string; readonly repoPath: string }>,
-    Array<{ readonly worktreePath: string }>,
+    Array<{ readonly worktreePath: string | null }>,
     Array<{ readonly workingDir: string }>,
   ];
   const roots = new Set<string>([
     ...projectRows.map((row) => path.resolve(row.repoPath)),
-    ...workspaceRows.map((row) => path.resolve(row.worktreePath)),
+    ...workspaceRows.flatMap(({ worktreePath }) =>
+      worktreePath === null ? [] : [path.resolve(worktreePath)],
+    ),
     ...localPackageRows.map((row) => path.resolve(row.workingDir)),
   ]);
   const worktreeBase = worktreesRoot();

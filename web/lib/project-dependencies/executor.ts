@@ -245,7 +245,7 @@ async function stagePackageMembers(
   };
 
   if (candidate.trustStatus !== "untrusted") {
-    await settlePreparedPackageSetups(db, members, authorizeSetup, signal);
+    await settlePreparedPackageSetups(db, project.id, members, authorizeSetup, signal);
   }
 
   return members;
@@ -481,7 +481,7 @@ export async function executeDependency(job: Execution): Promise<void> {
 
     if (resolveTrust(pin.source) !== "untrusted")
       await withSetupAuthority(db, authorize, () =>
-        stageFlowSetup(db, revision, declaration.logicalId, signal),
+        stageFlowSetup(db, claim.projectId, revision, declaration.logicalId, signal),
       );
     await withSettledSetups(() =>
       db.transaction(async (tx) => {

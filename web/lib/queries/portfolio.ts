@@ -572,6 +572,7 @@ export async function getPortfolio(
           packageStatus: flowRevisions.packageStatus,
           schemaVersion: flowRevisions.schemaVersion,
           setupStatus: flowRevisions.setupStatus,
+          execTrust: flowRevisions.execTrust,
         })
         .from(flows)
         .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
@@ -581,6 +582,7 @@ export async function getPortfolio(
     ]);
   const launchableFlowCount = onboardingFlowRows.filter((flow) =>
     isProjectFlowLaunchable({
+      projectId: flow.projectId,
       enabledRevisionId: flow.enabledRevisionId,
       enablementState: flow.enablementState,
       hasReadyRunner: hasReadyRunner && !flow.runnerUnavailable,
@@ -593,6 +595,7 @@ export async function getPortfolio(
             packageStatus: flow.packageStatus ?? "",
             schemaVersion: flow.schemaVersion ?? 0,
             setupStatus: flow.setupStatus ?? "",
+            execTrust: flow.execTrust,
           }
         : null,
       trustStatus: flow.trustStatus,
@@ -698,7 +701,7 @@ export async function getPortfolio(
         claimOwnerUserId: null,
         viewerUserId: null,
         worktreePresent: row.worktreePath
-          ? (presence.get(row.worktreePath) ?? false)
+          ? (row.worktreePath !== null && presence.get(row.worktreePath) === true)
           : null,
         publishedBranch: row.workspaceId ? row.publishedBranch : undefined,
         prUrl: row.workspaceId ? row.prUrl : undefined,
@@ -1178,7 +1181,7 @@ export async function getRailWorkspaceGroups(
         archivedBranch: row.archivedBranch,
         claimOwnerUserId: null,
         viewerUserId: null,
-        worktreePresent: presence.get(row.worktreePath) ?? false,
+        worktreePresent: row.worktreePath !== null && presence.get(row.worktreePath) === true,
         publishedBranch: row.publishedBranch,
         prUrl: row.prUrl,
         prState: row.prState ?? null,

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ExecutionFlowContext as FlowContext, StepResult } from "./types";
 import type { FlowDriverClaim } from "./graph/driver-claim";
+import type { AddressedCliWorkload } from "./addressed-workload";
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
@@ -14,6 +15,9 @@ import { childProcessEnv } from "./child-env";
 import { cliOutputFilePath } from "./graph/node-output";
 import { FlowDriverClaimLost } from "./graph/driver-claim";
 import { renderStrict } from "./templating";
+import { runAddressedCliWorkload } from "./addressed-workload";
+
+import { MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "flow-runner",
@@ -187,7 +191,6 @@ export type RunCliStepCtx = {
   projectSlug: string;
   runId: string;
   stepId: string;
-  worktreePath: string;
   context: FlowContext;
   timeoutMs?: number;
   driver?: Readonly<{ claim: FlowDriverClaim; signal: AbortSignal }>;
@@ -200,7 +203,13 @@ export type RunCliStepCtx = {
   // execute the script files it ships. Gates (gates-exec) and requirement
   // probes never set it: scope v1 is node actions only.
   flowInstallPath?: string;
-};
+} & (
+  | { worktreePath: string; workload?: never }
+  | {
+      workload: AddressedCliWorkload;
+      worktreePath?: never;
+    }
+);
 
 function previewCommand(s: string): string {
   if (s.length <= COMMAND_PREVIEW_LEN) return s;
@@ -234,6 +243,20 @@ export async function runCliStep(
       { runId: ctx.runId, stepId: ctx.stepId, requestedTimeoutMs, timeoutMs },
       "cli timeout clamped to the MAISTER_MAX_CLI_TIMEOUT_MS ceiling",
     );
+  }
+
+  if (ctx.workload) {
+    const { env: _managerEnvironment, ...templateValues } = ctx.context;
+    const result = await runAddressedCliWorkload(ctx.workload, {
+      runId: ctx.runId,
+      timeoutMs,
+      driver: ctx.driver,
+      ...(step.command.includes("{{") ? { templateValues } : {}),
+    });
+
+    return ctx.attempt !== undefined && result.originalOutput === undefined
+      ? { ...result, originalOutput: { kind: "absent" } }
+      : result;
   }
 
   const resolved = renderStrict(

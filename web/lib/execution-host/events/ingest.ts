@@ -18,15 +18,18 @@ import {
   sql,
 } from "drizzle-orm";
 import { ZodError } from "zod";
+import { isWorkspaceTerminalPayload, type WorkspaceOperationOwner, type WorkspaceTerminalPayload } from "../../../../runtime/workspace-prepare";
 
+import { markHostReadiness } from "../hosts";
 import { hasNativeOutputCommand } from "../runtime-object-intent";
+import { carriesWorkspaceGitEvidence, hasRetainedWorkspaceGitOwner, workspaceGitEvidence } from "../workspace-git-evidence";
 
 import { encodeJsonbSafe } from "./jsonb-safe";
 import { seedCanonicalProjectionConsumers } from "./projection-consumers";
 import { runEventWakeBus } from "./run-wake";
 
 import {
-  RuntimeEventEnvelopeSchema,
+  RuntimeEventWireEnvelopeSchema,
   SessionContentReferenceSchema,
   StdoutSegmentMetadataSchema,
   type RuntimeEventEnvelope,
@@ -144,8 +147,50 @@ export {
 
 /** The one envelope normalization: schema parse, then the jsonb-safe escape
  * `execution_events.payload` needs (U+0000 and lone surrogates). */
-export function normalizeRuntimeEnvelope(raw: unknown): RuntimeEventEnvelope {
-  return encodeJsonbSafe(RuntimeEventEnvelopeSchema.parse(raw));
+async function retainedWorkspaceProvenance(
+  db: Db, executionHostId: string, commandId: string, owner: WorkspaceOperationOwner,
+  operationId: WorkspaceTerminalPayload["operationId"],
+) {
+  const kind = operationId === "stageCPublish" ? "workspace.publish"
+    : operationId === "stageCSync" ? "workspace.sync"
+    : operationId === "stageCPreserve" ? "workspace.preserve"
+    : operationId === "stageCRelease" ? "workspace.release" : null;
+  if (!kind) return undefined;
+  const [command] = await db.select({
+    runId: executionCommands.runId,
+    assignmentId: executionCommands.executionAssignmentId,
+    assignmentEpoch: executionCommands.assignmentEpoch,
+  }).from(executionCommands).where(and(
+    eq(executionCommands.id, commandId),
+    eq(executionCommands.kind, kind),
+    eq(executionCommands.executionHostId, executionHostId),
+    eq(executionCommands.targetSessionId, owner.workspaceHandle),
+    sql`${executionCommands.payload}->>'generation' = ${String(owner.workspaceGeneration)}`,
+    sql`${executionCommands.payload}->>'claimId' = ${owner.claimId}`,
+    sql`${executionCommands.payload}->>'fence' = ${String(owner.fence)}`,
+  ));
+
+  return command;
+}
+
+export async function normalizeRuntimeEnvelope(db: Db, executionHostId: string, raw: unknown): Promise<RuntimeEventEnvelope> {
+  const parsed = encodeJsonbSafe(RuntimeEventWireEnvelopeSchema.parse(raw));
+  if (parsed.envelopeVersion === 1) return parsed;
+  const { payload } = parsed;
+  if (payload.owner.kind === "workspaceOperation") {
+    const command = await retainedWorkspaceProvenance(db, executionHostId, payload.commandId, payload.owner, payload.operationId);
+    if (!command) throw new MaisterError("ACP_PROTOCOL", "Workspace operation event has no matching retained owner");
+
+    return { ...parsed, ...command, hostSessionId: null };
+  }
+
+  return {
+    ...parsed,
+    runId: payload.owner.runId,
+    assignmentId: payload.owner.assignmentId,
+    assignmentEpoch: payload.owner.assignmentEpoch,
+    hostSessionId: null,
+  };
 }
 
 function invariantError(
@@ -375,6 +420,35 @@ async function isBoundHistoricalEvent(
     payload: Record<string, unknown> | null;
   },
 ): Promise<boolean> {
+  if (input.eventType === "workspace.command.terminal" && isWorkspaceTerminalPayload(input.payload) &&
+    input.payload.owner.kind === "workspaceOperation") {
+    const command = await retainedWorkspaceProvenance(tx, input.executionHostId, input.payload.commandId, input.payload.owner, input.payload.operationId);
+
+    return command?.runId === input.runId && command.assignmentId === input.assignmentId && command.assignmentEpoch === input.assignmentEpoch;
+  }
+  if (input.eventType === "workspace.command.terminal" && isWorkspaceTerminalPayload(input.payload) &&
+    input.payload.owner.kind === "assignment" &&
+    (input.payload.operationId === "stageCRunWorkload" || input.payload.operationId === "stageCCancelWorkload") &&
+    "handle" in input.payload.target
+  ) {
+    const { owner, target, commandId, operationId } = input.payload;
+    if (owner.runId !== input.runId || owner.assignmentId !== input.assignmentId ||
+      owner.assignmentEpoch !== input.assignmentEpoch) return false;
+    const [command] = await tx.select({ id: executionCommands.id })
+      .from(executionCommands)
+      .innerJoin(executionHosts, eq(executionHosts.id, executionCommands.executionHostId))
+      .where(and(
+        eq(executionCommands.id, commandId),
+        eq(executionCommands.kind, operationId === "stageCRunWorkload" ? "workspace.run" : "workspace.cancel"),
+        eq(executionCommands.runId, input.runId),
+        eq(executionCommands.executionHostId, input.executionHostId),
+        eq(executionCommands.executionAssignmentId, input.assignmentId),
+        eq(executionCommands.assignmentEpoch, input.assignmentEpoch),
+        eq(executionCommands.targetSessionId, target.handle),
+        eq(executionHosts.hostKey, owner.hostKey),
+      ));
+    return !!command;
+  }
   const reference = SessionContentReferenceSchema.safeParse(
     input.payload?.contentRef,
   );
@@ -399,6 +473,15 @@ async function isBoundHistoricalEvent(
       commandId: outputCommandId,
       hostSessionId: input.hostSessionId,
     });
+  if (
+    input.eventType === "runtime_object.available" &&
+    input.hostSessionId === null &&
+    input.payload && carriesWorkspaceGitEvidence(input.payload)
+  ) {
+    const evidence = workspaceGitEvidence(input.payload);
+
+    return evidence !== null && hasRetainedWorkspaceGitOwner(tx, { ...input, ...evidence });
+  }
   if (
     input.eventType === "runtime_object.available" ||
     input.eventType === "runtime_object.state"
@@ -1573,7 +1656,7 @@ export async function ingestRuntimeEventBatch(input: {
       // duplicate probe and the insert all read it — keeps every derived value
       // describing the same stored bytes. Readers restore the original through
       // decodeJsonbSafe.
-      envelope = normalizeRuntimeEnvelope(raw);
+      envelope = await normalizeRuntimeEnvelope(input.db, input.executionHostId, raw);
     } catch (error) {
       // The frames before it arrived intact: commit them first.
       if (index > 0)
@@ -1832,10 +1915,7 @@ async function markHostUnavailable(
   now: Date,
   reason: string,
 ): Promise<void> {
-  await db
-    .update(executionHosts)
-    .set({ readiness: "unavailable", readinessReason: reason, updatedAt: now })
-    .where(eq(executionHosts.id, executionHostId));
+  await markHostReadiness(db, executionHostId, "unavailable", reason, now);
 }
 
 async function recordIngestFailure(

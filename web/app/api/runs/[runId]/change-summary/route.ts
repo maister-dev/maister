@@ -85,7 +85,11 @@ export async function GET(
 
     await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
-    const summary = await getRunChangeSummary({ runId, scope });
+    const summary = await getRunChangeSummary({
+      runId,
+      scope,
+      signal: req.signal,
+    });
 
     if (!summary) {
       return NextResponse.json({ message: "not found" }, { status: 404 });

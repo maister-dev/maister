@@ -8,6 +8,7 @@ const getDb = vi.hoisted(() => vi.fn());
 const findPendingMigrations = vi.hoisted(() => vi.fn());
 const findPendingBrainMigrations = vi.hoisted(() => vi.fn());
 const assertDatabaseNotAheadOfBinary = vi.hoisted(() => vi.fn());
+const reconcileSkippedSessionCrashes = vi.hoisted(() => vi.fn());
 const startSchedulerTimer = vi.hoisted(() => vi.fn());
 const recoverProjectConfigurations = vi.hoisted(() => vi.fn());
 
@@ -24,6 +25,13 @@ vi.mock("@/lib/db/client", () => ({
 vi.mock("@/lib/project-config-persistence/reconcile", () => ({
   recoverProjectConfigurations,
 }));
+vi.mock(
+  import("@/lib/execution-host/events/lifecycle-projector"),
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    reconcileSkippedSessionCrashes,
+  }),
+);
 vi.mock("@/lib/runs/resume-recovery", () => ({
   runResumeRecoverySweep: vi.fn().mockResolvedValue(undefined),
   runTakeoverReturnRecoverySweep: vi.fn().mockResolvedValue(undefined),
@@ -62,6 +70,8 @@ describe("instrumentation DB boot boundary", () => {
     findPendingBrainMigrations.mockResolvedValue([]);
     assertDatabaseNotAheadOfBinary.mockReset();
     assertDatabaseNotAheadOfBinary.mockResolvedValue(undefined);
+    reconcileSkippedSessionCrashes.mockReset();
+    reconcileSkippedSessionCrashes.mockResolvedValue(0);
     startSchedulerTimer.mockReset();
     recoverProjectConfigurations.mockReset();
     recoverProjectConfigurations.mockResolvedValue({
@@ -78,6 +88,7 @@ describe("instrumentation DB boot boundary", () => {
     else process.env.NEXT_RUNTIME = originalRuntime;
   });
 
+  // The first full boot imports the Node runtime graph before testing order.
   it("runs configuration recovery after migration compatibility checks independently of host bootstrap", async () => {
     const order: string[] = [];
     const database = {};
@@ -96,6 +107,11 @@ describe("instrumentation DB boot boundary", () => {
     assertDatabaseNotAheadOfBinary.mockImplementation(async () => {
       order.push("compatible");
     });
+    reconcileSkippedSessionCrashes.mockImplementation(async () => {
+      order.push("session-crash-repair");
+
+      return 1;
+    });
     recoverProjectConfigurations.mockImplementation(async () => {
       order.push("configuration");
 
@@ -105,8 +121,17 @@ describe("instrumentation DB boot boundary", () => {
     expect(recoverProjectConfigurations).toHaveBeenCalledExactlyOnceWith(
       database,
     );
-    expect(order).toEqual(["main", "brain", "compatible", "configuration"]);
-  });
+    expect(reconcileSkippedSessionCrashes).toHaveBeenCalledExactlyOnceWith(
+      database,
+    );
+    expect(order).toEqual([
+      "main",
+      "brain",
+      "compatible",
+      "session-crash-repair",
+      "configuration",
+    ]);
+  }, 30_000);
 
   it("rejects boot when DB client initialization fails", async () => {
     getDb.mockImplementation(() => {
@@ -136,17 +161,15 @@ describe("instrumentation DB boot boundary", () => {
     );
 
     await expect(register()).rejects.toThrow(/ahead of this binary/);
+    expect(reconcileSkippedSessionCrashes).not.toHaveBeenCalled();
     expect(startSchedulerTimer).not.toHaveBeenCalled();
   });
 
-  // The first case to boot fully: `registerNodeRuntime` loads the whole
-  // node-runtime graph through dynamic imports, and that one-time module load
-  // (~4 s idle) is not this case's behaviour — so it gets its own budget.
   it("starts only the scheduler fallback timer after boot recovery", async () => {
     await register();
 
     expect(startSchedulerTimer).toHaveBeenCalledOnce();
-  }, 30_000);
+  });
 
   it("does nothing on the edge runtime", async () => {
     process.env.NEXT_RUNTIME = "edge";

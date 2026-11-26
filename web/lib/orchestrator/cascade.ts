@@ -7,7 +7,7 @@ import type {
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { Run } from "@/lib/db/schema";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { abandonUnlaunchedTasks } from "@/lib/services/tasks";
@@ -22,7 +22,7 @@ import {
   createExecutionHosts,
   releaseAssignmentForRun,
 } from "@/lib/execution-host";
-import { runs as executionRuns } from "@/lib/db/schema";
+import { runs as executionRuns, workspaces as executionWorkspaces } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
   CASCADE_NON_TERMINAL_RUN_STATUSES,
@@ -49,6 +49,7 @@ export type CascadeReason =
 export interface CascadeAbandonOptions {
   db?: Db;
   executionHosts?: ExecutionHosts;
+  confirmAddressedChildRetirement?: (child: Run) => Promise<void>;
 }
 
 async function abandonReceiptBackedChild(
@@ -174,29 +175,45 @@ async function abandonRunSubtree(
     };
   }
 
+  const activeDescendants = and(
+    inArray(executionRuns.id, subtreeIds),
+    inArray(executionRuns.status, CASCADE_NON_TERMINAL_RUN_STATUSES),
+  );
   const children = subtreeIds.length
-    ? await (database as ExecutionDb)
-        .select()
-        .from(executionRuns)
-        .where(
-          and(
-            inArray(executionRuns.id, subtreeIds),
-            inArray(executionRuns.status, [
-              ...CASCADE_NON_TERMINAL_RUN_STATUSES,
-            ]),
-            sql`(${executionRuns.agentKind}='operational' OR (${executionRuns.companyId} IS NOT NULL AND ${executionRuns.runKind}='flow'))`,
-          ),
-        )
+    ? await (database as ExecutionDb).select().from(executionRuns).where(and(
+        activeDescendants,
+        sql`(${executionRuns.agentKind}='operational' OR (${executionRuns.companyId} IS NOT NULL AND ${executionRuns.runKind}='flow'))`,
+      ))
+    : [];
+  const addressedChildren = subtreeIds.length && opts.confirmAddressedChildRetirement
+    ? await (database as ExecutionDb).select().from(executionRuns).where(and(
+        activeDescendants,
+        eq(executionRuns.runKind, "flow"),
+        isNull(executionRuns.companyId),
+        sql`EXISTS (
+          SELECT 1 FROM ${executionWorkspaces} workspace
+          WHERE workspace.run_id=${executionRuns.id} AND workspace.ownership_kind='host_owned'
+            AND workspace.removed_at IS NULL
+        )`,
+      ))
     : [];
   const receiptBackedIds: string[] = [];
+  const retiredAddressedChildren = new Map<string, string | null>();
 
-  if (children.length) {
+  if (children.length || addressedChildren.length) {
     const hosts = opts.executionHosts ?? createExecutionHosts({ db: database });
     const byId = new Map(children.map((child) => [child.id, child]));
+    const addressedById = new Map(addressedChildren.map((child) => [child.id, child]));
 
     for (const id of [...subtreeIds].reverse()) {
-      const child = byId.get(id);
+      const addressed = addressedById.get(id);
 
+      if (addressed && opts.confirmAddressedChildRetirement) {
+        await opts.confirmAddressedChildRetirement(addressed);
+        retiredAddressedChildren.set(id, addressed.executionAssignmentId);
+        continue;
+      }
+      const child = byId.get(id);
       if (!child) continue;
       if (await abandonReceiptBackedChild(database, hosts, child, reason)) {
         receiptBackedIds.push(id);
@@ -224,6 +241,19 @@ async function abandonRunSubtree(
   const cascaded: CascadedRunRow[] = await database.transaction(
     async (tx: Db) => {
       const endedAt = new Date();
+      if (retiredAddressedChildren.size) {
+        const current = await (tx as ExecutionDb).select({
+          id: executionRuns.id,
+          assignmentId: executionRuns.executionAssignmentId,
+        }).from(executionRuns)
+          .where(inArray(executionRuns.id, [...retiredAddressedChildren.keys()]))
+          .orderBy(asc(executionRuns.id))
+          .for("no key update");
+        if (current.length !== retiredAddressedChildren.size ||
+          current.some(({ id, assignmentId }) => retiredAddressedChildren.get(id) !== assignmentId))
+          throw new MaisterError("CONFLICT", "An addressed child changed ownership after retirement",
+            { details: { reason: "addressed_stop_pending", runId: orchestratorRunId } });
+      }
 
       const runRows: CascadedRunRow[] =
         subtreeIds.length > 0
@@ -339,7 +369,7 @@ async function abandonRunSubtree(
     cascadedRunCount: cascaded.length + receiptBackedIds.length,
     abandonedTaskCount: unlaunchedTaskIds.length,
     cascadedRunIds: [...receiptBackedIds, ...cascaded.map((row) => row.id)],
-    pendingTeardownIds: cascaded.map((row) => row.id),
+    pendingTeardownIds: cascaded.filter(({ id }) => !retiredAddressedChildren.has(id)).map(({ id }) => id),
   };
 }
 
@@ -378,7 +408,11 @@ export async function cascadeAbandonRunTreeAndStopSessions(
     orchestratorRunId,
     orchestratorTaskId,
     reason,
-    { db: opts.db, executionHosts: opts.executionHosts },
+    {
+      db: opts.db,
+      executionHosts: opts.executionHosts,
+      confirmAddressedChildRetirement: opts.confirmAddressedChildRetirement,
+    },
   );
 
   await teardownLiveSessionsForRuns(pendingTeardownIds, {

@@ -1,0 +1,1835 @@
+import { execFileSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+import { afterEach, expect, it, vi } from "vitest";
+
+import { EXECUTION_HOST_KEY_HEADER } from "../../../runtime/execution-host-address";
+import { WORKSPACE_CONTEXT_INPUT } from "../../../runtime/workspace-context-input";
+import { WORKSPACE_TEMPLATE_CONTEXT_NAME } from "../../../runtime/workspace-prepare";
+import type {
+  PreparedWorkspace,
+  WorkspacePrepareInput,
+  WorkspacePrepareReceipt,
+} from "../../../runtime/workspace-prepare";
+
+import { installLocalPullRequestProvider, localPullRequestUrl } from "../../test/fixtures/local-pr-provider";
+
+import { HOST_STATE_FILE } from "../host-state";
+
+import {
+  bootHost,
+  completePrompt,
+  cleanupRuntimeRoot,
+  createBody,
+  envelope,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
+
+const roots: string[] = [];
+const hosts: BootedHost[] = [];
+
+async function sealInput(
+  host: BootedHost,
+  owner: WorkspacePrepareReceipt["owner"],
+  kind: "capability_profile" | "capability_instructions",
+  content: string,
+  logicalName = kind === "capability_profile" ? "workspace-inputs.json" : "instructions.md",
+): Promise<{ objectId: string; sha256: string }> {
+  const objectId = randomUUID();
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const fence = {
+    hostKey: owner.hostKey,
+    runId: owner.runId,
+    assignmentId: owner.assignmentId,
+    assignmentEpoch: owner.assignmentEpoch,
+  };
+  const result = await postJson(
+    host.url + "/runtime-objects",
+    envelope("runtime_object.reserve", fence, {
+      objectId,
+      kind,
+      logicalName,
+      mimeType:
+        kind === "capability_profile" ? "application/json" : "text/markdown",
+      sizeBytes: Buffer.byteLength(content),
+      sha256,
+      generation: 1,
+      retentionClass: "run",
+    }),
+  );
+  expect(result.status).toBe(201);
+  const upload = await fetch(
+    `${host.url}/runtime-objects/${objectId}/content`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-length": String(Buffer.byteLength(content)),
+        "content-digest": `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`,
+        "x-maister-command-id": randomUUID(),
+        "x-maister-command-issued-at": new Date().toISOString(),
+        "x-maister-assignment-id": owner.assignmentId,
+        "x-maister-assignment-epoch": String(owner.assignmentEpoch),
+        "x-maister-object-generation": "1",
+        "x-maister-sha256": sha256,
+      },
+      body: content,
+    },
+  );
+  expect(upload.status).toBe(200);
+  await upload.body?.cancel();
+  return { objectId, sha256 };
+}
+
+it("C-07/C-08 materializes sealed inputs and executes bounded addressed workloads", async () => {
+  const verifyNativeWrites =
+    process.platform === "darwin" ||
+    process.env.MAISTER_TEST_ADDRESSED_READ_ONLY === "1";
+  const root = await mkdtemp(join(tmpdir(), "stage-c-workspace-inputs-"));
+  roots.push(root);
+  const contextSource = join(root, "context-source");
+  git(root, "init", "-b", "main", contextSource);
+  await writeFile(join(contextSource, "context.md"), "# pinned context");
+  git(contextSource, "add", "--", "context.md");
+  git(contextSource, "commit", "-m", "context");
+  const contextRevision = git(contextSource, "rev-parse", "HEAD");
+  vi.stubEnv(
+    "MAISTER_WORKSPACE_REPOSITORIES",
+    JSON.stringify({ "sibling-id": contextSource }),
+  );
+  const host = await bootHost({
+    runtimeRoot: root,
+    fixture: "mock-acp-record-newsession.mjs",
+  });
+  hosts.push(host);
+  const inputDigest = "8".repeat(64);
+  const prepared = await prepareAndRead(host, {
+    mode: "emptyDirectory",
+    inputDigest,
+  });
+  if (prepared.phase !== "completed")
+    throw new Error("workspace preparation did not complete");
+  const { handle, generation } = prepared.result.workspace;
+  const premature = await postJson(
+    host.url + "/sessions",
+    envelope("session.create", prepared.owner, createBody(handle)),
+  );
+  expect(premature).toMatchObject({
+    status: 409,
+    body: { details: { reason: "workspace_preparation_pending" } },
+  });
+  expect(host.registry.list()).toEqual([]);
+  const bytes = "# frozen instructions\n";
+  const skillPath = "bundles/0/skills/pinned-skill/SKILL.md";
+  const sealed = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    bytes,
+  );
+  const context = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    JSON.stringify([
+      {
+        stepId: "step-1",
+        repositoryId: "sibling-id",
+        slug: "sibling",
+        ref: "main",
+        declaredRef: null,
+        commit: contextRevision,
+      },
+    ]),
+  );
+  const workload = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    JSON.stringify([
+      {
+        id: "flow:setup",
+        workload: "setup",
+        command: "bash ./setup.sh",
+        timeoutMs: 5000,
+        flowAssets: true,
+        flowSetup: "frozen-revision",
+      },
+      {
+        id: "prepared-asset-check",
+        workload: "check",
+        command: 'cat "$MAISTER_FLOW_DIR/generated.txt"',
+        timeoutMs: 5000,
+        flowAssets: true,
+        flowSetup: "frozen-revision",
+      },
+      {
+        id: "project-check",
+        workload: "check",
+        command:
+          "printf '%s' '\"local check\"'; test -z \"${UNRELATED_MCP_TOKEN:-}\"",
+        timeoutMs: 5000,
+        structuredOutput: "json",
+      },
+      {
+        id: "long-check",
+        workload: "check",
+        command: "printf 'partial stdout'; : > .fixture-ready; sleep 15",
+        timeoutMs: 20_000,
+      },
+      {
+        id: "templated-check",
+        workload: "check",
+        command: `printf '%s' '{{ task.title }}-{{ env.UNRELATED_MCP_TOKEN ?? "filtered" }}'; : > .template-started`,
+        timeoutMs: 5_000,
+      },
+      {
+        id: "timed-check",
+        workload: "check",
+        command: "sleep 15",
+        timeoutMs: 500,
+      },
+      {
+        id: "invalid-output-check",
+        workload: "check",
+        command: "printf 'not json'; exit 42",
+        timeoutMs: 5000,
+        structuredOutput: "json",
+      },
+      {
+        id: "oversized-check",
+        workload: "check",
+        command: "head -c 4194305 /dev/zero",
+        timeoutMs: 5000,
+      },
+    ]),
+  );
+  const setup = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    "printf ready >> generated.txt\n",
+  );
+  await writeFile(join(contextSource, "context.md"), "# newer context");
+  git(contextSource, "add", "--", "context.md");
+  git(contextSource, "commit", "-m", "advance context");
+  const manifest = await sealInput(
+    host,
+    prepared.owner,
+    "capability_profile",
+    JSON.stringify({
+      version: 1,
+      workspaceInputDigest: inputDigest,
+      files: [
+        { path: skillPath, ...sealed },
+        { path: WORKSPACE_CONTEXT_INPUT, ...context },
+        { path: "workload-declarations.json", ...workload },
+        { path: "flow/setup.sh", ...setup },
+      ],
+    }),
+  );
+  const commandId = randomUUID();
+  const request = {
+    workspaceProtocol: 1,
+    command: {
+      id: commandId,
+      kind: "workspace.materialize",
+      issuedAt: new Date().toISOString(),
+    },
+    owner: prepared.owner,
+    payload: {
+      generation,
+      manifestDigest: manifest.sha256,
+      objects: [manifest, sealed, context, workload, setup],
+    },
+  };
+  const route = `/v1/workspaces/${handle}/materialization`;
+  const tampered = randomUUID();
+  const tamperedRequest = {
+    ...request,
+    command: { ...request.command, id: tampered },
+    payload: {
+      ...request.payload,
+      objects: [
+        manifest,
+        { ...sealed, sha256: "0".repeat(64) },
+        context,
+        workload,
+        setup,
+      ],
+    },
+  };
+  expect((await addressedRequest(host, route, tamperedRequest)).status).toBe(
+    202,
+  );
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(host, `/v1/commands/${tampered}`);
+    expect(await response.json()).toMatchObject({
+      phase: "rejected",
+      refusal: { details: { reason: "workspace_rejected" } },
+    });
+  });
+  expect(
+    host.hostState.getWorkspaceExecutionState(handle)?.materializationDigest,
+  ).toBeNull();
+  const accepted = await addressedRequest(host, route, request);
+  expect(accepted.status).toBe(202);
+  await accepted.body?.cancel();
+  const receipt = await vi.waitFor(async () => {
+    const response = await addressedRequest(host, `/v1/commands/${commandId}`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      phase: "completed",
+      operationId: "stageCMaterialize",
+      result: {
+        generation,
+        inputGeneration: 1,
+        manifestDigest: manifest.sha256,
+      },
+    });
+    return body;
+  });
+  const workspace = host.hostState.getWorkspace(handle);
+  if (!workspace) throw new Error("prepared workspace does not exist");
+  const file = join(workspace.runDir, "inputs", manifest.sha256, skillPath);
+  expect(await readFile(file, "utf8")).toBe(bytes);
+  expect((await stat(file)).mode & 0o222).toBe(0);
+  const replay = await addressedRequest(host, route, request);
+  expect(replay.status).toBe(202);
+  expect(
+    await (await addressedRequest(host, `/v1/commands/${commandId}`)).json(),
+  ).toEqual(receipt);
+  await chmod(file, 0o600);
+  await writeFile(file, "# tampered after materialization");
+  await chmod(file, 0o444);
+  const changedInput = await postJson(
+    host.url + "/sessions",
+    envelope("session.create", prepared.owner, createBody(handle)),
+  );
+  expect(changedInput).toMatchObject({
+    status: 409,
+    body: { details: { reason: "workspace_input_changed" } },
+  });
+  await chmod(file, 0o600);
+  await writeFile(file, bytes);
+  await chmod(file, 0o444);
+  vi.stubEnv("MAISTER_API_BASE_URL", "https://workspace-web.example.test");
+  const scopedToken = `mai_${"a".repeat(43)}`;
+  const wrongWeb = await postJson(
+    host.url + "/sessions",
+    envelope(
+      "session.create",
+      prepared.owner,
+      createBody(handle, {
+        mcpServers: [
+          {
+            name: "maister",
+            transport: "stdio",
+            platformOrigin: "maister_facade",
+            env: {
+              MAISTER_API_BASE_URL: "https://another-web.example.test",
+              MAISTER_PROJECT_TOKEN: scopedToken,
+            },
+          },
+        ],
+      }),
+    ),
+  );
+  expect(wrongWeb).toMatchObject({
+    status: 409,
+    body: { details: { reason: "workspace_rejected" } },
+  });
+  expect(host.registry.list()).toEqual([]);
+  const record = join(root, "newsession-record.json");
+  const recordedPrompt = join(root, "prompt-record.json");
+  const configuredFacade = join(root, "fixture-facade");
+  vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", configuredFacade);
+  vi.stubEnv("MOCK_ACP_NEWSESSION_RECORD_PATH", record);
+  vi.stubEnv("MOCK_ACP_PROMPT_RECORD_PATH", recordedPrompt);
+  vi.stubEnv("UNRELATED_MCP_TOKEN", "fixture-private-value");
+  const spawned = await postJson(
+    host.url + "/sessions",
+    envelope(
+      "session.create",
+      prepared.owner,
+      createBody(handle, {
+        stepId: verifyNativeWrites ? "step-1" : "no-sibling",
+        executor: {
+          agent: "claude",
+          model: "claude-sonnet-4-6",
+          env: {
+            MOCK_ACP_NEWSESSION_RECORD_PATH: record,
+            MOCK_ACP_PROMPT_RECORD_PATH: recordedPrompt,
+            MOCK_ACP_ENV_PROBE: "UNRELATED_MCP_TOKEN",
+            ...(verifyNativeWrites ? { MOCK_ACP_PROBE_CONTEXT_WRITE: "1" } : {}),
+          },
+        },
+        mcpServers: [
+          {
+            name: "maister",
+            transport: "stdio",
+            platformOrigin: "maister_facade",
+            command: "/manager/unused-facade",
+            args: ["--manager-path"],
+            env: {
+              MAISTER_API_BASE_URL: "https://workspace-web.example.test",
+              MAISTER_PROJECT_TOKEN: scopedToken,
+              MAISTER_MCP_TOOLSET: "project-run",
+              UNRELATED_MCP_TOKEN: "env:UNRELATED_MCP_TOKEN",
+            },
+          },
+        ],
+      }),
+    ),
+  );
+  expect(spawned.status).toBe(201);
+  if (verifyNativeWrites) {
+    const mounts = host.registry.get(String(spawned.body.sessionId))?.record
+      .contextMounts;
+    expect(mounts).toMatchObject([{ slug: "sibling", commit: contextRevision }]);
+    const mounted = mounts?.[0]?.path;
+    if (!mounted)
+      throw new Error("addressed session did not receive its declared sibling");
+    const denied = process.platform === "darwin" ? "EPERM" : "EROFS";
+    expect(JSON.parse(await readFile(record, "utf8"))).toMatchObject({
+      nativeContextWrites: { checkout: denied, git: denied },
+    });
+    expect(await readFile(join(mounted, "context.md"), "utf8")).toBe(
+      "# pinned context",
+    );
+    expect((await stat(join(mounted, "context.md"))).mode & 0o222).toBe(0);
+  }
+  const prompt = await completePrompt(
+    host,
+    String(spawned.body.sessionId),
+    envelope("session.prompt", prepared.owner, {
+      stepId: verifyNativeWrites ? "step-1" : "no-sibling",
+      prompt: "Follow the packaged skill.",
+    }),
+  );
+  expect(prompt.status).toBe(200);
+  expect(await readFile(recordedPrompt, "utf8")).toContain(skillPath);
+  const checkCommandId = randomUUID();
+  const check = await addressedRequest(
+    host,
+    `/v1/workspaces/${handle}/commands`,
+    {
+      workspaceProtocol: 1,
+      command: {
+        id: checkCommandId,
+        kind: "workspace.run",
+        issuedAt: new Date().toISOString(),
+      },
+      owner: prepared.owner,
+      payload: {
+        generation,
+        workload: "check",
+        declarationId: "project-check",
+        inputGeneration: 1,
+        inputDigest: manifest.sha256,
+      },
+    },
+  );
+  expect(check.status).toBe(202);
+  const checked = await vi.waitFor(async () => {
+    const result = await addressedRequest(
+      host,
+      `/v1/commands/${checkCommandId}`,
+    );
+    const body = (await result.json()) as {
+      result: { objects: Array<{ objectId: string; sha256: string }> };
+    };
+    expect(body).toMatchObject({
+      phase: "completed",
+      operationId: "stageCRunWorkload",
+      result: {
+        generation,
+        exitCode: 0,
+        processOutcome: "exited",
+        quiescence: "proved",
+        checkValidity: "valid",
+        outputState: "sealed",
+      },
+    });
+    return body.result;
+  });
+  const checkOutput = await addressedRequest(
+    host,
+    `/runtime-objects/${checked.objects[0].objectId}/content`,
+  );
+  expect(await checkOutput.text()).toBe('"local check"');
+  const runAssetWorkload = async (
+    workload: "setup" | "check",
+    declarationId: string,
+  ) => {
+    const id = randomUUID();
+    const response = await addressedRequest(
+      host,
+      `/v1/workspaces/${handle}/commands`,
+      {
+        workspaceProtocol: 1,
+        owner: prepared.owner,
+        command: { id, kind: "workspace.run", issuedAt: new Date().toISOString() },
+        payload: {
+          generation,
+          workload,
+          declarationId,
+          inputGeneration: 1,
+          inputDigest: manifest.sha256,
+        },
+      },
+    );
+    expect(response.status).toBe(202);
+    await response.body?.cancel();
+    await vi.waitFor(() =>
+      expect(["completed", "rejected"]).toContain(host.hostState.getReceipt(id)?.phase),
+    );
+    return host.hostState.getReceipt(id);
+  };
+  const unavailable = await runAssetWorkload("check", "prepared-asset-check");
+  expect(unavailable).toMatchObject({
+    phase: "rejected",
+    body: { refusal: { details: { reason: "workspace_setup_unavailable" } } },
+  });
+  for (const [workload, reused] of [
+    ["setup", false],
+    ["setup", true],
+    ["check", false],
+  ] as const) {
+    const receipt = await runAssetWorkload(
+      workload,
+      workload === "setup" ? "flow:setup" : "prepared-asset-check",
+    );
+    expect(receipt).toMatchObject({
+      phase: "completed",
+      body: {
+        result: {
+          exitCode: 0,
+          quiescence: "proved",
+          ...(reused ? { setupReused: true, objects: [] } : {}),
+        },
+      },
+    });
+    if (workload === "check") {
+      const first = (receipt?.body as {
+        result: { objects: { objectId: string }[] };
+      }).result.objects[0];
+      const stdout = await addressedRequest(
+        host,
+        `/runtime-objects/${first.objectId}/content`,
+      );
+      expect(await stdout.text()).toBe("ready");
+    }
+  }
+  const setupRoot = join(root, ".maister", "flow-setup");
+  const completed = (await readdir(setupRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory());
+  expect(completed).toHaveLength(1);
+  await writeFile(join(setupRoot, completed[0].name, "flow", "generated.txt"), "changed");
+  expect(await runAssetWorkload("setup", "flow:setup")).toMatchObject({
+    phase: "rejected",
+    body: { refusal: { details: { reason: "workspace_setup_unavailable" } } },
+  });
+  const templateContext = await sealInput(
+    host,
+    prepared.owner,
+    "capability_profile",
+    JSON.stringify({
+      version: 1,
+      declarationId: "templated-check",
+      values: { task: { title: "a".repeat(40_000) } },
+    }),
+    WORKSPACE_TEMPLATE_CONTEXT_NAME,
+  );
+  const rejectedCheck = randomUUID();
+  expect((await addressedRequest(host, `/v1/workspaces/${handle}/commands`, {
+    workspaceProtocol: 1,
+    command: { id: rejectedCheck, kind: "workspace.run", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: {
+      generation,
+      workload: "check",
+      declarationId: "templated-check",
+      inputGeneration: 1,
+      inputDigest: manifest.sha256,
+      templateContext,
+    },
+  })).status).toBe(202);
+  await vi.waitFor(async () => {
+    const receipt = await addressedRequest(host, `/v1/commands/${rejectedCheck}`);
+    expect(await receipt.json()).toMatchObject({
+      phase: "rejected",
+      refusal: { details: { reason: "workspace_template_context_invalid" } },
+    });
+  });
+  await expect(stat(join(workspace.path, ".template-started"))).rejects.toMatchObject({ code: "ENOENT" });
+  const longId = randomUUID();
+  const runPayload = {
+    generation,
+    workload: "check",
+    declarationId: "long-check",
+    inputGeneration: 1,
+    inputDigest: manifest.sha256,
+  };
+  const fencedTarget = randomUUID();
+  const stopBeforeDelivery = {
+    workspaceProtocol: 1,
+    command: {
+      id: randomUUID(),
+      kind: "workspace.cancel",
+      issuedAt: new Date().toISOString(),
+    },
+    owner: prepared.owner,
+    payload: { generation },
+  };
+  const cancellationPath = `/v1/workspaces/${handle}/commands/${fencedTarget}/cancel`;
+  expect((await addressedRequest(host, cancellationPath, stopBeforeDelivery)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const receipt = await addressedRequest(host, `/v1/commands/${stopBeforeDelivery.command.id}`);
+    expect(await receipt.json()).toMatchObject({
+      phase: "completed",
+      result: { targetCommandId: fencedTarget, quiescence: "proved", objects: [] },
+    });
+  });
+  expect(host.hostState.retireReceipt(stopBeforeDelivery.command.id, {
+    expectedRequestSha256: null,
+    expectedPhase: "completed",
+    assignmentEpoch: prepared.owner.assignmentEpoch,
+  })).toMatchObject({ outcome: "retired" });
+  const lateWorkRequest = {
+    workspaceProtocol: 1,
+    command: { id: fencedTarget, kind: "workspace.run", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: runPayload,
+  };
+  const lateWork = await addressedRequest(host, `/v1/workspaces/${handle}/commands`, lateWorkRequest);
+  expect(lateWork.status).toBe(409);
+  expect(await lateWork.json()).toMatchObject({ details: { reason: "workspace_workload_cancelled" } });
+  await expect(stat(join(workspace.path, ".fixture-ready"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await addressedRequest(host, cancellationPath, stopBeforeDelivery)).status).toBe(202);
+
+  const longRun = await addressedRequest(
+    host,
+    `/v1/workspaces/${handle}/commands`,
+    {
+      workspaceProtocol: 1,
+      command: {
+        id: longId,
+        kind: "workspace.run",
+        issuedAt: new Date().toISOString(),
+      },
+      owner: prepared.owner,
+      payload: runPayload,
+    },
+  );
+  expect(longRun.status).toBe(202);
+  await vi.waitFor(() => {
+    expect(host.hostState.getReceipt(longId)?.body).toMatchObject({
+      workspaceProcess: { group: expect.any(Number) },
+    });
+  });
+  await vi.waitFor(async () => {
+    expect((await stat(join(workspace.path, ".fixture-ready"))).isFile()).toBe(
+      true,
+    );
+  });
+  const cancelId = randomUUID();
+  const cancellation = await addressedRequest(
+    host,
+    `/v1/workspaces/${handle}/commands/${longId}/cancel`,
+    {
+      workspaceProtocol: 1,
+      command: {
+        id: cancelId,
+        kind: "workspace.cancel",
+        issuedAt: new Date().toISOString(),
+      },
+      owner: prepared.owner,
+      payload: { generation },
+    },
+  );
+  expect(cancellation.status).toBe(202);
+  await vi.waitFor(async () => {
+    const settled = await addressedRequest(host, `/v1/commands/${cancelId}`);
+    expect(await settled.json()).toMatchObject({
+      phase: "completed",
+      operationId: "stageCCancelWorkload",
+      result: { targetCommandId: longId, quiescence: "proved" },
+    });
+  });
+  const interrupted = (await (
+    await addressedRequest(host, `/v1/commands/${longId}`)
+  ).json()) as {
+    result: { objects: { objectId: string }[] };
+  };
+  expect(interrupted).toMatchObject({
+    phase: "completed",
+    result: { processOutcome: "cancelled", quiescence: "proved" },
+  });
+  const partial = await addressedRequest(
+    host,
+    `/runtime-objects/${interrupted.result.objects[0].objectId}/content`,
+  );
+  expect(await partial.text()).toBe("partial stdout");
+  for (const [declarationId, result] of [
+    ["timed-check", { processOutcome: "timedOut", exitCode: null }],
+    [
+      "invalid-output-check",
+      { processOutcome: "exited", exitCode: 42, checkValidity: "invalid" },
+    ],
+    ["oversized-check", { outputState: "truncated" }],
+  ] as const) {
+    const commandId = randomUUID();
+    expect(
+      (
+        await addressedRequest(host, `/v1/workspaces/${handle}/commands`, {
+          workspaceProtocol: 1,
+          command: {
+            id: commandId,
+            kind: "workspace.run",
+            issuedAt: new Date().toISOString(),
+          },
+          owner: prepared.owner,
+          payload: { ...runPayload, declarationId },
+        })
+      ).status,
+    ).toBe(202);
+    await vi.waitFor(async () => {
+      expect(
+        await (
+          await addressedRequest(host, `/v1/commands/${commandId}`)
+        ).json(),
+      ).toMatchObject({
+        phase: "completed",
+        result: { ...result, quiescence: "proved" },
+      });
+    });
+  }
+  expect(JSON.parse(await readFile(record, "utf8"))).toMatchObject({
+    cwd: workspace.path,
+    probePresent: false,
+    mcpServers: [
+      {
+        name: "maister",
+        command: configuredFacade,
+        args: ["--stdio"],
+        env: [
+          {
+            name: "MAISTER_API_BASE_URL",
+            value: "https://workspace-web.example.test",
+          },
+          { name: "MAISTER_PROJECT_TOKEN", value: scopedToken },
+          { name: "MAISTER_MCP_TOOLSET", value: "project-run" },
+        ],
+      },
+    ],
+  });
+  host.hostState.setFence(
+    prepared.owner.runId,
+    randomUUID(),
+    prepared.owner.assignmentEpoch + 1,
+  );
+  const staleCommandId = randomUUID();
+  const stale = await addressedRequest(
+    host,
+    `/v1/workspaces/${handle}/commands`,
+    {
+      workspaceProtocol: 1,
+      command: {
+        id: staleCommandId,
+        kind: "workspace.run",
+        issuedAt: new Date().toISOString(),
+      },
+      owner: prepared.owner,
+      payload: runPayload,
+    },
+  );
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({
+    code: "FENCED",
+    details: { reason: "assignment_fenced" },
+  });
+  await host.stop();
+  hosts.pop();
+  const rebooted = await bootHost({ runtimeRoot: root });
+  hosts.push(rebooted);
+  expect(rebooted.hostState.bootId).not.toBe(host.hostState.bootId);
+  const replayedLateWork = await addressedRequest(rebooted, `/v1/workspaces/${handle}/commands`, lateWorkRequest);
+  expect(replayedLateWork.status).toBe(409);
+  expect(await replayedLateWork.json()).toMatchObject({ details: { reason: "workspace_workload_cancelled" } });
+  expect(rebooted.hostState.getReceipt(staleCommandId)).toBeNull();
+}, 30_000);
+
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  for (const host of hosts.splice(0)) await host.stop();
+  for (const root of roots.splice(0)) await cleanupRuntimeRoot(root);
+});
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync(
+    "git",
+    [
+      "-C",
+      cwd,
+      "-c",
+      "user.name=Stage C",
+      "-c",
+      "user.email=stage-c@example.test",
+      ...args,
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  ).trim();
+}
+
+it("C-09 restores a retained Git checkpoint once without replacing later work on replay", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-git-checkpoint-"));
+  roots.push(root);
+  const repository = join(root, "sources");
+  git(root, "init", "-b", "main", repository);
+  await writeFile(join(repository, "input.txt"), "base\n");
+  git(repository, "add", "input.txt");
+  git(repository, "commit", "-m", "base");
+  const commit = git(repository, "rev-parse", "HEAD");
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repository }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, {
+    mode: "ownWorktree", repositoryId: "fixture", commit, inputDigest: "b".repeat(64),
+  });
+  if (prepared.phase !== "completed") throw new Error("fixture owns no checkout");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout?.repoPath) throw new Error("fixture checkout was not retained");
+  const file = join(checkout.realPath, "input.txt");
+  const untracked = join(checkout.realPath, "untracked.txt");
+  const attemptNotes = join(checkout.realPath, "attempt-notes.txt");
+  await writeFile(file, "captured tracked bytes\n");
+  await writeFile(untracked, "captured untracked bytes\n");
+  const checkpointId = randomUUID();
+  const checkpoint = await addressedRequest(host, `/v1/workspaces/${handle}/checkpoint`, {
+    workspaceProtocol: 1,
+    command: { id: checkpointId, kind: "workspace.checkpoint", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: { generation },
+  });
+  expect(checkpoint.status).toBe(202);
+  const captured = await vi.waitFor(async () => {
+    const response = await addressedRequest(host, `/v1/commands/${checkpointId}`);
+    const receipt = await response.json() as { result: { tree: string } };
+    expect(receipt).toMatchObject({ phase: "completed", result: { generation, checkpointId, tree: expect.stringMatching(/^[0-9a-f]{40}$/) } });
+    return receipt;
+  });
+  expect(git(checkout.realPath, "rev-parse", "HEAD")).toBe(commit);
+  expect(git(checkout.realPath, "ls-files", "--", "untracked.txt")).toBe("");
+  await writeFile(file, "changed after checkpoint\n");
+  await writeFile(untracked, "changed untracked bytes\n");
+  await writeFile(attemptNotes, "notes created during the failed attempt\n");
+  const restoreId = randomUUID();
+  const restore = {
+    workspaceProtocol: 1,
+    command: { id: restoreId, kind: "workspace.restore", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: { generation, checkpointId },
+  };
+  const restorePath = `/v1/workspaces/${handle}/restore`;
+  expect((await addressedRequest(host, restorePath, restore)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(host, `/v1/commands/${restoreId}`);
+    expect(await response.json()).toMatchObject({ phase: "completed", result: captured.result });
+  });
+  expect(await readFile(file, "utf8")).toBe("captured tracked bytes\n");
+  expect(await readFile(untracked, "utf8")).toBe("captured untracked bytes\n");
+  expect(await readFile(attemptNotes, "utf8")).toBe("notes created during the failed attempt\n");
+  expect(git(checkout.realPath, "ls-files", "--", "untracked.txt")).toBe("");
+  await writeFile(file, "later work after restore\n");
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect(restarted.hostState.hostKey).toBe(host.hostState.hostKey);
+  expect((await addressedRequest(restarted, restorePath, restore)).status).toBe(202);
+  const replay = await addressedRequest(restarted, `/v1/commands/${restoreId}`);
+  expect(await replay.json()).toMatchObject({ phase: "completed", result: captured.result });
+  expect(await readFile(file, "utf8")).toBe("later work after restore\n");
+  const other = await prepareAndRead(restarted, {
+    mode: "ownWorktree", repositoryId: "fixture", commit, inputDigest: "b".repeat(64),
+  });
+  if (other.phase !== "completed") throw new Error("foreign fixture owns no checkout");
+  const foreignDiff = await addressedRequest(restarted,
+    `/v1/workspaces/${other.result.workspace.handle}/diff?generation=${generation}&checkpointId=${checkpointId}`,
+  );
+  expect(foreignDiff.status).toBe(409);
+  expect(await foreignDiff.json()).toMatchObject({ details: { reason: "workspace_diff_range_invalid" } });
+  // Apply the stronger author-approved policy from the same retained checkpoint.
+  const ignored = join(checkout.realPath, "local-build-cache");
+  await writeFile(join(checkout.repoPath, ".git", "info", "exclude"), "local-build-cache\n");
+  await writeFile(ignored, "cache");
+  const freshId = randomUUID();
+  const fresh = { ...restore, command: { ...restore.command, id: freshId }, payload: { ...restore.payload, policy: "fresh-attempt" } };
+  expect((await addressedRequest(restarted, restorePath, fresh)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const receipt = await addressedRequest(restarted, `/v1/commands/${freshId}`);
+    expect(await receipt.json()).toMatchObject({ phase: "completed", result: {
+      generation, checkpointId, tree: captured.result.tree,
+      resultingTree: git(checkout.realPath, "rev-parse", commit + "^{tree}"),
+    } });
+  });
+  expect(await readFile(file, "utf8")).toBe("base\n");
+  await expect(readFile(untracked)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(readFile(attemptNotes)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(ignored, "utf8")).toBe("cache");
+  await writeFile(attemptNotes, "created after the fresh restore");
+  expect((await addressedRequest(restarted, restorePath, fresh)).status).toBe(202);
+  expect(await readFile(attemptNotes, "utf8")).toBe("created after the fresh restore");
+}, 30_000);
+
+function addressedRequest(
+  host: BootedHost,
+  path: string,
+  body?: unknown,
+): Promise<Response> {
+  return fetch(host.url + path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: {
+      [EXECUTION_HOST_KEY_HEADER]: host.hostState.hostKey,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+it("C-06 observes an approved Git ref and replays pinned workspace preparation across a host restart", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-workspace-host-"));
+  roots.push(root);
+  const repository = join(root, "source");
+  git(root, "init", "-b", "main", repository);
+  await writeFile(join(repository, "input.txt"), "first\n");
+  git(repository, "add", "--", "input.txt");
+  git(repository, "commit", "-m", "first");
+  const commit = git(repository, "rev-parse", "HEAD");
+  vi.stubEnv(
+    "MAISTER_WORKSPACE_REPOSITORIES",
+    JSON.stringify({ "fixture-repo": repository, "other-repo": repository }),
+  );
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const observed = await addressedRequest(
+    host,
+    "/v1/repositories/resolve-revision",
+    {
+      repositoryId: "fixture-repo",
+      ref: "refs/heads/main",
+    },
+  );
+  expect(observed.status).toBe(200);
+  expect(await observed.json()).toEqual({
+    repositoryId: "fixture-repo",
+    ref: "refs/heads/main",
+    commit,
+  });
+  const listed = await addressedRequest(
+    host,
+    "/v1/repositories/fixture-repo/refs",
+  );
+  expect(listed.status).toBe(200);
+  expect(await listed.json()).toEqual({
+    refs: ["refs/heads/main"],
+    defaultRef: "refs/heads/main",
+    nextCursor: null,
+  });
+
+  execFileSync("git", ["-C", repository, "update-ref", "--stdin"], {
+    input: Array.from({ length: 100 }, (_, index) =>
+      `create refs/heads/fixture-${String(index).padStart(3, "0")} ${commit}\n`,
+    ).join(""),
+  });
+  const firstPage = await addressedRequest(host, "/v1/repositories/fixture-repo/refs");
+  const firstBody = (await firstPage.json()) as { refs: string[]; nextCursor: string | null };
+  expect(firstBody.refs).toHaveLength(100);
+  if (!firstBody.nextCursor) throw new Error("expected a second approved ref page");
+  const suffix = `/refs?cursor=${encodeURIComponent(firstBody.nextCursor)}`;
+  const foreignPage = await addressedRequest(host, `/v1/repositories/other-repo${suffix}`);
+  expect(foreignPage.status).toBe(409);
+  const secondPage = await addressedRequest(host, `/v1/repositories/fixture-repo${suffix}`);
+  expect(secondPage.status).toBe(200);
+  expect(await secondPage.json()).toEqual({
+    refs: ["refs/heads/main"], defaultRef: "refs/heads/main", nextCursor: null,
+  });
+
+  await writeFile(join(repository, "input.txt"), "second\n");
+  git(repository, "add", "--", "input.txt");
+  git(repository, "commit", "-m", "second");
+  const current = git(repository, "rev-parse", "HEAD");
+  const pinned = await addressedRequest(host, "/v1/repositories/resolve-revision", {
+    repositoryId: "fixture-repo", ref: "refs/heads/main", pinnedCommit: commit.slice(0, 12),
+  });
+  expect(pinned.status).toBe(200);
+  expect(await pinned.json()).toMatchObject({ commit: current, pinnedCommit: commit });
+  const divergent = await addressedRequest(host, "/v1/repositories/resolve-revision", {
+    repositoryId: "fixture-repo", ref: "refs/heads/fixture-000", pinnedCommit: current,
+  });
+  expect(divergent.status).toBe(409);
+  expect(await divergent.json()).toMatchObject({ details: { reason: "source_commit_unavailable" } });
+  const inputDigest = "1".repeat(64);
+  const command = {
+    workspaceProtocol: 1,
+    command: {
+      id: randomUUID(),
+      kind: "workspace.prepare",
+      issuedAt: new Date().toISOString(),
+    },
+    owner: {
+      kind: "assignment",
+      hostKey: host.hostState.hostKey,
+      assignmentId: randomUUID(),
+      assignmentEpoch: 1,
+      runId: randomUUID(),
+    },
+    payload: {
+      mode: "ownWorktree",
+      repositoryId: "fixture-repo",
+      commit,
+      inputDigest,
+    },
+  };
+  const accepted = await addressedRequest(
+    host,
+    "/v1/workspaces/prepare",
+    command,
+  );
+  const receiptPath = `/v1/commands/${command.command.id}`;
+  expect(accepted.status).toBe(202);
+  expect(accepted.headers.get("location")).toBe(receiptPath);
+  await accepted.body?.cancel();
+
+  const receipt = await vi.waitFor(
+    async () => {
+      const response = await addressedRequest(host, receiptPath);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { result: PreparedWorkspace };
+      expect(body).toMatchObject({
+        phase: "completed",
+        owner: command.owner,
+        target: { kind: "prepare" },
+        result: {
+          inputDigest,
+          workspace: {
+            observedCommit: commit,
+            generation: 1,
+            mode: "ownWorktree",
+          },
+        },
+      });
+      return body;
+    },
+    { timeout: 10_000 },
+  );
+  const workspace = host.hostState.getWorkspace(
+    receipt.result.workspace.handle,
+  );
+  if (!workspace) throw new Error("receipt has no owned workspace");
+  const path = join(workspace.realPath, "input.txt");
+  expect(await readFile(path, "utf8")).toBe("first\n");
+  const workspaceQuery = `/v1/workspaces/${workspace.id}`;
+  const inspect = (supervisor: BootedHost) =>
+    addressedRequest(supervisor, `${workspaceQuery}/status?generation=1`);
+  const clean = await inspect(host);
+  expect(clean.status).toBe(200);
+  expect(await clean.json()).toEqual({
+    workspace: receipt.result.workspace,
+    workingTree: "clean",
+    headState: "detached",
+  });
+  await writeFile(path, "dirty first workspace\n");
+
+  await host.stop();
+  hosts.pop();
+  const priorStore = new DatabaseSync(join(host.stateDir, HOST_STATE_FILE));
+  try {
+    priorStore.exec(`
+      DROP TABLE workspace_workload_cancel_fences;
+      ALTER TABLE workspace_execution_state DROP COLUMN publication_fence;
+      ALTER TABLE workspace_execution_state DROP COLUMN preparation_mode;
+      PRAGMA user_version = 19;
+    `);
+  } finally {
+    priorStore.close();
+  }
+  const rebooted = await bootHost({ runtimeRoot: root });
+  hosts.push(rebooted);
+  expect(rebooted.hostState.bootId).not.toBe(host.hostState.bootId);
+  const replay = await addressedRequest(
+    rebooted,
+    "/v1/workspaces/prepare",
+    command,
+  );
+  expect(replay.status).toBe(202);
+  expect(await replay.json()).toEqual({
+    commandId: command.command.id,
+    state: "accepted",
+  });
+  expect(await (await addressedRequest(rebooted, receiptPath)).json()).toEqual(
+    receipt,
+  );
+  expect(await readFile(path, "utf8")).toBe("dirty first workspace\n");
+  const dirty = await inspect(rebooted);
+  expect(dirty.status).toBe(200);
+  expect(await dirty.json()).toEqual({
+    workspace: receipt.result.workspace,
+    workingTree: "dirty",
+    headState: "detached",
+  });
+  const stale = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/status?generation=2`,
+  );
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({
+    details: { reason: "stale_workspace_generation" },
+  });
+  await writeFile(
+    join(workspace.realPath, "new-file.txt"),
+    "new untracked work\n",
+  );
+  const response = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/diff?generation=1&base=${commit}`,
+  );
+  expect(response.status).toBe(200);
+  const reference = (await response.json()) as {
+    generation: number;
+    object: { objectId: string; sha256: string };
+  };
+  expect(reference.generation).toBe(1);
+  const patch = await addressedRequest(
+    rebooted,
+    `/runtime-objects/${reference.object.objectId}/content`,
+  );
+  const bytes = Buffer.from(await patch.arrayBuffer());
+  expect(patch.status).toBe(200);
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+    reference.object.sha256,
+  );
+  expect(bytes.toString()).toContain("+dirty first workspace\n");
+  expect(bytes.toString()).toContain("+new untracked work\n");
+  expect(git(workspace.realPath, "ls-files", "--", "new-file.txt")).toBe("");
+  expect(bytes.toString()).not.toContain(root);
+  const binaryName = "binary\tasset.bin";
+  await writeFile(join(workspace.realPath, binaryName), Buffer.from([0, 255, 3]));
+  const review = await addressedRequest(rebooted,
+    `${workspaceQuery}/diff?generation=1&format=review&base=${commit}`,
+  );
+  expect(review.status).toBe(200);
+  const reviewRef = await review.json() as { object: { objectId: string; sha256: string } };
+  const reviewRead = await addressedRequest(rebooted,
+    `/runtime-objects/${reviewRef.object.objectId}/content`,
+  );
+  const reviewBytes = Buffer.from(await reviewRead.arrayBuffer());
+  expect(createHash("sha256").update(reviewBytes).digest("hex")).toBe(reviewRef.object.sha256);
+  expect(JSON.parse(reviewBytes.toString())).toMatchObject({
+    baseCommit: commit,
+    patch: expect.stringContaining("+new untracked work\n"),
+    files: expect.arrayContaining([
+      { path: "new-file.txt", status: "A", additions: 1, deletions: 0, binary: false },
+      { path: binaryName, status: "A", additions: 0, deletions: 0, binary: true },
+    ]),
+  });
+  expect(git(workspace.realPath, "ls-files", "--", binaryName)).toBe("");
+  const newer = git(repository, "rev-parse", "HEAD");
+  const unrelated = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/diff?generation=1&base=${newer}`,
+  );
+  expect(unrelated.status).toBe(409);
+  expect(await unrelated.json()).toMatchObject({
+    details: { reason: "workspace_diff_range_invalid" },
+  });
+  await writeFile(path, "oversized\n".repeat(15_000));
+  const oversized = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/diff?generation=1&base=${commit}`,
+  );
+  expect(oversized.status).toBe(409);
+  expect(await oversized.json()).toMatchObject({
+    details: { reason: "workspace_diff_too_large" },
+  });
+  await writeFile(path, "dirty first workspace\n");
+
+  const conflicting = await addressedRequest(
+    rebooted,
+    "/v1/workspaces/prepare",
+    {
+      ...command,
+      payload: {
+        ...command.payload,
+        commit: git(repository, "rev-parse", "HEAD"),
+      },
+    },
+  );
+  expect(conflicting.status).toBe(409);
+  expect(await conflicting.json()).toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "command_digest_mismatch" },
+  });
+
+  const freshCommit = git(repository, "rev-parse", "HEAD");
+  const second = await prepareAndRead(rebooted, {
+    mode: "ownWorktree",
+    repositoryId: "fixture-repo",
+    commit: freshCommit,
+    inputDigest,
+  });
+  expect(second.phase).toBe("completed");
+  if (second.phase !== "completed")
+    throw new Error("second workspace unavailable");
+  expect(second.result.workspace.observedCommit).toBe(freshCommit);
+  expect(second.result.workspace.handle).not.toBe(
+    receipt.result.workspace.handle,
+  );
+  expect(await readFile(path, "utf8")).toBe("dirty first workspace\n");
+
+  const logPath = `/v1/workspaces/${second.result.workspace.handle}/log?generation=1&limit=1`;
+  async function readLogPage(url: string) {
+    const response = await addressedRequest(rebooted, url);
+    expect(response.status).toBe(200);
+    const reference = (await response.json()) as {
+      generation: number;
+      object: { objectId: string; sha256: string };
+    };
+    expect(reference.generation).toBe(1);
+    const content = await addressedRequest(
+      rebooted,
+      `/runtime-objects/${reference.object.objectId}/content`,
+    );
+    expect(content.status).toBe(200);
+    const bytes = Buffer.from(await content.arrayBuffer());
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      reference.object.sha256,
+    );
+
+    return JSON.parse(bytes.toString("utf8")) as { nextCursor: string | null };
+  }
+
+  const firstLogPage = await readLogPage(logPath);
+  expect(firstLogPage).toMatchObject({
+    head: freshCommit,
+    commits: [{ commit: freshCommit, subject: "second" }],
+    nextCursor: expect.any(String),
+  });
+  if (firstLogPage.nextCursor === null)
+    throw new Error("expected a second Git log page");
+  const cursor = encodeURIComponent(firstLogPage.nextCursor);
+  expect(await readLogPage(`${logPath}&cursor=${cursor}`)).toMatchObject({
+    head: freshCommit,
+    commits: [{ commit, subject: "first" }],
+    nextCursor: null,
+  });
+  const rangeUrl = `/v1/workspaces/${second.result.workspace.handle}/log?generation=1&base=${commit}&head=${freshCommit}`;
+  const commitSet = await addressedRequest(rebooted, rangeUrl);
+  expect(commitSet.status).toBe(200);
+  const commitSetRef = await commitSet.json() as { object: { objectId: string; sha256: string } };
+  const commitSetRead = await addressedRequest(rebooted,
+    `/runtime-objects/${commitSetRef.object.objectId}/content`,
+  );
+  const commitSetBytes = Buffer.from(await commitSetRead.arrayBuffer());
+  expect(createHash("sha256").update(commitSetBytes).digest("hex")).toBe(commitSetRef.object.sha256);
+  expect(commitSetBytes.toString()).toMatch(/^[0-9a-f]+ second\n$/);
+  const foreignCommitSet = await addressedRequest(rebooted, `${workspaceQuery}/log?generation=1&base=${commit}&head=${freshCommit}`);
+  expect(foreignCommitSet.status).toBe(409);
+  const emptySet = await addressedRequest(rebooted, `${workspaceQuery}/log?generation=1&base=${commit}&head=${commit}`);
+  expect(emptySet.status).toBe(200);
+  const emptyRef = await emptySet.json() as { object: { objectId: string } };
+  const emptyRead = await addressedRequest(rebooted, `/runtime-objects/${emptyRef.object.objectId}/content`);
+  expect(emptyRead.status).toBe(200);
+  expect(await emptyRead.text()).toBe("");
+  const foreignLogPage = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/log?generation=1&cursor=${cursor}`,
+  );
+  expect(foreignLogPage.status).toBe(409);
+  expect(await foreignLogPage.json()).toMatchObject({
+    details: { reason: "workspace_log_cursor_invalid" },
+  });
+  const secondCheckout = rebooted.hostState.getWorkspace(second.result.workspace.handle);
+  if (!secondCheckout) throw new Error("second checkout was not retained");
+  const messagePath = join(root, "long-commit-message.txt");
+  await writeFile(messagePath, `${"a".repeat(70_000)}\n`);
+  git(secondCheckout.realPath, "commit", "--allow-empty", "-F", messagePath);
+  const priorHeadPage = await addressedRequest(rebooted, `${logPath}&cursor=${cursor}`);
+  expect(priorHeadPage.status).toBe(409);
+  expect(await priorHeadPage.json()).toMatchObject({
+    details: { reason: "workspace_log_cursor_invalid" },
+  });
+  const oversizedLog = await addressedRequest(rebooted, logPath);
+  expect(oversizedLog.status).toBe(409);
+  expect(await oversizedLog.json()).toMatchObject({
+    details: { reason: "workspace_log_too_large" },
+  });
+}, 30_000);
+
+async function prepareAndRead(
+  host: BootedHost,
+  payload: WorkspacePrepareInput,
+): Promise<WorkspacePrepareReceipt> {
+  const id = randomUUID();
+  const response = await addressedRequest(host, "/v1/workspaces/prepare", {
+    workspaceProtocol: 1,
+    command: {
+      id,
+      kind: "workspace.prepare",
+      issuedAt: new Date().toISOString(),
+    },
+    owner: {
+      kind: "assignment",
+      hostKey: host.hostState.hostKey,
+      runId: randomUUID(),
+      assignmentId: randomUUID(),
+      assignmentEpoch: 1,
+    },
+    payload,
+  });
+  expect(response.status).toBe(202);
+  await response.body?.cancel();
+
+  return (await waitForWorkspaceReceipt(host, id)) as WorkspacePrepareReceipt;
+}
+
+async function waitForWorkspaceReceipt(host: BootedHost, id: string): Promise<unknown> {
+  return vi.waitFor(
+    async () => {
+      const record = await addressedRequest(host, `/v1/commands/${id}`);
+      expect(record.status).toBe(200);
+      const receipt = (await record.json()) as { phase: string };
+      expect(receipt.phase).not.toBe("accepted");
+      return receipt;
+    },
+    { timeout: 10_000 },
+  );
+}
+
+it.each([undefined, "merge", "rebase"] as const)("C-10 publishes one retained ref and reconciles its exact receipt after restart (%s)", async (integration) => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-retained-publish-"));
+  roots.push(root);
+  const remote = join(root, "approved.git");
+  const source = join(root, "source");
+  git(root, "init", "--bare", "-b", "main", remote);
+  git(remote, "config", "core.logAllRefUpdates", "true");
+  git(root, "init", "-b", "main", source);
+  await writeFile(join(source, "input.txt"), "base\n");
+  git(source, "add", "--", "input.txt");
+  git(source, "commit", "-m", "base");
+  const base = git(source, "rev-parse", "HEAD");
+  git(source, "push", "--", remote, "HEAD:refs/heads/main");
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: remote }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, { mode: "ownWorktree", repositoryId: "fixture", commit: base, inputDigest: "a".repeat(64) });
+  if (prepared.phase !== "completed") throw new Error("publication fixture did not prepare");
+  const { handle, generation } = prepared.result.workspace;
+  const workspace = host.hostState.getWorkspace(handle);
+  if (!workspace) throw new Error("publication fixture has no checkout");
+  await writeFile(join(workspace.realPath, "input.txt"), "approved promotion\n");
+  git(workspace.realPath, "add", "--", "input.txt");
+  git(workspace.realPath, "commit", "-m", "approved promotion");
+  const head = git(workspace.realPath, "rev-parse", "HEAD");
+  if (integration) {
+    await writeFile(join(source, "upstream.txt"), "approved target avance\n");
+    git(source, "add", "--", "upstream.txt");
+    git(source, "commit", "-m", "advance target independently");
+    git(source, "push", "--", remote, "HEAD:refs/heads/main");
+  }
+  const priorTarget = git(source, "rev-parse", "HEAD");
+  const command = {
+    workspaceProtocol: 1,
+    command: { id: randomUUID(), kind: "workspace.publish", issuedAt: new Date().toISOString() },
+    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle, workspaceGeneration: generation, claimId: randomUUID(), fence: 1 },
+    payload: { generation, expected: { head, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget }, publication: "promote", ...(integration ? { integration } : {}) },
+  };
+  const route = `/v1/workspaces/${handle}/publication`;
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted after the Git push and before the terminal SQLite commit");
+  });
+  const first = await addressedRequest(host, route, command);
+  expect(first.status).toBe(202);
+  await first.body?.cancel();
+  const observedTarget = await vi.waitFor(() => {
+    const observed = git(remote, "rev-parse", "refs/heads/main");
+    expect(observed).not.toBe(priorTarget);
+    return observed;
+  }, { timeout: 5_000 });
+  if (integration) {
+    expect(git(remote, "show", `${observedTarget}:input.txt`)).toBe("approved promotion");
+    expect(git(remote, "show", `${observedTarget}:upstream.txt`)).toBe("approved target avance");
+    expect(git(remote, "show", "-s", "--format=%P", observedTarget)).toBe(
+      integration === "merge" ? `${priorTarget} ${head}` : priorTarget,
+    );
+    expect(git(workspace.realPath, "rev-parse", "HEAD")).toBe(head);
+  } else expect(observedTarget).toBe(head);
+  await host.stop();
+  // A successful remote mutation left only the accepted request and the writer fence.
+  const persisted = new DatabaseSync(join(host.stateDir, HOST_STATE_FILE), { readOnly: true });
+  try {
+    expect(persisted.prepare("SELECT phase FROM command_receipts WHERE command_id=?").get(command.command.id)?.phase).toBe("accepted");
+  } finally {
+    persisted.close();
+  }
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect((await addressedRequest(restarted, route, command)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(restarted, `/v1/commands/${command.command.id}`);
+    expect(await response.json()).toMatchObject({ operationId: "stageCPublish", phase: "completed", owner: command.owner,
+      result: { publication: "promote", git: { head, priorTarget, observedTarget, generation } },
+    });
+  }, { timeout: 5_000 });
+  const stale = {
+    ...command, command: { ...command.command, id: randomUUID() },
+    owner: { ...command.owner, claimId: randomUUID(), fence: 2 },
+  };
+  expect((await addressedRequest(restarted, route, stale)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(restarted, `/v1/commands/${stale.command.id}`);
+    expect(await response.json()).toMatchObject({ phase: "rejected", refusal: { details: { reason: "target_ref_changed" } } });
+  }, { timeout: 5_000 });
+  expect(git(remote, "reflog", "show", "--format=%H", "refs/heads/main").split("\n")).toEqual(
+    integration ? [observedTarget, priorTarget, base] : [observedTarget, priorTarget],
+  );
+}, 30_000);
+
+it("C-10 opens one provider PR from the approved retained checkout after a lost receipt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-retained-pr-"));
+  roots.push(root);
+  const repository = join(root, "upstream.git");
+  const seed = join(root, "seed");
+  git(root, "init", "--bare", "-b", "main", repository);
+  git(root, "init", "-b", "main", seed);
+  await writeFile(join(seed, "feature.txt"), "base\n");
+  git(seed, "add", "--", "feature.txt");
+  git(seed, "commit", "-m", "base");
+  git(seed, "push", "--", repository, "HEAD:refs/heads/main");
+  const base = git(seed, "rev-parse", "HEAD");
+  const { source, path, created: providerRecord } = await installLocalPullRequestProvider(root, repository);
+  vi.stubEnv("PATH", path);
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: source }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, { mode: "ownWorktree", repositoryId: "fixture", commit: base, inputDigest: "a".repeat(64) });
+  if (prepared.phase !== "completed") throw new Error("PR fixture did not prepare");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout) throw new Error("PR fixture has no worktree");
+  await writeFile(join(checkout.realPath, "feature.txt"), "reviewed\n");
+  git(checkout.realPath, "commit", "-am", "reviewed");
+  const head = git(checkout.realPath, "rev-parse", "HEAD");
+  const request = {
+    workspaceProtocol: 1,
+    command: { kind: "workspace.publish", id: randomUUID(), issuedAt: new Date().toISOString() },
+    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey,
+      workspaceHandle: handle, workspaceGeneration: generation, claimId: randomUUID(), fence: 1 },
+    payload: {
+      generation, publication: "openPullRequest",
+      expected: { head, remoteId: "fixture", targetRef: "refs/heads/feature", priorTarget: null },
+      pullRequest: { baseRef: "refs/heads/main", baseCommit: base, title: "Fixture PR", body: "Reviewed", draft: false },
+    },
+  };
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture stopped after the provider accepted the PR");
+  });
+  const route = `/v1/workspaces/${handle}/publication`;
+  expect((await addressedRequest(host, route, request)).status).toBe(202);
+  await vi.waitFor(async () => expect(await readFile(providerRecord, "utf8")).toBe("created\n"));
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  await writeFile(join(seed, "feature.txt"), "new base while offline\n");
+  git(seed, "commit", "-am", "advance upstream after PR creation");
+  git(seed, "push", "--", repository, "HEAD:refs/heads/main");
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect((await addressedRequest(restarted, route, request)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(restarted, request.command.id)).toMatchObject({
+    phase: "completed",
+    result: {
+      publication: "openPullRequest",
+      git: { head, observedTarget: head, priorTarget: null, generation },
+      pullRequest: { url: localPullRequestUrl, number: 7, reused: true },
+    },
+  });
+  expect(git(repository, "rev-parse", "refs/heads/feature")).toBe(head);
+  expect(await readFile(providerRecord, "utf8")).toBe("created\n");
+}, 30_000);
+
+it("C-10 syncs an exact retained target and verifies one checkout update after a lost receipt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-retained-sync-"));
+  roots.push(root);
+  const repo = join(root, "source");
+  git(root, "init", "-b", "main", repo);
+  await writeFile(join(repo, "input.txt"), "base\n");
+  git(repo, "add", "--", "input.txt");
+  git(repo, "commit", "-m", "base");
+  const head = git(repo, "rev-parse", "HEAD");
+  git(repo, "branch", "feature", head);
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repo }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, {
+    mode: "ownWorktree", repositoryId: "fixture", commit: head, inputDigest: "a".repeat(64),
+  });
+  if (prepared.phase !== "completed") throw new Error("sync fixture did not prepare");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout) throw new Error("sync fixture has no checkout");
+  await writeFile(join(repo, "input.txt"), "upstream advanced\n");
+  git(repo, "commit", "-am", "upstream advanced");
+  const target = git(repo, "rev-parse", "HEAD");
+  const command = {
+    workspaceProtocol: 1,
+    command: { id: randomUUID(), kind: "workspace.sync", issuedAt: new Date().toISOString() },
+    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle, workspaceGeneration: generation, claimId: randomUUID(), fence: 3 },
+    payload: {
+      generation,
+      expected: { head, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget: target },
+      strategy: "fastForward",
+      publish: { targetRef: "refs/heads/feature", priorTarget: head },
+    },
+  };
+  const stale = {
+    ...command,
+    command: { ...command.command, id: randomUUID() },
+    owner: { ...command.owner, claimId: randomUUID(), fence: 1 },
+    payload: { ...command.payload, expected: { ...command.payload.expected, priorTarget: head } },
+  };
+  const route = `/v1/workspaces/${handle}/sync`;
+  expect((await addressedRequest(host, route, stale)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(host, stale.command.id)).toMatchObject({
+    phase: "rejected", refusal: { details: { reason: "target_ref_changed" } },
+  });
+  const stalePublication = {
+    ...command,
+    command: { ...command.command, id: randomUUID() },
+    owner: { ...command.owner, claimId: randomUUID(), fence: 2 },
+    payload: { ...command.payload, publish: { ...command.payload.publish, priorTarget: null } },
+  };
+  expect((await addressedRequest(host, route, stalePublication)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(host, stalePublication.command.id)).toMatchObject({
+    phase: "rejected", refusal: { details: { reason: "target_ref_changed" } },
+  });
+  expect(git(repo, "rev-parse", "refs/heads/feature")).toBe(head);
+  expect(git(checkout.realPath, "rev-parse", "HEAD")).toBe(head);
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted after the Git sync and before the terminal SQLite commit");
+  });
+  expect((await addressedRequest(host, route, command)).status).toBe(202);
+  await vi.waitFor(() => expect(git(checkout.realPath, "rev-parse", "HEAD")).toBe(target), { timeout: 5_000 });
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect((await addressedRequest(restarted, route, command)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(restarted, command.command.id)).toMatchObject({
+    operationId: "stageCSync", phase: "completed", owner: command.owner,
+    result: {
+      generation, head: target, priorTarget: target, observedTarget: target, behind: 1,
+      publication: { targetRef: "refs/heads/feature", priorTarget: head, observedTarget: target },
+    },
+  });
+  expect(await readFile(join(checkout.realPath, "input.txt"), "utf8")).toBe("upstream advanced\n");
+  expect(git(checkout.realPath, "reflog", "show", "--format=%H", "HEAD").split("\n").slice(0, 2)).toEqual([target, head]);
+  expect(git(repo, "reflog", "show", "--format=%H", "refs/heads/feature")).toBe(`${target}\n${head}`);
+}, 30_000);
+
+it("C-10 prepares one retained resolver conflict across an interrupted host receipt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-resolver-"));
+  roots.push(root);
+  const repo = join(root, "source");
+  git(root, "init", "-b", "main", repo);
+  await writeFile(join(repo, "input.txt"), "base\n");
+  git(repo, "add", "--", "input.txt");
+  git(repo, "commit", "-m", "base");
+  const base = git(repo, "rev-parse", "HEAD");
+  git(repo, "branch", "resolution", base);
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repo }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, {
+    mode: "ownWorktree", repositoryId: "fixture", commit: base, inputDigest: "a".repeat(64),
+  });
+  if (prepared.phase !== "completed") throw new Error("resolver checkout was not prepared");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout) throw new Error("resolver checkout was not retained");
+  await writeFile(join(checkout.realPath, "input.txt"), "reviewed local\n");
+  git(checkout.realPath, "commit", "-am", "reviewed local");
+  const local = git(checkout.realPath, "rev-parse", "HEAD");
+  await writeFile(join(repo, "input.txt"), "approved upstream\n");
+  git(repo, "commit", "-am", "approved upstream");
+  const target = git(repo, "rev-parse", "HEAD");
+  const command = {
+    workspaceProtocol: 1,
+    command: { id: randomUUID(), kind: "workspace.sync", issuedAt: new Date().toISOString() },
+    owner: { kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle,
+      workspaceGeneration: generation, claimId: randomUUID(), fence: 1 },
+    payload: { generation, expected: { head: local, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget: target },
+      strategy: "merge", onConflict: "prepareResolver",
+      publish: { targetRef: "refs/heads/resolution", priorTarget: base } },
+  };
+  const route = `/v1/workspaces/${handle}/sync`;
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted before the prepared conflict receipt");
+  });
+  expect((await addressedRequest(host, route, command)).status).toBe(202);
+  await vi.waitFor(() => expect(git(checkout.realPath, "rev-parse", "MERGE_HEAD")).toBe(target), { timeout: 5_000 });
+  const conflicted = await readFile(join(checkout.realPath, "input.txt"), "utf8");
+  expect(conflicted).toMatch(/<<<<<<<[\s\S]*reviewed local[\s\S]*approved upstream[\s\S]*>>>>>>>/u);
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect((await addressedRequest(restarted, route, command)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(restarted, command.command.id)).toMatchObject({
+    phase: "completed", result: { generation, head: local, observedTarget: target,
+      conflictedFiles: ["input.txt"] },
+  });
+  expect(await readFile(join(checkout.realPath, "input.txt"), "utf8")).toBe(conflicted);
+  expect(git(repo, "rev-parse", "refs/heads/main")).toBe(target);
+  expect(git(repo, "rev-parse", "refs/heads/resolution")).toBe(base);
+
+  await writeFile(join(checkout.realPath, "input.txt"), "reviewed local\napproved upstream\n");
+  git(checkout.realPath, "add", "--", "input.txt");
+  git(checkout.realPath, "commit", "-m", "Resolve both inputs");
+  const resolution = git(checkout.realPath, "rev-parse", "HEAD");
+  const verification = {
+    ...command,
+    command: { ...command.command, id: randomUUID() },
+    owner: { ...command.owner, fence: 2 },
+    payload: { ...command.payload, onConflict: undefined, resolver: { commandId: command.command.id, action: "verify" } },
+  };
+  vi.spyOn(restarted.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted after the resolved branch updated");
+  });
+  expect((await addressedRequest(restarted, route, verification)).status).toBe(202);
+  await vi.waitFor(() => expect(git(repo, "rev-parse", "refs/heads/resolution")).toBe(resolution), { timeout: 5_000 });
+  await restarted.stop();
+  hosts.splice(hosts.indexOf(restarted), 1);
+  const finalHost = await bootHost({ runtimeRoot: root });
+  hosts.push(finalHost);
+  expect((await addressedRequest(finalHost, route, verification)).status).toBe(202);
+  expect(await waitForWorkspaceReceipt(finalHost, verification.command.id)).toMatchObject({
+    phase: "completed",
+    result: { head: resolution, resolverSettlement: "verified", publication: { observedTarget: resolution } },
+  });
+  expect(git(repo, "reflog", "show", "--format=%H", "refs/heads/resolution")).toBe(`${resolution}\n${base}`);
+}, 30_000);
+
+it("C-10 preserves dirty tracked and untracked files before releasing a retained address", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-retained-archive-"));
+  roots.push(root);
+  const repository = join(root, "source");
+  git(root, "init", "-b", "main", repository);
+  await writeFile(join(repository, "tracked.txt"), "base\n");
+  git(repository, "add", "--", "tracked.txt");
+  git(repository, "commit", "-m", "base");
+  const commit = git(repository, "rev-parse", "HEAD");
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repository }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const prepared = await prepareAndRead(host, {
+    mode: "ownWorktree", repositoryId: "fixture", commit, inputDigest: "a".repeat(64),
+  });
+  if (prepared.phase !== "completed") throw new Error("archive fixture was not prepared");
+  const { handle, generation } = prepared.result.workspace;
+  const checkout = host.hostState.getWorkspace(handle);
+  if (!checkout?.repoPath) throw new Error("archive fixture has no owned checkout");
+  await writeFile(join(checkout.realPath, "tracked.txt"), "dirty before archive\n");
+  await writeFile(join(checkout.realPath, "untracked.txt"), "untracked before archive\n");
+  const issuedAt = new Date().toISOString();
+  const owner = {
+    kind: "workspaceOperation", hostKey: host.hostState.hostKey, workspaceHandle: handle,
+    workspaceGeneration: generation, claimId: randomUUID(), fence: 1,
+  };
+  const preserveId = randomUUID();
+  const quiescenceId = randomUUID();
+  const preserve = {
+    workspaceProtocol: 1, owner, command: { id: preserveId, kind: "workspace.preserve", issuedAt },
+    payload: { generation, disposition: "archive", quiescenceId },
+  };
+  expect((await addressedRequest(host, `/v1/workspaces/${handle}/preserve`, preserve)).status).toBe(202);
+  const archived = await vi.waitFor(async () => {
+    const body = await (await addressedRequest(host, `/v1/commands/${preserveId}`)).json() as {
+      result: { dispositionId: string; retainedCommit: string };
+    };
+    expect(body).toMatchObject({ phase: "completed", result: {
+      dispositionId: preserveId, retainedCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
+    } });
+    return body.result;
+  });
+  const releaseId = randomUUID();
+  const remove = {
+    workspaceProtocol: 1, owner, command: { id: releaseId, kind: "workspace.release", issuedAt },
+    payload: { generation, dispositionId: archived.dispositionId, quiescenceId },
+  };
+  const release = (target: BootedHost, request: typeof remove = remove) => fetch(`${target.url}/v1/workspaces/${handle}`, {
+    method: "DELETE",
+    headers: { [EXECUTION_HOST_KEY_HEADER]: owner.hostKey, "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  const changed = join(checkout.realPath, "tracked.txt");
+  await writeFile(changed, "new work after archive\n");
+  const staleReleaseId = randomUUID();
+  expect((await release(host, { ...remove, command: { ...remove.command, id: staleReleaseId } })).status).toBe(202);
+  await vi.waitFor(async () => {
+    const failed = await addressedRequest(host, `/v1/commands/${staleReleaseId}`);
+    expect(await failed.json()).toMatchObject({
+      phase: "rejected", refusal: { details: { reason: "retained_disposition_required" } },
+    });
+  });
+  expect(await readFile(changed, "utf8")).toBe("new work after archive\n");
+  await writeFile(changed, "dirty before archive\n");
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
+    throw new Error("fixture interrupted after physical removal and before the release receipt");
+  });
+  expect((await release(host)).status).toBe(202);
+  await vi.waitFor(async () => await expect(stat(checkout.realPath)).rejects.toMatchObject({ code: "ENOENT" }));
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  const restarted = await bootHost({ runtimeRoot: root });
+  hosts.push(restarted);
+  expect(restarted.hostState.getReceipt(releaseId)).toMatchObject({ phase: "accepted" });
+  expect((await release(restarted)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(restarted, `/v1/commands/${releaseId}`);
+    expect(await response.json()).toMatchObject({
+      phase: "completed", result: { handle, generation, dispositionId: preserveId },
+    });
+  });
+  await expect(stat(checkout.realPath)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(git(checkout.repoPath, "show", archived.retainedCommit + ":tracked.txt")).toBe("dirty before archive");
+  expect(git(checkout.repoPath, "show", archived.retainedCommit + ":untracked.txt")).toBe("untracked before archive");
+  expect((await release(restarted)).status).toBe(202);
+}, 30_000);
+
+it("C-06 creates the declared workspace modes and refuses a stale root, missing commit and escaped directory alias", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-workspace-modes-"));
+  const outside = await mkdtemp(join(tmpdir(), "stage-c-workspace-outside-"));
+  roots.push(root, outside);
+  const source = join(root, "source");
+  const directory = join(root, "approved-directory");
+  const alias = join(root, "escaped-directory");
+  await mkdir(directory);
+  await symlink(outside, alias);
+  git(root, "init", "-b", "main", source);
+  git(source, "commit", "--allow-empty", "-m", "base");
+  const commit = git(source, "rev-parse", "HEAD");
+  const inputDigest = "7".repeat(64);
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ source }));
+  vi.stubEnv(
+    "MAISTER_WORKSPACE_DIRECTORIES",
+    JSON.stringify({ directory, alias }),
+  );
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const own = await prepareAndRead(host, {
+    mode: "ownWorktree",
+    repositoryId: "source",
+    commit,
+    inputDigest,
+  });
+  if (own.phase !== "completed") throw new Error("root workspace failed");
+  const parent = own.result.workspace;
+
+  const shared = await prepareAndRead(host, {
+    mode: "sharedWorktree",
+    parentHandle: parent.handle,
+    parentGeneration: parent.generation,
+    inputDigest,
+  });
+  if (shared.phase !== "completed") throw new Error("shared workspace failed");
+  expect(
+    host.hostState.getWorkspace(shared.result.workspace.handle)?.realPath,
+  ).toBe(host.hostState.getWorkspace(parent.handle)?.realPath);
+  expect(
+    await prepareAndRead(host, {
+      mode: "sharedWorktree",
+      parentHandle: parent.handle,
+      parentGeneration: parent.generation + 1,
+      inputDigest,
+    }),
+  ).toMatchObject({
+    phase: "rejected",
+    refusal: { details: { reason: "workspace_rejected" } },
+  });
+  expect(
+    await prepareAndRead(host, {
+      mode: "readOnlyCheckout",
+      repositoryId: "source",
+      commit,
+      inputDigest,
+    }),
+  ).toMatchObject({
+    phase: "completed",
+    result: { workspace: { mode: "readOnlyCheckout", observedCommit: commit } },
+  });
+  expect(
+    await prepareAndRead(host, { mode: "emptyDirectory", inputDigest }),
+  ).toMatchObject({
+    phase: "completed",
+    result: { workspace: { mode: "emptyDirectory", observedCommit: null } },
+  });
+  expect(
+    await prepareAndRead(host, {
+      mode: "directory",
+      directoryProfileId: "directory",
+      inputDigest,
+    }),
+  ).toMatchObject({
+    phase: "completed",
+    result: { workspace: { mode: "directory", observedCommit: null } },
+  });
+  expect(
+    await prepareAndRead(host, {
+      mode: "directory",
+      directoryProfileId: "directory",
+      inputDigest,
+    }),
+  ).toMatchObject({
+    phase: "rejected",
+    refusal: { details: { reason: "workspace_rejected" } },
+  });
+  expect(
+    await prepareAndRead(host, {
+      mode: "directory",
+      directoryProfileId: "alias",
+      inputDigest,
+    }),
+  ).toMatchObject({
+    phase: "rejected",
+    refusal: { details: { reason: "workspace_rejected" } },
+  });
+  expect(
+    await prepareAndRead(host, {
+      mode: "ownWorktree",
+      repositoryId: "source",
+      commit: "a".repeat(40),
+      inputDigest,
+    }),
+  ).toMatchObject({
+    phase: "rejected",
+    refusal: { details: { reason: "source_commit_unavailable" } },
+  });
+}, 30_000);

@@ -17,6 +17,7 @@ await registerContainerAllocation(invocation);
 const reaper = await getReaper(await getContainerRuntimeClient());
 const container = await new PostgreSqlContainer("pgvector/pgvector:pg16")
   .withLabels({ [INVOCATION_CONTAINER_LABEL]: invocation.id })
+  .withTmpFs({ "/var/lib/postgresql/data": "rw,size=128m" })
   .start();
 
 await registerContainer(invocation, container.getId());

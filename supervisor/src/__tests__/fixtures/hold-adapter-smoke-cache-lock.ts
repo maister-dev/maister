@@ -1,4 +1,4 @@
-import { withAdapterSmokeCacheLock } from "../../adapter-smoke-cache-lock";
+import { withSqliteFileLock as withAdapterSmokeCacheLock } from "../../sqlite-file-lock";
 
 const cachePath = process.argv[2];
 

@@ -1336,6 +1336,14 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_IMPORT_MAX_ENTRIES` | no | `2000` | **(ADR-096.)** Max file count per import batch; over → `PRECONDITION` pre-write. `importMaxEntries()`. Host/service-env only. |
 > | `MAISTER_IMPORT_MAX_FILE_BYTES` | no | `10485760` (10 MiB) | **(ADR-096.)** Per-file size cap within an import batch; over → `PRECONDITION` pre-write. `importMaxFileBytes()`. Host/service-env only. |
 > | `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
+> | `MAISTER_SELECTED_EXECUTION_HOST_KEY` | no | — | Web pins the configured supervisor by the stable key reported in health. Set `MAISTER_SUPERVISOR_URL` to its trusted HTTP(S) origin. |
+> | `MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS` | no | — | JSON array of project IDs eligible to set the addressed supervisor as their saved default and to use it on direct project Flow launches. When omitted, the configured supervisor is eligible instance-wide. |
+> | `MAISTER_ADDITIONAL_EXECUTION_HOSTS` | no | — | Optional JSON array with one trusted descriptor containing a distinct HTTP(S) origin `url`, stable `hostKey`, `displayName` and optional `projectIds`. A pinned default supervisor and the peer-registry migration are required. The peer may set `maxConcurrentRuns` (integer from 1 to 1,000) and `draining` (boolean). A peer's project list further restricts the instance list. |
+> | `MAISTER_SELECTED_EXECUTION_HOST_MAX_CONCURRENT_RUNS` | no | — | Optional limit for new addressed admissions to the configured default supervisor, from 1 to 1,000. Global limits still apply independently. |
+> | `MAISTER_SELECTED_EXECUTION_HOST_DRAIN` | no | `0` | `1` prevents new addressed reservations on the default supervisor and lets its current owners finish or reconcile. |
+> | `MAISTER_WORKSPACE_REPOSITORIES` | no | — | Supervisor-only JSON map from approved repository IDs to credential-free HTTPS/SSH URLs or trusted absolute paths. The default ID for a project checkout is the Web project ID. The supervisor uses its own Git credentials and private Git cache. |
+> | `MAISTER_API_BASE_URL` | for addressed MAIster MCP | — | Set the same Web origin on Web and its supervisor. The supervisor checks the configured origin before starting the facade and chooses its local executable. Use `MAISTER_MCP_FACADE_COMMAND` on the supervisor to override the executable. |
+> | `MAISTER_WORKSPACE_DIRECTORIES` | no | — | Supervisor-only JSON map from directory profile IDs to absolute directories inside its approved workspace roots. |
 > | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
 > | `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |
 > | `MAISTER_HEARTBEAT_INTERVAL_MS` | no | `5000` | Supervisor orphan-child detection |
@@ -1380,6 +1388,26 @@ SSE, never embedded in `session/update` payloads visible to the browser.
 
 `.env.example` in the repo root documents the full set with safe placeholder
 values.
+
+### Addressed read-only checkouts
+
+Addressed ACP sessions with a read-only primary or sibling checkout require the
+supervisor's native write guard. Darwin uses `/usr/bin/sandbox-exec`. On Linux,
+install `/usr/bin/bwrap` in the supervisor's environment and enable its
+unprivileged user and mount namespace prerequisites. The image includes
+Bubblewrap. Container policy must permit namespaced mounts and Bubblewrap's
+write to the user namespace limit under `/proc/sys/user/`. The supervisor
+applies the write restriction before the adapter runs. A missing driver
+refuses session creation with `read_only_process_unavailable`. The Linux
+integration fixture uses `MAISTER_TEST_ADDRESSED_READ_ONLY=1` on a configured
+environment to exercise the native wrapper.
+
+For a project managed by an addressed supervisor, executable trust allows
+the supervisor to run the pinned Flow's `setup.sh` on first use. Web can
+show the central installation's setup as pending while the host holds a
+verified setup receipt. Install the package runtime prerequisites under
+the supervisor's account. If a setup stops before a successful receipt,
+inspect the owning host and any effects before retrying the revision.
 
 ## Authentication & RBAC
 

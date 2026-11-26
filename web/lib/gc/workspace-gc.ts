@@ -38,6 +38,7 @@ import {
   WORKTREE_TTL_RUN_STATUSES,
 } from "@/lib/runs/run-status-sets";
 import {
+  archiveExpiredAddressedWorkbench,
   claimLifecycleOperation,
   finalizeLifecycleOperation,
   recordArchive,
@@ -107,6 +108,7 @@ type CandidateRow = {
   resultContract?: RunResultContract | null;
   knowledgeAccess?: KnowledgeAccessCapture | null;
   workspaceId: string;
+  ownershipKind: "legacy_path" | "host_owned";
   worktreePath: string;
   parentRepoPath: string;
   branch: string;
@@ -264,6 +266,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
   const rows = await db
     .select({
       workspaceId: workspaces.id,
+      ownershipKind: workspaces.ownershipKind,
       worktreePath: workspaces.worktreePath,
       parentRepoPath: workspaces.parentRepoPath,
       branch: workspaces.branch,
@@ -465,6 +468,18 @@ export async function runWorkspaceGcSweep(
     let attemptId: string | null = null;
 
     try {
+      if (cand.ownershipKind === "host_owned") {
+        const result = await archiveExpiredAddressedWorkbench(
+          db,
+          cand.workspaceId,
+          now(),
+        );
+        if (!result.idempotent) {
+          preserved += 1;
+          pruned += 1;
+        }
+        return;
+      }
       const claim = await claimLifecycleOperation({
         database: db,
         runId: cand.runId,
@@ -622,14 +637,15 @@ export async function runWorkspaceGcSweep(
       failed += 1;
       retryableFailed += 1;
 
-      if (attemptId !== null) {
+      if (attemptId !== null || cand.ownershipKind === "host_owned") {
         try {
-          await finalizeLifecycleOperation({
-            database: db,
-            workspaceId: cand.workspaceId,
-            attemptId,
-            state: "failed",
-          });
+          if (attemptId !== null)
+            await finalizeLifecycleOperation({
+              database: db,
+              workspaceId: cand.workspaceId,
+              attemptId,
+              state: "failed",
+            });
           await scheduleRetry(cand);
         } catch (finalizeError) {
           log.error(

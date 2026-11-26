@@ -2,6 +2,8 @@ import type { HostState } from "./host-state";
 import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { Logger } from "pino";
 import type { WorkspaceResolution } from "./workspace-registry";
+import { workspaceAdapterEnvironment } from "./workspace-adapter-environment";
+import { protectWorkspaceProcess } from "./workspace-read-only-process";
 import type { Readable } from "node:stream";
 import type { SessionRegistry } from "./registry";
 
@@ -99,6 +101,7 @@ export type ChildEnvRequest = Pick<
 export function buildChildEnv(
   request: ChildEnvRequest,
   opts: {
+    hostEnvironment?: NodeJS.ProcessEnv;
     contextMounts?: ContextMount[];
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
@@ -120,7 +123,7 @@ export function buildChildEnv(
       : {};
 
   return {
-    ...process.env,
+    ...(opts.hostEnvironment ?? process.env),
     ...(request.executor.env ?? {}),
     ...(request.adapterLaunch?.env ?? {}),
     ...(opts.capabilityProfilePath
@@ -192,11 +195,19 @@ export async function spawnSession(
     }
 
     const childEnv = buildChildEnv(request, {
+      hostEnvironment:
+        workspace.ownershipKind === "host_owned"
+          ? workspaceAdapterEnvironment(adapterRuntime.id, process.env)
+          : undefined,
       contextMounts: workspace.contextMounts,
       capabilityProfilePath: opts.runtimeObjectEnv?.capabilityProfilePath,
       capabilityInstructionsPath:
         opts.runtimeObjectEnv?.capabilityInstructionsPath,
       outputPaths: opts.runtimeObjectEnv?.outputPaths,
+    });
+    const nativeLaunch = await protectWorkspaceProcess(workspace, {
+      binary,
+      arguments: args,
     });
 
     logger.info(
@@ -303,7 +314,7 @@ export async function spawnSession(
             detached: true,
             stdio: ["pipe", "pipe", "inherit", "ipc"],
           })
-        : spawn(binary, args, {
+        : spawn(nativeLaunch.binary, nativeLaunch.arguments, {
             cwd: workspace.cwd,
             env: childEnv,
             stdio: ["pipe", "pipe", "inherit"],
@@ -402,6 +413,7 @@ export async function spawnSession(
       // with the mounts the web tier materialized for this session.
       contextMounts: workspace.contextMounts,
       runtimeOutputObjectIds: opts.runtimeObjectEnv?.outputObjectIds,
+      workspacePackageInstructions: workspace.packageInstructions,
       capabilityDenyCount: 0,
       capabilityPendingWriteIds: new Set<string>(),
       repeatCount: 0,
@@ -537,8 +549,8 @@ export async function spawnSession(
           record,
           state: opts.hostState,
           registry: opts.registry,
-          binary,
-          arguments: args,
+          binary: nativeLaunch.binary,
+          arguments: nativeLaunch.arguments,
           environment: childEnv,
         });
       } catch (cause) {

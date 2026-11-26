@@ -1,7 +1,7 @@
 # Implementation Plan: Stage A/B stabilization
 
 Branch at planning: `feature/stage-b-durable-execution-host-data-plane`.
-Created: 2026-09-05. Status: **Implementation in progress; S0–S4 qualified (C07–C10 closed); S5.1 complete; S5.2 accepted by exact-source hosted macOS evidence; 43/45 complete; S5.3/S5.4 pending**.
+Created: 2026-09-05. Status: **44/45 complete. S0–S4 qualified (C07–C10 closed), S5.1 complete, S5.2 historically qualified on hosted macOS, and S5.3 qualified locally. S5.4/C11 awaits release qualification.**
 Implementation base: the audited Stage B tip, followed by revalidation against the then-current local `main`.
 
 ## Settings
@@ -892,7 +892,49 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
 | Postgres connection loss during projection | B3: committed consumer claim, identified backend blocked at its domain write; terminate that backend. | isolation; `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D3; retain web `web/lib/execution-host/events/__tests__/projection-worker.integration.test.ts:163,201` | Existing tests prove failed **shutdown cleanup**, not loss during apply. Production control proves effect/cursor rollback together, original failure visible, successor claim retries and projects once without new event. Preserve cleanup tests' EXECUTOR_UNAVAILABLE/retained-claim assertions. |
 | Web death between create ACK and first prompt | Create ACK and binding committed; proxy holds first prompt before upstream forwarding. Kill web group, then restart. | isolation; `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D4 | Production proof qualified locally. Same create intent/session recovered, zero host prompts at death, one prompt/application after restart. Existing `web/lib/flows/graph/__tests__/prompt-owners.integration.test.ts:1015` before_admission/before_effect/**before_ack** windows do not prove this post-ACK window. |
 
-- [ ] **S5.3 — Browser lifecycle and runtime/transport matrix.** Includes the Linux uid/mount-namespace isolation driver and separate-user Linux deployment layout deferred by S5.2 option B. Owner Q; Depends: S5.2 and S3 browser policy. Files: new dedicated Playwright real-supervisor config, lifecycle/content specs, CI/scripts, minimum Node/image qualification. Exercise launch→stream→HITL→checkpoint→resume→cancel/completion/history, each owner-visible reply and active MIME download after restarts. Run AT-17 on minimum 24.15, 24.19 and selected image with exact binary/dependency versions. Logging: scenario/revision/runtime/image/transport phase and result. Acceptance: browser outcomes come from real web/supervisor; default fake-peer E2E remains supporting regression only; no full-Node-24 claim from one passing patch.
+- [x] **S5.3 — Browser lifecycle and runtime/transport matrix.** Includes the Linux uid/mount-namespace isolation driver and separate-user Linux deployment layout deferred by S5.2 option B. Owner Q; Depends: S5.2 and S3 browser policy. Files: new dedicated Playwright real-supervisor config, lifecycle/content specs, CI/scripts, minimum Node/image qualification. Exercise launch→stream→HITL→checkpoint→resume→cancel/completion/history, each owner-visible reply and active MIME download after restarts. Run AT-17 on minimum 24.15, 24.19 and selected image with exact binary/dependency versions. Logging: scenario/revision/runtime/image/transport phase and result. Acceptance: browser outcomes come from real web/supervisor; default fake-peer E2E remains supporting regression only; no full-Node-24 claim from one passing patch.
+
+  **Local S5.3 qualification.** The [production-image browser smoke](../../web/scripts/smoke-production-split-users.ts)
+  boots production Web and supervisor on Linux arm64 with UID 1001 and 1002,
+  a shared Git/worktree group, a private supervisor runtime directory and
+  a fresh migrated PostgreSQL database. Web receives `EACCES` on the
+  supervisor's live SQLite file. Chromium signs in and opens the board.
+  The board launch HTTP path and Run stream return the expected effects.
+  A checkpointed permission resumes after Web SIGKILL under epoch 2 with
+  the original workspace handle and reaches Review. An independent run
+  cancels and releases assignment ownership. The supervisor restarts with
+  the same durable key and a new boot ID. Chromium downloads the saved
+  HTML after another Web restart and the content endpoint returns the
+  original bytes with attachment disposition. The supervisor uses the
+  deterministic resumable ACP fixture.
+
+  The browser smoke now drives the board Launch dialog, receives the exact
+  canonical permission event on a live-only SSE subscription, and observes
+  the Run move to NeedsInput without a reload. It clicks Allow after a
+  checkpoint and Web restart, then uses the Run Stop confirmation on an
+  independent Flow. Stop returns Review with supervisor termination
+  confirmed, and the assignment releases. The production-image Chrome 157
+  run used Linux arm64 and Node 24.22.2 on image
+  `sha256:b66189f539ff68a86340525b6c5d46224fa430dfe810cf53d20e6c3f8187993d`.
+  Local log `/private/tmp/maister-stage-c-final-chrome.log`.
+
+  - Build `maister-s53-stage-c:local`, Linux arm64, image ID
+    `sha256:d402a6350b86eedb18d17980842f4b72a146cdecf849a61c62db3adb13d714cc`,
+    Node 24.22.2, Next.js 16.4.6. The Docker build used the branch's
+    `945b1127e` runtime source. The browser harness runs outside the
+    image and uses only the packaged runtime code for Web and supervisor.
+  - AT-17 passed 20/20 on Node 24.15.0 (Darwin arm64), 24.19.0 (Linux
+    arm64 with the Node binary from `node:24.19-bookworm-slim`) and
+    the selected production Linux image. The image's HTTP/SIGTERM smoke
+    also passed against migrated PostgreSQL.
+  - Reports are `/private/tmp/maister-s53-split-user-confirmed.log` and
+    `/private/tmp/maister-s53-{node24.15-binary,node24.19-binary,image-binary,image-http}.log`.
+    The [earlier Librarian browser job](https://github.com/maister-dev/maister/actions/runs/45222613398/job/137860624146)
+    passed Testcontainers startup on base `22df665aa`. This is separate
+    evidence from the corrected S5.4 candidate.
+  - The release workflow runs the split-user smoke against its built
+    image. The systemd units keep their documented shared-user rollout.
+    This locally verified checkpoint brings the plan to **44/45**.
 
   **Owner sequencing override (2026-10-02):** finish one further corrective
   iteration in `codex-stage-ab-ci-r9.md`, then enter S5.3. S5.2 stays open at
@@ -932,10 +974,41 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   browser lifecycle and the final S5.4/C11 audit remain open. No old hosted
   receipt is relabelled as acceptance of the corrective code.
 
+  **Current hosted regression (base `22df665aa`).** [CI run 45222613398](https://github.com/maister-dev/maister/actions/runs/45222613398)
+  passed preflight for part 2 and then returned 124 at the overall part
+  deadline. The reported build took 512 seconds and the process-death suite
+  took 1,269 seconds out of 1,901 seconds available. W06/W08 exceeded its
+  case budget while repeatedly booting the real stack. Part 2 published no
+  complete production result. Parts 1 and 3 passed 20 and 10 cases,
+  respectively. The combined gate remained red. Web unit failed on both
+  Node 24 and Node 26 because `inspectDeliveryBase` was missing from the
+  operation-scoped filesystem inventory. The repository-worktree classification
+  restored the existing inventory invariant. The full Web unit suite passes
+  9,313/9,313 on Node 24.15.0 and Node 26.13.1 at `fced03c63`.
+
+  **Correction.** Keep the measured process-death suite on its own VM
+  and distribute the remaining whole suites across the existing parts
+  (24/7/22 cases). Preserve the same three preflights, 53 case names,
+  and job budgets. In W06/W08, account for the initial disposable stack
+  setup in its own hook. Preserve the 240-second case deadline, all real
+  restart boundaries and assertions. The original selector failed the
+  dedicated-part assertion. The corrected selector and evidence
+  validators passed all 41 tool tests. The three corrected production
+  parts passed 24/7/22 on Darwin arm64 with Node 24.15.0. Their Vitest
+  durations were 385.54, 152.40 and 269.71 seconds, respectively. D1,
+  D3 and W06/W08 passed in the corrected sequence. The raw reports are
+  under `/private/tmp/maister-ab-rebalanced`. A prior local repeat
+  crossed a Git commit and correctly failed the production build identity
+  check. The corrected three-part run kept the revision fixed.
+  Qualification of the revised hosted matrix requires a new combined
+  receipt for its exact SHA.
+
   The final corrective iteration also carries the unresolved Librarian
   Testcontainers initialization timeout into this gate: collect phase evidence
   before changing the probe contract. A generic 3-second client-init timeout
   does not prove the Docker daemon itself was unavailable.
+  Librarian passed all 15 browser scenarios locally on `fced03c63`
+  under Node 24.15.0, with phase diagnostics and zero process leaks.
 
   **Named scenario added by ADR-180 (one owner for the permission deadline).**
   *A permission older than the old host window while the operator is active →
@@ -969,7 +1042,31 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   **No** `session.exited` `reason` enum change · **no** `httpStatusForCode`
   change · **no** migration · **no** new `runs.status` · **no** new index.
 
-- [ ] **S5.4 — Final specification, lineage and acceptance gate.** Owner D/Q; Depends: S5.1–S5.3. Files: all affected canonical docs/analytics/API/ERD/error/config surfaces and this plan; no new summary-report deliverable. Recheck current main/HEAD; revalidate changed findings, migration order/constraints/snapshot hashes and ADR anchors, including prose provisional numbering. Run full suites/gates, verify every AT row with actual runner/case/artifact evidence, and adversarial review of final fix cycles. Logging: exact gate/ref/scenario/evidence state and unresolved risk IDs. Acceptance: all AB-01–17 and final matrix rows satisfied; no known A/B defect remains hidden by quarantine or Implemented prose; Stage C is still unimplemented.
+- [ ] **S5.4 — Final specification, lineage and acceptance gate.** Owner D/Q; Depends: S5.1–S5.3. Files: all affected canonical docs/analytics/API/ERD/error/config surfaces and this plan; no new summary-report deliverable. Recheck current main/HEAD; revalidate changed findings, migration order/constraints/snapshot hashes and ADR anchors, including prose provisional numbering. Run full suites/gates, verify every AT row with actual runner/case/artifact evidence, and adversarial review of final fix cycles. Logging: exact gate/ref/scenario/evidence state and unresolved risk IDs. Acceptance: all AB-01–17 and final matrix rows satisfied; no known A/B defect remains hidden by quarantine or Implemented prose; the A/B release candidate contains only the A/B execution boundary.
+
+  **Local corrective checkpoint.** Web integration passed 381/381 on shard 1.
+  Shard 2 on `fced03c63` passed 344/345. Its failing permission/crash case
+  observed `Crashed` with a still-active incarnation. A one-worker projection
+  run reproduced the failure. A read of the disposable database confirmed the
+  lifecycle cursor had advanced over the accepted unbound crash after assignment
+  release. The ordered ingest regression reproduces the lost historical witness
+  with an active successor. The canonical projector now settles only the exact
+  historical incarnation, and migration `0369_reconcile_skipped_session_crashes`
+  repairs the same disposition after an old cursor has advanced. See [ADR-177](../../docs/decisions/adr-177.md).
+
+  The ingest suite passes 22/22 on the corrected source, including fresh schema
+  setup and the data repair on populated PostgreSQL, its replay and untouched
+  successor and stale-epoch sibling. The real supervisor HITL/crash suite passes
+  15/15 under each supported one- and two-worker projection configuration.
+  Its restart test observes the durable crash with automatic re-entry paused.
+  The unchanged crash-recover continuation suite passed 15/15 with autonomous
+  re-entry enabled. RED and GREEN logs are in
+  `/private/tmp/maister-stage-ab-s54-fced03c63`.
+
+  The corrected candidate still needs same-revision hosted acceptance:
+  the three preflights and combined isolation receipt, Web/runtime matrix
+  and the production image job including the new browser check. Historical
+  or locally passing reports cannot discharge these release conditions.
 
 S5 rollback: qualification-only changes can revert independently, but evidence cannot be treated as passing after reverting a tested fix. Runtime state retains S1–S4 recovery/retention guarantees. Release only a commit whose concrete scenario matrix and specification gates correspond to that exact revision.
 
@@ -1085,4 +1182,4 @@ they do not check S5.2 or supply final R9 hosted acceptance. Completed remains
 | K11 Flaky/shared-state tests mask defects | Disposable PG/ports/roots, actual processes, exact failure sets, nonempty discovery, no A/B quarantine | Q; absent/unexecuted critical case is a failed gate. |
 | K12 Scope growth into Stage C/D or new workflow engine | Keep repository/Git owners and existing domain reducers; operational claim/receipt/import state only | D; unrelated ownership/placement/auth/relay work removed from this delivery. |
 
-Completion requires every finding's primary test and final matrix row to pass at the release revision, complete owner/refusal/recovery tables to match enforcing code/constraints, all required suites/spec/lineage gates green with honest failure-set handling, and operator upgrade/rollback instructions verified on real preserved histories. Review each fix cycle adversarially, especially event ordering, late success, activation and destructive cleanup. Stage C planning begins only after this A/B prerequisite is accepted; no implementation is performed by this plan.
+Completion requires every finding's primary test and final matrix row to pass at the A/B release revision, complete owner/refusal/recovery tables to match enforcing code/constraints, all required suites/spec/lineage gates green with honest failure-set handling, and operator upgrade/rollback instructions verified on real preserved histories. Review each fix cycle adversarially, especially event ordering, late success, activation and destructive cleanup. S5.4/C11 gates rollout of Stage C to a deployed instance. The separate [Stage C plan](feature-stage-c-selected-supervisor.md) owns local implementation and browser qualification.

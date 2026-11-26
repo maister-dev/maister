@@ -948,3 +948,32 @@ and offers retry. See [agent memory](system-analytics/agent-memory.md#human-cata
 Timeout, stale and autonomous refusal are recorded decisions with typed
 reasons. An uncertain host or provider read preserves the existing deadline
 and grants no delivery authority.
+
+## Addressed workspace input refusals
+
+| Reason | Effect |
+| --- | --- |
+| `workspace_preparation_pending` | Session creation returns `PRECONDITION` and leaves the reserved Run without a child until the selected host's input receipt is applied. |
+| `workspace_preparation_refused` | The accepted board launch is held after its selected supervisor returns a terminal preparation refusal. The original command and ownership record remain available for diagnosis. |
+| `launch_execution_host_capacity` | The selected supervisor has no free Run slot. The launch retains that supervisor and remains eligible when its slot is released. |
+| `launch_execution_host_draining` | The selected supervisor is draining. Existing assignments continue to completion or reconciliation. Reload Web with drain cleared to accept new work. |
+| `launch_execution_host_unavailable` | The selected identity cannot currently admit work. Restore the original supervisor and its retained state to continue. |
+| `execution_host_quiescence_pending` | A previous assignment still has an unsettled physical effect. A new assignment waits for an owning-host terminal or cancellation witness. |
+| `workspace_requirements_pending` | Workload and session admission wait until the selected host's required successful probe receipts have been applied. |
+| `workspace_requirement_failed` | A required probe failed and its process group retired. The Run records `PRECONDITION`, releases the assignment and retains diagnostic objects. |
+| `workspace_diff_range_invalid` | The owning supervisor cannot verify the requested ancestry or retained checkout. No diff object is returned. |
+| `workspace_diff_too_large` | The Git patch exceeds 64 KiB. No diff object is returned. |
+| `workspace_log_cursor_invalid` | The page cursor is malformed or belongs to a different host, workspace generation or HEAD. Start from the first page. |
+| `workspace_log_too_large` | The Git history page exceeds 64 KiB. Use a smaller page size. |
+| `workspace_log_pending` | Web has no applied runtime-object evidence for the addressed history page yet. |
+| `workspace_template_context_invalid` | The sealed values or template cannot be verified or rendered within the workload budget. No process is started. |
+| `workspace_workload_cancelled` | A durable cancellation bound to this workspace, assignment and workload arrived before it. No process is started. |
+| `workspace_checkpoint_unknown` | The supervisor cannot verify a Git checkpoint for this workspace, generation and assignment. |
+| `workspace_writer_active` | A process or an outstanding Git operation holds the workspace writer fence. Retry after its outcome is recorded. |
+| `publication_provider_unavailable` | The selected supervisor could not prepare the approved provider's credentials or client before publishing the PR branch. |
+| `addressed_stop_pending` | Stop is retained on the current assignment. Web is awaiting canonical supervisor retirement evidence. |
+| `addressed_stop_owner_changed` | The Run no longer has the addressed workspace and assignment that can accept this Stop. |
+| `addressed_stop_child_active` | A dependent child still owns work. Stop the child through its current owner before releasing the parent. |
+| `workspace_input_changed` | The supervisor refuses to spawn when verification of the retained manifest, its files or the authorized context checkout fails. |
+| `addressed_native_settings_unavailable` | The addressed Flow node needs an adapter settings file. The current supervisor capability preparation stops before creating an ACP session. |
+| `workspace_context_authority_required` | Web refuses a context declaration whose launching user or current agent attachment lacks authority. A removed project membership retains the existing `launch_authority_revoked` reason. |

@@ -204,7 +204,7 @@ export async function installOperatorFlow(
       async (tx) => {
         await authorize(tx);
       },
-      () => stageFlowSetup(db, revision, pin.flowId),
+      () => stageFlowSetup(db, projectId, revision, pin.flowId),
     );
   const result = await withSettledSetups(() =>
     db.transaction(async (tx) => {

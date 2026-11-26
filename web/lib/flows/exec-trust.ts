@@ -15,6 +15,7 @@ import { requireParentPackageTrust } from "@/lib/project-dependencies/member-tru
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { projectFlowSetupOwner } from "@/lib/execution-host/selected-endpoint";
 import { runRevisionSetup } from "@/lib/flows";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
@@ -85,6 +86,8 @@ export async function trustExecutable(args: {
     );
   }
 
+  const managerOwnsSetup = projectFlowSetupOwner(args.projectId) === "manager";
+
   // Flip exec_trust → trusted unconditionally (idempotent).
   const queued = await db.transaction(async (tx: Db) => {
     await lockCurrentFlowSetup(tx, flow, args.actorUserId);
@@ -93,6 +96,7 @@ export async function trustExecutable(args: {
       .set({ execTrust: "trusted" })
       .where(eq(flowRevisions.id, rev.id));
 
+    if (!managerOwnsSetup) return [];
     return enqueueTrustedSetup(
       tx,
       args.actorUserId,
@@ -117,7 +121,7 @@ export async function trustExecutable(args: {
       .from(flowRevisions)
       .where(eq(flowRevisions.id, rev.id));
     setupStatus = completed.status;
-  } else if (rev.setupStatus === "pending" || rev.setupStatus === "failed") {
+  } else if (managerOwnsSetup && (rev.setupStatus === "pending" || rev.setupStatus === "failed")) {
     setupStatus = await withSetupAuthority(
       db,
       (tx) => lockCurrentFlowSetup(tx, flow, args.actorUserId),

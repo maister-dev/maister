@@ -14,6 +14,7 @@ import { getTranslations } from "next-intl/server";
 import clsx from "clsx";
 
 import { FlightCard } from "@/components/board/flight-card";
+import { BoardLaunchDialogs } from "@/components/board/launch-popover";
 import { boardTaskGate } from "@/components/board/board-task-gate";
 import { TaskCard } from "@/components/board/task-card";
 import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
@@ -231,10 +232,11 @@ export async function Board({
     return flowIncompatibilityReason(card.flowIncompatibility);
   };
 
-  return (
+  const grid = (
     <section
       data-board
       aria-label="Task board"
+      tabIndex={-1}
       className={clsx(
         "flex items-stretch gap-3.5 overflow-x-auto overflow-y-visible pb-3.5 [scroll-snap-type:x_proximity]",
         "data-[layout=swimlanes]:flex-col data-[layout=swimlanes]:overflow-x-visible",
@@ -348,4 +350,6 @@ export async function Board({
       })}
     </section>
   );
+
+  return <BoardLaunchDialogs>{grid}</BoardLaunchDialogs>;
 }

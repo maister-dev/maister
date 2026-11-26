@@ -5,7 +5,7 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 
 import { eq } from "drizzle-orm";
 import {
@@ -42,7 +42,7 @@ import {
   launchQualifiedEngineRun as launchRun,
   acceptQualifiedEngineFixture,
 } from "@/test-support/launch-engine-response";
-import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
+import { dispatchBoundTaskLaunchIntent, prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { getRunDetail } from "@/lib/queries/run";
 import { acceptAgentMessage } from "@/lib/agents/turns";
 import { claimAgentMessage } from "@/lib/agents/turn-claim";
@@ -72,6 +72,8 @@ let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
+const workspacePreparation = vi.hoisted(() => ({ advertised: false }));
+
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/lib/supervisor-client")>();
@@ -79,7 +81,12 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   return {
     ...actual,
     checkSupervisorHealth: async () => readySupervisorHealth(),
-    getExecutionHostCapabilities: async () => readyExecutionHostCapabilities(),
+    getExecutionHostCapabilities: async () => ({
+      ...readyExecutionHostCapabilities(),
+      ...(workspacePreparation.advertised
+        ? { workspaceProtocol: [1] }
+        : {}),
+    }),
   };
 });
 
@@ -205,7 +212,7 @@ async function until<T>(
   }
 }
 
-async function seedLaunchableTask(): Promise<{ taskId: string }> {
+async function seedLaunchableTask(manifest: unknown = instructManifest): Promise<{ taskId: string }> {
   const projectId = randomUUID();
   const slug = `lp-${projectId.slice(0, 8)}`;
   const revisionId = randomUUID();
@@ -231,7 +238,7 @@ async function seedLaunchableTask(): Promise<{ taskId: string }> {
     versionLabel: "v1.0.0",
     resolvedRevision: projectId.replace(/-/g, "").padEnd(40, "x").slice(0, 40),
     manifestDigest: `digest-${projectId}`,
-    manifest: instructManifest,
+    manifest,
     schemaVersion: 1,
     installedPath: `${repoPath}/.fixture-flow`,
     setupStatus: "not_required",
@@ -244,7 +251,7 @@ async function seedLaunchableTask(): Promise<{ taskId: string }> {
     source: "github.com/x/y",
     version: "v1.0.0",
     installedPath: `${repoPath}/.fixture-flow`,
-    manifest: instructManifest,
+    manifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,
     enablementState: "Enabled",
@@ -733,6 +740,131 @@ describe("ADR-183 amendment — the fence follows the host's new-work signal", (
 });
 
 describe("flow launch + graph driver (ADR-166 T4.1)", () => {
+  it("C-05 flow: commits the placed Run and a pathless preparation command before workspace effects", async () => {
+    const { taskId } = await seedLaunchableTask({
+      ...instructManifest,
+      requirements: [{ name: "Node.js", probe: "node --version" }],
+      nodes: instructManifest.nodes.map((node) => ({
+        ...node,
+        pre_finish: { gates: [{ id: "typecheck", kind: "command_check", command: "pnpm typecheck" }] },
+      })),
+    });
+
+    workspacePreparation.advertised = true;
+    vi.stubEnv(
+      "MAISTER_SELECTED_EXECUTION_HOST_KEY",
+      readySupervisorHealth().health.host.hostKey,
+    );
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://127.0.0.1:1");
+
+    try {
+      const { receipt } = await acceptQualifiedEngineFixture(
+        { taskId },
+        { authorize: async () => {} },
+        testDatabase.db,
+      );
+      await Promise.all([
+        prepareTaskLaunchIntent(testDatabase.db, receipt.intentId),
+        prepareTaskLaunchIntent(testDatabase.db, receipt.intentId),
+      ]);
+      const result = await prepareTaskLaunchIntent(testDatabase.db, receipt.intentId);
+      if (!result.runId) throw new Error("reservation did not bind a Run");
+      const [run] = await runsForTask(taskId);
+      const assignment = await getActiveAssignment(db as never, result.runId);
+      const [workspace] = await testDatabase.db
+        .select()
+        .from(schemaModule.workspaces)
+        .where(eq(schemaModule.workspaces.runId, result.runId));
+      const commands = await listCommandsForRun(db as never, result.runId);
+
+      expect(run).toMatchObject({
+        id: result.runId,
+        status: "Pending",
+        executionAssignmentId: assignment?.id,
+      });
+      expect(workspace).toMatchObject({
+        ownershipKind: "host_owned",
+        preparationAssignmentId: assignment?.id,
+        executionHostId: assignment?.executionHostId,
+        executionWorkspaceId: null,
+        worktreePath: null,
+        parentRepoPath: null,
+        workspaceInputDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        workspaceGeneration: 1,
+      });
+      expect(commands).toEqual([
+        expect.objectContaining({
+          kind: "workspace.prepare",
+          state: "queued",
+          executionAssignmentId: assignment?.id,
+          executionHostId: assignment?.executionHostId,
+        }),
+      ]);
+      const [inputs] = await testDatabase.db
+        .select()
+        .from(schemaModule.workspaceInputCaptures)
+        .where(eq(schemaModule.workspaceInputCaptures.workspaceId, workspace.id));
+      const declaration = inputs.files.find(({ path }) => path === "workload-declarations.json");
+      expect(declaration).toBeDefined();
+      expect(JSON.parse(Buffer.from(declaration!.base64, "base64").toString("utf8"))).toEqual([
+        expect.objectContaining({ workload: "requirementProbe", command: "node --version", timeoutMs: 10_000 }),
+        expect.objectContaining({ workload: "check", command: "pnpm typecheck", timeoutMs: 300_000 }),
+      ]);
+      expect(await sessionFor(run.id)).toMatchObject({ hostSessionId: null });
+      scheduling.real = true;
+      expect(await tryStartRun(run.id, { db })).toMatchObject({
+        started: false,
+      });
+      expect(await runStatus(run.id)).toBe("Pending");
+      const [project] = await testDatabase.db.select({ repoPath: schemaModule.projects.repoPath })
+        .from(schemaModule.projects).where(eq(schemaModule.projects.id, workspace.projectId));
+      const parkedRepository = `${project.repoPath}.host-only`;
+      await rename(project.repoPath, parkedRepository);
+      try {
+        await dispatchBoundTaskLaunchIntent(testDatabase.db, receipt.intentId);
+        const [intent] = await testDatabase.db.select({ state: schemaModule.taskLaunchIntents.state, reason: schemaModule.taskLaunchIntents.reason })
+          .from(schemaModule.taskLaunchIntents).where(eq(schemaModule.taskLaunchIntents.id, receipt.intentId));
+        expect(intent).toEqual({ state: "run_bound", reason: null });
+      } finally {
+        await rename(parkedRepository, project.repoPath);
+      }
+      await expect(prepareTaskLaunchIntent(testDatabase.db, receipt.intentId))
+        .resolves.toMatchObject({ runId: run.id });
+      expect(await runsForTask(taskId)).toHaveLength(1);
+      expect(await listCommandsForRun(db as never, run.id)).toEqual(commands);
+
+      const aborted = await seedLaunchableTask();
+      await testDatabase.pool.query(`
+        CREATE FUNCTION abort_addressed_preparation_fixture() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.kind = 'workspace.prepare' AND EXISTS (
+            SELECT 1 FROM runs WHERE id = NEW.run_id AND task_id = '${aborted.taskId}'
+          ) THEN
+            RAISE EXCEPTION 'injected preparation reservation rollback' USING ERRCODE='40001';
+          END IF;
+          RETURN NEW;
+        END $$;
+        CREATE TRIGGER abort_addressed_preparation_fixture
+        AFTER INSERT ON execution_commands FOR EACH ROW
+        EXECUTE FUNCTION abort_addressed_preparation_fixture();
+      `);
+      try {
+        await expect(
+          launchRun({ taskId: aborted.taskId }, { authorize: async () => {} }, testDatabase.db),
+        ).rejects.toMatchObject({ code: "CRASH", details: { sqlState: "40001" } });
+        expect(await runsForTask(aborted.taskId)).toEqual([]);
+      } finally {
+        await testDatabase.pool.query("DROP TRIGGER abort_addressed_preparation_fixture ON execution_commands");
+        await testDatabase.pool.query("DROP FUNCTION abort_addressed_preparation_fixture()");
+      }
+    } finally {
+      scheduling.real = false;
+      workspacePreparation.advertised = false;
+      vi.unstubAllEnvs();
+      resetResolverForTests();
+    }
+  }, 60_000);
+
   it("P1: launchRun mints epoch 1 `launch` in the SAME transaction as the run — a tx abort leaves neither", async () => {
     const aborted = await seedLaunchableTask();
 

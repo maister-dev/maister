@@ -28,6 +28,10 @@ export type GitState = {
   head: string | null;
   targetHead: string | null;
   dirty: { tracked: number; untracked: number } | null;
+  workspaceStatus?: {
+    workingTree: "clean" | "dirty" | "nonGit";
+    headState: "branch" | "detached" | "nonGit";
+  } | null;
   unpushedCommits: number | null;
   aheadBehind: {
     base: { ahead: number; behind: number } | null;

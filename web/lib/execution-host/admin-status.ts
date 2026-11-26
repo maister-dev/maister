@@ -6,16 +6,18 @@ import type { ExecutionObservabilitySummary } from "@/lib/execution-host/events/
 import type { ExecutionEventLagReadModel } from "@/types/execution-host-observability";
 import type { SchedulerClockStatus } from "@/types/scheduler";
 import type { DurableWorkerState } from "@/lib/workers/health";
+import type { SelectedExecutionEndpoint } from "./selected-endpoint";
 
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { collectExecutionEventLag } from "@/lib/execution-host/events/lag-read-model";
 import { parseExecutionObservability } from "@/lib/execution-host/events/lag-observation";
 import { getPlatformStatus } from "@/lib/execution-host/platform-status";
+import { configuredAdditionalExecutionEndpoints, configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { getSchedulerClockStatus } from "@/lib/queries/scheduler";
 import {
   DEFAULT_SYSTEM_SWEEP_JOB_ID,
@@ -79,9 +81,16 @@ export type AdminExecutionHostRow = Readonly<{
 
 export type AdminPanelFailure = Readonly<{ unavailable: true }>;
 
+type AdminSelectedHost =
+  | Readonly<{ kind: "registered"; hostKey: string; hostId: string; draining?: true; maxConcurrentRuns?: number }>
+  | Readonly<{ kind: "unregistered" | "registry_unavailable"; hostKey: string }>
+  | Readonly<{ kind: "invalid_configuration" }>;
+
 export type AdminExecutionHostStatus = Readonly<{
   sampledAt: string;
   hosts: readonly AdminExecutionHostRow[] | AdminPanelFailure;
+  selectedHost: AdminSelectedHost | null;
+  additionalHosts?: readonly AdminSelectedHost[];
   lag: ExecutionEventLagReadModel | AdminPanelFailure;
   latestSweep:
     | Readonly<{
@@ -144,6 +153,44 @@ async function listHosts(db: AdminStatusDb): Promise<AdminExecutionHostRow[]> {
     registeredAt: iso(row.registered_at)!,
     retiredAt: iso(row.retired_at),
   }));
+}
+
+function observedConfiguredHost(
+  hosts: AdminExecutionHostStatus["hosts"],
+  { hostKey, draining, maxConcurrentRuns }: SelectedExecutionEndpoint,
+): AdminSelectedHost {
+  if (isPanelUnavailable(hosts))
+    return { kind: "registry_unavailable", hostKey };
+  const host = hosts.find(
+    (candidate) => candidate.hostKey === hostKey && !candidate.retiredAt,
+  );
+  return host
+    ? { kind: "registered", hostKey, hostId: host.id,
+        ...(draining ? { draining: true } : {}),
+        ...(maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns }),
+      }
+    : { kind: "unregistered", hostKey };
+}
+
+function readSelectedHost(hosts: AdminExecutionHostStatus["hosts"]): AdminSelectedHost | null {
+  try {
+    const configured = configuredSelectedExecutionEndpoint();
+    return configured ? observedConfiguredHost(hosts, configured) : null;
+  } catch (error) {
+    if (isMaisterError(error) && error.code === "CONFIG")
+      return { kind: "invalid_configuration" };
+    throw error;
+  }
+}
+
+function readAdditionalHosts(hosts: AdminExecutionHostStatus["hosts"]): readonly AdminSelectedHost[] {
+  try {
+    return configuredAdditionalExecutionEndpoints().map((host) => observedConfiguredHost(hosts, host));
+  } catch (error) {
+    if (isMaisterError(error) && error.code === "CONFIG")
+      return [{ kind: "invalid_configuration" }];
+    throw error;
+  }
 }
 
 async function latestSweepObservation(db: AdminStatusDb) {
@@ -242,9 +289,12 @@ export async function getAdminExecutionHostStatus(
     settlePanel(() => latestSweepObservation(db), "latestSweep", logger),
   ]);
 
+  const additionalHosts = readAdditionalHosts(hosts);
   return {
     sampledAt: now.toISOString(),
     hosts,
+    selectedHost: readSelectedHost(hosts),
+    ...(additionalHosts.length ? { additionalHosts } : {}),
     lag,
     latestSweep,
     workers: durableWorkersHealth(),

@@ -101,7 +101,7 @@ erDiagram
         text placement_reason "CHECK: launch|resume|recover|wait_resume|rework_return|gate_chat|sync_resolver|scratch_recover|node_interrupt|legacy_backfill"
         text execution_workspace_id "nullable; host-scoped opaque ws_<uuid> handle"
         timestamptz workspace_adopted_at "nullable"
-        timestamptz lease_expires_at "nullable; reserved for Stage C, always NULL in Stage A"
+        timestamptz lease_expires_at "nullable; reserved for future execution leases, unused through G2"
         text superseded_by_id FK "execution_assignments(id) SET NULL"
         text released_reason "nullable"
         timestamptz created_at "DEFAULT now()"
@@ -268,6 +268,73 @@ requires terminal ACK, owner disposition, terminal run/delivery holds and grace,
 followed by host confirmation before compaction. Existing cascade FKs must not
 remove protected commands or import proofs. No in-place migration amendment is
 permitted; guarded forward corrections and a real run-delete race enforce this.
+
+## Stage C workspace ownership migration (Designed, ADR-219)
+
+PostgreSQL migration `0379_stage_c_workspace_ownership` adds host ownership
+to `workspaces` and permits absent path columns on addressed rows. The
+existing `id` remains the logical identity. The migration preserves legacy
+rows without guessing their host or adopting them. Legacy filesystem
+operations require their actual local paths. An addressed row cannot enter
+those operations with a substituted path.
+
+| Form | Required fields and constraints |
+|---|---|
+| Legacy | Existing path and owner columns retain their original bytes and associations. Legacy path uniqueness remains over non-null values. Retirement does not remove associations. |
+| Addressed preparing | The `host_owned` form has a restricted host FK, a positive generation and a pinned input digest. A composite FK ties its preparation assignment to the same Run and host. At most one addressed workspace per Run is live. Both path columns and the unassigned handle are null. |
+| Addressed ready or retained | Same owner and generation plus supervisor handle. Unique live pair `(execution_host_id, execution_workspace_id)`. Shared children reference a root on the same host and hold no independent handle. |
+| Ambiguous legacy | The migration preserves the original row and sets `legacy_host_adoption_issue=owner_unverified` when the current assignment has no exact handle or other host evidence conflicts. This diagnostic does not establish physical ownership. Addressed adoption, publication and disposal require an independently verified owner. |
+
+Keep the existing unique active assignment per Run. An active execution
+command carries the current assignment and epoch. A terminal lifecycle
+command can retain an ended assignment as historical provenance, with
+admission and application fenced by the workspace operation claim,
+generation and operation number. An exclusive owner discriminator prevents
+accepting a workspace operation under a session-only command kind. Use
+restrictive owner references and apply result CAS before releasing the claim.
+
+Migration `0380_stage_c_prepare_command` adds the pending
+`workspace.prepare` command to the existing execution ledger. Its target is
+the logical workspace ID. A database guard requires the matching pending Run,
+active assignment and epoch, host and input digest. The request fields
+remain immutable during delivery and recovery. Session create and prompt
+admission require a prepared handle on a host-owned workspace. Scratch
+capabilities retain their selection before a host materializes it.
+
+Migration `0381_stage_c_workspace_events` admits the typed workspace terminal
+envelope on the existing event stream. The projection compares the selected
+host's receipt to the committed stream ID, event ID, owner and request/outcome
+digests. It updates the workspace and its active assignment in one
+transaction. Checkout does not authorize a session until the host-owned
+materialization generation is also present.
+
+SQLite schema 19 upgrades a v18 store in one transaction. A private
+`workspace_execution_state` row tracks generation, input and materialization
+digests, and the operation claim and fence. The migration seeds the initial
+metadata for existing workspace handles without asserting a verified input.
+New workspaces receive the same initial state. The migration preserves the
+host key, run fences, handles, stream position, receipts and tombstones. A
+newer unsupported schema refuses before changing SQLite journal mode.
+
+SQLite schema 20 retains the preparation mode in the private workspace row so
+status reads survive checkout receipt retirement. For an existing v19 handle,
+the migration uses a retained terminal receipt only if its host, Run, handle,
+generation, input digest and workspace kind match. A missing or conflicting
+witness leaves the mode unset and addressed status refuses the handle.
+
+The addressed command writer will persist the accepted request digest before
+physical effects and seal its terminal receipt with the corresponding outbox
+event in one SQLite transaction. The legacy receipt and event formats continue
+to use their existing journal.
+
+G2 replaces the singleton active-host index after manager writers support
+addressed routing. Host key uniqueness remains global. The active default
+has at most one row. Operator descriptor IDs are unique and separate from
+boot identity. For both stores, expand compatible reads first, backfill
+verified owners under a writer fence, validate the data, then activate
+addressed writes. Drain and take coordinated database, state and workspace
+backups before crossing the incompatible-write boundary. Test both upgrade
+orders, interruption, restore and refusal of an incompatible writer.
 
 ## Linked artifacts
 

@@ -1,11 +1,15 @@
 import "server-only";
 
+import type { WorkspaceStatus } from "../../../runtime/workspace-prepare";
+
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
+import { workbenchClaimHoldsTree } from "@/lib/runs/lifecycle-claim";
 import { loadWorkbenchGitFacts } from "@/lib/workbench-git/facts";
 import {
   deriveWorkbenchGitActions,
@@ -50,6 +54,7 @@ export type GitAheadBehind = { ahead: number; behind: number } | null;
 
 export type GitStateWarning =
   | "head"
+  | "workspaceStatus"
   | "targetHead"
   | "dirty"
   | "upstream"
@@ -78,12 +83,14 @@ export type GitStateResponse = {
   head: string | null;
   targetHead: string | null;
   dirty: { tracked: number; untracked: number } | null;
+  workspaceStatus?: Pick<WorkspaceStatus, "workingTree" | "headState"> | null;
   unpushedCommits: number | null;
   aheadBehind: {
     base: GitAheadBehind;
     target: GitAheadBehind;
     published: GitAheadBehind;
   };
+
   publishedRemoteHead: string | null;
   // The local tracking ref of the publication; differing from
   // `publishedRemoteHead` means the remote moved since the last fetch.
@@ -215,11 +222,20 @@ export async function loadGitState(args: {
     }
   };
 
+  const addressed = workspace?.ownershipKind === "host_owned";
+  const legacyWorkspace = addressed ? null : workspace;
+  const status =
+    addressed && workspace.executionWorkspaceId && !workspace.removedAt
+      ? await read("workspaceStatus", () =>
+          readAddressedWorkspaceStatus(db, workspace),
+        )
+      : null;
   const facts = await loadWorkbenchGitFacts({
     db,
     run: {
       id: run.id,
       runKind: run.runKind,
+      agentKind: run.agentKind,
       status: run.status,
       scratchDialogStatus: scratch?.dialogStatus ?? null,
       workspaceMode: run.workspaceMode,
@@ -227,13 +243,36 @@ export async function loadGitState(args: {
       rootRunId: run.rootRunId,
       parentRunId: run.parentRunId,
     },
-    workspace,
+    workspace: legacyWorkspace,
   });
 
   for (const field of facts.degraded) warnings.push(field);
 
   const actions = deriveWorkbenchGitActions({
     ...facts.policy,
+    ...(addressed
+      ? {
+          addressedWorkspace: true,
+          hasWorkspace: true,
+          promotionState: workspace.promotionState,
+          prUrl: workspace.prNumber === null ? null : workspace.prUrl,
+          prState: prStateOf(workspace.prState),
+          updateSupported:
+            facts.policy.updateSupported &&
+            !facts.hasActiveAssignment &&
+            status?.workspace.mode === "ownWorktree",
+          workspaceRemoved: workspace.removedAt !== null,
+          worktreePresent:
+            status?.workspace.mode === "ownWorktree" ||
+            (workspace.lifecycleOperationName === "archive" &&
+              workspace.lifecycleOperationState === "claiming"),
+          busy:
+            facts.hasActiveAssignment ||
+            facts.hasLiveSharedSibling ||
+            (workspace.lifecycleOperationName !== "archive" &&
+              workbenchClaimHoldsTree(workspace)),
+        }
+      : {}),
     viewerUserId: args.viewerUserId,
   });
   const mainBranch: string = project?.mainBranch ?? "main";
@@ -251,9 +290,10 @@ export async function loadGitState(args: {
     onto: SyncOnto,
     scratchRef: string | null,
   ): string | null => {
-    if (run.runKind === "scratch" || workspace === null) return scratchRef;
+    if (run.runKind === "scratch" || legacyWorkspace === null)
+      return scratchRef;
     try {
-      return resolveSyncRef(onto, run.id, workspace, project).ref;
+      return resolveSyncRef(onto, run.id, legacyWorkspace, project).ref;
     } catch {
       return null;
     }
@@ -268,7 +308,9 @@ export async function loadGitState(args: {
   );
   const remotes = facts.remotes ?? [];
   const usable =
-    workspace !== null && workspace.removedAt === null && facts.worktreePresent;
+    legacyWorkspace !== null &&
+    legacyWorkspace.removedAt === null &&
+    facts.worktreePresent;
   const taskKey =
     task && project?.taskKey ? `${project.taskKey}-${task.number}` : null;
 
@@ -287,12 +329,12 @@ export async function loadGitState(args: {
   };
   const git = { ...empty };
 
-  if (workspace) {
-    const repo: string = workspace.parentRepoPath;
-    const wt: string = workspace.worktreePath;
+  if (legacyWorkspace) {
+    const repo: string = legacyWorkspace.parentRepoPath;
+    const wt: string = legacyWorkspace.worktreePath;
 
     const [upstream, targetHead, rescueRefs, trackingHead] = await Promise.all([
-      read("upstream", () => branchUpstream(repo, workspace.branch)),
+      read("upstream", () => branchUpstream(repo, legacyWorkspace.branch)),
       read("targetHead", () =>
         localBranchHead({ projectRepoPath: repo, branch: targetBranch }),
       ),
@@ -369,7 +411,7 @@ export async function loadGitState(args: {
 
   let suggestedPublicBranch: string | null = null;
 
-  if (workspace) {
+  if (legacyWorkspace) {
     const remote =
       publishedRemote ??
       (remotes.includes("origin") ? "origin" : (remotes[0] ?? "origin"));
@@ -405,7 +447,7 @@ export async function loadGitState(args: {
     runId: run.id,
     runKind: run.runKind,
     runStatus: run.status,
-    internalBranch: workspace?.branch ?? null,
+    internalBranch: legacyWorkspace?.branch ?? null,
     publicBranch,
     publishedRemote,
     publishedAt: workspace?.publishedAt
@@ -414,11 +456,20 @@ export async function loadGitState(args: {
     suggestedPublicBranch,
     upstream: git.upstream,
     remotes,
-    worktreePresent: facts.worktreePresent,
+    worktreePresent: addressed
+      ? status !== null && status.workingTree !== "nonGit"
+      : facts.worktreePresent,
     workspaceRemoved: workspace?.removedAt != null,
-    head: git.head,
+    head: status?.workspace.observedCommit ?? git.head,
     targetHead: git.targetHead,
     dirty: git.dirty,
+    ...(addressed
+      ? {
+          workspaceStatus: status
+            ? { workingTree: status.workingTree, headState: status.headState }
+            : null,
+        }
+      : {}),
     // Commits HEAD carries that the published tracking ref does not.
     unpushedCommits: git.published?.ahead ?? null,
     aheadBehind: {
@@ -451,7 +502,7 @@ export async function loadGitState(args: {
     rescueRefs: git.rescueRefs,
     actions,
     // C35: the same defaults `openPullRequest` applies when the body omits them.
-    prDefaults: workspace
+    prDefaults: legacyWorkspace
       ? {
           ...pullRequestDefaults({
             run,
@@ -480,15 +531,15 @@ export async function loadGitState(args: {
       : null,
     commands: {
       checkout:
-        workspace && publicBranch && publishedRemote
+        legacyWorkspace && publicBranch && publishedRemote
           ? [
-              `git -C ${workspace.parentRepoPath} fetch ${publishedRemote} ${publicBranch}`,
-              `git -C ${workspace.parentRepoPath} switch --track ${publishedRemote}/${publicBranch}`,
+              `git -C ${legacyWorkspace.parentRepoPath} fetch ${publishedRemote} ${publicBranch}`,
+              `git -C ${legacyWorkspace.parentRepoPath} switch --track ${publishedRemote}/${publicBranch}`,
             ]
           : [],
       restoreRescue:
-        workspace && newestRescue && facts.worktreePresent
-          ? rescueRestoreCommand(workspace.worktreePath, newestRescue.ref)
+        legacyWorkspace && newestRescue && facts.worktreePresent
+          ? rescueRestoreCommand(legacyWorkspace.worktreePath, newestRescue.ref)
           : null,
     },
     warnings,

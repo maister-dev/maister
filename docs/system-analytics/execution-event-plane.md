@@ -1019,6 +1019,30 @@ soft at 203 s, hard at ~251 s, one stall, nine `producer-pause-exceeded`
 checkpoints — and, once nine producers waited at hard, a supervisor pegged at
 100% CPU by the capacity cascade of EDGE-EVT-14, fixed on the same branch.
 
+## Addressed host streams Stage C (Designed)
+
+Use the existing host key and stream identity as the consumer scope for
+each configured endpoint. ACK the verified host after committing contiguous
+ingest and scheduling the matching consumer rows. Projection runs
+independently. Its owner-state write and projection cursor advance in
+the same transaction.
+
+The negotiated workspace envelope adds a flat version 2 event
+`workspace.command.terminal` with payload schema
+`maister.workspace.command.terminal.v1`. Its [schema](../api/stage-c-workspace.schema.yaml)
+uses the existing host key, boot/stream UUIDs and canonical sequence rules in the
+same outbox and continuity domain. The event carries only the owner, target,
+command ID, operation, phase and request/outcome digests. It never carries
+checkout paths or result bytes. To apply a terminal result, match the addressed
+receipt and applied owner against the event's host, stream, event ID and all
+payload fields. Preserve historical evidence under its original ownership and
+use the current owner CAS for effects.
+
+Host replacement cannot inherit an old identity's cursor. C-13 injects a
+held or poisoned projector after ingest, observes a contiguous ACK from that
+host and continues independent work on the other host. After repair, only
+the matching receipt is applied once without a new host event.
+
 ## Expectations
 
 - **EVT-01:** Postgres is canonical for browser and projector event reads, never supervisor memory or runtime files.

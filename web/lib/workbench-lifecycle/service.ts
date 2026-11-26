@@ -10,12 +10,15 @@ import type { ProjectAction } from "@/lib/authz";
 import type {
   WorkspacePreservationOutcome,
   WorkspaceRemovalKind,
+  Workspace,
+  ExecutionCommand,
 } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 
 import { and, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
+import { z } from "zod";
 import pino from "pino";
 
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
@@ -31,6 +34,16 @@ import {
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { pgErrorOf } from "@/lib/db/pg-error";
+import { getAssignmentById } from "@/lib/execution-host/assignments";
+import { insertCommand } from "@/lib/execution-host/commands";
+import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
+import {
+  nextRetainedWorkspaceFence,
+  settleRetainedWorkspaceCommand,
+} from "@/lib/execution-host/workspace-retained-operation";
+import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
+import { WORKTREE_ACTION_STATUSES } from "@/lib/workbench-git/policy";
 import { MaisterError } from "@/lib/errors";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
@@ -38,7 +51,10 @@ import {
   requireRunProjectId,
   withProjectRunKind,
 } from "@/lib/runs/run-kind-invariants";
-import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  DISPOSABLE_WORKSPACE_RUN_STATUSES,
+  WORKTREE_TTL_RUN_STATUSES,
+} from "@/lib/runs/run-status-sets";
 import {
   ABANDONABLE_STATUSES,
   markAbandoned,
@@ -46,6 +62,7 @@ import {
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
 import {
   gcArchivePush,
+  gcAgeDays,
   promotionClaimTimeoutSeconds,
   worktreesRoot,
 } from "@/lib/instance-config";
@@ -909,6 +926,13 @@ function throwRemovedWorkspaceConflict(workspace: LifecycleWorkspace): never {
   );
 }
 
+async function findAddressedWorkbench(client: ExecutionDb, runId: string): Promise<Workspace | undefined> {
+  const [workspace] = await client.select().from(workspaces).where(and(
+    eq(workspaces.runId, runId), eq(workspaces.ownershipKind, "host_owned"),
+  ));
+  return workspace;
+}
+
 export async function archiveWorkbench(
   runId: string,
   options?: WorkbenchLifecycleOptions,
@@ -916,6 +940,22 @@ export async function archiveWorkbench(
   const deps = depsFromOptions(options);
 
   const sessionUser = await deps.requireActiveSession();
+  if (!options?.deps) {
+    const client = db();
+    const addressed = await findAddressedWorkbench(client, runId);
+    if (addressed) {
+      await deps.authorize(
+        requireRunProjectId(addressed.projectId, runId),
+        "recoverRun",
+      );
+
+      const receipt = await disposeAddressedWorkbench(client, addressed, {
+        kind: "archive",
+        actorUserId: sessionUser.id,
+      });
+      return addressedArchiveResult(runId, receipt);
+    }
+  }
 
   const ctx = await deps.loadContext(runId);
 
@@ -926,6 +966,365 @@ export async function archiveWorkbench(
   return archiveWorkbenchForCtx(runId, ctx, deps, {
     allowPausedBudgetRun: options?.allowPausedBudgetRun,
   });
+}
+
+const RetainedArchiveResult = z.object({
+  generation: z.number().int().positive(),
+  dispositionId: z.string().uuid(),
+  retainedCommit: z.string().regex(GIT_OBJECT_ID),
+});
+
+function addressedArchiveResult(
+  runId: string,
+  receipt: AddressedDisposalReceipt,
+): ArchiveWorkbenchResult {
+  return {
+    ok: true,
+    runId,
+    operation: "archive",
+    ...receipt,
+    workspaceRemoved: true,
+    preservationOutcome: "snapshot_created",
+    archived: true,
+    archivedBranch: null,
+    snapshotted: true,
+  };
+}
+
+type AddressedDisposalReceipt = Pick<DropWorkbenchResult, "runStatus" | "idempotent">;
+
+type AddressedDisposalOwner =
+  | { kind: "archive" | "drop" | "discard"; actorUserId: string | null }
+  | { kind: "retention_gc"; now: Date };
+
+export async function archiveExpiredAddressedWorkbench(
+  client: ExecutionDb,
+  workspaceId: string,
+  now: Date,
+): Promise<ArchiveWorkbenchResult> {
+  const [candidate] = await client
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId));
+  if (!candidate || candidate.ownershipKind !== "host_owned")
+    throw new MaisterError(
+      "CONFLICT",
+      "The addressed retention candidate changed",
+    );
+
+  const receipt = await disposeAddressedWorkbench(client, candidate, {
+    kind: "retention_gc",
+    now,
+  });
+  return addressedArchiveResult(candidate.runId, receipt);
+}
+
+async function lockAddressedDisposalRun(
+  tx: ExecutionDb,
+  workspace: Workspace,
+  owner: AddressedDisposalOwner,
+) {
+  const runId = workspace.runId;
+  const [run] = await tx
+    .select()
+    .from(schema.runs)
+    .where(eq(runs.id, runId))
+    .for("update", { noWait: true })
+    .catch((cause: unknown) => {
+      if (pgErrorOf(cause)?.code === "55P03")
+        throw new MaisterError(
+          "CONFLICT",
+          "The Run is being changed by another operation",
+          { cause },
+        );
+      throw cause;
+    });
+  if (
+    !run ||
+    (run.runKind !== "flow" &&
+      run.runKind !== "agent" &&
+      run.runKind !== "scratch") ||
+    !WORKTREE_ACTION_STATUSES.has(run.status) ||
+    run.workspaceMode === "shared"
+  )
+    throw gitActionRefusal(runId, owner.kind === "drop" || owner.kind === "discard" ? "drop" : "archive", "unsupported-status");
+  assertCodeDeliveryAllowed(run, owner.kind === "retention_gc" ? "archive" : owner.kind);
+  if (owner.kind === "retention_gc" && !workspace.removedAt) {
+    const fallbackDeadline =
+      run.endedAt && new Date(run.endedAt.getTime() + gcAgeDays() * 86_400_000);
+    const deadline = workspace.scheduledRemovalAt ?? fallbackDeadline;
+    if (
+      !WORKTREE_TTL_RUN_STATUSES.some((status) => status === run.status) ||
+      !deadline ||
+      deadline > owner.now
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The addressed workspace is outside its retention window",
+      );
+    const { evaluationParticipants, evaluationStudies } = schema;
+    const [evaluationHold] = await tx
+      .select({ id: evaluationParticipants.id })
+      .from(evaluationParticipants)
+      .innerJoin(
+        evaluationStudies,
+        eq(evaluationStudies.id, evaluationParticipants.studyId),
+      )
+      .where(
+        and(
+          eq(evaluationParticipants.runId, runId),
+          eq(evaluationParticipants.sourceType, "launched"),
+          notInArray(evaluationStudies.status, ["decided", "archived"]),
+        ),
+      )
+      .limit(1);
+    if (evaluationHold)
+      throw new MaisterError(
+        "CONFLICT",
+        "An active evaluation retains this workspace",
+      );
+  }
+
+  return { ...run, runKind: run.runKind };
+}
+
+async function disposeAddressedWorkbench(
+  client: ExecutionDb,
+  candidate: Workspace,
+  owner: AddressedDisposalOwner,
+): Promise<AddressedDisposalReceipt> {
+  const runId = candidate.runId;
+  const reserved = await client.transaction(async (tx) => {
+    const [workspace] = await tx
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, candidate.id))
+      .for("update");
+    if (!workspace)
+      throw new MaisterError("CONFLICT", "The addressed workspace disappeared");
+    const run = await lockAddressedDisposalRun(tx, workspace, owner);
+    if (
+      workspace.ownershipKind !== "host_owned" ||
+      run.projectId !== candidate.projectId ||
+      !workspace.executionHostId ||
+      !workspace.executionWorkspaceId ||
+      !workspace.workspaceGeneration
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The addressed workspace changed before archival",
+      );
+    if (workspace.removedAt) {
+      if (
+        workspace.removalKind === owner.kind &&
+        workspace.preservationOutcome === "snapshot_created" &&
+        workspace.archivedCommit
+      )
+        return {
+          completed: { runStatus: run.status, idempotent: true },
+        } as const;
+      throw new MaisterError(
+        "CONFLICT",
+        "The workspace was removed by a different operation",
+      );
+    }
+    const {
+      executionHostId: hostId,
+      executionWorkspaceId: handle,
+      workspaceGeneration: generation,
+    } = workspace;
+    const assignment = run.executionAssignmentId
+      ? await getAssignmentById(tx, run.executionAssignmentId)
+      : null;
+    if (
+      !assignment ||
+      assignment.state !== "released" ||
+      assignment.executionHostId !== hostId ||
+      assignment.executionWorkspaceId !== handle
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The workspace's original execution has not retired",
+      );
+    const rows = await tx
+      .select()
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.executionHostId, hostId),
+          eq(schema.executionCommands.targetSessionId, handle),
+          eq(schema.executionCommands.kind, "workspace.preserve"),
+        ),
+      );
+    const resumed = rows.find(
+      (row) => row.payload.claimId === workspace.lifecycleOperationAttemptId,
+    );
+    const claim = await claimLifecycleOperation({
+      database: tx,
+      runId,
+      workspaceId: workspace.id,
+      operation: owner.kind,
+      expectedRunStatus: run.status,
+      ...(owner.kind === "retention_gc" ? {} : { actorUserId: owner.actorUserId }),
+      ...(resumed &&
+      resumed.state !== "failed" &&
+      workspace.lifecycleOperationAttemptId
+        ? {
+            replay: {
+              attemptId: workspace.lifecycleOperationAttemptId,
+              assertOwner: async () => {
+                if (
+                  resumed.executionAssignmentId !== assignment.id ||
+                  resumed.payload.generation !== generation
+                )
+                  throw new MaisterError(
+                    "CONFLICT",
+                    "The retained archive belongs to another workspace generation",
+                  );
+              },
+            },
+          }
+        : {}),
+    });
+    const target = {
+      runId,
+      hostId,
+      targetSessionId: handle,
+      assignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+    };
+    let preserve: ExecutionCommand;
+    if (resumed && resumed.payload.claimId === claim.attemptId) {
+      preserve = resumed;
+    } else {
+      preserve = await insertCommand(tx, {
+        ...target,
+        kind: "workspace.preserve",
+        maxAttempts: 3,
+        driverless: true,
+        payload: {
+          generation,
+          claimId: claim.attemptId,
+          fence: await nextRetainedWorkspaceFence(tx, hostId, handle),
+          disposition: "archive",
+          quiescenceId: claim.attemptId,
+        },
+      });
+    }
+
+    return {
+      target,
+      preserve,
+      run,
+      generation,
+      attemptId: claim.attemptId,
+    } as const;
+  });
+  if (reserved.completed) return reserved.completed;
+  const preservation = await settleRetainedWorkspaceCommand(
+    client,
+    reserved.preserve,
+  );
+  if (preservation.state === "failed") {
+    await finalizeLifecycleOperation({
+      database: client,
+      workspaceId: candidate.id,
+      attemptId: reserved.attemptId,
+      state: "failed",
+    });
+    throw new MaisterError(
+      "CONFLICT",
+      "The supervisor could not preserve the addressed workspace",
+    );
+  }
+  const archive = RetainedArchiveResult.safeParse(preservation.result);
+  if (
+    !archive.success ||
+    archive.data.dispositionId !== preservation.id ||
+    archive.data.generation !== reserved.generation
+  )
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "The addressed preservation receipt is inconsistent",
+    );
+  const release = await client.transaction(async (tx) => {
+    const [workspace] = await tx
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, candidate.id))
+      .for("update");
+    if (!workspace)
+      throw new MaisterError("CONFLICT", "The addressed workspace disappeared");
+    const run = await lockAddressedDisposalRun(tx, workspace, owner);
+    if (
+      run.status !== reserved.run.status ||
+      run.executionAssignmentId !== reserved.target.assignmentId ||
+      workspace.lifecycleOperationAttemptId !== reserved.attemptId
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "The archive claim changed before release",
+      );
+    const actions = await tx
+      .select()
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.kind, "workspace.release"),
+        ),
+      );
+    const retained = actions.find(
+      (action) =>
+        action.payload.dispositionId === preservation.id &&
+        action.state !== "failed",
+    );
+    if (retained) return retained;
+
+    return insertCommand(tx, {
+      ...reserved.target,
+      kind: "workspace.release",
+      maxAttempts: 3,
+      driverless: true,
+      payload: {
+        generation: reserved.generation,
+        claimId: reserved.attemptId,
+        fence: preservation.payload.fence,
+        dispositionId: preservation.id,
+        quiescenceId: preservation.payload.quiescenceId,
+      },
+    });
+  });
+  const released = await settleRetainedWorkspaceCommand(client, release);
+  if (released.state !== "succeeded")
+    throw new MaisterError(
+      "CONFLICT",
+      "The supervisor kept the worktree because its archive no longer proves safe removal",
+      {
+        details: { reason: "retained_disposition_required" },
+      },
+    );
+  const now = owner.kind === "retention_gc" ? owner.now : new Date();
+  const nextRunStatus = (owner.kind === "drop" || owner.kind === "discard") && reserved.run.status !== "Done"
+    ? "Abandoned" : null;
+  await recordDrop({
+    database: client,
+    runId,
+    runKind: reserved.run.runKind,
+    workspaceId: candidate.id,
+    removedAt: now,
+    expectedRunStatus: reserved.run.status,
+    nextRunStatus,
+    archivedAt: now,
+    archivedBranch: null,
+    archivedCommit: archive.data.retainedCommit,
+    preservationOutcome: "snapshot_created",
+    removalKind: owner.kind,
+    attemptId: reserved.attemptId,
+  });
+
+  return { runStatus: nextRunStatus ?? reserved.run.status, idempotent: false };
 }
 
 async function archiveWorkbenchForCtx(
@@ -1420,6 +1819,14 @@ async function removeWorkbench(
   const deps = depsFromOptions(options);
 
   const sessionUser = await deps.requireActiveSession();
+  if (!options?.deps) {
+    const client = db();
+    const addressed = await findAddressedWorkbench(client, runId);
+    if (addressed) {
+      await deps.authorize(requireRunProjectId(addressed.projectId, runId), "recoverRun");
+      return removeAddressedWorkbench(client, addressed, operation, sessionUser.id);
+    }
+  }
 
   const ctx = await deps.loadContext(runId);
 
@@ -1428,6 +1835,22 @@ async function removeWorkbench(
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
   return removeWorkbenchForCtx(runId, ctx, deps, operation);
+}
+
+async function removeAddressedWorkbench(
+  client: ExecutionDb,
+  workspace: Workspace,
+  operation: DropWorkbenchResult["operation"],
+  actorUserId: string | null,
+): Promise<DropWorkbenchResult> {
+  const owner = { kind: operation, actorUserId } satisfies AddressedDisposalOwner;
+  if (!workspace.removedAt) {
+    const run = await lockAddressedDisposalRun(client, workspace, owner);
+    await cascadeOrchestratorIfNeeded(run);
+  }
+  const receipt = await disposeAddressedWorkbench(client, workspace, owner);
+  return { ok: true, runId: workspace.runId, operation, ...receipt, workspaceRemoved: true,
+    preservationOutcome: "snapshot_created", archivedBranch: null };
 }
 
 async function removeWorkbenchForCtx(
@@ -1849,7 +2272,7 @@ async function stopLiveSupervisorSession(
 // scheduler/query graph out of this module's static eval graph (mirrors the
 // agent/scratch service imports). The default WorkbenchLifecycleDeps wires this
 // as cascadeOrchestratorIfNeeded.
-async function cascadeOrchestratorIfNeeded(run: LifecycleRun): Promise<void> {
+async function cascadeOrchestratorIfNeeded(run: Pick<LifecycleRun, "id" | "runKind" | "status" | "taskId">): Promise<void> {
   if (run.runKind !== "flow") return;
 
   const { getChildRuns } = await import("@/lib/queries/run");
@@ -2144,6 +2567,15 @@ export async function discardWorkbenchForToken(
   options?: WorkbenchLifecycleOptions,
 ): Promise<DropWorkbenchResult> {
   const deps = depsFromOptions(options);
+  if (!options?.deps) {
+    const client = db();
+    const addressed = await findAddressedWorkbench(client, runId);
+    if (addressed) {
+      if (addressed.projectId !== args.projectId)
+        throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+      return removeAddressedWorkbench(client, addressed, "discard", null);
+    }
+  }
   const ctx = await deps.loadContext(runId);
 
   // Token authority, no browser session: there is no viewer, so the ADR-160
@@ -2157,6 +2589,25 @@ export async function discardWorkbenchForToken(
   return removeWorkbenchForCtx(runId, ctx, deps, "discard");
 }
 
+async function stopForAddressedDisposal(
+  runId: string,
+  userId: string,
+  authorize: WorkbenchLifecycleDeps["authorize"],
+): Promise<{
+  client: ExecutionDb;
+  workspace: Workspace;
+  supervisorStopped: boolean;
+} | null> {
+  const client = db();
+  const workspace = await findAddressedWorkbench(client, runId);
+  if (!workspace) return null;
+  await authorize(requireRunProjectId(workspace.projectId, runId), "recoverRun");
+  if (workspace.removedAt) return { client, workspace, supervisorStopped: false };
+  const { stopRunForUser } = await import("@/lib/runs/stop");
+  const { supervisorStopped } = await stopRunForUser(userId, runId);
+  return { client, workspace, supervisorStopped };
+}
+
 // POST /api/runs/{runId}/stop-archive — all workspace-backed run kinds. Stop
 // commits the parked status first; an archive failure leaves the run retryable.
 export async function stopThenArchive(
@@ -2166,6 +2617,22 @@ export async function stopThenArchive(
   const deps = depsFromOptions(options);
 
   const sessionUser = await deps.requireActiveSession();
+
+  if (!options?.deps) {
+    const stopped = await stopForAddressedDisposal(
+      runId,
+      sessionUser.id,
+      deps.authorize,
+    );
+    if (stopped) {
+      const { client, workspace, supervisorStopped } = stopped;
+      const receipt = await disposeAddressedWorkbench(client, workspace, {
+        kind: "archive",
+        actorUserId: sessionUser.id,
+      });
+      return { ...addressedArchiveResult(runId, receipt), supervisorStopped };
+    }
+  }
 
   const ctx = await deps.loadContext(runId);
 
@@ -2188,6 +2655,24 @@ export async function stopThenDrop(
   const deps = depsFromOptions(options);
 
   const sessionUser = await deps.requireActiveSession();
+
+  if (!options?.deps) {
+    const stopped = await stopForAddressedDisposal(
+      runId,
+      sessionUser.id,
+      deps.authorize,
+    );
+    if (stopped) {
+      const { client, workspace, supervisorStopped } = stopped;
+      const drop = await removeAddressedWorkbench(
+        client,
+        workspace,
+        "drop",
+        sessionUser.id,
+      );
+      return { ...drop, supervisorStopped };
+    }
+  }
 
   const ctx = await deps.loadContext(runId);
 
@@ -2400,7 +2885,9 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     );
   }
 
-  const workspace = workspaceRows[0] ?? null;
+  const workspace = workspaceRows[0]
+    ? requireLegacyWorkspacePaths(workspaceRows[0])
+    : null;
   // ADR-181 D1a: the ONE fact loader — the ADR-160 claim owner, a live shared
   // sibling, the lifecycle slot, presence, and re-attach sources.
   const facts = await loadWorkbenchGitFacts({
@@ -2625,82 +3112,97 @@ async function markRunStoppedAndCloseAssignments(args: {
   reason: string;
   expectedRunStatus?: "Pending";
 }): Promise<void> {
-  await db().transaction(async (tx) => {
-    const rows = await tx
-      .update(runs)
-      .set({
-        status: "Review",
-        currentStepId: null,
-        endedAt: args.endedAt,
-        // ADR-126 T8: a manual-takeover return is a fresh Review entry — restart
-        // the auto-promotion grace window.
-        reviewEnteredAt: args.endedAt,
-      })
-      .where(
-        and(
-          eq(runs.id, args.runId),
-          args.expectedRunStatus === "Pending"
-            ? and(
-                eq(runs.status, args.expectedRunStatus),
-                eq(runs.runKind, "flow"),
-                queuedConditionResumeExists(runs.id),
-              )
-            : inArray(runs.status, STOP_STATUSES),
-        ),
-      )
-      .returning({
-        id: runs.id,
-        projectId: runs.projectId,
-        taskId: runs.taskId,
-        flowId: runs.flowId,
-        runKind: runs.runKind,
-        parentRunId: runs.parentRunId,
-      });
+  await db().transaction((tx) => recordProjectRunStopped(tx, args));
+}
 
-    if (rows.length === 0) {
-      throw new MaisterError(
-        "CONFLICT",
-        `run ${args.runId} was not in a stoppable state`,
-      );
-    }
+/** Apply the shared project Flow stop-to-Review transition in the caller's owner transaction. */
+export async function recordProjectRunStopped(
+  tx: NodePgDatabase<typeof schema>,
+  args: Readonly<{
+    runId: string;
+    endedAt: Date;
+    reason: string;
+    expectedRunStatus?: "Pending";
+    addressedOwner?: Readonly<{ assignmentId: string; status: (typeof runs.$inferSelect)["status"] }>;
+  }>,
+): Promise<void> {
+  const rows = await tx
+    .update(runs)
+    .set({
+      status: "Review",
+      currentStepId: null,
+      endedAt: args.endedAt,
+      // ADR-126 T8: a manual-takeover return is a fresh Review entry — restart
+      // the auto-promotion grace window.
+      reviewEnteredAt: args.endedAt,
+    })
+    .where(
+      and(
+        eq(runs.id, args.runId),
+        args.addressedOwner
+          ? and(eq(runs.executionAssignmentId, args.addressedOwner.assignmentId),
+              eq(runs.status, args.addressedOwner.status))
+          : args.expectedRunStatus === "Pending"
+          ? and(
+              eq(runs.status, args.expectedRunStatus),
+              eq(runs.runKind, "flow"),
+              queuedConditionResumeExists(runs.id),
+            )
+          : inArray(runs.status, STOP_STATUSES),
+      ),
+    )
+    .returning({
+      id: runs.id,
+      projectId: runs.projectId,
+      taskId: runs.taskId,
+      flowId: runs.flowId,
+      runKind: runs.runKind,
+      parentRunId: runs.parentRunId,
+    });
 
-    // ADR-166 D7: the stop ends the run's driver generation.
-    if (rows[0].runKind === "flow" && rows[0].projectId) {
-      const { closeConditionWaitsForRun } = await import("@/lib/waits/close");
-
-      await closeConditionWaitsForRun(tx, args.runId, "run_stopped");
-    }
-    await releaseAssignmentForRun(
-      tx as unknown as ExecutionDb,
-      args.runId,
-      "stopped",
+  if (rows.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      `run ${args.runId} was not in a stoppable state`,
     );
+  }
 
-    await systemCloseActiveAssignmentsForRun({
-      db: tx,
-      runId: args.runId,
-      reason: args.reason,
-    });
+  // ADR-166 D7: the stop ends the run's driver generation.
+  if (rows[0].runKind === "flow" && rows[0].projectId) {
+    const { closeConditionWaitsForRun } = await import("@/lib/waits/close");
 
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.review",
-      projectId: requireRunProjectId(rows[0].projectId, args.runId),
-      runId: args.runId,
-      data: { source: "workbench" },
-    });
-    // ADR-163: an operator stop parks a delegated child in Review too, and a
-    // Review nothing announces leaves its parent waiting forever. The cause
-    // keeps the as-plan auto-promote from reading the stop as a completion.
-    await emitDelegatedReviewIfChild(tx, {
-      runId: args.runId,
-      projectId: requireRunProjectId(rows[0].projectId, args.runId),
-      taskId: rows[0].taskId,
-      flowId: rows[0].flowId,
-      runKind: rows[0].runKind,
-      parentRunId: rows[0].parentRunId,
-      cause: "operator_stop",
-    });
+    await closeConditionWaitsForRun(tx, args.runId, "run_stopped");
+  }
+  await releaseAssignmentForRun(
+    tx as unknown as ExecutionDb,
+    args.runId,
+    "stopped",
+  );
+
+  await systemCloseActiveAssignmentsForRun({
+    db: tx,
+    runId: args.runId,
+    reason: args.reason,
+  });
+
+  await emitWebhookEvent({
+    db: tx,
+    type: "run.review",
+    projectId: requireRunProjectId(rows[0].projectId, args.runId),
+    runId: args.runId,
+    data: { source: "workbench" },
+  });
+  // ADR-163: an operator stop parks a delegated child in Review too, and a
+  // Review nothing announces leaves its parent waiting forever. The cause
+  // keeps the as-plan auto-promote from reading the stop as a completion.
+  await emitDelegatedReviewIfChild(tx, {
+    runId: args.runId,
+    projectId: requireRunProjectId(rows[0].projectId, args.runId),
+    taskId: rows[0].taskId,
+    flowId: rows[0].flowId,
+    runKind: rows[0].runKind,
+    parentRunId: rows[0].parentRunId,
+    cause: "operator_stop",
   });
 }
 

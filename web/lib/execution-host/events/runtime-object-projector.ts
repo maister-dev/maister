@@ -2,6 +2,9 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+
 import {
   SessionContentReferenceSchema,
   StdoutSegmentMetadataSchema,
@@ -13,8 +16,10 @@ import {
   type RuntimeObjectBinding,
 } from "../runtime-object-evidence";
 import { hasNativeOutputCommand } from "../runtime-object-intent";
+import { carriesWorkspaceGitEvidence, hasRetainedWorkspaceGitOwner, workspaceGitEvidence } from "../workspace-git-evidence";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
+import { runEventWakeBus } from "./run-wake";
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
@@ -23,6 +28,8 @@ import {
 } from "./projector";
 
 import {
+  executionCommands,
+  executionAssignments,
   executionRuntimeObjects,
   runs,
   type ExecutionEvent,
@@ -36,6 +43,14 @@ import {
 export const canonicalRuntimeObjectProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.runtimeObject,
   project: projectRuntimeObject,
+  afterCommit(events) {
+    for (const event of events)
+      if (
+        carriesWorkspaceGitEvidence(event.payload ?? {}) ||
+        event.payload?.workspaceWorkloadCommandId !== undefined
+      )
+        runEventWakeBus.wake(event.runId);
+  },
 };
 const kinds = new Set<string>(RUNTIME_OBJECT_KINDS);
 const retentionClasses = new Set<string>(RUNTIME_OBJECT_RETENTION_CLASSES);
@@ -314,6 +329,82 @@ async function applyRuntimeObjectEvent(
     return;
   }
   if (event.eventType === "runtime_object.available") {
+    if (carriesWorkspaceGitEvidence(event.payload ?? {})) {
+      const evidence = workspaceGitEvidence(event.payload ?? {});
+      const binding = sealForEvent(event);
+      if (
+        !evidence || event.hostSessionId ||
+        !event.executionHostId ||
+        !event.executionAssignmentId ||
+        event.assignmentEpoch === null ||
+        binding.kind !== "diagnostic" ||
+        binding.logicalName !== evidence.logicalName ||
+        binding.mimeType !== evidence.mimeType ||
+        binding.sizeBytes === null ||
+        binding.sizeBytes > evidence.maxBytes ||
+        event.payload?.workspaceWorkloadCommandId !== undefined
+      )
+        throw permanent("Workspace Git evidence has invalid identity");
+      const owned = await hasRetainedWorkspaceGitOwner(tx, {
+        runId: event.runId,
+        executionHostId: event.executionHostId,
+        assignmentId: event.executionAssignmentId,
+        assignmentEpoch: event.assignmentEpoch,
+        handle: evidence.handle,
+        generation: evidence.generation,
+      });
+      if (!owned)
+        throw permanent(
+          "Workspace Git evidence has no matching workspace and assignment",
+        );
+      await catalogueContentIntent(tx, event);
+    }
+    if (event.payload?.workspaceWorkloadCommandId !== undefined) {
+      const commandId = z
+        .string()
+        .uuid()
+        .safeParse(event.payload.workspaceWorkloadCommandId);
+      const workloadMimeType =
+        event.payload.logicalName === "workload-result.json"
+          ? "application/json"
+          : "text/plain";
+      if (
+        !commandId.success ||
+        event.hostSessionId ||
+        !event.executionHostId ||
+        !event.executionAssignmentId ||
+        event.assignmentEpoch === null ||
+        event.payload.kind !== "diagnostic" ||
+        event.payload.mimeType !== workloadMimeType ||
+        ![
+          "workload-stdout.txt",
+          "workload-stderr.txt",
+          "workload-result.json",
+        ].includes(String(event.payload.logicalName))
+      )
+        throw permanent("Workspace workload output has invalid identity");
+      const [source] = await tx
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.id, commandId.data),
+            eq(executionCommands.kind, "workspace.run"),
+            eq(executionCommands.runId, event.runId),
+            eq(executionCommands.executionHostId, event.executionHostId),
+            eq(
+              executionCommands.executionAssignmentId,
+              event.executionAssignmentId,
+            ),
+            eq(executionCommands.assignmentEpoch, event.assignmentEpoch),
+          ),
+        );
+      if (!source)
+        throw permanent(
+          "Workspace workload output has no matching command and assignment",
+        );
+      await catalogueContentIntent(tx, event);
+    }
     if (event.payload?.stdoutSegment !== undefined) {
       const segment = StdoutSegmentMetadataSchema.safeParse(
         event.payload.stdoutSegment,

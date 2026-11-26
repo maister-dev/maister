@@ -226,7 +226,8 @@ vi.mock("@/lib/assignments/service", () => ({
   systemCloseActiveAssignmentsForRun: vi.fn(async () => []),
 }));
 
-vi.mock("@/lib/instance-config", () => ({
+vi.mock("@/lib/instance-config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/instance-config")>()),
   gcAgeDays: () => 7,
   runtimeRoot: () => "/tmp/maister",
   worktreesRoot: () => "/tmp/maister/worktrees",

@@ -2619,6 +2619,160 @@
       "when": 1795618433825,
       "tag": "0377_optimize_peek_hint_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 378,
+      "version": "7",
+      "when": 1795618433826,
+      "tag": "0378_reconcile_skipped_session_crashes",
+      "breakpoints": true
+    },
+    {
+      "idx": 379,
+      "version": "7",
+      "when": 1795618433827,
+      "tag": "0379_stage_c_workspace_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 380,
+      "version": "7",
+      "when": 1795618433828,
+      "tag": "0380_stage_c_prepare_command",
+      "breakpoints": true
+    },
+    {
+      "idx": 381,
+      "version": "7",
+      "when": 1795618433829,
+      "tag": "0381_stage_c_workspace_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 382,
+      "version": "7",
+      "when": 1795618433830,
+      "tag": "0382_stage_c_workspace_inputs",
+      "breakpoints": true
+    },
+    {
+      "idx": 383,
+      "version": "7",
+      "when": 1795618433831,
+      "tag": "0383_stage_c_workspace_workloads",
+      "breakpoints": true
+    },
+    {
+      "idx": 384,
+      "version": "7",
+      "when": 1795618433832,
+      "tag": "0384_stage_c_workspace_requirement_probes",
+      "breakpoints": true
+    },
+    {
+      "idx": 385,
+      "version": "7",
+      "when": 1795618433833,
+      "tag": "0385_stage_c_addressed_launch_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 386,
+      "version": "7",
+      "when": 1795618433834,
+      "tag": "0386_stage_c_addressed_stop",
+      "breakpoints": true
+    },
+    {
+      "idx": 387,
+      "version": "7",
+      "when": 1795618433835,
+      "tag": "0387_stage_c_workspace_git_checkpoint",
+      "breakpoints": true
+    },
+    {
+      "idx": 388,
+      "version": "7",
+      "when": 1795618433836,
+      "tag": "0388_stage_c_inherited_workspace_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 389,
+      "version": "7",
+      "when": 1795618433837,
+      "tag": "0389_stage_c_retained_workspace_publication",
+      "breakpoints": true
+    },
+    {
+      "idx": 390,
+      "version": "7",
+      "when": 1795618433838,
+      "tag": "0390_stage_c_retained_workspace_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 391,
+      "version": "7",
+      "when": 1795618433839,
+      "tag": "0391_stage_c_retained_workspace_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 392,
+      "version": "7",
+      "when": 1795618433840,
+      "tag": "0392_stage_c_addressed_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 393,
+      "version": "7",
+      "when": 1795618433841,
+      "tag": "0393_stage_c_flow_setup_preflight",
+      "breakpoints": true
+    },
+    {
+      "idx": 394,
+      "version": "7",
+      "when": 1795618433842,
+      "tag": "0394_stage_c_addressed_tree_stop",
+      "breakpoints": true
+    },
+    {
+      "idx": 395,
+      "version": "7",
+      "when": 1795618433843,
+      "tag": "0395_stage_c_addressed_agent_launch",
+      "breakpoints": true
+    },
+    {
+      "idx": 396,
+      "version": "7",
+      "when": 1795688971544,
+      "tag": "0396_execution-host-peer-registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 397,
+      "version": "7",
+      "when": 1795690371141,
+      "tag": "0397_stage-c-host-capacity",
+      "breakpoints": true
+    },
+    {
+      "idx": 398,
+      "version": "7",
+      "when": 1795692242293,
+      "tag": "0398_stage-c-addressed-drop",
+      "breakpoints": true
+    },
+    {
+      "idx": 399,
+      "version": "7",
+      "when": 1795692242294,
+      "tag": "0399_stage_c_retained_sync_resolver",
+      "breakpoints": true
     }
   ]
 }

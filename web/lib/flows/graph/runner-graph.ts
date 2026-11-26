@@ -4,6 +4,8 @@ import {
 } from "@/lib/agents/operational-diagnostics";
 import "server-only";
 
+import type { ClaudeNativePermissions } from "../../../../runtime/claude-native-permissions";
+import { workspaceEvidenceDigest } from "../../../../runtime/workspace-prepare";
 import type {
   DeclaredDelegationBounds,
   RunResultContract,
@@ -17,6 +19,7 @@ import type {
 } from "@/lib/db/schema";
 import type { CapabilityCatalogRecord } from "@/lib/capabilities/types";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { CapabilityBundleContent } from "@/lib/execution-host/capability-profile";
 import type {
   FormSettings,
   PlanReviewSettings,
@@ -43,6 +46,7 @@ import { buildContext, buildCompanyContext } from "../context";
 import { hookEnvDefaults, resolveHooksConfig } from "../hooks-config";
 import { bindExecution, runAgentStep } from "../runner-agent";
 import { runCliStep } from "../runner-cli";
+import { nodeWorkloadDeclarationId } from "../addressed-workload-input";
 import {
   parsePlanReviewContract,
   type PlanReviewV1,
@@ -54,6 +58,7 @@ import {
   resolveFlowRuntimeRoot,
   isCompanyFlowRun,
   requireProjectFlowRun,
+  requireRepositoryFlowRun,
 } from "./runner-core";
 import { compileManifest, resolveTransition } from "./compile";
 import {
@@ -71,8 +76,13 @@ import {
 } from "./run-context";
 import { runNodeGates } from "./gates-exec";
 import { FlowPromptContinuationPending } from "./prompt-owner";
+import {
+  FlowWorkloadContinuationPending,
+  flowWorkloadTarget,
+  runAddressedGitOperation,
+} from "../addressed-workload";
 import { ConsensusGenerationPending } from "./consensus/prompt-owner";
-import { FlowDriverClaimLost, isFlowDriverClaimLost } from "./driver-claim";
+import { assertFlowDriverClaim, FlowDriverClaimLost, isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
 import {
   persistFinishContinuation,
@@ -195,10 +205,13 @@ import {
   pinCatalogToSnapshot,
   resolveCapabilityProfile,
 } from "@/lib/capabilities/resolver";
-import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
+import {
+  materializeCapabilityProfile,
+  prepareAddressedCapabilityProfile,
+} from "@/lib/capabilities/materialize";
 import { cleanupNodeMaterialization } from "@/lib/capabilities/cleanup";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
-import { agentFacadeMcpServer } from "@/lib/agents/launch";
+import { agentFacadeMcpServerForRun } from "@/lib/agents/launch";
 import {
   issueOrchestratorRunToken,
   issueNativeNodeRunToken,
@@ -284,6 +297,7 @@ import {
   acpContextFailureReason,
   type AcpContextFailureReason,
 } from "../../../../runtime/acp-context-failure";
+import { WORKSPACE_GIT_CHECKPOINT_PREFIX } from "../../../../runtime/workspace-prepare";
 
 import { nodeAttempts } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
@@ -311,6 +325,8 @@ import {
 } from "@/lib/agents/company-flow-workspace";
 import { finalizeCompanyFlowRun } from "@/lib/run-results/company-flow-terminal";
 import { assertTaskAdmissionForDispatch } from "@/lib/tasks/qualification-admission";
+import { requireFlowWorktree } from "@/lib/execution-host/legacy-workspace";
+import { readAddressedHeadCommitSet, readAddressedWorkspacePatch } from "@/lib/execution-host/workspace-review";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, hitlRequests, artifactInstances } =
@@ -1481,7 +1497,7 @@ async function resolveNodeArtifactContents(
   currentArtifacts: ArtifactInstance[],
   checks: CheckStrictness,
   ctx: {
-    worktreePath: string;
+    worktreePath: string | undefined;
     projectSlug: string;
     runId: string;
     runtimeRoot: string;
@@ -1557,7 +1573,7 @@ async function executeNodeAction(
   context: ExecutionFlowContext,
   ctx: {
     runtimeRoot: string;
-    worktreePath: string;
+    worktreePath: string | undefined;
     execution?: AgentExecution;
     flowDriverClaim?: FlowDriverClaim;
     signal?: AbortSignal;
@@ -1567,6 +1583,8 @@ async function executeNodeAction(
     rootDb: Db;
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
+    capabilityContent?: CapabilityBundleContent;
+    claudePermissions?: ClaudeNativePermissions;
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     prepareSessionCapabilities?: () => Promise<AgentSessionCapabilities>;
@@ -1603,34 +1621,47 @@ async function executeNodeAction(
     runId: loaded.run.id,
     stepId: node.id,
     nodeAttemptId: ctx.nodeAttemptId,
-    worktreePath: ctx.worktreePath,
     bindExecution: ctx.bindExecution,
     context,
   };
 
   switch (def.type) {
     case "cli":
-    case "check":
-      requireProjectFlowRun(loaded);
-
+    case "check": {
+      const project = requireRepositoryFlowRun(loaded);
       return runCliStep(
         { id: node.id, type: "cli", command: def.action.command },
         {
           ...common,
+          ...(ctx.worktreePath
+            ? {
+                worktreePath: ctx.worktreePath,
+                flowInstallPath: loaded.flowInstallPath,
+              }
+            : {
+                workload: flowWorkloadTarget(
+                  ctx.rootDb,
+                  ctx.flowDriverClaim,
+                  project.run.executionAssignmentId,
+                  {
+                    declarationId: nodeWorkloadDeclarationId(node.id),
+                    operationKey: `node:${ctx.nodeAttemptId}`,
+                    workload: def.type,
+                  },
+                ),
+              }),
           // M26 (ADR-063): arm the MAISTER_OUTPUT_FILE transport only when the
           // node declares output.result — no transport provisioning otherwise.
           ...(def.output?.result ? { attempt: ctx.attempt } : {}),
           ...(def.settings?.timeoutMs !== undefined
             ? { timeoutMs: def.settings.timeoutMs }
             : {}),
-          // ADR-154: node actions get MAISTER_FLOW_DIR (packaged-script
-          // execution); gates/probes deliberately do not.
-          flowInstallPath: loaded.flowInstallPath,
           ...(ctx.flowDriverClaim && ctx.signal
             ? { driver: { claim: ctx.flowDriverClaim, signal: ctx.signal } }
             : {}),
         },
       );
+    }
     case "ai_coding":
     case "judge":
     // M37 (ADR-098): an orchestrator runs as an ACP session exactly like an
@@ -1693,7 +1724,7 @@ async function executeNodeAction(
           : [];
       const childLaunchContext = childLaunchPromptContext(childLaunchReceipts);
       const waitReferences = extractWaitContentReferences(def.action.prompt);
-      const runContextPrompt = isCompanyFlowRun(loaded)
+      const runContextPrompt = isCompanyFlowRun(loaded) || !ctx.worktreePath
         ? `${waitReferences.template}${childLaunchContext}`
         : `${waitReferences.template}${childLaunchContext}\n\n[Run context: ${runContextPath(
             ctx.worktreePath,
@@ -1777,6 +1808,7 @@ async function executeNodeAction(
           },
           {
             ...common,
+            worktreePath: ctx.worktreePath,
             waitContentNodes: waitReferences.nodes,
             scheduledRequestSnapshot: loaded.run.scheduledRequestSnapshot,
             // Thread the caller's db — runner-agent's resolved_prompt persist
@@ -1834,6 +1866,8 @@ async function executeNodeAction(
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
             capabilityProfilePath: ctx.capabilityProfilePath,
             capabilityInstructionsPath: ctx.capabilityInstructionsPath,
+            capabilityContent: ctx.capabilityContent,
+            claudePermissions: ctx.claudePermissions,
             adapterLaunch: mergeRunnerAdapterLaunch(
               sessionRunner,
               ctx.adapterLaunch,
@@ -1885,7 +1919,7 @@ async function executeNodeAction(
         loaded: requireProjectFlowRun(loaded),
         context,
         runtimeRoot: ctx.runtimeRoot,
-        worktreePath: ctx.worktreePath,
+        worktreePath: requireFlowWorktree(ctx.worktreePath),
         execution: ctx.execution,
         bindExecution: ctx.bindExecution,
         nodeAttemptId: ctx.nodeAttemptId,
@@ -2120,34 +2154,34 @@ async function findLatestRespondedHitl(
 // Writes NO secrets — mcp creds resolve from the host env via `${NAME}`
 // placeholders the materializer emits (R-SECRET). Does NOT write the
 // materialization ledger (that is T4.2).
+type MaterializedNodeCapabilities = {
+  capabilityProfilePath?: string;
+  capabilityInstructionsPath?: string;
+  capabilityContent?: CapabilityBundleContent;
+  claudePermissions?: ClaudeNativePermissions;
+  adapterLaunch: ScratchAdapterLaunch;
+  mcpServers: AgentMcpServer[];
+  plan: MaterializationPlan;
+  // The node's resolved restriction path sets feed must_not_touch gates.
+  restrictionPaths: RestrictionPathSet[];
+  enforcementProfile?: SessionEnforcementProfile;
+};
+
 async function materializeNodeCapabilities(
   node: CompiledNode,
   loaded: LoadedRun,
   // M42 (ADR-114): the node's session runner (judge/named-session nodes pin
   // their OWN model + agent here, not the run-level executor).
   executor: LoadedRun["executor"],
-  worktreePath: string,
+  worktreePath: string | undefined,
   nodeAttemptId: string,
   catalog: CapabilityCatalogRecord[],
   db: Db,
   logger: pino.Logger,
   checkDiagnostics: () => Promise<SupervisorDiagnosticsStatus>,
-): Promise<
-  | {
-      capabilityProfilePath: string;
-      capabilityInstructionsPath: string;
-      adapterLaunch: ScratchAdapterLaunch;
-      mcpServers: AgentMcpServer[];
-      plan: MaterializationPlan;
-      // M29 (ADR-074, D-C2): the node's resolved restriction path sets,
-      // threaded into GateRunContext for must_not_touch evaluation.
-      restrictionPaths: RestrictionPathSet[];
-      // ADR-130: the derived capability-enforcement set delivered to the supervisor.
-      enforcementProfile?: SessionEnforcementProfile;
-    }
-  | undefined
-> {
+): Promise<MaterializedNodeCapabilities | undefined> {
   if (isCompanyFlowRun(loaded)) {
+    const companyWorktree = requireFlowWorktree(worktreePath);
     const definition = node.source.node;
 
     if (definition.type !== "ai_coding" && definition.type !== "orchestrator")
@@ -2168,7 +2202,7 @@ async function materializeNodeCapabilities(
       runId: loaded.run.id,
       nodeAttemptId,
       executorAgent: executor.agent,
-      worktreePath,
+      worktreePath: companyWorktree,
       db,
       requireFlowTrigger: settings?.agent !== undefined,
     });
@@ -2177,7 +2211,7 @@ async function materializeNodeCapabilities(
       runId: loaded.run.id,
       nodeAttemptId,
       sessionName: node.session ?? "default",
-      worktreePath,
+      worktreePath: companyWorktree,
       checkDiagnostics,
     });
 
@@ -2245,9 +2279,8 @@ async function materializeNodeCapabilities(
     catalog,
   });
 
-  const m = await materializeCapabilityProfile({
+  const capabilityArgs = {
     runId: loaded.run.id,
-    worktreePath,
     profile,
     nodeAttemptId,
     tools: declares && settings ? settings.tools?.[agent] : undefined,
@@ -2266,7 +2299,14 @@ async function materializeNodeCapabilities(
       agent,
       model: executor.model,
     },
-  });
+  };
+  const addressed = loaded.workspace.ownershipKind === "host_owned";
+  const m = addressed
+    ? prepareAddressedCapabilityProfile(capabilityArgs)
+    : await materializeCapabilityProfile({
+        ...capabilityArgs,
+        worktreePath: requireFlowWorktree(worktreePath),
+      });
 
   // ADR-130 (W-C/W-E): one shared gate+overlay pass (spec §13) — platform-trust
   // + exec-trust withhold (visible-but-not-executable, persisted to the run-level
@@ -2308,11 +2348,24 @@ async function materializeNodeCapabilities(
     mcpServerNames: mcpServers.map((s) => s.name),
   });
 
+  const nativePolicy = addressed && agent === "claude" ? {
+    permissions: "claudePermissions" in m ? m.claudePermissions ?? null : null,
+    pathGuard: capabilityArgs.hooksConfig?.pathGuard ?? null,
+  } : undefined;
+  const addressedRole = addressed && (node.nodeType === "ai_coding" || node.nodeType === "orchestrator")
+    ? (settings && "agent" in settings ? settings.agent : undefined) ?? loaded.run.agentId
+    : null;
   const plan: MaterializationPlan = {
     // Fold the enforcement profile into the digest so the long-lived-session
     // consistency guard catches a mid-session enforcement change (D4).
     profileDigest: foldEnforcementProfileIntoDigest(
-      profile.profileDigest,
+      nativePolicy?.permissions || nativePolicy?.pathGuard || addressedRole
+        ? workspaceEvidenceDigest({
+          profileDigest: profile.profileDigest,
+          nativePolicy: nativePolicy ?? null,
+          addressedRole: addressedRole ?? null,
+        })
+        : profile.profileDigest,
       enforcementProfile,
     ),
     resolvedRevisions: profile.supported.map((e) => ({
@@ -2320,7 +2373,7 @@ async function materializeNodeCapabilities(
       kind: e.kind,
       sha: e.revision ?? "",
     })),
-    materializedFiles: m.materializedFiles,
+    materializedFiles: "materializedFiles" in m ? m.materializedFiles : [],
     enforcedClasses: profile.enforced.map((e) => e.capabilityRefId),
     // `profile.instructed` includes downgraded (unsupported, silently-dropped)
     // caps; source from supported-but-not-enforced so the immutable plan never
@@ -2339,7 +2392,7 @@ async function materializeNodeCapabilities(
     // stable inputs); the graph forces new-session so no cross-attempt consistency
     // guard reads it back.
     enforcementProfile: enforcementProfile ?? null,
-    cleanup: { status: "pending" },
+    cleanup: { status: addressed ? "done" : "pending" },
   };
 
   if (withheldMcps.length > 0) {
@@ -2357,15 +2410,24 @@ async function materializeNodeCapabilities(
     {
       nodeId: node.id,
       profileDigest: profile.profileDigest,
-      matPath: m.profilePath,
+      matPath: "profilePath" in m ? m.profilePath : undefined,
+      ownershipKind: loaded.workspace.ownershipKind,
     },
     "[runner.graph] node materialized",
   );
 
   return {
-    capabilityProfilePath: m.profilePath,
-    capabilityInstructionsPath: m.instructionsPath,
-    adapterLaunch: m.adapterLaunch,
+    ...("capabilityContent" in m
+      ? {
+          capabilityContent: m.capabilityContent,
+          claudePermissions: m.claudePermissions,
+          adapterLaunch: {},
+        }
+      : {
+          capabilityProfilePath: m.profilePath,
+          capabilityInstructionsPath: m.instructionsPath,
+          adapterLaunch: m.adapterLaunch,
+        }),
     mcpServers,
     plan,
     // enforced + instructed together cover every selected (non-refused)
@@ -2799,7 +2861,7 @@ export async function runGraph(
 
   const worktreePath = isCompanyFlowRun(loaded)
     ? companyAgentWorkdirPath(loaded.run.companyId, runId)
-    : requireProjectFlowRun(loaded).workspace.worktreePath;
+    : loaded.workspace.worktreePath ?? undefined;
   // M14 T4.1 / M27 T-B5 (ADR-069): load the live selectable catalog ONCE, then
   // PIN it to the launch-frozen `runs.resolved_capability_set` snapshot so a
   // mid-run edit/publish (a new same-id record at any scope, or a wholly new
@@ -2928,6 +2990,66 @@ export async function runGraph(
   // `attempts` bounds the node's TOTAL ledger attempts — rework re-visits consume
   // the same budget. An apply failure abandons the retry (fails), never corrupts.
   type AutoRetryDecision = "retry" | "escalate" | "fail";
+  const addressedProject = !isCompanyFlowRun(loaded) && loaded.workspace.ownershipKind === "host_owned";
+  const addressedReworkCheckpointTargets = new Set(
+    addressedProject
+      ? [...graph.nodes.values()].flatMap((node) =>
+          node.rework?.workspacePolicies.some((policy) => policy !== "keep")
+            ? [
+                ...node.rework.allowedTargets,
+                ...(node.output?.result?.on_mismatch === "retry" ? [node.id] : []),
+              ]
+            : [],
+        )
+      : [],
+  );
+  const addressedGitOwner = () => {
+    const driver = opts.driver;
+    if (driver?.claim.scope !== "assignment" || driver.claim.assignmentId !== loaded.run.executionAssignmentId)
+      throw new MaisterError("CHECKPOINT", "An assigned Flow driver is required for the workspace Git operation");
+
+    return { runId, assignmentId: driver.claim.assignmentId, signal: driver.signal,
+      assertDriver: (tx: Db) => assertFlowDriverClaim(tx, driver.claim) };
+  };
+  const applyGraphWorkspacePolicy = async (
+    policy: Exclude<WorkspacePolicy, "keep">,
+    checkpointRef: string | null,
+    operationKey: string,
+  ): Promise<void> => {
+    if (addressedProject) {
+      if (!checkpointRef?.startsWith(WORKSPACE_GIT_CHECKPOINT_PREFIX))
+        throw new MaisterError("CHECKPOINT", "The selected workspace requires a retained checkpoint for this policy",
+          { details: { reason: "workspace_checkpoint_unknown" } });
+      const owner = addressedGitOwner();
+      await runAddressedGitOperation(rootDb, {
+        ...owner,
+        kind: "workspace.restore",
+        operationKey,
+        checkpointId: checkpointRef.slice(WORKSPACE_GIT_CHECKPOINT_PREFIX.length),
+        ...(policy === "fresh-attempt" ? { policy } : {}),
+      }, owner.signal);
+
+      return;
+    }
+    const checkpointWorktree = requireFlowWorktree(worktreePath);
+    if (!checkpointRef)
+      throw new MaisterError("CHECKPOINT", "The workspace checkpoint is unavailable");
+    const project = requireProjectFlowRun(loaded);
+    await applyWorkspacePolicy({
+      policy,
+      worktreePath: checkpointWorktree,
+      checkpointRef,
+      rematerialize: policy === "fresh-attempt"
+        ? () => materializeProjectBundlesIntoWorktree({
+            runId,
+            projectId: project.run.projectId,
+            worktreePath: checkpointWorktree,
+            baseBranch: project.workspace.baseBranch ?? "main",
+            db,
+          })
+        : undefined,
+    });
+  };
   const scheduleAutoRetry = async (
     node: CompiledNode,
     code: MaisterErrorCode,
@@ -2976,33 +3098,20 @@ export async function runGraph(
     }
 
     if (retryPolicy.workspace !== "keep") {
-      if (!state.attemptCheckpointRef) {
+      if (!state.attemptCheckpointRef && !addressedProject) {
+        requireFlowWorktree(worktreePath);
         log2.warn(
           { nodeId: node.id, workspacePolicy: retryPolicy.workspace },
           "[retry] no checkpoint_ref — workspace policy degraded to keep",
         );
       } else {
         try {
-          await applyWorkspacePolicy({
-            policy: retryPolicy.workspace,
-            worktreePath: requireProjectFlowRun(loaded).workspace.worktreePath,
-            checkpointRef: state.attemptCheckpointRef,
-            rematerialize:
-              retryPolicy.workspace === "fresh-attempt"
-                ? () =>
-                    materializeProjectBundlesIntoWorktree({
-                      runId,
-                      projectId: requireProjectFlowRun(loaded).run.projectId,
-                      worktreePath:
-                        requireProjectFlowRun(loaded).workspace.worktreePath,
-                      baseBranch:
-                        requireProjectFlowRun(loaded).workspace.baseBranch ??
-                        "main",
-                      db,
-                    })
-                : undefined,
-          });
+          await applyGraphWorkspacePolicy(
+            retryPolicy.workspace, state.attemptCheckpointRef,
+            `rewind:${state.attemptCheckpointRef}`,
+          );
         } catch (err) {
+          if (err instanceof FlowWorkloadContinuationPending || isFencedError(err) || isFlowDriverClaimLost(err)) throw err;
           log2.error(
             { nodeId: node.id, err: asError(err).message },
             "[retry] workspace apply failed — retry abandoned (normal failure)",
@@ -3080,6 +3189,7 @@ export async function runGraph(
   // the blackboard silently; it NEVER fails the run (correctness never depends on
   // run.json).
   const runContextWriteSafe =
+    worktreePath &&
     !isCompanyFlowRun(loaded) &&
     (await ensureRunContextExcluded(worktreePath).catch((err) => {
       log2.debug(
@@ -3469,7 +3579,7 @@ export async function runGraph(
             autoRetry: pendingAutoRetryNodeId === node.id,
             sessionPolicy: appendSessionPolicy,
             executionAssignmentId:
-              claimsFailedNodeRestart &&
+              (claimsFailedNodeRestart || worktreePath === undefined) &&
               opts.driver?.claim.scope === "assignment"
                 ? opts.driver.claim.assignmentId
                 : opts.driver || isAgentNodeType(node.nodeType)
@@ -3524,6 +3634,7 @@ export async function runGraph(
         // policies degrade to keep with a WARN at apply time.
         // applyWorkspacePolicy itself stays hard (CHECKPOINT).
         if (
+          worktreePath &&
           !isCompanyFlowRun(loaded) &&
           (node.nodeType === "ai_coding" || node.nodeType === "cli")
         ) {
@@ -3550,11 +3661,32 @@ export async function runGraph(
         }
       }
 
+      const retryWorkspace = (node.source.node as { retry_policy?: RetryPolicy }).retry_policy?.workspace;
+      const needsMutationCheckpoint = node.gates.some((gate) => gate.must_touch !== undefined || gate.must_not_touch !== undefined);
+      if (
+        addressedProject &&
+        (retryWorkspace === "rewind-to-node-checkpoint" ||
+          needsMutationCheckpoint ||
+          addressedReworkCheckpointTargets.has(node.id)) &&
+        !attemptCheckpointRef
+      ) {
+        const owner = addressedGitOwner();
+        const checkpoint = await runAddressedGitOperation(rootDb, { ...owner, kind: "workspace.checkpoint",
+          operationKey: `attempt-checkpoint:${nodeAttemptId}`,
+        }, owner.signal);
+        const checkpointRef = `${WORKSPACE_GIT_CHECKPOINT_PREFIX}${checkpoint.checkpointId}`;
+        await db.transaction(async (tx: Db) => {
+          await owner.assertDriver(tx);
+          await setCheckpointRef(nodeAttemptId, checkpointRef, tx);
+        });
+        attemptCheckpointRef = checkpointRef;
+      }
+
       // M29 (ADR-074, D-C3): capture HEAD at this node's FIRST attempt start
       // — write-if-absent, so attempt 2+/resume keep the true start. Best
       // effort: git unavailable at start → skip; the must_touch range falls
       // back to the cumulative branch range at gate time.
-      if (!isCompanyFlowRun(loaded))
+      if (worktreePath && !isCompanyFlowRun(loaded))
         try {
           const startHead = await resolveRefSha(worktreePath, "HEAD");
 
@@ -3882,17 +4014,7 @@ export async function runGraph(
       // the in-flight attempt never stays stale at Running on the outer catch.
       let prepareSessionCapabilities:
         (() => Promise<AgentSessionCapabilities>) | undefined;
-      let materialized:
-        | {
-            capabilityProfilePath: string;
-            capabilityInstructionsPath: string;
-            adapterLaunch: ScratchAdapterLaunch;
-            mcpServers: AgentMcpServer[];
-            plan: MaterializationPlan;
-            restrictionPaths: RestrictionPathSet[];
-            enforcementProfile?: SessionEnforcementProfile;
-          }
-        | undefined;
+      let materialized: MaterializedNodeCapabilities | undefined;
 
       if (
         node.nodeType === "ai_coding" ||
@@ -3975,7 +4097,9 @@ export async function runGraph(
                     nodeAttemptId,
                     db,
                   });
-              const facadeServer = agentFacadeMcpServer(
+              const facadeServer = await agentFacadeMcpServerForRun(
+                db,
+                runId,
                 issued.secret,
                 company ? "company" : "project-run",
               );
@@ -4090,9 +4214,9 @@ export async function runGraph(
       } else {
         try {
           const usesManagedProvenance =
-            await hasManagedWorktreeProvenance(worktreePath);
+            worktreePath && (await hasManagedWorktreeProvenance(worktreePath));
 
-          if (usesManagedProvenance) {
+          if (worktreePath && usesManagedProvenance) {
             await setWorktreeProvenanceNode({ worktreePath, nodeId: node.id });
           }
           try {
@@ -4107,6 +4231,8 @@ export async function runGraph(
               capabilityProfilePath: materialized?.capabilityProfilePath,
               capabilityInstructionsPath:
                 materialized?.capabilityInstructionsPath,
+              capabilityContent: materialized?.capabilityContent,
+              claudePermissions: materialized?.claudePermissions,
               adapterLaunch: materialized?.adapterLaunch,
               mcpServers: materialized?.mcpServers,
               prepareSessionCapabilities,
@@ -4123,7 +4249,7 @@ export async function runGraph(
               db,
             });
           } finally {
-            if (usesManagedProvenance) {
+            if (worktreePath && usesManagedProvenance) {
               await clearWorktreeProvenanceNode(worktreePath);
             }
           }
@@ -4147,6 +4273,7 @@ export async function runGraph(
         } catch (err) {
           if (
             err instanceof FlowPromptContinuationPending ||
+            err instanceof FlowWorkloadContinuationPending ||
             err instanceof ConsensusGenerationPending ||
             isProjectionTransactionUnavailable(err) ||
             isFlowDriverClaimLost(err)
@@ -4296,6 +4423,8 @@ export async function runGraph(
             nodeId: node.id,
             attempt: nodeAttemptNumber,
             workspace: loaded.workspace,
+            sourceDb: rootDb,
+            signal: opts.driver?.signal,
           },
           db,
         ).catch((err) => {
@@ -4424,7 +4553,7 @@ export async function runGraph(
       // past it (success, failure, or rework — all leave the pause), so the
       // gate-chat L3 baseline refs for the run are stale — GC them. Bounded
       // at 1 per hitlRequest; best-effort (non-git fixtures / no refs).
-      if (reusesCurrentAttempt && !isCompanyFlowRun(loaded)) {
+      if (worktreePath && reusesCurrentAttempt && !isCompanyFlowRun(loaded)) {
         try {
           await deleteRunCheckpointRefs(worktreePath, runId, [
             "chat-checkpoints",
@@ -4563,7 +4692,8 @@ export async function runGraph(
             );
             const checkpointRef = targetAttempt?.checkpointRef ?? null;
 
-            if (!checkpointRef) {
+            if (!checkpointRef && !addressedProject) {
+              requireFlowWorktree(worktreePath);
               log2.warn(
                 {
                   nodeId: node.id,
@@ -4586,25 +4716,7 @@ export async function runGraph(
                 break;
               }
               try {
-                await applyWorkspacePolicy({
-                  policy: onMismatchPolicy,
-                  worktreePath,
-                  checkpointRef,
-                  rematerialize:
-                    onMismatchPolicy === "fresh-attempt"
-                      ? () =>
-                          materializeProjectBundlesIntoWorktree({
-                            runId,
-                            projectId:
-                              requireProjectFlowRun(loaded).run.projectId,
-                            worktreePath,
-                            baseBranch:
-                              requireProjectFlowRun(loaded).workspace
-                                .baseBranch ?? "main",
-                            db,
-                          })
-                      : undefined,
-                });
+                await applyGraphWorkspacePolicy(onMismatchPolicy, checkpointRef, `mismatch:${nodeAttemptId}:${reworkTarget}`);
                 log2.info(
                   {
                     nodeId: node.id,
@@ -4615,6 +4727,7 @@ export async function runGraph(
                   "[checkpoint] on_mismatch apply policy",
                 );
               } catch (err) {
+                if (err instanceof FlowWorkloadContinuationPending || isFencedError(err) || isFlowDriverClaimLost(err)) throw err;
                 const e = isMaisterError(err)
                   ? err
                   : new MaisterError("CHECKPOINT", asError(err).message, {
@@ -4751,7 +4864,7 @@ export async function runGraph(
         const gateOutcome = await runNodeGates(
           node,
           nodeAttemptId,
-          requireProjectFlowRun(loaded),
+          requireRepositoryFlowRun(loaded),
           context,
           {
             runtimeRoot,
@@ -4760,9 +4873,11 @@ export async function runGraph(
             bindExecution: ensureExecution,
             flowDriverClaim: opts.driver?.claim,
             signal: opts.driver?.signal,
+            rootDb,
             // M29 (ADR-074): the node's resolved restriction path sets for
             // must_not_touch — undefined for capability-less nodes.
             restrictionPaths: materialized?.restrictionPaths,
+            workspaceCheckpointRef: attemptCheckpointRef,
             db,
           },
         );
@@ -4974,6 +5089,44 @@ export async function runGraph(
                 kind: produces.kind,
                 producer: "runner",
                 locator: { kind: "file", path: produces.path },
+                validity: "current",
+                requiredFor: produces.requiredFor,
+                visibility: produces.visibility ?? "internal",
+                retention: produces.retention ?? "run",
+              },
+              db,
+            );
+          } else if (
+            loaded.workspace?.ownershipKind === "host_owned" &&
+            (produces.kind === "diff" || produces.kind === "commit_set")
+          ) {
+            const workspace = loaded.workspace;
+            const current = await getCurrentArtifact(runId, produces.id, db);
+            if (current?.nodeAttemptId === nodeAttemptId && current.locator.kind === "execution-object") continue;
+            if (!workspace.baseCommit)
+              throw new MaisterError("PRECONDITION", "The assigned workspace has no pinned base for a Git artifact");
+            const source = {
+              db: rootDb,
+              workspace,
+              signal: opts.driver?.signal ?? AbortSignal.timeout(12_000),
+            };
+            const { reference, sizeBytes } = produces.kind === "diff"
+              ? await readAddressedWorkspacePatch({ ...source, range: { base: workspace.baseCommit } })
+              : await readAddressedHeadCommitSet({ ...source, base: workspace.baseCommit });
+
+            await recordCurrentArtifact(
+              {
+                id: `run:${nodeAttemptId}:${produces.id}`,
+                runId,
+                nodeAttemptId,
+                nodeId: node.id,
+                attempt: currentAttempt,
+                artifactDefId: produces.id,
+                kind: produces.kind,
+                producer: "runner",
+                locator: { kind: "execution-object", objectId: reference.objectId },
+                hash: reference.sha256,
+                sizeBytes,
                 validity: "current",
                 requiredFor: produces.requiredFor,
                 visibility: produces.visibility ?? "internal",
@@ -5196,6 +5349,8 @@ export async function runGraph(
           nodeId: node.id,
           attempt: nodeAttemptNumber,
           workspace: loaded.workspace,
+          sourceDb: rootDb,
+          signal: opts.driver?.signal,
         },
         db,
       ).catch((err) => {
@@ -5422,7 +5577,7 @@ export async function runGraph(
             break;
           }
           assertSucceededAttemptResult(closeOutcome.value);
-          if (materialized && !isCompanyFlowRun(loaded)) {
+          if (materialized && worktreePath && !isCompanyFlowRun(loaded)) {
             await cleanupNodeMaterialization({
               nodeAttemptId,
               runId: loaded.run.id,
@@ -5605,7 +5760,7 @@ export async function runGraph(
           break;
         }
         assertSucceededAttemptResult(closeOutcome.value);
-        if (materialized && !isCompanyFlowRun(loaded)) {
+        if (materialized && worktreePath && !isCompanyFlowRun(loaded)) {
           await cleanupNodeMaterialization({
             nodeAttemptId,
             runId: loaded.run.id,
@@ -5670,7 +5825,8 @@ export async function runGraph(
             : null;
           const checkpointRef = targetAttempt?.checkpointRef ?? null;
 
-          if (!checkpointRef) {
+          if (!checkpointRef && !addressedProject) {
+            requireFlowWorktree(worktreePath);
             // Pre-M30 rows / degraded capture: no checkpoint to apply
             // against — observable degrade, never a guess.
             log2.warn(
@@ -5695,27 +5851,7 @@ export async function runGraph(
             // the review attempt still open — re-deciding the review re-runs
             // an idempotent apply against the same checkpoint.
             try {
-              await applyWorkspacePolicy({
-                policy: chosenPolicy,
-                worktreePath,
-                checkpointRef,
-                rematerialize:
-                  chosenPolicy === "fresh-attempt"
-                    ? () =>
-                        materializeProjectBundlesIntoWorktree({
-                          runId,
-                          projectId:
-                            requireProjectFlowRun(loaded).run.projectId,
-                          worktreePath,
-                          // Pre-M30 workspaces may lack base_branch; the
-                          // override only seeds AIF's base-branch hint.
-                          baseBranch:
-                            requireProjectFlowRun(loaded).workspace
-                              .baseBranch ?? "main",
-                          db,
-                        })
-                    : undefined,
-              });
+              await applyGraphWorkspacePolicy(chosenPolicy, checkpointRef, `review:${nodeAttemptId}:${target}`);
               log2.info(
                 {
                   nodeId: node.id,
@@ -5726,6 +5862,7 @@ export async function runGraph(
                 "[checkpoint] apply policy",
               );
             } catch (err) {
+              if (err instanceof FlowWorkloadContinuationPending || isFencedError(err) || isFlowDriverClaimLost(err)) throw err;
               const e = isMaisterError(err)
                 ? err
                 : new MaisterError("CHECKPOINT", asError(err).message, {
@@ -6040,7 +6177,7 @@ export async function runGraph(
         }
         assertSucceededAttemptResult(closeOutcome.value);
 
-        if (materialized && !isCompanyFlowRun(loaded)) {
+        if (materialized && worktreePath && !isCompanyFlowRun(loaded)) {
           await cleanupNodeMaterialization({
             nodeAttemptId,
             runId: loaded.run.id,
@@ -6105,13 +6242,14 @@ export async function runGraph(
     }
     if (
       err instanceof FlowPromptContinuationPending ||
+      err instanceof FlowWorkloadContinuationPending ||
       err instanceof ConsensusGenerationPending ||
       isFencedError(err) ||
       isFlowDriverClaimLost(err)
     ) {
       log2.warn(
         isMaisterError(err) ? { code: err.code, details: err.details } : {},
-        "driver-yielded awaiting durable prompt continuation",
+        "driver-yielded awaiting durable command continuation",
       );
 
       return;

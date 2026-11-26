@@ -50,14 +50,14 @@ async function seedRecord(runId: string): Promise<void> {
 }
 
 describe("agent materialization cleanup sweep", () => {
-  it("discovers local-package working directories alongside project and workspace roots", async () => {
+  it("discovers manager-owned roots even when a supervisor workspace has no path", async () => {
     const projectRoot = path.join(root, "project");
     const workspaceRoot = path.join(root, "workspace");
     const localPackageRoot = path.join(root, "local-package");
     const from = vi
       .fn()
       .mockResolvedValueOnce([{ slug: "p", repoPath: projectRoot }])
-      .mockResolvedValueOnce([{ worktreePath: workspaceRoot }])
+      .mockResolvedValueOnce([{ worktreePath: workspaceRoot }, { worktreePath: null }])
       .mockResolvedValueOnce([{ workingDir: localPackageRoot }]);
     const db = {
       select: vi.fn(() => ({ from })),

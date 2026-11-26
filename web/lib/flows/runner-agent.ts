@@ -1,10 +1,15 @@
 import "server-only";
 
 import type { ChildLaunchReceipt } from "@/lib/orchestrator/child-launch-context";
+import type { ClaudeNativePermissions } from "../../../runtime/claude-native-permissions";
 import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { CapabilityAgent } from "@/lib/config.schema";
+import type {
+  CapabilityBundleContent,
+  PublishedCapabilityBundle,
+} from "@/lib/execution-host/capability-profile";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
@@ -63,6 +68,7 @@ import {
 } from "./graph/prompt-permission";
 
 import { isProjectionTransactionUnavailable } from "@/lib/execution-host/events/projection-transaction";
+import { requireFlowWorktree } from "@/lib/execution-host/legacy-workspace";
 import {
   assertMemorySessionSources,
   stageProjectFlowMemory,
@@ -121,6 +127,7 @@ import {
   type SupervisorRunnerInput,
 } from "@/lib/execution-host";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { publishCapabilityBundleContent } from "@/lib/execution-host/capability-profile";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
@@ -186,7 +193,7 @@ export type RunAgentStepCtx = {
   coordinatorChildLaunchReceipts?: readonly ChildLaunchReceipt[];
   flowDriverClaim?: FlowDriverClaim;
   signal?: AbortSignal;
-  worktreePath: string;
+  worktreePath: string | undefined;
   // ADR-166: the caller's once-per-driver-generation binding, resolved lazily
   // at the first agent dispatch (so a mocked step never binds and a failed
   // binding surfaces as THIS step's failure, with its attempt in the ledger).
@@ -217,6 +224,8 @@ export type RunAgentStepCtx = {
   context: ExecutionFlowContext;
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
+  capabilityContent?: CapabilityBundleContent;
+  claudePermissions?: ClaudeNativePermissions;
   outputObjects?: RuntimeObjectOutputBinding[];
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
@@ -1356,6 +1365,17 @@ async function resolveFlowRolePrompt(
   prompt: string,
   ctx: RunAgentStepCtx,
 ): Promise<{ prompt: string; personaId: string | null }> {
+  const agentId = ctx.agentBinding?.id ?? ctx.runPersonaAgentId;
+  if (!ctx.worktreePath && agentId) {
+    const { attestAddressedFlowPersona, readAddressedFlowPersona } = await import("@/lib/agents/addressed-flow-persona");
+    const persona = await readAddressedFlowPersona(ctx.db, ctx.runId, ctx.stepId, agentId);
+    const rolePrompt = usesStructuredKnowledgeContext(ctx)
+      ? await attestAddressedFlowPersona(ctx.db, { runId: ctx.runId, nodeAttemptId: ctx.nodeAttemptId, persona })
+      : persona.prompt;
+    return persona.mode === "session"
+      ? { prompt: `${rolePrompt}\n\n## Task\n\n${prompt}`, personaId: agentId }
+      : { prompt, personaId: null };
+  }
   let promptTemplate = prompt;
   let personaId: string | null = null;
 
@@ -1371,7 +1391,7 @@ async function resolveFlowRolePrompt(
       runId: ctx.runId,
       nodeAttemptId: ctx.nodeAttemptId,
       executorAgent: ctx.executor.agent,
-      worktreePath: ctx.worktreePath,
+      worktreePath: requireFlowWorktree(ctx.worktreePath),
       db: ctx.db,
     });
 
@@ -1391,7 +1411,7 @@ async function resolveFlowRolePrompt(
       runId: ctx.runId,
       nodeAttemptId: ctx.nodeAttemptId,
       executorAgent: ctx.executor.agent,
-      worktreePath: ctx.worktreePath,
+      worktreePath: requireFlowWorktree(ctx.worktreePath),
       db: ctx.db,
       requireFlowTrigger: false,
     });
@@ -1456,7 +1476,7 @@ async function dispatchAgentStep(
   }
 
   const skillPrompt =
-    "owner" in ctx.context.run
+    "owner" in ctx.context.run || !ctx.worktreePath
       ? ""
       : await workspacePackageSkillsPrompt(ctx.worktreePath, ctx.runId);
   const ordinaryPrompt = appendScheduledRequest(
@@ -1638,18 +1658,26 @@ async function runNewSession(
     const prepareCreatePayload = async (): Promise<
       Omit<CreateSessionPayload, "executionWorkspaceId">
     > => {
-      const capabilityBundle =
-        ctx.capabilityProfilePath && ctx.capabilityInstructionsPath
-          ? await publishCapabilityBundle({
-              client,
-              runId: ctx.runId,
-              sourceId: ctx.nodeAttemptId ?? ctx.stepId,
-              profileLogicalName: `${ctx.stepId}-capability-profile.json`,
-              profilePath: ctx.capabilityProfilePath,
-              instructionsLogicalName: `${ctx.stepId}-capability-instructions.md`,
-              instructionsPath: ctx.capabilityInstructionsPath,
-            })
-          : undefined;
+      let capabilityBundle: PublishedCapabilityBundle | undefined;
+      const capabilityOwner = {
+        client,
+        runId: ctx.runId,
+        sourceId: ctx.nodeAttemptId ?? ctx.stepId,
+        profileLogicalName: `${ctx.stepId}-capability-profile.json`,
+        instructionsLogicalName: `${ctx.stepId}-capability-instructions.md`,
+      };
+      if (ctx.capabilityContent) {
+        capabilityBundle = await publishCapabilityBundleContent(
+          capabilityOwner,
+          ctx.capabilityContent,
+        );
+      } else if (ctx.capabilityProfilePath && ctx.capabilityInstructionsPath) {
+        capabilityBundle = await publishCapabilityBundle({
+          ...capabilityOwner,
+          profilePath: ctx.capabilityProfilePath,
+          instructionsPath: ctx.capabilityInstructionsPath,
+        });
+      }
 
       const sessionCapabilities = ctx.prepareSessionCapabilities
         ? await ctx.prepareSessionCapabilities()
@@ -1665,14 +1693,16 @@ async function runNewSession(
       ) {
         const { issueProjectVaultNodeToken } =
           await import("@/lib/agents/tokens");
-        const { agentFacadeMcpServer } = await import("@/lib/agents/launch");
+        const { agentFacadeMcpServerForRun } = await import("@/lib/agents/launch");
         const credential = await issueProjectVaultNodeToken({
           projectId: memoryProjectId,
           runId: ctx.runId,
           nodeAttemptId: ctx.nodeAttemptId,
           db: ctx.db,
         });
-        const facade = agentFacadeMcpServer(credential.secret, "vault");
+        const facade = await agentFacadeMcpServerForRun(
+          ctx.db ?? getDb(), ctx.runId, credential.secret, "vault",
+        );
 
         if (!facade)
           throw new MaisterError(
@@ -1696,6 +1726,7 @@ async function runNewSession(
         runner: ctx.runner,
         capabilityProfileObjectId: capabilityBundle?.profileObjectId,
         capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
+        claudePermissions: ctx.claudePermissions,
         outputObjects: ctx.outputObjects,
         adapterLaunch: ctx.adapterLaunch,
         mcpServers: sessionCapabilities.mcpServers,
