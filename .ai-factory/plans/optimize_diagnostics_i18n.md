@@ -486,7 +486,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
 
 ### Phase 4: Root client-message pruning. Exit: web unit + integration green; Playwright spec green
 
-- [ ] **Task 14: Picker and root provider (TDD)** (depends on 4)
+- [x] **Task 14: Picker and root provider (TDD)** (depends on 4)
   - **RED:** `web/lib/__tests__/pick-messages.test.ts` (unit; matched by `lib/**/*.test.ts`):
     - CMSG-06:
       - by-reference identity for a whole namespace;
@@ -501,7 +501,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
   - **REFACTOR:** the picker has no list knowledge (SRP); the root layout's change is a single prop.
   - **LOGGING:** DEBUG `[i18n.client-messages] provided { paths }`; `bytes` is computed only when debug is enabled. WARN on an unknown path in production.
 
-- [ ] **Task 15: Client-namespace scanner + list equality (TDD)** (depends on 14)
+- [x] **Task 15: Client-namespace scanner + list equality (TDD)** (depends on 14)
   - **RED (engine):** `web/test-support/__tests__/client-namespace-scanner.test.ts`. It uses in-memory fixture file maps, one case per distinct detection path with no overlap:
     - a literal reached through a 2-hop import from a `"use client"` file is collected;
     - a literal used only by server code is not collected;
@@ -523,7 +523,8 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
   - **REFACTOR:** the engine is pure (`fileMap` in, result out); the repo test only does I/O.
   - **LOGGING:** test-only. The equality failure prints the missing and extra paths plus the client module chain for each missing one.
 
-- [ ] **Task 16: Runtime `MISSING_MESSAGE` E2E (CMSG-08)** (depends on 15)
+- [x] **Task 16: Runtime `MISSING_MESSAGE` E2E (CMSG-08)** (depends on 15)
+  - RED demonstrated by temporarily removing `"librarian"` from `CLIENT_NAMESPACES` (`MISSING_MESSAGE: librarian (en)/(ru)` caught across routes), then restored and verified GREEN (`desk-html-bytes-en=786993`, `desk-html-bytes-ru=955262`).
   - **RED → GREEN:** `web/e2e/i18n-client-messages.spec.ts`. For EN and RU, it collects browser console messages, visits the routes below, and asserts that no message contains `MISSING_MESSAGE`:
     - desk and inbox;
     - `/projects/[slug]` with the board, settings and webhooks tabs;
