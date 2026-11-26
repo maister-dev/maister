@@ -61,6 +61,7 @@ import { loadGitState } from "@/lib/workbench-git/read-model";
 import {
   artifactInstances,
   agents,
+  capabilityImports,
   flows,
   flowRevisions,
   gateResults,
@@ -501,9 +502,26 @@ it.each([
     const skillContent = "---\nname: shared-check\ndescription: Verify the shared checkout\n---\nInspect the owning checkout.\n";
     await mkdir(join(childAgent.installedPath, "assets", "skills", "shared-check"), { recursive: true });
     await writeFile(join(childAgent.installedPath, "assets", skillPath), skillContent);
-    await db.update(packageInstalls)
+    const [supplier] = await db.update(packageInstalls)
       .set({ manifest: { spec: { capabilities: [{ id: "shared-check", path: "assets" }] } } })
-      .where(eq(packageInstalls.id, childAgent.packageInstallId));
+      .where(eq(packageInstalls.id, childAgent.packageInstallId))
+      .returning({ revision: packageInstalls.resolvedRevision });
+    const installedPath = join(childAgent.installedPath, "assets");
+    await db.insert(capabilityImports).values({
+      id: randomUUID(),
+      projectId,
+      capabilityRefId: "shared-check",
+      source: `file://${installedPath}`,
+      versionTag: "fixture-v1",
+      resolvedRevision: supplier.revision,
+      manifestDigest: "fixture",
+      manifest: {},
+      installedPath,
+      packageInstallId: childAgent.packageInstallId,
+      packageStatus: "Installed",
+      trustStatus: "trusted",
+      setupStatus: "not_required",
+    });
     await db.update(agents).set({ triggers: ["domain_event"] }).where(eq(agents.id, childAgent.agentId));
     const childTaskId = randomUUID();
     await db.insert(tasks).values({

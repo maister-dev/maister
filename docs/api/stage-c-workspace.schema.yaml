@@ -330,6 +330,10 @@ definitions:
           enum: [ 1 ]
         minItems: 1
         maxItems: 1
+      workspaceSyncResolver:
+        type: integer
+        enum: [1]
+        description: Advertises retained conflict preparation, verification and abort.
   WorkspaceQuery:
     type: object
     additionalProperties: false

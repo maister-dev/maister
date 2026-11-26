@@ -52,10 +52,12 @@ runs. The supervisor isolates that failure mode. The two processes share
 the HTTP+SSE wire. Stage B removes the runtime-data filesystem dependency:
 browser replay, transcripts, costs, artifacts, and prompt completion read
 manager-owned Postgres state. The legacy repository path still uses Web-side
-Git under ADR-023. The Stage C pilot can prepare and execute an independent
-project Flow on a selected supervisor and serve its retained Review diff.
-The verified topology and the remaining placement and Git lifecycle work are
-tracked in [execution host analytics](system-analytics/execution-hosts.md).
+Git under ADR-023. Stage C can prepare and execute a project Run on a selected
+supervisor, serve its retained Review diff, and perform Git and disposal
+operations on that owner. Hosts serving `/v1/workspaces/{id}/sync` advertise
+`workspaceSyncResolver: 1` in an addressed `/capabilities` response when they
+support preparing and settling a conflict on the retained checkout. Placement,
+retention and upgrade requirements are in [execution host analytics](system-analytics/execution-hosts.md).
 
 The architectural decision and its trade-offs live in
 [`ARCHITECTURE.md`](../.ai-factory/ARCHITECTURE.md). The ACP spike findings
@@ -1653,12 +1655,12 @@ operator runbook: [`deployment.md`](deployment.md#14-stage-b-execution-data-cut-
 
 ## Limitations on POC
 
-- **Single host, unauthenticated loopback.** Exactly one non-retired local
-  execution host; the web tier no longer mounts or reads host runtime data.
-  Worktree/diff/promotion are still web-side Git and remain Stage C. The HTTP wire carries no host
-  auth (`0.0.0.0:7777` — keep it loopback-only); remote transport, relay,
-  enrollment, multiple simultaneous hosts, placement, and cross-host ACP
-  resume are later stages.
+- **Trusted supervisor endpoints.** The legacy configuration keeps one active
+  local host. Stage C supports a configured selected host and an additional
+  trusted host. The local pilot uses separate Linux identities, SQLite stores
+  and network namespaces. The current HTTP transport requires a trusted
+  network boundary. Enrollment, relay transport and cross-host ACP resume
+  belong to later stages.
 - **Per-session diagnostic SSE replay is bounded** (1000 entries). Canonical
   browser/run replay instead comes from retained manager Postgres events.
 - **No Cursor / Aider executors** — the supervisor supports the code-owned ACP

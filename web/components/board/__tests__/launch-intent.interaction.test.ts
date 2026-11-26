@@ -375,8 +375,8 @@ it("shows the actual supervisor after the launch card moves to another board col
   });
 
   const renderBoard = (backlog: boolean) => act(async () => {
-    root.render(createElement(BoardLaunchDialogs, {
-      children: createElement("section", {
+    root.render(createElement(BoardLaunchDialogs, null,
+      createElement("section", {
         "data-board": "",
         tabIndex: -1,
       }, backlog
@@ -384,7 +384,7 @@ it("shows the actual supervisor after the launch card moves to another board col
             taskId: "task-1", label: "Launch", disabledLabel: "Unavailable",
           })
         : createElement("article", null, "The Run is in production")),
-    }));
+    ));
   });
   vi.stubGlobal("fetch", fetcher);
   await renderBoard(true);

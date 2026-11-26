@@ -4,6 +4,7 @@ operationCases:
     response:
       workspaceProtocol:
         - 1
+      workspaceSyncResolver: 1
     refusal:
       status: 503
       body:

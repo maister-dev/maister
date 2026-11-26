@@ -421,7 +421,7 @@ paths:
         prepares a candidate away from the live checkout and applies it under a
         retained workspace fence. A dedicated branch can be published under a
         separate lease on the approved remote. A resolver may request conflict
-        preparation when health advertises `workspaceSyncResolver: 1`. The
+        preparation when addressed `/capabilities` advertises `workspaceSyncResolver: 1`. The
         verification or abort command references the completed preparation,
         original claim, workspace generation and a higher fence. Replay reads the
         same preparation and publication evidence.
