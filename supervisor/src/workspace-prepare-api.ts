@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Logger } from "pino";
 import type { HostState, CommandReceiptRow } from "./host-state";
+import { isUnconfirmedWorkspaceReceipt } from "./host-state";
 import type { CommandFence } from "./types";
 import type { WorkspaceRegistry } from "./workspace-registry";
 import type {
@@ -31,6 +32,7 @@ import { z } from "zod";
 import { EXECUTION_HOST_KEY_PATTERN } from "../../runtime/execution-host-address";
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 import {
+  canReconcileWorkspaceCommand,
   isWorkspaceGenerationTarget,
   isWorkspaceCancelTarget,
   isWorkspaceOperationOwner,
@@ -435,11 +437,28 @@ export function registerWorkspacePreparation(args: {
       );
   }
 
+  function retainsReconciliationOwner(row: CommandReceiptRow, effect: WorkspaceEffect): boolean {
+    if (!canReconcileWorkspaceCommand(row.kind)) return false;
+    if (row.kind === "workspace.cancel")
+      return isWorkspaceCancelTarget(effect.binding.target) && row.assignmentId !== null;
+    if (effect.binding.target.kind !== "workspace")
+      return false;
+    if (row.kind === "workspace.run")
+      return "workspaceProcess" in (row.body as Record<string, unknown>);
+    const dispositionId = "dispositionId" in effect.request.payload
+      ? effect.request.payload.dispositionId : row.commandId;
+    const stateRow = state.getWorkspaceExecutionState(effect.binding.target.handle);
+
+    return stateRow?.generation === effect.binding.target.generation &&
+      stateRow.operationClaimId === dispositionId;
+  }
+
   async function finish(
     row: CommandReceiptRow,
     effect: WorkspaceEffect,
   ): Promise<void> {
     const { request, binding } = effect;
+    const reconciling = isUnconfirmedWorkspaceReceipt(row);
     if (row.assignmentId === null)
       throw new SupervisorError("ACP_PROTOCOL", "Workspace receipt has no retained assignment provenance");
     let outcome: Record<string, unknown>;
@@ -447,16 +466,16 @@ export function registerWorkspacePreparation(args: {
     try {
       const result = await effect.run(() => assertCurrent(row));
       if (result === null) return;
+      if (reconciling && request.command.kind === "workspace.cancel" &&
+        (result as { quiescence?: unknown }).quiescence !== "proved") return;
       outcome = { result };
       phase = "completed";
     } catch (error) {
-      if (
-        error instanceof WorkspaceGitEffectUnconfirmed &&
-        (binding.operationId === WORKSPACE_PUBLISH_OPERATION ||
-          binding.operationId === WORKSPACE_RESTORE_OPERATION) &&
-        binding.target.kind === "workspace" &&
-        state.getWorkspaceExecutionState(binding.target.handle)?.operationClaimId === row.commandId
-      ) {
+      const confirmedRefusal = isSupervisorError(error) &&
+        error.details?.reason === "publication_refused";
+      const unconfirmed = error instanceof WorkspaceGitEffectUnconfirmed || !isSupervisorError(error);
+      if (!confirmedRefusal && (reconciling ||
+        (unconfirmed && request.command.kind !== "workspace.run" && retainsReconciliationOwner(row, effect)))) {
         logger.warn(
           { commandId: row.commandId, runId: row.runId },
           "workspace operation awaiting same-command reconciliation",
@@ -528,6 +547,8 @@ export function registerWorkspacePreparation(args: {
         phase: phase === "completed" ? "completed" : "rejected",
         body: {
           ...outcome,
+          sourceDigest: effect.sourceDigest,
+          ...(reconciling ? { priorWorkspaceReceipt: row } : {}),
           workspacePhase: phase,
           outcomeSha256,
           workspaceTarget: binding.target,
@@ -587,6 +608,9 @@ export function registerWorkspacePreparation(args: {
     const { command, owner } = request;
     const requestDigest = workspaceCommandRequestDigest(request, binding);
     const existing = state.getReceipt(command.id);
+    const historical = existing?.body as { workspacePhase?: string; sourceDigest?: string | null } | undefined;
+    const reconcile = existing && isUnconfirmedWorkspaceReceipt(existing) &&
+      retainsReconciliationOwner(existing, effect);
     if (
       existing &&
       (existing.requestSchema !== requestSchemaTag ||
@@ -607,13 +631,13 @@ export function registerWorkspacePreparation(args: {
         .status(202)
         .send(acceptance(command.id));
     if (existing) reply.header(REPLAYED_HEADER, "true");
-    if (existing && (existing.phase !== "accepted" || inflight.has(command.id)))
+    if (existing && ((existing.phase !== "accepted" && !reconcile) || inflight.has(command.id)))
       return accept();
 
     if (
       existing &&
-      (existing.body as { sourceDigest?: unknown }).sourceDigest !==
-        sourceDigest
+      (!reconcile || historical?.sourceDigest !== undefined) &&
+      historical?.sourceDigest !== sourceDigest
     )
       return reply
         .status(409)
@@ -673,8 +697,11 @@ export function registerWorkspacePreparation(args: {
         binding.operationId === WORKSPACE_RUN_OPERATION
         ? {
             ...effect,
-            run: () =>
-              recoverWorkspaceWorkload(existing, binding.target.generation),
+            async run() {
+              const result = await recoverWorkspaceWorkload(existing, binding.target.generation);
+
+              return reconcile && result?.quiescence !== "proved" ? null : result;
+            },
           }
         : effect,
     )
@@ -887,7 +914,7 @@ export function registerWorkspacePreparation(args: {
           );
       const request = parsed.data;
 
-      if (request.owner.hostKey === state.hostKey && state.isWorkspaceWorkloadCancelled({
+      if (request.owner.hostKey === state.hostKey && !state.getReceipt(request.command.id) && state.isWorkspaceWorkloadCancelled({
         ...request.owner,
         commandId: request.command.id,
         handle: handle.data,
@@ -1011,9 +1038,11 @@ export function registerWorkspacePreparation(args: {
           workloads.get(targetCommandId)?.abort();
           await inflight.get(targetCommandId);
           const receipt = state.getReceipt(targetCommandId);
+          const completed = receipt?.phase === "completed"
+            ? (receipt.body as { result?: WorkspaceWorkloadResult }).result : undefined;
           const retained =
-            receipt?.phase === "completed"
-              ? (receipt.body as { result?: WorkspaceWorkloadResult }).result
+            completed?.quiescence === "proved"
+              ? completed
               : receipt
                 ? await recoverWorkspaceWorkload(
                     receipt,
@@ -1164,10 +1193,16 @@ export function registerWorkspacePreparation(args: {
     });
   });
 
-  app.get<{ Params: { commandId: string } }>(
+  app.get<{ Params: { commandId: string }; Querystring: { eventId?: string } }>(
     "/v1/commands/:commandId",
     async (req, reply) => {
-      const row = state.getReceipt(req.params.commandId);
+      const latest = state.getReceipt(req.params.commandId);
+      const eventId = z.string().uuid().optional().safeParse(req.query.eventId);
+      if (!eventId.success)
+        return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "Invalid workspace receipt event"));
+      const prior = (latest?.body as { priorWorkspaceReceipt?: CommandReceiptRow } | undefined)?.priorWorkspaceReceipt;
+      const row = !eventId.data || latest?.eventId === eventId.data ? latest :
+        prior?.eventId === eventId.data ? prior : null;
       if (
         !row ||
         (row.body as { retired?: unknown }).retired === true ||
@@ -1209,6 +1244,8 @@ export function registerWorkspacePreparation(args: {
         workspaceTarget: _workspaceTarget,
         workspaceProcess: _workspaceProcess,
         workspaceProcessRetired: _workspaceProcessRetired,
+        sourceDigest: _sourceDigest,
+        priorWorkspaceReceipt: _priorWorkspaceReceipt,
         workspaceOwner: _workspaceOwner,
         archiveDispositionId: _archiveDispositionId,
         archiveQuiescenceId: _archiveQuiescenceId,

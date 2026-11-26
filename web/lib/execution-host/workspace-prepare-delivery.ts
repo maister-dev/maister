@@ -21,6 +21,7 @@ import { reserveRunHostCapacity } from "./host-capacity";
 import type { ExecutionHostTransport } from "./contracts";
 
 import { and, eq, isNull, lte, or } from "drizzle-orm";
+import { canReconcileWorkspaceCommand } from "../../../runtime/workspace-prepare";
 
 import { getAssignmentById } from "./assignments";
 import { casTransition, claimDelivering, markAccepted } from "./commands";
@@ -371,16 +372,18 @@ export async function recoverWorkspacePreparation(
     command.state === "queued"
       ? null
       : await transport.getWorkspaceCommandReceipt(command.id);
-  if (retained && retained.phase !== "accepted") return false;
+  const unconfirmedWorkload = retained?.phase === "completed" &&
+    (retained.operationId === "stageCRunWorkload" || retained.operationId === "stageCCancelWorkload") &&
+    retained.result.quiescence === "uncertain";
+  if ((retained?.phase === "completed" && !unconfirmedWorkload) || retained?.phase === "rejected") return false;
 
   if (
-    (command.kind === "workspace.run" || command.kind === "workspace.publish" ||
-      command.kind === "workspace.restore") &&
-    retained?.phase === "accepted"
+    canReconcileWorkspaceCommand(command.kind) &&
+    (retained?.phase === "accepted" || retained?.phase === "indeterminate" || unconfirmedWorkload)
   ) {
     // Delivery is already witnessed. Reconcile the same receipt at a bounded
     // cadence without charging new admission attempts. The owner observes the
-    // original workload group, publication lease, or restore checkpoint.
+    // original workload group or fenced Git operation.
     const [retry] = await db
       .update(executionCommands)
       .set({ nextAttemptAt: new Date(at.getTime() + 30_000), updatedAt: at })
@@ -397,12 +400,15 @@ export async function recoverWorkspacePreparation(
       )
       .returning({ id: executionCommands.id });
     if (!retry) return false;
+    if (command.kind === "workspace.checkpoint" || command.kind === "workspace.restore")
+      await assertWorkspaceRunAuthority(db, command.runId);
     await deliver();
     if (command.state === "delivering")
       await markAccepted(db, command.id, command.attempts, { now: at });
 
     return true;
   }
+  if (retained?.phase === "indeterminate") return false;
   if (
     command.kind === "workspace.materialize" ||
     command.kind === "workspace.run" ||

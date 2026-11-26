@@ -20,7 +20,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { EXECUTION_HOST_KEY_HEADER } from "../../../runtime/execution-host-address";
 import { WORKSPACE_CONTEXT_INPUT } from "../../../runtime/workspace-context-input";
-import { WORKSPACE_TEMPLATE_CONTEXT_NAME } from "../../../runtime/workspace-prepare";
+import { WORKSPACE_TEMPLATE_CONTEXT_NAME, workspaceEvidenceDigest } from "../../../runtime/workspace-prepare";
 import type {
   PreparedWorkspace,
   WorkspacePrepareInput,
@@ -643,20 +643,14 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
   await expect(stat(join(workspace.path, ".fixture-ready"))).rejects.toMatchObject({ code: "ENOENT" });
   expect((await addressedRequest(host, cancellationPath, stopBeforeDelivery)).status).toBe(202);
 
-  const longRun = await addressedRequest(
-    host,
-    `/v1/workspaces/${handle}/commands`,
-    {
-      workspaceProtocol: 1,
-      command: {
-        id: longId,
-        kind: "workspace.run",
-        issuedAt: new Date().toISOString(),
-      },
-      owner: prepared.owner,
-      payload: runPayload,
-    },
-  );
+  const longRoute = `/v1/workspaces/${handle}/commands`;
+  const longRequest = {
+    workspaceProtocol: 1,
+    command: { id: longId, kind: "workspace.run", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: runPayload,
+  };
+  const longRun = await addressedRequest(host, longRoute, longRequest);
   expect(longRun.status).toBe(202);
   await vi.waitFor(() => {
     expect(host.hostState.getReceipt(longId)?.body).toMatchObject({
@@ -669,29 +663,48 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     );
   });
   const cancelId = randomUUID();
-  const cancellation = await addressedRequest(
-    host,
-    `/v1/workspaces/${handle}/commands/${longId}/cancel`,
-    {
-      workspaceProtocol: 1,
-      command: {
-        id: cancelId,
-        kind: "workspace.cancel",
-        issuedAt: new Date().toISOString(),
-      },
-      owner: prepared.owner,
-      payload: { generation },
-    },
-  );
-  expect(cancellation.status).toBe(202);
-  await vi.waitFor(async () => {
-    const settled = await addressedRequest(host, `/v1/commands/${cancelId}`);
-    expect(await settled.json()).toMatchObject({
-      phase: "completed",
-      operationId: "stageCCancelWorkload",
-      result: { targetCommandId: longId, quiescence: "proved" },
+  const cancelRoute = `${longRoute}/${longId}/cancel`;
+  const cancelRequest = {
+    workspaceProtocol: 1,
+    command: { id: cancelId, kind: "workspace.cancel", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: { generation },
+  };
+  const persist = host.hostState.putReceiptWithRuntimeEvent.bind(host.hostState);
+  const uncertain = vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementation((row, event) => {
+    if (row.commandId !== longId && row.commandId !== cancelId) return persist(row, event);
+    const body = row.body as { result: Record<string, unknown> };
+    const result = { ...body.result, quiescence: "uncertain" };
+    const outcomeSha256 = workspaceEvidenceDigest({ result });
+
+    return persist({ ...row, body: { ...body, workspaceProcessRetired: false, result, outcomeSha256 } }, {
+      ...event,
+      draft: { ...event.draft, payload: { ...event.draft.payload, outcomeSha256 } },
     });
   });
+  const cancellation = await addressedRequest(host, cancelRoute, cancelRequest);
+  expect(cancellation.status).toBe(202);
+  const historical = await vi.waitFor(async () => {
+    const settled = await (await addressedRequest(host, `/v1/commands/${cancelId}`)).json() as { eventId: string };
+    expect(settled).toMatchObject({
+      phase: "completed",
+      operationId: "stageCCancelWorkload",
+      result: { targetCommandId: longId, quiescence: "uncertain" },
+    });
+
+    return settled;
+  });
+  uncertain.mockRestore();
+  expect((await addressedRequest(host, longRoute, longRequest)).status).toBe(202);
+  expect((await addressedRequest(host, cancelRoute, cancelRequest)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const settled = await (await addressedRequest(host, `/v1/commands/${cancelId}`)).json();
+    expect(settled).toMatchObject({
+      result: { targetCommandId: longId, quiescence: "proved" },
+      eventId: expect.not.stringMatching(historical.eventId),
+    });
+  });
+  expect(await (await addressedRequest(host, `/v1/commands/${cancelId}?eventId=${historical.eventId}`)).json()).toEqual(historical);
   const interrupted = (await (
     await addressedRequest(host, `/v1/commands/${longId}`)
   ).json()) as {
@@ -1645,7 +1658,7 @@ it("C-10 opens one provider PR from the approved retained checkout after a lost 
   expect(await readFile(providerRecord, "utf8")).toBe("created\n");
 }, 30_000);
 
-it("C-10 syncs an exact retained target and verifies one checkout update after a lost receipt", async () => {
+it.each(["lost", "indeterminate"])("C-10 settles an exact retained sync after a %s receipt", async (initial) => {
   const root = await mkdtemp(join(tmpdir(), "stage-c-retained-sync-"));
   roots.push(root);
   const repo = join(root, "source");
@@ -1702,8 +1715,20 @@ it("C-10 syncs an exact retained target and verifies one checkout update after a
   });
   expect(git(repo, "rev-parse", "refs/heads/feature")).toBe(head);
   expect(git(checkout.realPath, "rev-parse", "HEAD")).toBe(head);
-  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
-    throw new Error("fixture interrupted after the Git sync and before the terminal SQLite commit");
+  const persist = host.hostState.putReceiptWithRuntimeEvent.bind(host.hostState);
+  vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce((row, event) => {
+    if (initial === "lost") throw new Error("fixture interrupted before the SQLite commit");
+    const outcome = { condition: "effect_unconfirmed" };
+    const outcomeSha256 = workspaceEvidenceDigest(outcome);
+    const { result: _result, sourceDigest: _source, ...body } = row.body as Record<string, unknown>;
+    return persist({
+      ...row,
+      phase: "rejected",
+      body: { ...body, ...outcome, outcomeSha256, workspacePhase: "indeterminate" },
+    }, {
+      ...event,
+      draft: { ...event.draft, payload: { ...event.draft.payload, phase: "indeterminate", outcomeSha256 } },
+    });
   });
   expect((await addressedRequest(host, route, command)).status).toBe(202);
   await vi.waitFor(() => expect(git(checkout.realPath, "rev-parse", "HEAD")).toBe(target), { timeout: 5_000 });
@@ -1711,14 +1736,29 @@ it("C-10 syncs an exact retained target and verifies one checkout update after a
   hosts.splice(hosts.indexOf(host), 1);
   const restarted = await bootHost({ runtimeRoot: root });
   hosts.push(restarted);
+  const receiptUrl = `/v1/commands/${command.command.id}`;
+  const original = await (await addressedRequest(restarted, receiptUrl)).json() as {
+    phase: string; eventId?: string; outcomeSha256?: string;
+  };
+  expect(original.phase).toBe(initial === "lost" ? "accepted" : "indeterminate");
   expect((await addressedRequest(restarted, route, command)).status).toBe(202);
-  expect(await waitForWorkspaceReceipt(restarted, command.command.id)).toMatchObject({
-    operationId: "stageCSync", phase: "completed", owner: command.owner,
-    result: {
-      generation, head: target, priorTarget: target, observedTarget: target, behind: 1,
-      publication: { targetRef: "refs/heads/feature", priorTarget: head, observedTarget: target },
-    },
-  });
+  const latest = await vi.waitFor(async () => {
+    const receipt = await (await addressedRequest(restarted, receiptUrl)).json() as { eventId?: string };
+    expect(receipt).toMatchObject({
+      operationId: "stageCSync", phase: "completed", owner: command.owner,
+      result: {
+        generation, head: target, priorTarget: target, observedTarget: target, behind: 1,
+        publication: { targetRef: "refs/heads/feature", priorTarget: head, observedTarget: target },
+      },
+    });
+    return receipt;
+  }, { timeout: 10_000 });
+  if (original.eventId) {
+    expect(latest.eventId).not.toBe(original.eventId);
+    const prior = await addressedRequest(restarted, `${receiptUrl}?eventId=${original.eventId}`);
+    expect(prior.status).toBe(200);
+    expect(await prior.json()).toEqual(original);
+  }
   expect(await readFile(join(checkout.realPath, "input.txt"), "utf8")).toBe("upstream advanced\n");
   expect(git(checkout.realPath, "reflog", "show", "--format=%H", "HEAD").split("\n").slice(0, 2)).toEqual([target, head]);
   expect(git(repo, "reflog", "show", "--format=%H", "refs/heads/feature")).toBe(`${target}\n${head}`);

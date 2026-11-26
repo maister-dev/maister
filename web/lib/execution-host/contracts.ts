@@ -308,7 +308,7 @@ export interface ExecutionHostTransport {
   sendWorkspaceMaterialization?(handle: string, request: WorkspaceMaterializeRequest): Promise<void>;
   sendWorkspaceWorkload?(handle: string, request: WorkspaceWorkloadRequest): Promise<void>;
   cancelWorkspaceWorkload?(handle: string, targetCommandId: string, request: WorkspaceCancelWorkloadRequest): Promise<void>;
-  getWorkspaceCommandReceipt?(commandId: string): Promise<WorkspaceCommandReceipt | null>;
+  getWorkspaceCommandReceipt?(commandId: string, eventId?: string): Promise<WorkspaceCommandReceipt | null>;
   getWorkspaceStatus?(handle: string, generation: number): Promise<WorkspaceStatus>;
   getWorkspaceDiff?(handle: string, query: WorkspaceDiffQuery): Promise<WorkspaceEvidenceObject>;
   getWorkspaceReviewFingerprint?(handle: string, input: { generation: number; base: string }): Promise<WorkspaceReviewFingerprint>;

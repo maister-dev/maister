@@ -60,7 +60,8 @@ export async function settleRetainedWorkspaceCommand(
       "ACP_PROTOCOL",
       "Expected a retained workspace command",
     );
-  if (command.state === "queued" && command.attempts === 0)
+  if ((command.state === "queued" && command.attempts === 0) ||
+    command.transportState === "reconciliation_required")
     await recoverWorkspacePreparation(
       db,
       command,
@@ -73,11 +74,7 @@ export async function settleRetainedWorkspaceCommand(
     const observed = await getCommand(db, command.id);
     if (observed?.state === "succeeded" || observed?.state === "failed")
       return observed;
-    if (
-      observed?.transportState === "reconciliation_required" ||
-      observed?.state === "fenced"
-    )
-      break;
+    if (observed?.state === "fenced") break;
     await runEventWakeBus.wait(command.runId, 500, deadline);
   }
   throw new MaisterError(

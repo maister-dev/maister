@@ -1211,6 +1211,14 @@ that readback and retries the original candidate only while the original
 lease still holds. A definitive Git ref rejection with the original lease
 still observed returns `publication_refused` and releases the writer fence.
 An unconfirmed publication remains accepted for same-command reconciliation.
+An older indeterminate receipt can settle through the original request under
+the retained host claim. On proof of settlement the supervisor atomically
+appends a terminal event and keeps the original receipt available by its
+event ID. Web applies each event against its exact receipt. A replay without
+proof leaves the old receipt and claim in place.
+Workload and cancellation receipts with uncertain quiescence follow the
+same protocol. The supervisor rechecks the recorded process group, preserves
+the recorded workload result and never launches the command again.
 Web
 accepts the terminal event after assignment release only when the immutable
 manager command, retained owner, host receipt, and verified target agree.

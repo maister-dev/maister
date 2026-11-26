@@ -158,7 +158,7 @@ export async function prepareWorkspaceEvidence(
     }
   }
   signal.throwIfAborted();
-  const receipt = await transport.getWorkspaceCommandReceipt?.(command.id);
+  const receipt = await transport.getWorkspaceCommandReceipt?.(command.id, event.id);
   if (!receipt || receipt.phase === "accepted")
     throw new ExecutionEventProjectionError(
       "Workspace terminal receipt is temporarily unavailable",

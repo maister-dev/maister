@@ -238,6 +238,14 @@ export type CommandReceiptRow = {
   completedAt: string | null;
 };
 
+export function isUnconfirmedWorkspaceReceipt(row: CommandReceiptRow): boolean {
+  const body = row.body as { workspacePhase?: string; result?: { quiescence?: string } };
+
+  return (row.phase === "rejected" && body.workspacePhase === "indeterminate") ||
+    ((row.kind === "workspace.run" || row.kind === "workspace.cancel") && row.phase === "completed" &&
+      body.workspacePhase === "completed" && body.result?.quiescence === "uncertain");
+}
+
 export type SettledReceiptRow = CommandReceiptRow & {
   phase: Exclude<ReceiptPhase, "accepted">;
 };
@@ -2915,6 +2923,16 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
         try {
           admitRuntimeReceipt(receipt, admission);
+          const prior = (receipt.body as { priorWorkspaceReceipt?: CommandReceiptRow }).priorWorkspaceReceipt;
+          if (prior) {
+            const current = state.getReceipt(receipt.commandId);
+            if (!current || current.eventId !== prior.eventId || !prior.eventId ||
+              current.requestDigest !== receipt.requestDigest ||
+              !isUnconfirmedWorkspaceReceipt(current) ||
+              receipt.phase === "accepted")
+              throw new HostRuntimeEventError("command_invariant_conflict",
+                "Workspace reconciliation lost its original terminal receipt");
+          }
           const event = appendRuntimeEventInTransaction(db, {
             limits,
             hostKey,
@@ -2933,6 +2951,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
                   terminalSequence: event.sequence,
                 }),
           });
+          if (prior)
+            db.prepare(`UPDATE command_receipts SET terminal_stream_id=?, terminal_sequence=?
+              WHERE command_id=? AND event_id=?`).run(event.streamId, event.sequence, receipt.commandId, event.eventId);
           settleReceiptBudget(db, receipt);
           if (receipt.kind === "workspace.checkpoint" || receipt.kind === "workspace.restore" || receipt.kind === "workspace.publish" || receipt.kind === "workspace.sync") {
             const body = receipt.body as { workspacePhase?: unknown; workspaceTarget?: unknown };

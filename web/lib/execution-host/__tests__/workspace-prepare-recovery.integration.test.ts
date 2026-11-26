@@ -62,6 +62,7 @@ import {
   artifactInstances,
   agents,
   capabilityImports,
+  executionEventStreams,
   flows,
   flowRevisions,
   gateResults,
@@ -1485,6 +1486,9 @@ async function assertAddressedRequirement({
       operationKey: "stop-check-before-wire",
       declarationId: "stop-check",
     });
+    // Transfer the fixture reader's ACK lease to the background Stop consumer.
+    await db.update(executionEventStreams).set({ claimOwner: null, claimExpiresAt: null })
+      .where(and(eq(executionEventStreams.executionHostId, host.id), eq(executionEventStreams.claimOwner, "fixture")));
     startRuntimeEventConsumer({ db, executionHostId: host.id, transport });
     startCanonicalProjectionWorker();
     const reserveChild = async (branch: string) => {

@@ -33,6 +33,7 @@ import { inspectProcessGroup } from "../../runtime/process-group";
 import { WORKSPACE_CONTEXT_INPUT } from "../../runtime/workspace-context-input";
 
 import { SupervisorError } from "./types";
+import { isUnconfirmedWorkspaceReceipt } from "./host-state";
 import { readHostProcessContext } from "./session-process-context";
 import {
   materializeWorkspaceFlowAssets,
@@ -486,10 +487,12 @@ export async function recoverWorkspaceWorkload(
   receipt: CommandReceiptRow,
   generation: number,
 ): Promise<WorkspaceWorkloadResult | null> {
-  const { workspaceProcess: witness, workspaceProcessRetired } = receipt.body as {
+  const { workspaceProcess: witness, workspaceProcessRetired, result } = receipt.body as {
     workspaceProcess?: unknown;
     workspaceProcessRetired?: boolean;
+    result?: WorkspaceWorkloadResult;
   };
+  if (isUnconfirmedWorkspaceReceipt(receipt) && witness === undefined) return null;
   let quiescence: WorkspaceWorkloadResult["quiescence"] = "proved";
   if (witness !== undefined && workspaceProcessRetired !== true) {
     const process = persistedProcess.safeParse(witness);
@@ -508,6 +511,8 @@ export async function recoverWorkspaceWorkload(
       }
     }
   }
+
+  if (result) return { ...result, quiescence };
 
   return {
     generation,

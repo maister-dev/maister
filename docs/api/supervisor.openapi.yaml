@@ -561,9 +561,14 @@ paths:
       x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/WorkspaceCommandReceipt
       parameters:
         - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - name: eventId
+          in: query
+          description: Return the exact terminal receipt for this event, including the original indeterminate receipt after reconciliation.
+          schema: { type: string, format: uuid }
       responses:
         "200": { description: Versioned receipt containing either the original acceptance or exact terminal evidence. }
-        "404": { description: No workspace receipt on this host. }
+        "400": { description: Invalid event ID. }
+        "404": { description: No matching workspace receipt on this host. }
         "409": { description: Addressed host key mismatch. }
   /capabilities:
     get:

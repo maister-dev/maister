@@ -370,6 +370,13 @@ export const WORKSPACE_TERMINAL_EVENT = "workspace.command.terminal";
 export const WORKSPACE_TERMINAL_SCHEMA =
   "maister.workspace.command.terminal.v1";
 
+export function canReconcileWorkspaceCommand(kind: string): boolean {
+  return kind === "workspace.run" || kind === "workspace.cancel" || kind === "workspace.checkpoint" ||
+    kind === "workspace.restore" || kind === "workspace.publish" ||
+    kind === "workspace.sync" || kind === "workspace.preserve" ||
+    kind === "workspace.release";
+}
+
 export type WorkspaceGenerationTarget = Readonly<{
   kind: "workspace";
   handle: string;

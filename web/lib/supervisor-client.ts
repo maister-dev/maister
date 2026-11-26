@@ -2147,11 +2147,12 @@ async function getWorkspaceEvidence(handle: string, resource: "diff" | "log", qu
 
 export async function getWorkspaceCommandReceipt(
   commandId: string,
+  eventId?: string,
 ): Promise<WorkspaceCommandReceipt | null> {
   try {
     const res = await request<unknown>({
       method: "GET",
-      path: `/v1/commands/${encodeURIComponent(commandId)}`,
+      path: `/v1/commands/${encodeURIComponent(commandId)}${eventId ? `?eventId=${encodeURIComponent(eventId)}` : ""}`,
       ctx: "getWorkspaceCommandReceipt",
       fallbackCode: "ACP_PROTOCOL",
       timeoutMs: ADMIN_READ_TIMEOUT_MS,
