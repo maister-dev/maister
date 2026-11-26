@@ -21,9 +21,19 @@ type Translate = (
 ) => string;
 
 export type ApiErrorBody = {
+  ok?: boolean;
   code?: string;
   message?: string;
-  details?: { reason?: string };
+  details?: {
+    reason?: string;
+    field?: string;
+    mutationAccepted?: boolean;
+    memberRef?: string;
+    linkReason?: string | null;
+    trustAccepted?: boolean;
+    projectSlug?: string;
+    declarationId?: string;
+  };
 } | null;
 
 export async function readApiErrorBody(res: Response): Promise<ApiErrorBody> {

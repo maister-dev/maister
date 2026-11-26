@@ -2785,6 +2785,88 @@ table project_config_push_intents {
   }
 }
 
+table project_dependency_attempts {
+  id text [pk, not null]
+  project_id text [not null]
+  declaration_id text [not null]
+  generation integer [not null]
+  attempt_no integer [not null]
+  desired jsonb [not null]
+  actor_user_id text [not null]
+  status text [not null, default: 'pending']
+  due_at "timestamp with time zone" [not null, default: `now()`]
+  claim_token text
+  lease_expires_at "timestamp with time zone"
+  stage text
+  reason text
+  resolved_revision text
+  member_ref text
+  retry_of_attempt_id text
+  checkpoint jsonb [not null, default: `{}`]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+
+    (declaration_id, generation, attempt_no) [name: 'dependency_attempt_number_uq', unique]
+    (declaration_id, generation, id) [name: 'dependency_attempt_owner_generation_uq', unique]
+
+    retry_of_attempt_id [name: 'dependency_retry_receipt_uq', unique]
+    declaration_id [name: 'dependency_single_claim_uq', unique]
+    (due_at, project_id) [name: 'dependency_attempt_due_idx']
+    lease_expires_at [name: 'dependency_attempt_expiry_idx']
+
+  }
+}
+
+table project_dependency_declarations {
+  id text [pk, not null]
+  project_id text [not null]
+  kind text [not null]
+  logical_id text [not null]
+  ordinal integer [not null]
+  generation integer [not null, default: 1]
+  desired jsonb [not null]
+  effective_attachment_id text
+  effective_revision text
+  effective_generation integer
+
+  indexes {
+    (project_id, id) [name: 'dependency_head_owner_uq', unique]
+
+    effective_attachment_id [name: 'dependency_effective_attachment_uq', unique]
+    (project_id, logical_id) [name: 'dependency_flow_namespace_uq', unique]
+    (project_id, logical_id) [name: 'dependency_import_namespace_uq', unique]
+
+  }
+}
+
+table project_dependency_setup_receipts {
+  material_key text [pk, not null]
+  physical_key text [unique]
+  script_digest text
+  content_witness text
+  status text [not null]
+  claim_token text [not null]
+  owner_host text
+  owner_pid integer
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table project_flow_link_publications {
+  operation_id text [not null]
+  project_id text [not null]
+  flow_ref_id text [not null]
+  workspace_root text [not null]
+  due_at "timestamp with time zone" [not null, default: `now()`]
+  reason text
+
+  indexes {
+    (operation_id, flow_ref_id) [pk]
+    due_at [name: 'project_flow_link_publication_due_idx']
+  }
+}
+
 table project_flow_roles {
   id text [pk, not null]
   project_id text [not null]
@@ -2859,6 +2941,7 @@ table project_package_attachments {
   attached_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+    (project_id, id) [name: 'project_package_attachments_owner_id_uq', unique]
     (project_id, package_name) [name: 'project_package_attachments_project_name_uq', unique]
   }
 }
@@ -5800,6 +5883,18 @@ ref project_config_persist_operations_project_id_projects_id_fk: project_config_
 ref project_config_persist_operations_actor_user_id_users_id_fk: project_config_persist_operations.actor_user_id > users.id [delete: restrict, update: no action]
 
 ref project_config_push_operation_identity_fk: project_config_push_intents.(operation_id, project_id, actor_user_id) > project_config_persist_operations.(id, project_id, actor_user_id) [delete: restrict, update: no action]
+
+ref project_dependency_attempts_actor_user_id_users_id_fk: project_dependency_attempts.actor_user_id > users.id [delete: restrict, update: no action]
+
+ref dependency_attempt_owner_fk: project_dependency_attempts.(project_id, declaration_id) > project_dependency_declarations.(project_id, id) [delete: cascade, update: no action]
+
+ref dependency_retry_owner_fk: project_dependency_attempts.(declaration_id, generation, retry_of_attempt_id) > project_dependency_attempts.(declaration_id, generation, id) [delete: no action, update: no action]
+
+ref project_dependency_declarations_project_id_projects_id_fk: project_dependency_declarations.project_id > projects.id [delete: cascade, update: no action]
+
+ref dependency_attachment_owner_fk: project_dependency_declarations.(project_id, effective_attachment_id) > project_package_attachments.(project_id, id) [delete: no action, update: no action]
+
+ref project_flow_link_publications_project_id_projects_id_fk: project_flow_link_publications.project_id > projects.id [delete: cascade, update: no action]
 
 ref project_flow_roles_project_id_projects_id_fk: project_flow_roles.project_id > projects.id [delete: cascade, update: no action]
 

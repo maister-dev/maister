@@ -27,7 +27,9 @@ import { buildFlowFixture } from "@/lib/__tests__/_fixtures/build-flow-plugin";
 import * as schemaModule from "@/lib/db/schema";
 import { installFlowPlugin } from "@/lib/flows";
 import { trustExecutable } from "@/lib/flows/exec-trust";
-import { enableRevision } from "@/lib/flows/lifecycle";
+import { readProjectDeclarations } from "@/lib/project-dependencies/read";
+import { MaisterError } from "@/lib/errors";
+import { enableRevision, rollbackFlow } from "@/lib/flows/lifecycle";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -141,7 +143,7 @@ describe("exec_trust two-axis gate (T-B3)", () => {
     expect(result.enablementState).toBe("Enabled");
   }, 60_000);
 
-  it("(c) trustExecutable flips exec_trust→'trusted' and runs pending setup (setupStatus→'done')", async () => {
+  it("reports standalone executable trust until granted and preserves that grant when another project installs the revision", async () => {
     // Install with execTrustOverride='untrusted' so setupStatus stays pending.
     const install = await installFlowPlugin({
       source: setupOkRepo,
@@ -162,6 +164,26 @@ describe("exec_trust two-axis gate (T-B3)", () => {
 
     expect(beforeRow.execTrust).toBe("untrusted");
     expect(beforeRow.setupStatus).toBe("pending");
+    const [declaration] = await db
+      .insert(schemaModule.projectDependencyDeclarations)
+      .values({
+        projectId,
+        kind: "flow",
+        logicalId: "setup-ok-trust-flip",
+        ordinal: 0,
+        desired: { source: setupOkRepo, version: "v1.0.0" },
+        effectiveGeneration: 1,
+        effectiveRevision: install.revision,
+      })
+      .returning();
+    const [waiting] = await readProjectDeclarations(
+      db,
+      projectId,
+      true,
+      declaration.id,
+    );
+
+    expect.soft(waiting.readiness).toBe("awaiting_trust");
 
     // Call trustExecutable → must flip exec_trust and run setup.sh.
     // trustExecutable uses flows.id (the row UUID), not flowRefId.
@@ -182,6 +204,41 @@ describe("exec_trust two-axis gate (T-B3)", () => {
 
     expect(afterRow.execTrust).toBe("trusted");
     expect(afterRow.setupStatus).toBe("done");
+    const otherProject = randomUUID();
+    const otherWorkspace = await mkdtemp(
+      join(workspaceRoot, "second-project-"),
+    );
+
+    await db.insert(schemaModule.projects).values({
+      id: otherProject,
+      slug: "second-trust-project",
+      name: "Second project",
+      taskKey: "SCP",
+      repoPath: otherWorkspace,
+      maisterYamlPath: join(otherWorkspace, "maister.yaml"),
+    });
+    const second = await installFlowPlugin(
+      {
+        source: setupOkRepo,
+        version: "v1.0.0",
+        projectId: otherProject,
+        projectSlug: "second-trust-project",
+        flowId: "setup-ok-trust-flip",
+        workspaceRoot: otherWorkspace,
+        db,
+      },
+      "untrusted",
+    );
+
+    expect(second.revisionId).toBe(install.revisionId);
+    expect(second.trustStatus).toBe("untrusted");
+    expect(second.enablementState).toBe("Installed");
+    const [shared] = await db
+      .select()
+      .from(schemaModule.flowRevisions)
+      .where(eq(schemaModule.flowRevisions.id, install.revisionId));
+
+    expect(shared.execTrust).toBe("trusted");
   }, 60_000);
 
   it("(d) enableRevision sets exec_trust='trusted' on the revision row", async () => {
@@ -213,12 +270,21 @@ describe("exec_trust two-axis gate (T-B3)", () => {
       .set({ packageStatus: "Installed" })
       .where(eq(schema.flowRevisions.id, install.revisionId));
 
-    await enableRevision({
+    const selection = {
       projectId,
       flowRefId: "setup-ok-enable-flip",
       revisionId: install.revisionId,
       db,
-    });
+    };
+    const projectOnly = async () => {
+      throw new MaisterError("UNAUTHORIZED", "Global role required");
+    };
+    await expect(
+      rollbackFlow({ ...selection, authorizeExecution: projectOnly }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await enableRevision(selection);
+    // A project administrator may select an already trusted and ready revision.
+    await rollbackFlow({ ...selection, authorizeExecution: projectOnly });
 
     const [afterRow] = await db
       .select()

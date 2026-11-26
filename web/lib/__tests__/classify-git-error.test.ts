@@ -39,6 +39,10 @@ describe("classifyGitError", () => {
       "NETWORK",
       "ssh: connect to host gitverse.ru port 22: Connection timed out",
     ],
+    [
+      "NETWORK",
+      "fatal: unable to access 'http://127.0.0.1:64037/404.git/': The requested URL returned error: 503",
+    ],
     ["UNKNOWN", "fatal: something entirely unexpected happened"],
   ];
 

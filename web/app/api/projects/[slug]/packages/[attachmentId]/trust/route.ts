@@ -26,7 +26,7 @@ export async function POST(
   const { slug, attachmentId } = await ctx.params;
 
   try {
-    const { project, db } = await authorizePackageTrust(slug);
+    const { project, db, user } = await authorizePackageTrust(slug);
     const [att] = await db
       .select()
       .from(projectPackageAttachments)
@@ -42,6 +42,7 @@ export async function POST(
     const result = await trustPackageRevision({
       packageInstallId: att.packageInstallId,
       db,
+      actorUserId: user.id,
     });
 
     if (result === null) {

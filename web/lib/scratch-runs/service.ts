@@ -38,6 +38,7 @@ import {
   ScratchCreateHandoffPending,
 } from "./create-continuation";
 
+import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
@@ -1064,12 +1065,7 @@ export async function* launchScratchRunStaged(
     const installedImports: Array<{ installedPath: string }> = await db
       .select({ installedPath: capabilityImports.installedPath })
       .from(capabilityImports)
-      .where(
-        and(
-          eq(capabilityImports.projectId, project.id),
-          eq(capabilityImports.packageStatus, "Installed"),
-        ),
-      );
+      .where(eligibleProjectImport(project.id));
     const adapterHome = await materializeAdapterCapabilityHome({
       agent: executor.agent,
       worktreePath,

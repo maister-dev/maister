@@ -3,12 +3,10 @@ import "@/lib/load-env";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
-import { installAndIngestCapabilityImports } from "@/lib/capabilities/import";
-import { loadProjectConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { installPackage } from "@/lib/packages/install";
+import { installOperatorPackage } from "@/lib/project-dependencies/operator";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see install-flow.ts).
 const { projects } = schemaModule as unknown as Record<string, any>;
@@ -67,17 +65,12 @@ async function flushLogger(): Promise<void> {
   });
 }
 
-// Ops smoke CLI for ADR-088 package installs: installs every flow + bundle a
-// package ships into a registered project, then ingests the package-derived
-// capability entries through the project's SET/CLEAR upsert (re-reading the
-// project's maister.yaml so config + import + package records stay one
-// symmetric write).
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   // FIXME(any): dual drizzle-orm peer-dep variants; see install-flow.ts.
-  const db = getDb() as any;
+  const db = getDb();
 
-  log.info({ project: args.project, source: args.source }, "lookup project row");
+  log.info({ project: args.project }, "lookup project row");
   const rows = await db
     .select()
     .from(projects)
@@ -98,38 +91,20 @@ async function main(): Promise<void> {
       `Project "${args.project}" has no repository manifest. Save configuration through Project Settings before using install-package, or attach the package through the project API. No package was installed.`,
     );
   }
-  const config = await loadProjectConfig(project.maisterYamlPath);
-
-  const result = await installPackage({
-    source: args.source,
-    version: args.version,
-    path: args.path,
-    projectId: project.id,
-    projectSlug: project.slug,
-    workspaceRoot: project.repoPath,
-    db,
-  });
-
-  await installAndIngestCapabilityImports({
-    config,
-    projectId: project.id,
-    additionalImportDerived: result.capabilityDerived,
-    db,
-  });
-
-  log.info(
+  const result = await installOperatorPackage(
     {
-      package: result.name,
-      revision: result.resolvedRevision,
-      versionLabel: result.versionLabel,
-      flows: result.flows.map((f) => ({
-        flowRowId: f.flowRowId,
-        revisionId: f.revisionId,
-      })),
-      capabilities: result.capabilityDerived.map((c) => c.id),
+      projectId: project.id,
+      projectSlug: project.slug,
+      workspaceRoot: project.repoPath,
+      db,
     },
-    "install-package done",
+    {
+      source: args.source,
+      version: args.version,
+      ...(args.path === undefined ? {} : { path: args.path }),
+    },
   );
+  log.info(result, "install-package done");
 }
 
 main()
@@ -139,7 +114,10 @@ main()
   })
   .catch(async (err) => {
     if (isMaisterError(err)) {
-      log.error({ code: err.code, message: err.message }, "install-package failed");
+      log.error(
+        { code: err.code, message: err.message },
+        "install-package failed",
+      );
     } else {
       log.error({ err: (err as Error).message }, "install-package failed");
     }

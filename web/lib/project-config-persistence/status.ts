@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ConfigRepositorySnapshot } from "./types";
+import type { ConfigRepositorySnapshot, LocalPackageWitness } from "./types";
 import type { ConfigPersistReason, ConfigStatus } from "./contracts";
 import type { PersistenceDb } from "./store";
 
@@ -13,7 +13,7 @@ import { commonGitDirectory } from "./repository-lock";
 import { manifestMatches } from "./manifest";
 import {
   readExportSnapshot,
-  assertExportablePackages,
+  reviewPackageSources,
   type ExportSnapshot,
 } from "./projection";
 
@@ -262,59 +262,12 @@ export async function currentConfigStatus(
   projectId: string,
 ): Promise<ConfigStatus> {
   const snapshot = await readExportSnapshot(db, projectId);
-  let repositoryState: ConfigStatus["repositoryState"] = "unavailable";
 
   try {
     const observed = await inspectRepository(snapshot.project);
 
-    repositoryState = repositoryStateForReason(observed.blocker);
-    if (observed.source !== null)
-      parseProjectConfig(observed.source, "maister.yaml");
-    let exportState: ConfigStatus["exportState"] =
-      observed.source === null
-        ? "missing"
-        : manifestMatches(observed.source, snapshot.projection)
-          ? "in_sync"
-          : "pending";
-    let reason = observed.blocker;
-
-    try {
-      await assertExportablePackages(snapshot.projection);
-    } catch (error) {
-      if (!(error instanceof MaisterError) || error.code !== "CONFIG")
-        throw error;
-      reason = error.details?.reason as ConfigPersistReason;
-      exportState = "blocked";
-    }
-    if (
-      await exists(
-        resolve(
-          observed.repository.commonDirectory,
-          "maister-config-mutation.lock",
-        ),
-      )
-    ) {
-      reason = "operation_busy";
-      repositoryState = "operation_in_progress";
-    }
-
-    return {
-      exportState,
-      exportRevision: snapshot.exportRevision,
-      observedAt: new Date().toISOString(),
-      repositoryState,
-      ...(reason ? { reason } : {}),
-    };
+    return (await statusForObservation(snapshot, observed)).status;
   } catch (error) {
-    if (error instanceof MaisterError && error.code === "CONFIG") {
-      return {
-        exportState: "blocked",
-        repositoryState,
-        observedAt: new Date().toISOString(),
-        exportRevision: snapshot.exportRevision,
-        reason: "manifest_invalid",
-      };
-    }
     if (error instanceof MaisterError) throw error;
     if ((error as NodeJS.ErrnoException).code) {
       throw new MaisterError(
@@ -328,4 +281,59 @@ export async function currentConfigStatus(
     }
     throw error;
   }
+}
+
+/** Preview and status evaluate exactly one repository observation and desired revision. */
+export async function statusForObservation(
+  snapshot: ExportSnapshot,
+  observed: RepositoryObservation,
+): Promise<{ status: ConfigStatus; localWitnesses: LocalPackageWitness[] }> {
+  let repositoryState = repositoryStateForReason(observed.blocker);
+  let exportState: ConfigStatus["exportState"];
+  let reason = observed.blocker;
+  let localWitnesses: LocalPackageWitness[] = [];
+
+  try {
+    if (observed.source !== null)
+      parseProjectConfig(observed.source, "maister.yaml");
+    exportState =
+      observed.source === null
+        ? "missing"
+        : manifestMatches(observed.source, snapshot.projection)
+          ? "in_sync"
+          : "pending";
+    localWitnesses = await reviewPackageSources(
+      snapshot.projection,
+      observed.source,
+    );
+  } catch (error) {
+    if (!(error instanceof MaisterError) || error.code !== "CONFIG")
+      throw error;
+    exportState = "blocked";
+    reason =
+      (error.details?.reason as ConfigPersistReason | undefined) ??
+      "manifest_invalid";
+  }
+  if (
+    await exists(
+      resolve(
+        observed.repository.commonDirectory,
+        "maister-config-mutation.lock",
+      ),
+    )
+  ) {
+    reason = "operation_busy";
+    repositoryState = "operation_in_progress";
+  }
+
+  return {
+    status: {
+      exportState,
+      exportRevision: snapshot.exportRevision,
+      observedAt: new Date().toISOString(),
+      repositoryState,
+      ...(reason ? { reason } : {}),
+    },
+    localWitnesses,
+  };
 }

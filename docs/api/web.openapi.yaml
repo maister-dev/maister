@@ -2534,7 +2534,8 @@ paths:
                         flowRevisionId: { type: string }
                         slotKey:
                           type: string
-                          description: "`session:<name>` | `consensus:<nodeId>:<participantId>` | `consensus:<nodeId>:synthesizer`."
+                          description: "`session:<name>` | `consensus:<nodeId>:<participantId>` | `consensus:<nodeId>:synthesizer` | `declaration:default`."
+                        declaredRunnerId: { type: string, description: Runner named by the project Flow declaration. }
                         status: { type: string, enum: [Pending, Mapped] }
                         mappedRunnerId: { type: string, nullable: true }
         "401": { $ref: "#/components/responses/Unauthenticated" }
@@ -2544,9 +2545,11 @@ paths:
       summary: Bind (or clear) a Flow runner slot to a platform runner
       description: |
         Project owner/admin route. Binds one Flow runner `slot_key` to an
-        available platform ACP runner (SET), or clears it (CLEAR → `Pending`).
+        available platform ACP runner. Clearing a revision slot returns it to
+        `Pending`. Clearing `declaration:default` restores the runner named by
+        the project declaration and reports its current readiness.
         **(M42 — Implemented, ADR-114.)** `slot_key` is body-controlled and
-        validated ∈ the revision-declared slots (else 409/422); `mappedRunnerId`
+        validated against revision slots or the effective declaration default. `mappedRunnerId`
         is body-controlled and validated ∈ `platform_acp_runners` (allow-list).
         DB-only, no downstream side-effect — no two-phase commit.
       operationId: patchProjectFlowRunnerRemap
@@ -2567,12 +2570,12 @@ paths:
                 slotKey:
                   {
                     type: string,
-                    description: Must be one of the revision-declared slots.,
+                    description: A revision-declared slot or declaration:default for a project Flow with a manifest runner.,
                   }
                 mappedRunnerId:
                   type: string
                   nullable: true
-                  description: A `platform_acp_runners.id` to SET, or `null` to CLEAR (→ `Pending`).
+                  description: A ready platform runner ID to set, or null to clear the override.
       responses:
         "200":
           description: Slot binding updated.
@@ -2613,45 +2616,15 @@ paths:
         (greenfield `mkdir -p` + `git init`, only on an explicit `mode: new`).
 
         It then **stats `maister.yaml` v2** at `{resolvedDir}/maister.yaml`.
-        **Present** → today's path (validate, derive slug from `project.name`
-        kebab-case server-side, install each `flows[]` plugin). **Absent** →
-        validate minimal v2 configuration in memory using
-        `name = body.name || basename(resolvedDir)`, the resolved default branch,
-        and `flows: []`, then follow the same registration pipeline. No manifest
-        is written; `maister_yaml_path` remains null until an explicit reviewed
-        save. Both paths check `slug` / `repo_path` / `taskKey`
-        uniqueness, persist `projects`, and
-        insert a `project_members` row for the caller with `role = "owner"`.
-
-        Phases and their error codes:
-        1. Auth/authz — `UNAUTHENTICATED` (401) / `UNAUTHORIZED` or
-           `PASSWORD_CHANGE_REQUIRED` (403)
-        2. Resolve project source (clone / existing / new-empty git-init) —
-           `PRECONDITION` (409) on clone failure (with advisory `reason` +
-           redacted `detail`), missing dir, or a target/new path collision
-        3. Stat `maister.yaml` — **present-but-invalid** → `CONFIG` (422);
-           **missing** → validate minimal configuration in memory without writing a file
-        4. Slug/repo_path/taskKey collision check — `CONFLICT` (409)
-        5. DB write (project + owner membership, plus executors/flows on the
-           present-manifest path) in ONE transaction — `CONFIG` (422) on
-           slug-derivation failure; a concurrent duplicate that races the
-           collision check trips the unique constraint and is reported as
-           `CONFLICT` (409).
-        6. Flow plugin installs — `FLOW_INSTALL` (502). Registration is
-           all-or-nothing: on any install failure the route fully
-           compensates — deletes the `projects` row (FK cascade removes
-           flows and the owner membership) and removes the
-           slug-scoped artifact subtree — so the same `maister.yaml` can be
-           retried with no leftover row. The shared, content-addressed system
-           cache (`~/.maister/flows/<id>@<sha>`) is intentionally retained.
+        **Present** → validate the manifest and derive the slug from project.name.
+        **Absent** → validate in-memory defaults and retain a null manifest path.
+        After source preparation, commit the project, owner, inline configuration
+        and all package, Flow and capability import requests together (ADR-218). HTTP 201 identifies the accepted project. Installation
+        and readiness are observable per declaration after acceptance. Clone
+        and identity failures retain their existing 409/422 classification.
 
         Source: `web/app/api/projects/route.ts`.
       operationId: postProject
-      x-maister-m43-legacy-steps:
-        status: 502
-        code: FLOW_INSTALL
-        sideEffects: compensated-registration
-        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       requestBody:
         required: true
         content:
@@ -2735,19 +2708,17 @@ paths:
           description: |
             A **present** `maister.yaml` is invalid YAML, fails schema
             validation, or its `project.name` cannot be kebab-cased (`CONFIG`).
-            A **missing** manifest does NOT 422 — MAIster atomically generates a
-            minimal manifest, then validates and registers it (Implemented,
-            [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).
+            A missing manifest uses validated in-memory defaults.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "502":
+        "503":
           description: |
-            A Flow plugin `git clone` or manifest validation failed
-            (`FLOW_INSTALL`). The whole registration is rolled back — the
-            `projects` row is deleted (cascading to flows and the
-            owner membership) and the slug-scoped artifact subtree is removed —
-            so the identical request can be retried without a 409.
+            Registration commit acknowledgement was lost or could not be
+            confirmed (`EXECUTOR_UNAVAILABLE` with
+            `details.reason: "registration_commit_unknown"`). The project may
+            already have been committed; inspect the project list before
+            retrying.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -14341,7 +14312,7 @@ paths:
       tags: [flow-packages]
       summary: Install a Flow package into a project
       description: |
-        M10 (ADR-021). Admin-only (`requireProjectAction("managePackages")`).
+        M10 (ADR-021). Requires an active global administrator for the source fetch.
         Two-phase install via `installFlowPlugin` → `installRevision`: a
         `flow_revisions` row is written `Installing` before disk side-effects,
         then flipped to `Installed`/`Failed`. Trusted-by-policy sources
@@ -14385,8 +14356,12 @@ paths:
       tags: [flow-packages]
       summary: Enable a specific installed revision
       description: |
-        M10. Admin-only. Sets the project's enabled revision to `revisionId`,
-        refreshing the denormalized cache while preserving runner remaps.
+        Project managePackages can select an already executable and ready revision.
+        Granting executable trust or starting deferred setup also requires active global admin.
+        Sets the project's enabled revision to `revisionId`,
+        refreshing the denormalized cache while preserving runner remaps. An unavailable
+        explicit `flows[].runner` without a ready per-Flow mapping returns 409
+        PRECONDITION with reason `declared_flow_runner_unavailable`.
         Refuses untrusted / incompatible /
         setup-incomplete revisions. `revisionId` is validated against the flow
         AND the project's declared source (cross-source enable is rejected).
@@ -14455,7 +14430,7 @@ paths:
       tags: [flow-packages]
       summary: Install a new revision beside the current one
       description: |
-        M10. Admin-only. Installs a new immutable revision (two-phase) from the
+        M10. Requires an active global administrator. Installs a new immutable revision from the
         SAME source as the project's flow and marks it `UpdateAvailable`. Does
         NOT auto-enable. Rejects a `source` that differs from the project's
         declared flow source (re-sourcing is install/re-install).
@@ -14505,7 +14480,9 @@ paths:
       tags: [flow-packages]
       summary: Roll the enabled revision back to an older installed revision
       description: |
-        M10. Admin-only. Switches the enabled pointer to an older installed
+        Project managePackages can select an already executable and ready revision.
+        Granting executable trust or starting deferred setup also requires active global admin.
+        Switches the enabled pointer to an older installed
         revision (same validation as enable, including source-scope). Never
         mutates completed/active run history. Source:
         `.../flow-packages/[flowRefId]/rollback/route.ts`.
@@ -14545,7 +14522,8 @@ paths:
       tags: [flow-packages]
       summary: Set or clear explicit trust for a flow package
       description: |
-        M10. Admin-only. Sets `trust_status` to `trusted`/`untrusted`. Trust
+        Granting trust requires an active global administrator. Project managePackages can revoke it.
+        Package members require trust in their originating package revision. Trust
         alone does NOT make a package launchable — the package must still be
         `/enable`d (launch requires `Enabled`/`UpdateAvailable`). Source:
         `.../flow-packages/[flowRefId]/trust/route.ts`.
@@ -15964,12 +15942,28 @@ paths:
         "422": { $ref: "#/components/responses/Config" }
         "502": { $ref: "#/components/responses/FlowInstall" }
 
+  /api/admin/package-installs/{installId}/trust:
+    post:
+      tags: [flow-packages, admin]
+      operationId: trustPackageInstall
+      summary: Trust an installed package revision across its attached projects.
+      description: Requires an active global administrator. A durable setup receipt identifies the affected project when an accepted trust decision has unfinished setup.
+      parameters:
+        - {name: installId, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/TrustSetupConflict" }
+        "502": { $ref: "#/components/responses/TrustSetupFailure" }
+
   /api/projects/{slug}/packages:
     get:
       tags: [flow-packages, projects]
       summary: (ADR-088 — Implemented) List package attachments of a project
       description: |
-        (ADR-088 — Implemented.) Member-visible. Attachments with member flow
+        (ADR-088 — Implemented.) Requires managePackages. Attachments with member flow
         ids and the `updateAvailable` derivation (a newer matching tag exists
         in the source's discovered snapshot).
       operationId: getProjectPackages
@@ -15987,14 +15981,38 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [attachments]
+                required: [attachments, declarations]
                 properties:
+                  declarations:
+                    type: array
+                    items: { $ref: "#/components/schemas/ProjectDependencyDeclaration" }
                   attachments:
                     type: array
                     items:
                       { $ref: "#/components/schemas/ProjectPackageAttachment" }
+              examples:
+                failedPackage:
+                  value:
+                    attachments: []
+                    declarations:
+                      - {id: d1, kind: package, ref: core, generation: 1, source: "https://example.org/team/packages", version: core/v1, path: null, attempt: 1, state: failed, stage: resolve, reason: source_unavailable, effectiveAttachmentId: null, effectiveRevision: null, memberRef: null, resolvedRevision: null, readiness: unresolved, actions: {edit: true, retry: true, recoverSetup: false}}
+                refreshedAfterEdit:
+                  value:
+                    attachments: []
+                    declarations:
+                      - {id: d1, kind: package, ref: core, generation: 2, source: "https://example.org/team/packages", version: core/v1.1, path: packages/core, attempt: 1, state: pending, stage: null, reason: null, effectiveAttachmentId: null, effectiveRevision: null, memberRef: null, resolvedRevision: null, readiness: unresolved, actions: {edit: true, retry: false, recoverSetup: false}}
+                interruptedSetup:
+                  value:
+                    attachments: []
+                    declarations:
+                      - {id: d1, kind: package, ref: core, generation: 2, source: "https://example.org/team/packages", version: core/v1.1, path: packages/core, attempt: 1, state: recovery_required, stage: setup, reason: setup_uncertain, effectiveAttachmentId: null, effectiveRevision: null, memberRef: "capability:bundle", resolvedRevision: edac62b8de8dfa93107149269f82bae440ae287e, readiness: recovery_required, actions: {edit: true, retry: false, recoverSetup: true}}
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The project is missing or archived.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivePackageProjectPrecondition" }
     post:
       tags: [flow-packages, projects]
       summary: (ADR-088 — Implemented) Attach a package install to a project
@@ -16064,16 +16082,135 @@ paths:
           description: |
             Typed conflicts: standalone flow-id collision, cross-package
             `(kind, id)` record collision, or (ADR-132) the package-name
-            collision with rename guidance in `details`.
+            collision with rename guidance in `details`. When the database mutation
+            committed but a Flow link awaits repair, the response identifies the
+            accepted mutation and its operation ID.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              schema:
+                anyOf:
+                  - { $ref: "#/components/schemas/PackageFlowLinkPending" }
+                  - { $ref: "#/components/schemas/MaisterErrorBody" }
               example:
                 code: CONFLICT
                 message: "package name already attached — rename the fork and re-cut"
                 details:
                   reason: package_name_taken
                   packageName: aif
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/dependency-declarations/{declarationId}:
+    patch:
+      tags: [projects]
+      operationId: editProjectDependencyDeclaration
+      summary: Replace editable package coordinates and queue the new generation.
+      description: ADR-218 requires active project management and global installation authority before mutation or receipt replay.
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string}}
+        - {name: declarationId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EditProjectDependency" }
+      responses:
+        "200":
+          description: Replace editable package coordinates and queue the new generation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectDependencyDeclaration" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The project is missing or archived (PRECONDITION), or a declaration command conflicts with current state (CONFLICT).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/ActivePackageProjectPrecondition" }
+                  - { $ref: "#/components/schemas/ProjectDependencyConflict" }
+        "422":
+          description: Invalid JSON, an ineligible declaration kind, or an invalid editable field. For field errors details.field identifies the input to correct.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: {type: string, enum: [CONFIG]}
+                  message: {type: string}
+                  details:
+                    type: object
+                    required: [field]
+                    properties:
+                      field: {type: string, enum: [source, version, path, expectedGeneration]}
+              example: {code: CONFIG, message: "Invalid package path.", details: {field: path}}
+
+  /api/projects/{slug}/dependency-declarations/{declarationId}/retry:
+    post:
+      tags: [projects]
+      operationId: retryProjectDependency
+      summary: Queue a retry or replay its existing receipt.
+      description: ADR-218 requires active project management and global installation authority before mutation or receipt replay.
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string}}
+        - {name: declarationId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RetryProjectDependency" }
+      responses:
+        "202":
+          description: Queue a retry or replay its existing receipt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectDependencyReceipt" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The project is missing or archived (PRECONDITION), or a declaration command conflicts with current state (CONFLICT).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/ActivePackageProjectPrecondition" }
+                  - { $ref: "#/components/schemas/ProjectDependencyConflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/dependency-declarations/{declarationId}/recover-setup:
+    post:
+      tags: [projects]
+      operationId: recoverProjectDependencySetup
+      summary: Authorize one setup replay against a quiescent exact member.
+      description: ADR-218 requires active project management and global installation authority before mutation or receipt replay.
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string}}
+        - {name: declarationId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecoverProjectDependencySetup" }
+      responses:
+        "202":
+          description: Authorize one setup replay against a quiescent exact member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectDependencyReceipt" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The project is missing or archived (PRECONDITION), or a declaration command conflicts with current state (CONFLICT).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/ActivePackageProjectPrecondition" }
+                  - { $ref: "#/components/schemas/ProjectDependencyConflict" }
         "422": { $ref: "#/components/responses/Config" }
 
   /api/projects/{slug}/packages/{attachmentId}:
@@ -16134,7 +16271,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Precondition" }
+        "409": { $ref: "#/components/responses/PackageMutationConflict" }
 
   /api/projects/{slug}/packages/{attachmentId}/upgrade:
     post:
@@ -16190,7 +16327,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Precondition" }
+        "409": { $ref: "#/components/responses/PackageMutationConflict" }
         "422": { $ref: "#/components/responses/Config" }
 
   /api/projects/{slug}/packages/{attachmentId}/trust:
@@ -16204,9 +16341,9 @@ paths:
         One operator decision per package revision: the same transaction fans
         `trust_status`/`exec_trust='trusted'` onto every member
         `flow_revisions` + `capability_imports` row, THEN the existing
-        post-trust setup path runs pending member `setup.sh` (after-tx
-        side-effect; never at install). Setup failure marks the member
-        revision Failed and surfaces on launch as today. Native
+        post-trust setup path processes pending member `setup.sh` after the
+        transaction. If setup does not complete, a committed declaration
+        receipt identifies the project and dependency to inspect. Native
         evidence_findings_v1 member Flows remain Installed after trust and need
         the existing explicit revision-enable action. A trusted install/cache
         or a previous attachment does not enable a new native attachment.
@@ -16229,7 +16366,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Precondition" }
+        "409": { $ref: "#/components/responses/TrustSetupConflict" }
+        "502": { $ref: "#/components/responses/TrustSetupFailure" }
 
   /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/fork:
     post:
@@ -16391,31 +16529,15 @@ paths:
       tags: [capabilities]
       summary: Trust-confirm a capability import and run its setup
       description: |
-        **Implemented (M14).** Admin-only
-        (`requireProjectAction("managePackages")`). Establishes explicit trust
-        for a `capability_imports[]` entry and, when trust is granted, executes
-        the import's `setup.sh` (if present and not yet run).
+        An active global administrator confirms an import identified by the project slug
+        and capability reference. Package members also require an already trusted
+        originating package. The service records trust, runs deferred setup using
+        the shared material receipt and reconciles the project catalog.
 
-        **Identifiers.** `slug` is a url-param resolved to a `projects` row
-        (server-state). `capabilityRefId` is a url-param validated against the
-        project's `capability_imports` rows (server-state) — it is NOT derived
-        from the body.
-
-        **Two-phase, retry-safe semantics (R-2PC).** The idempotency marker is
-        `setupStatus`, NOT `trustStatus`. When `confirm: true`:
-
-        1. Under `SELECT … FOR UPDATE`, write `trustStatus = 'trusted'` (BEFORE
-           the side-effect).
-        2. Execute `runCapabilityRevisionSetup` (the trust-gated, physically
-           separate function — never called from `installCapabilityRevision`).
-        3. Write `setupStatus = 'done'` (AFTER the side-effect).
-
-        On any setup failure `setupStatus` is flipped to `'failed'` and the route
-        returns 502 (`FLOW_INSTALL`, retryable via re-POST). Because `runCapabilityRevisionSetup` re-runs when
-        `setupStatus ∈ {pending, failed}`, a re-POST restarts setup without a
-        spurious 409. `409` is returned **ONLY** when `setupStatus = 'done'` or
-        `'not_required'` (genuinely nothing to do), and NEVER merely because
-        `trustStatus` is already `'trusted'`.
+        A first confirmation succeeds even when the bundle requires no setup.
+        Known setup failure returns 502. The declaration exposes its retry action.
+        An already trusted, ready bundle returns 409. An uncertain setup
+        requires the explicit dependency recovery decision and quiescent owner.
 
         Source: `web/app/api/projects/[slug]/capabilities/[capabilityRefId]/trust/route.ts`.
         See [ADR-043](../decisions.md) and
@@ -16473,14 +16595,7 @@ paths:
                     enum: [trusted, trusted_by_policy]
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "409":
-          description: |
-            Project or capability import not found for this project
-            (`PRECONDITION`), or setup is already `done` or `not_required`
-            (nothing to do, `CONFLICT`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409": { $ref: "#/components/responses/TrustSetupConflict" }
         "422":
           description: |
             Body is malformed or `capabilityRefId` fails `SAFE_PATH_SEGMENT`
@@ -16488,15 +16603,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "502":
-          description: |
-            `setup.sh` execution failed (`setupStatus` flipped to `'failed'`).
-            `trustStatus` remains `'trusted'` so a re-POST will retry setup
-            (`FLOW_INSTALL`, retryable via re-POST). Carries structured detail
-            `{source, version, stage:'setup', exitStatus, output}` in the message.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "502": { $ref: "#/components/responses/TrustSetupFailure" }
 
   # ── M27 Flow Studio ─────────────────────────────────────────────────────────
 
@@ -16726,7 +16833,7 @@ paths:
       tags: [flow-studio]
       summary: (M27) Flip exec_trust to trusted on the enabled flow revision
       description: |
-        (M27 — Designed.) Requires global `admin` role
+        (M27 — Implemented.) Requires global `admin` role
         (`requireGlobalRole("admin")`). Flips `flow_revisions.exec_trust` to
         `trusted` on the currently enabled revision of the flow. This is the
         explicit operator gate before `setup.sh` runs and before any MCP stdio
@@ -16736,8 +16843,8 @@ paths:
         `setup.sh` or an MCP stdio command. A separate explicit exec-trust flip
         via this route is always required.
 
-        After the flip, `runRevisionSetup` (physically separate, sentinel
-        once-only) is queued server-side. Empty request body.
+        Package members require prior trust in the originating package revision.
+        After the flip, setup uses the shared material execution receipt. Empty request body.
       operationId: trustExecutableFlowRevision
       parameters:
         - name: slug
@@ -16755,22 +16862,27 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, exec_trust]
+                required: [ok, execTrust, setupStatus]
                 properties:
                   ok: { type: boolean, enum: [true] }
-                  exec_trust:
+                  execTrust:
                     type: string
                     enum: [trusted]
                     description: The new exec_trust value of the enabled revision.
+                  setupStatus:
+                    type: string
+                    enum: [not_required, done]
               examples:
                 trusted:
                   summary: Exec trust granted
                   value:
                     ok: true
-                    exec_trust: trusted
+                    execTrust: trusted
+                    setupStatus: done
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/TrustSetupConflict" }
+        "502": { $ref: "#/components/responses/TrustSetupFailure" }
 
   # ── M27 Platform MCP server admin ───────────────────────────────────────────
 
@@ -20405,7 +20517,9 @@ paths:
         state. Persist immutable input/settings/basis, reservation, audit and task.launch_changed in
         one transaction before effects. Same key/same payload returns original receipt after access
         checks; changed payload conflicts. 202 describes intent acceptance, not a started run. Lost
-        response does not cancel accepted work.
+        response does not cancel accepted work. An unavailable explicit `flows[].runner`
+        without a ready per-Flow mapping returns 409 PRECONDITION with reason
+        `declared_flow_runner_unavailable` before reservation.
       security:
         - sessionCookie: []
       parameters:
@@ -25337,6 +25451,39 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/NotFoundBody" }
+    TrustSetupConflict:
+      description: The project or target is unavailable, the trust operation conflicts, or setup is pending or requires recovery. Only an explicit trustAccepted receipt confirms committed trust and identifies the specific declaration. Refresh that project’s Packages view.
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - { $ref: "#/components/schemas/AcceptedTrustSetup" }
+              - { $ref: "#/components/schemas/MaisterErrorBody" }
+          example: {code: CONFLICT, message: "Inspect the trusted dependency setup in project settings.", details: {trustAccepted: true, reason: setup_uncertain, projectSlug: demo, declarationId: d1}}
+    TrustSetupFailure:
+      description: Setup failed. When the response includes trustAccepted, trust was committed and the identified declaration contains the durable attempt and its authorized recovery actions.
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - { $ref: "#/components/schemas/AcceptedTrustSetup" }
+              - { $ref: "#/components/schemas/MaisterErrorBody" }
+          example: {code: FLOW_INSTALL, message: "Inspect the trusted dependency setup in project settings.", details: {trustAccepted: true, reason: setup_failed, projectSlug: demo, declarationId: d1}}
+    PackageMutationConflict:
+      description: |
+        The request was refused, or its database mutation committed and an affected
+        Flow link awaits repair. In the latter case the worker retries publication
+        and the client can refresh the project to inspect the applied change.
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - { $ref: "#/components/schemas/PackageFlowLinkPending" }
+              - { $ref: "#/components/schemas/MaisterErrorBody" }
+          example:
+            code: PRECONDITION
+            message: The package change was committed. Its Flow link is awaiting repair.
+            details: { reason: project_flow_link_pending, mutationAccepted: true, operationId: op-1, memberRef: review, linkReason: project_flow_link_conflict }
     Precondition:
       description: Precondition failed or conflict (`PRECONDITION` / `CONFLICT`).
       content:
@@ -31850,6 +31997,12 @@ components:
           $ref: "#/components/schemas/TaskLaunchBody/properties/relaunchOfRunId"
         packageVersions:
           type: object
+          description: |
+            A shared adoption requires a settled project dependency pin. An
+            outstanding replacement returns 409 with reason dependency_pin_unsettled.
+            keep and an offered try_once preserve the project's desired pin.
+            An adoption whose working-copy Flow link cannot be published refuses
+            launch with reason launch_flow_link_pending. No Run is accepted.
           maxProperties: 64
           additionalProperties:
             type: string
@@ -33017,6 +33170,8 @@ components:
                   not_installed,
                   setup_failed,
                   setup_pending,
+                  flow_capability_unavailable,
+                  untrusted,
                   unsupported_schema,
                   incompatible,
                 ]
@@ -33061,6 +33216,8 @@ components:
                   not_installed,
                   setup_failed,
                   setup_pending,
+                  flow_capability_unavailable,
+                  untrusted,
                   unsupported_schema,
                   incompatible,
                   runner_unresolved,
@@ -33100,6 +33257,9 @@ components:
                     not_installed,
                     setup_failed,
                     setup_pending,
+                    runner_unresolved,
+                    flow_capability_unavailable,
+                    untrusted,
                     unsupported_schema,
                     incompatible,
                     null,
@@ -37663,6 +37823,7 @@ components:
             type: string,
             description: "Present only when attachToProjectId was supplied and the attach succeeded.",
           }
+        flowLinkPending: { $ref: "#/components/schemas/PendingFlowLink" }
         adoptions:
           type: array
           items:
@@ -37673,7 +37834,8 @@ components:
               projectId: { type: string }
               status: { type: string, enum: [adopted, failed] }
               error: { type: string, nullable: true }
-          description: "(ADR-132) Per-project adopt outcomes for `adoptInProjectIds`; present only when it was supplied. Failed adopts are retryable from the dialog."
+              flowLinkPending: { $ref: "#/components/schemas/PendingFlowLink" }
+          description: "(ADR-132) Per-project adopt outcomes for `adoptInProjectIds`; present only when it was supplied. An adopted target can have a pending working-copy link. The dialog offers retries only for failed adoptions."
           example: [{ projectId: "proj-1", status: adopted }]
     PublishLocalPackageBody:
       type: object
@@ -37972,6 +38134,146 @@ components:
           items: { type: string }
           description: "Manifest flow ids."
 
+    PendingFlowLink:
+      type: object
+      required: [reason, operationId, memberRef, linkReason]
+      properties:
+        reason: { type: string, enum: [project_flow_link_pending] }
+        operationId: { type: string }
+        memberRef: { type: string }
+        linkReason: { type: string, nullable: true, enum: [project_flow_link_conflict, project_flow_link_unavailable, null] }
+    PackageFlowLinkPending:
+      type: object
+      required: [code, message, details]
+      properties:
+        code: { type: string, enum: [PRECONDITION] }
+        message: { type: string }
+        details:
+          allOf:
+            - { $ref: "#/components/schemas/PendingFlowLink" }
+            - type: object
+              required: [mutationAccepted]
+              properties:
+                mutationAccepted: { type: boolean, enum: [true] }
+                attachmentId: { type: string }
+    ActivePackageProjectPrecondition:
+      type: object
+      description: The package-management route requires an active project and uses the same error for a missing or archived project.
+      required: [code, message]
+      properties:
+        code: {type: string, enum: [PRECONDITION]}
+        message: {type: string}
+      example: {code: PRECONDITION, message: "project not found: demo"}
+    ProjectDependencyConflict:
+      type: object
+      required: [code, message, details]
+      properties:
+        code: {type: string, enum: [CONFLICT]}
+        message: {type: string}
+        details:
+          type: object
+          required: [reason]
+          properties:
+            reason:
+              type: string
+              enum: [stale_generation, stale_attempt, ineligible_state, setup_owner_live, setup_evidence_missing, operation_busy]
+      example: {code: CONFLICT, message: "Refresh the current package pin.", details: {reason: stale_generation}}
+    AcceptedTrustSetup:
+      type: object
+      required: [code, message, details]
+      properties:
+        code: {type: string, enum: [CONFLICT, FLOW_INSTALL]}
+        message: {type: string}
+        details:
+          type: object
+          required: [trustAccepted, reason, projectSlug, declarationId]
+          properties:
+            trustAccepted: {type: boolean, enum: [true]}
+            reason: {type: string}
+            projectSlug: {type: string, minLength: 1}
+            declarationId: {type: string, minLength: 1}
+            memberRef: {type: string, nullable: true}
+    EditProjectDependency:
+      type: object
+      additionalProperties: false
+      required: [expectedGeneration, source, version]
+      properties:
+        expectedGeneration: {type: integer, minimum: 1}
+        source:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Absolute local path, local file URL, HTTP(S), SSH URL or user@host:path Git remote. Control characters are forbidden. URLs reject whitespace, backslashes, query strings and fragments. HTTP(S) credentials and SSH passwords are forbidden. An explicit network port must be at most 65535.
+        version:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^(?![-/])(?!.*\.\.)[A-Za-z0-9._+/-]+$'
+        path:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^(?!\.{1,2}(?:/|$))(?!.*\/\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$'
+          description: Relative package directory. Omit the property to clear the previous path and select the repository root.
+      example: {expectedGeneration: 1, source: "https://example.org/team/packages", version: "core/v1.1", path: packages/core}
+    RetryProjectDependency:
+      type: object
+      additionalProperties: false
+      required: [expectedGeneration, expectedAttempt]
+      properties:
+        expectedGeneration: {type: integer, minimum: 1}
+        expectedAttempt: {type: integer, minimum: 1}
+    RecoverProjectDependencySetup:
+      type: object
+      additionalProperties: false
+      required: [expectedGeneration, expectedAttempt, memberRef, resolvedRevision, action]
+      properties:
+        expectedGeneration: {type: integer, minimum: 1}
+        expectedAttempt: {type: integer, minimum: 1}
+        memberRef: {type: string, minLength: 1}
+        resolvedRevision: {type: string, minLength: 1}
+        action: {type: string, enum: [rerun_setup]}
+      example: {expectedGeneration: 2, expectedAttempt: 1, memberRef: "capability:bundle", resolvedRevision: "edac62b8de8dfa93107149269f82bae440ae287e", action: rerun_setup}
+    ProjectDependencyReceipt:
+      type: object
+      description: An identical authorized retry or recovery command replays this receipt.
+      example: {declarationId: d1, generation: 2, attempt: 2}
+      required: [declarationId, generation, attempt]
+      properties:
+        declarationId: {type: string}
+        generation: {type: integer}
+        attempt: {type: integer}
+    ProjectDependencyDeclaration:
+      type: object
+      required: [id, kind, ref, generation, source, version, path, attempt, state, stage, reason, effectiveAttachmentId, effectiveRevision, memberRef, resolvedRevision, readiness, actions]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [package, flow, capability_import]}
+        ref: {type: string}
+        generation: {type: integer, minimum: 1}
+        source: {type: string}
+        version: {type: string}
+        path: {type: string, nullable: true}
+        attempt: {type: integer, nullable: true}
+        state: {type: string, nullable: true, enum: [pending, running, succeeded, failed, recovery_required, null]}
+        stage: {type: string, nullable: true, enum: [resolve, install, attach, setup, projection, null]}
+        reason: {type: string, nullable: true}
+        effectiveAttachmentId: {type: string, nullable: true}
+        readiness:
+          type: string
+          enum: [unresolved, awaiting_trust, setup_pending, setup_failed, recovery_required, installed]
+          description: Installation readiness. Run admission also checks runner bindings and current runtime policy.
+        actions:
+          type: object
+          additionalProperties: false
+          required: [edit, retry, recoverSetup]
+          properties:
+            edit: {type: boolean}
+            retry: {type: boolean}
+            recoverSetup: {type: boolean}
+        effectiveRevision: {type: string, nullable: true}
+        memberRef: {type: string, nullable: true, description: "Kind-qualified setup member for exact recovery (for example capability:bundle)."}
+        resolvedRevision: {type: string, nullable: true}
     ProjectPackageAttachment:
       type: object
       description: (ADR-088 — Implemented) A project's enablement of one package install.

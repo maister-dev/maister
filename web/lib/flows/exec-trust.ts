@@ -1,8 +1,17 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
+
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  enqueueTrustedSetup,
+  finishTrustedSetup,
+  lockCurrentFlowSetup,
+} from "@/lib/project-dependencies/post-trust-store";
+import { withSetupAuthority } from "@/lib/project-dependencies/setup";
+import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -28,6 +37,7 @@ const log = pino({
 export async function trustExecutable(args: {
   projectId: string;
   flowId: string;
+  actorUserId?: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
 }): Promise<{ execTrust: "trusted"; setupStatus: string }> {
@@ -59,6 +69,8 @@ export async function trustExecutable(args: {
     );
   }
 
+  await requireParentPackageTrust(db, flow.packageInstallId);
+
   // Load the enabled revision.
   const revRows = await db
     .select()
@@ -74,10 +86,22 @@ export async function trustExecutable(args: {
   }
 
   // Flip exec_trust → trusted unconditionally (idempotent).
-  await db
-    .update(flowRevisions)
-    .set({ execTrust: "trusted" })
-    .where(eq(flowRevisions.id, rev.id));
+  const queued = await db.transaction(async (tx: Db) => {
+    await lockCurrentFlowSetup(tx, flow, args.actorUserId);
+    await tx
+      .update(flowRevisions)
+      .set({ execTrust: "trusted" })
+      .where(eq(flowRevisions.id, rev.id));
+
+    return enqueueTrustedSetup(
+      tx,
+      args.actorUserId,
+      { kind: "flow", id: rev.id },
+      args.projectId,
+    );
+  });
+
+  await finishTrustedSetup(db, queued);
 
   log.debug(
     { projectId: args.projectId, flowId: args.flowId, revisionId: rev.id },
@@ -87,12 +111,23 @@ export async function trustExecutable(args: {
   // Run pending setup.sh if needed.
   let setupStatus: string = rev.setupStatus;
 
-  if (rev.setupStatus === "pending") {
-    setupStatus = await runRevisionSetup({
+  if (queued.length) {
+    const [completed] = await db
+      .select({ status: flowRevisions.setupStatus })
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, rev.id));
+    setupStatus = completed.status;
+  } else if (rev.setupStatus === "pending" || rev.setupStatus === "failed") {
+    setupStatus = await withSetupAuthority(
       db,
-      revisionId: rev.id,
-      installedPath: rev.installedPath,
-    });
+      (tx) => lockCurrentFlowSetup(tx, flow, args.actorUserId),
+      () =>
+        runRevisionSetup({
+          db,
+          revisionId: rev.id,
+          installedPath: rev.installedPath,
+        }),
+    );
 
     if (setupStatus === "failed") {
       throw new MaisterError(

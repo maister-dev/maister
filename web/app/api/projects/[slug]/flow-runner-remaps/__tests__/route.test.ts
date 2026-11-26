@@ -83,6 +83,7 @@ const fakeQueries = {
 
 const fakeDb = {
   ...fakeQueries,
+  execute: async () => ({ rows: [] }),
   transaction: async <T>(
     action: (tx: typeof fakeQueries) => Promise<T>,
   ): Promise<T> => action(fakeQueries),

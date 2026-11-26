@@ -25,14 +25,16 @@
 // the restarted process's log is asserted alongside it (trap 2), because a
 // registry that fails to compose leaves the worker silently unstarted.
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readLaunchResult } from "@/e2e/_seed/launch-stream";
+import { enqueueProjectDependencies } from "@/lib/project-dependencies/store";
 import { acquireRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { launchFlowThroughHttp } from "@/test-support/launch-flow-through-http";
 import * as schema from "@/lib/db/schema";
@@ -82,6 +84,7 @@ const EVIDENCE_BUDGET_MS = 180_000;
 const EVIDENCE_DIR = process.env.MAISTER_TEST_EVIDENCE_DIR;
 
 let testDatabase: StartedPostgresTestDb;
+let adminUserId: string;
 let base = "";
 let supervisorRoot = "";
 let webRoot = "";
@@ -257,7 +260,7 @@ describe("P0-2 durable workers in the production web boot", () => {
         ? { logFile: path.join(EVIDENCE_DIR, "supervisor.log") }
         : {}),
     });
-    await seedAdmin(testDatabase.db);
+    adminUserId = await seedAdmin(testDatabase.db);
     await seedPlatformRunner(testDatabase.db);
     project = await seedProjectRepo(testDatabase.db, base);
     const flow = await seedFlowTask(testDatabase.db, {
@@ -587,6 +590,134 @@ describe("P0-2 durable workers in the production web boot", () => {
     }
   }, 600_000);
 
+  it("AC03: the restarted production worker reclaims a pre-effect dependency lease and realizes its pending sibling without another request", async () => {
+    const issuer = web;
+    const target = await seedProjectRepo(testDatabase.db, base);
+    const sources = [
+      path.join(base, "bad-package"),
+      path.join(base, "good-package"),
+    ];
+
+    await Promise.all(sources.map((source) => mkdir(source)));
+    await writeFile(
+      path.join(sources[0]!, "maister-package.yaml"),
+      "invalid: [",
+    );
+    await writeFile(
+      path.join(sources[1]!, "maister-package.yaml"),
+      "schemaVersion: 1\nname: boot-package\n",
+    );
+    const gate = await testDatabase.pool.connect();
+    const attempts = () =>
+      testDatabase.db
+        .select()
+        .from(schema.projectDependencyAttempts)
+        .where(
+          eq(schema.projectDependencyAttempts.projectId, target.projectId),
+        );
+
+    try {
+      await gate.query("BEGIN");
+      // A real worker can claim the item but must authorize its actor before any effect.
+      await gate.query("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE", [
+        adminUserId,
+      ]);
+      await drizzle(testDatabase.pool, { schema }).transaction((tx) =>
+        enqueueProjectDependencies(tx, {
+          projectId: target.projectId,
+          actorUserId: adminUserId,
+          declarations: sources.map((source, ordinal) => ({
+            kind: "package",
+            ordinal,
+            logicalId: ordinal === 0 ? "broken" : "healthy",
+            desired: { source, version: "v1" },
+          })),
+        }),
+      );
+      const claimed = await poll(
+        async () => {
+          const rows = await attempts();
+
+          return rows.find(
+            (row) =>
+              row.desired.source === sources[0] && row.status === "running",
+          );
+        },
+        EVIDENCE_BUDGET_MS,
+        "the original production process to claim its first declaration",
+      );
+
+      expect(claimed).toMatchObject({
+        stage: null,
+        checkpoint: {},
+        resolvedRevision: null,
+      });
+      expect(claimed.claimToken).toBeTruthy();
+      const sibling = (await attempts()).find(
+        (row) => row.desired.source === sources[1],
+      );
+
+      expect(sibling).toMatchObject({ status: "pending", claimToken: null });
+
+      await issuer.kill("SIGKILL");
+      await gate.query("ROLLBACK");
+      await testDatabase.pool.query(
+        "UPDATE project_dependency_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1 AND claim_token=$2",
+        [claimed.id, claimed.claimToken],
+      );
+      // The recovered installer uses a fixture-owned home for its package cache.
+      web = await issuer.restart({
+        env: { ...issuer.options.env, HOME: webRoot },
+      });
+      expect(web.pid).not.toBe(issuer.pid);
+      const settled = await poll(
+        async () => {
+          const rows = await attempts();
+
+          return rows.every(
+            (row) => row.status === "failed" || row.status === "succeeded",
+          )
+            ? rows
+            : null;
+        },
+        EVIDENCE_BUDGET_MS,
+        "the restarted worker to finish both original dependency attempts",
+      );
+
+      expect(settled).toHaveLength(2);
+      expect(settled).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: claimed.id,
+            status: "failed",
+            stage: "resolve",
+            reason: expect.any(String),
+            claimToken: null,
+          }),
+          expect.objectContaining({
+            id: sibling!.id,
+            status: "succeeded",
+            claimToken: null,
+          }),
+        ]),
+      );
+      const attached = await testDatabase.db
+        .select()
+        .from(schema.projectPackageAttachments)
+        .where(
+          eq(schema.projectPackageAttachments.projectId, target.projectId),
+        );
+
+      expect(attached).toHaveLength(1);
+      expect(attached[0]?.packageName).toBe("boot-package");
+    } finally {
+      await gate.query("ROLLBACK");
+      gate.release();
+      if (web === issuer) web = await issuer.restart();
+      cookie = await signInWithCredentials(web.url, WORKER_ADMIN);
+    }
+  }, 600_000);
+
   // -------------------------------------------------------------------------
   // Registry composition and worker lifecycle (Task 6).
   // -------------------------------------------------------------------------
@@ -652,7 +783,7 @@ describe("P0-2 durable workers in the production web boot", () => {
       await expect(stopDurableWorkers()).resolves.toBeUndefined();
     });
 
-    it("R5: a double start returns the same four handles", async () => {
+    it("R5: a double start returns the same worker handles", async () => {
       const { startDurableWorkers, stopDurableWorkers } =
         await import("@/lib/workers/runtime");
       const first = startDurableWorkers();
@@ -664,6 +795,8 @@ describe("P0-2 durable workers in the production web boot", () => {
         expect(second.flowContinuation).toBe(first.flowContinuation);
         expect(second.agentContinuation).toBe(first.agentContinuation);
         expect(second.taskLaunch).toBe(first.taskLaunch);
+        expect(first.projectDependency.health().state).toBe("running");
+        expect(second.projectDependency).toBe(first.projectDependency);
       } finally {
         await stopDurableWorkers();
       }

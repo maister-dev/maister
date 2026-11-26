@@ -1,12 +1,5 @@
 # Add project
 
-## Cut-over legacy Flow refusal (ADR-131 — Implemented)
-
-If any package member contains steps[], registration preserves every entered
-field and focuses a role=alert summary with FLOW_INSTALL and the engine-3
-republish-with-nodes remediation. No converter is offered and no partial
-project remains.
-
 - **Type:** screen (admin).
 - **Route:** `/projects/new` (global admin only).
 - **Status:** Implemented (URL-clone) · onboarding modes + prefill + classified
@@ -35,7 +28,11 @@ without a pre-existing `maister.yaml` or a guess-and-retry loop.
   [left rail](../chrome/left-rail.md) projects section.
 - **Exit:** a successful registration lands on the new project board
   (`/projects/{slug}`) with validated source configuration or in-memory defaults. Missing-manifest
-  registration creates no file; Settings → Git offers a separate reviewed save.
+  registration creates no file. The registration receipt links to declared
+  dependencies and another registration. A new Git repository displays the
+  initial-commit guidance; a repository without a remote displays the promotion
+  guidance. A malformed dependency member appears as a failed installation in
+  Packages. Settings → Git offers a separate reviewed save.
 
 ```mermaid
 flowchart TD

@@ -39,9 +39,10 @@ test("admin registers a local project and duplicate registration conflicts", asy
   await page.getByRole("button", { name: "Register project" }).click();
   expect((await registerResponse).status()).toBe(201);
   await expect(page.getByText("Project registered")).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /Open project/ }),
-  ).toHaveAttribute("href", `/projects/${fx.expectedSlug}`);
+  await expect(page).toHaveURL(
+    (url) => url.pathname === `/projects/${fx.expectedSlug}`,
+  );
+  await expect(page.getByText(/repo has no remote/i)).toBeVisible();
 
   const registeredCount = await countRows("projects", "slug = $1", [
     fx.expectedSlug,
@@ -51,7 +52,7 @@ test("admin registers a local project and duplicate registration conflicts", asy
 
   // "Register another" resets the form, which puts the source back to the
   // default "Clone from URL" — so the mode has to be chosen again here.
-  await page.getByRole("button", { name: "Register another" }).click();
+  await page.getByRole("link", { name: "Register another" }).click();
   await page.getByRole("radio", { name: "Existing local repo" }).click();
   await page
     .getByRole("textbox", { name: "Local path or clone folder" })

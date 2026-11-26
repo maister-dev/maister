@@ -16,12 +16,13 @@ import { eq } from "drizzle-orm";
 
 import { git } from "../git";
 import { currentConfigStatus, inspectRepository } from "../status";
-import { readExportSnapshot, assertExportablePackages } from "../projection";
+import { readExportSnapshot, reviewPackageSources } from "../projection";
 import { patchProjectManifest } from "../manifest";
 import { writeConfigReviewFiles } from "../review-files";
 
 import { projects, users } from "@/lib/db/schema";
 import { localDirectoryContentDigest } from "@/lib/flows";
+import { materialLayoutDigest } from "@/lib/project-dependencies/content-digest";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -148,15 +149,30 @@ it("IT-CPC-07: deleted local sources and changed directory revisions refuse expo
     ],
   };
 
-  await expect(assertExportablePackages(projection)).resolves.toBeUndefined();
+  expect(await reviewPackageSources(projection)).toEqual([
+    {
+      id: "source",
+      digest: await localDirectoryContentDigest(directory),
+      layoutDigest: await materialLayoutDigest(directory),
+    },
+  ]);
   await writeFile(join(directory, "content.txt"), "changed");
-  await expect(assertExportablePackages(projection)).rejects.toMatchObject({
+  await expect(reviewPackageSources(projection)).rejects.toMatchObject({
     details: { reason: "package_revision_mismatch" },
   });
   await rm(directory, { recursive: true });
-  await expect(assertExportablePackages(projection)).rejects.toMatchObject({
+  await expect(reviewPackageSources(projection)).rejects.toMatchObject({
     details: { reason: "package_source_unexportable" },
   });
+  const unresolved = {
+    ...projection,
+    packages: [{ ...projection.packages[0]!, resolvedRevision: null }],
+  };
+  const reviewedSource = patchProjectManifest(null, unresolved);
+
+  await expect(
+    reviewPackageSources(unresolved, reviewedSource),
+  ).resolves.toEqual([]);
   expect((await readExportSnapshot(database.db, projectId)).projection).toEqual(
     snapshot.projection,
   );
@@ -329,7 +345,7 @@ it("IT-CPC-07: authentication-bearing package coordinates refuse export without 
     "file://user@example.invalid/package",
   ]) {
     await expect(
-      assertExportablePackages({
+      reviewPackageSources({
         ...snapshot.projection,
         packages: [
           {

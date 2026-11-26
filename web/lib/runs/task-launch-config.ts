@@ -12,9 +12,10 @@ import type {
 } from "@/lib/runs/delivery-policy";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
+import { readFlowRunnerBinding } from "@/lib/acp-runners/declared-flow-runner";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
 import { toConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import {
@@ -42,7 +43,6 @@ const {
   flows,
   platformAcpRunners,
   platformRuntimeSettings,
-  projectFlowRunnerDefaults,
   projects,
   tasks,
 } = schemaModule as unknown as Record<string, any>;
@@ -170,28 +170,17 @@ export async function resolveTaskLaunchConfig(
     }
   }
 
-  const [runtimeRows, runnerRows, projectFlowDefaultRows, bindings] =
-    await Promise.all([
-      db
-        .select()
-        .from(platformRuntimeSettings)
-        .where(eq(platformRuntimeSettings.id, "singleton")),
-      db.select().from(platformAcpRunners),
-      flowRow
-        ? db
-            .select({ runnerId: projectFlowRunnerDefaults.runnerId })
-            .from(projectFlowRunnerDefaults)
-            .where(
-              and(
-                eq(projectFlowRunnerDefaults.projectId, project.id),
-                eq(projectFlowRunnerDefaults.flowId, flowRow.id),
-              ),
-            )
-        : Promise.resolve([]),
-      revision
-        ? loadFlowRunnerBindings(db, project.id, revision.id)
-        : Promise.resolve([]),
-    ]);
+  const [runtimeRows, runnerRows, runnerBinding, bindings] = await Promise.all([
+    db
+      .select()
+      .from(platformRuntimeSettings)
+      .where(eq(platformRuntimeSettings.id, "singleton")),
+    db.select().from(platformAcpRunners),
+    flowRow ? readFlowRunnerBinding(db, flowRow.id) : Promise.resolve(null),
+    revision
+      ? loadFlowRunnerBindings(db, project.id, revision.id)
+      : Promise.resolve([]),
+  ]);
   const platformRuntime = runtimeRows[0];
   const runnerCatalog = runnerRows.map(runnerCatalogEntry);
 
@@ -212,7 +201,7 @@ export async function resolveTaskLaunchConfig(
           bindings,
           taskRunnerId: task.runnerId,
           projectFlow: {
-            defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
+            defaultRunnerId: runnerBinding?.defaultRunnerId ?? null,
           },
           platformFlow: { defaultRunnerId: revision.defaultRunnerId ?? null },
           project: { defaultRunnerId: project.defaultRunnerId },
@@ -240,7 +229,8 @@ export async function resolveTaskLaunchConfig(
     runnerInspection?.consensus.map(toConsensusRunnerSlotPreview) ?? [];
   const runnerIssue =
     flowIssue === null &&
-    (!runnerInspection ||
+    (runnerBinding?.unavailable ||
+      !runnerInspection ||
       [...runnerInspection.sessions, ...runnerInspection.consensus].some(
         (slot) => slot.status === "unresolved",
       ))

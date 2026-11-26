@@ -29,7 +29,9 @@ import {
   PACKAGE_TAB_PAGE_SIZE,
   PackageTabs,
 } from "@/components/studio/package-tabs";
-import { readApiError } from "@/lib/api-error";
+import { apiErrorText, readApiError } from "@/lib/api-error";
+import { requestPackageTrust } from "@/lib/project-dependencies/trust-response";
+import { TrustedSetupNotice } from "@/components/projects/trusted-setup-notice";
 
 export type PackageDetailView = {
   name: string;
@@ -190,8 +192,12 @@ export function PackageDetail({
               triggerClassName="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
             />
           ) : null}
-          {canTrust && selected && selected.trustStatus === "untrusted" ? (
-            <TrustButton installId={selected.installId} />
+          {canTrust && selected ? (
+            <TrustButton
+              key={selected.installId}
+              installId={selected.installId}
+              trusted={selected.trustStatus !== "untrusted"}
+            />
           ) : null}
           {/* Fork-to-local (M36 T2.4): clones the package into a new local
               package and opens the editor. Import (⤓) stays ABSENT here:
@@ -275,32 +281,38 @@ export function PackageDetail({
 }
 
 // One-click platform trust from the package card (admin only). POSTs the selected
-// install to the trust route and refreshes. Only rendered for an untrusted
-// revision, so a trusted package shows no button (its versions list reads
-// "trusted").
-function TrustButton({ installId }: { installId: string }): ReactElement {
+// install to the trust route. Keep any outstanding setup receipt visible
+// after refreshing the revision's trust state.
+function TrustButton({
+  installId,
+  trusted,
+}: {
+  installId: string;
+  trusted: boolean;
+}): ReactElement | null {
   const t = useTranslations("studio");
   const tApiErrors = useTranslations("apiErrors");
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [setupHref, setSetupHref] = useState<string | null>(null);
 
   async function trust(): Promise<void> {
     setBusy(true);
     setError(null);
 
     try {
-      const res = await fetch(
+      const result = await requestPackageTrust(
         `/api/admin/package-installs/${encodeURIComponent(installId)}/trust`,
-        { method: "POST" },
       );
 
-      if (!res.ok) {
-        setError(await readApiError(res, tApiErrors));
+      if (result.kind === "unconfirmed") {
+        setError(apiErrorText(result.error, tApiErrors));
 
         return;
       }
 
+      if (result.kind === "setup") setSetupHref(result.href);
       router.refresh();
     } catch {
       setError(tApiErrors("requestFailed"));
@@ -308,6 +320,14 @@ function TrustButton({ installId }: { installId: string }): ReactElement {
       setBusy(false);
     }
   }
+
+  if (setupHref)
+    return (
+      <span role="status">
+        <TrustedSetupNotice href={setupHref} />
+      </span>
+    );
+  if (trusted) return null;
 
   return (
     <span className="inline-flex flex-col gap-1">

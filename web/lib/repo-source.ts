@@ -17,6 +17,11 @@ import {
 
 import { reposRoot } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
+import {
+  cleanRegistrationDirectory,
+  createRegistrationDirectory,
+  type OwnedDirectory,
+} from "@/lib/registration-directory";
 import { deriveRepoNameSafe } from "@/lib/repo-name";
 
 const execFileAsync = promisify(execFile);
@@ -48,6 +53,7 @@ export type ResolvedSource = {
   provider: Provider | null;
   gitStatus: GitStatus;
   clonedByUs: boolean;
+  ownedDirectory?: OwnedDirectory;
   // ADR-093: the new-empty path created this dir; the route cleans it up on a
   // registration failure (mirrors clonedByUs for the clone path).
   createdByUs: boolean;
@@ -130,14 +136,18 @@ export function classifyGitError(stderr: string): CloneFailureReason {
     s.includes("could not read password") ||
     s.includes("terminal prompts disabled") ||
     s.includes("invalid username or password") ||
-    s.includes("403")
+    /(?:returned error:\s*|http(?:\/[\d.]+)?\s+)403\b|\b403\s+forbidden\b/.test(
+      s,
+    )
   ) {
     return "HTTPS_AUTH";
   }
   if (
     s.includes("repository not found") ||
     s.includes("does not exist") ||
-    s.includes("404")
+    /(?:returned error:\s*|http(?:\/[\d.]+)?\s+)404\b|\b404\s+not found\b/.test(
+      s,
+    )
   ) {
     return "NOT_FOUND";
   }
@@ -432,12 +442,13 @@ export async function resolveProjectSource(body: {
       );
     }
 
-    await mkdir(reposRootDir, { recursive: true });
+    await mkdir(dirname(dir), { recursive: true });
+    const ownedDirectory = await createRegistrationDirectory(dir);
 
     try {
       await cloneRepo({ url: body.repoUrl, target: dir, token: body.token });
     } catch (err) {
-      await rm(dir, { recursive: true, force: true }).catch(() => {}); // we created it; safe to remove
+      await cleanRegistrationDirectory(ownedDirectory);
       throw err;
     }
 
@@ -447,6 +458,7 @@ export async function resolveProjectSource(body: {
       provider: detectProvider(body.repoUrl),
       gitStatus: "remote",
       clonedByUs: true,
+      ownedDirectory,
       createdByUs: false,
     };
   }
@@ -463,7 +475,7 @@ export async function resolveProjectSource(body: {
   if (!(await pathExists(dir))) {
     // ADR-093: greenfield onboarding — ONLY an explicit mode="new" creates the
     // directory (never on a typo'd existing-repo path). The route's deferred
-    // gitInit turns it into a repo after the registration commits.
+    // gitInit turns it into a repo before the registration commits.
     if (body.mode === "new") {
       // [FIX] Atomic ownership claim (Codex F1): create parents recursively,
       // then the final dir EXCLUSIVELY (non-recursive). A recursive mkdir
@@ -472,21 +484,8 @@ export async function resolveProjectSource(body: {
       // — and the route's failure cleanup `rm -rf`s any `createdByUs` dir,
       // destroying host data we don't own. EEXIST ⇒ someone else owns it → refuse.
       await mkdir(dirname(dir), { recursive: true });
-      try {
-        await mkdir(dir);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-          log.warn(
-            { dir },
-            "new-empty target appeared concurrently — refusing",
-          );
-          throw new MaisterError(
-            "PRECONDITION",
-            `target already exists: ${dir}`,
-          );
-        }
-        throw err;
-      }
+      const ownedDirectory = await createRegistrationDirectory(dir);
+
       log.info({ dir }, "new-empty project dir created exclusively");
 
       return {
@@ -496,6 +495,7 @@ export async function resolveProjectSource(body: {
         gitStatus: "initialized",
         clonedByUs: false,
         createdByUs: true,
+        ownedDirectory,
       };
     }
 
@@ -504,8 +504,7 @@ export async function resolveProjectSource(body: {
 
   if (!(await isGitRepo(dir))) {
     // Defer `git init` to the route — it must not mutate the operator's
-    // directory until the manifest is validated and the registration is
-    // otherwise committed. gitStatus "initialized" signals the route to init.
+    // directory until the manifest and core project identity pass validation.
     return {
       dir,
       repoUrl: null,

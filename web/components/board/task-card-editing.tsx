@@ -116,6 +116,9 @@ const FLOW_DISABLED_REASON_LABEL: Record<string, string> = {
   setup_failed: "editFlowSetupFailed",
   setup_pending: "editFlowSetupPending",
   unsupported_schema: "editFlowUnsupportedSchema",
+  untrusted: "editFlowUntrusted",
+  runner_unresolved: "editFlowRunnerUnavailable",
+  flow_capability_unavailable: "editFlowCapabilityUnavailable",
 };
 
 export type TaskEditableTarget = {

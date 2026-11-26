@@ -2556,6 +2556,55 @@
       "when": 1795435885577,
       "tag": "0368_run_sync_attempt_peek_hint",
       "breakpoints": true
+    },
+    {
+      "idx": 369,
+      "version": "7",
+      "when": 1795462341910,
+      "tag": "0369_project_dependencies",
+      "breakpoints": true
+    },
+    {
+      "idx": 370,
+      "version": "7",
+      "when": 1795463255644,
+      "tag": "0370_dependency_source_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 371,
+      "version": "7",
+      "when": 1795463931000,
+      "tag": "0371_dependency_source_coordinates",
+      "breakpoints": true
+    },
+    {
+      "idx": 372,
+      "version": "7",
+      "when": 1795505678359,
+      "tag": "0372_bundle_eligibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 373,
+      "version": "7",
+      "when": 1795505844783,
+      "tag": "0373_dependency_setup_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 374,
+      "version": "7",
+      "when": 1795513604769,
+      "tag": "0374_flow_link_publication",
+      "breakpoints": true
+    },
+    {
+      "idx": 375,
+      "version": "7",
+      "when": 1795513945570,
+      "tag": "0375_package_skill_readiness",
+      "breakpoints": true
     }
   ]
 }

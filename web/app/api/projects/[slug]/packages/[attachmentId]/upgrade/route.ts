@@ -21,7 +21,7 @@ export async function POST(
   const { slug, attachmentId } = await ctx.params;
 
   try {
-    const { project, db } = await authorizeManagePackages(slug);
+    const { project, db, user } = await authorizeManagePackages(slug);
     const parsed = upgradeBodySchema.safeParse(await req.json());
 
     if (!parsed.success) {
@@ -39,6 +39,7 @@ export async function POST(
       projectSlug: project.slug,
       attachmentId,
       packageInstallId: parsed.data.packageInstallId,
+      actorGrant: { userId: user.id, action: "managePackages" },
       workspaceRoot: project.repoPath,
       db,
     });

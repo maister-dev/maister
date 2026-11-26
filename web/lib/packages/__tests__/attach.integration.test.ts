@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -15,6 +17,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { parse as parseYaml } from "yaml";
+
+import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import { readAndValidateFormSchemaDoc } from "@/lib/config";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -167,6 +172,10 @@ describe("package attach lifecycle (integration)", () => {
 
     expect(first.reused).toBe(false);
     installV1 = first.id;
+    await db
+      .update(schemaModule.packageInstalls)
+      .set({ manifest: sql`manifest #- '{inventory,skillsByCapability}'` })
+      .where(eq(schemaModule.packageInstalls.id, installV1));
 
     const again = await installPackageRevision({
       source: pkgV1,
@@ -185,6 +194,7 @@ describe("package attach lifecycle (integration)", () => {
     expect(row.packageStatus).toBe("Installed");
     expect(row.manifest.inventory).toEqual({
       skills: ["skill-one"],
+      skillsByCapability: { "att-bundle": ["skill-one"] },
       agents: ["agent-one"],
       platformAgents: ["triager"],
     });
@@ -439,6 +449,13 @@ nodes:
   });
 
   it("attachPackage: ONE tx writes flows + imports + ingestion + attachment (SET)", async () => {
+    await db.insert(schema.projectDependencyDeclarations).values({
+      projectId,
+      kind: "package",
+      logicalId: "project-alias",
+      ordinal: 0,
+      desired: { source: pkgV1, version: "attpkg/v1.0.0" },
+    });
     const result = await attachPackage({
       projectId,
       projectSlug: "attach-int",
@@ -537,11 +554,39 @@ nodes:
       flowRevisionId: memberFlow.enabledRevisionId,
     });
 
+    await db
+      .update(schema.projectDependencyDeclarations)
+      .set({
+        desired: { source: pkgV2, version: "replacement-pending" },
+        generation: 2,
+      })
+      .where(
+        eq(
+          schema.projectDependencyDeclarations.effectiveAttachmentId,
+          attachmentId,
+        ),
+      );
     await expect(
       detachPackage({ projectId, attachmentId, db }),
     ).rejects.toSatisfy(
       (e: unknown) => isMaisterError(e) && e.code === "PRECONDITION",
     );
+
+    const [pending] = await db
+      .select()
+      .from(schema.projectDependencyDeclarations)
+      .where(
+        eq(
+          schema.projectDependencyDeclarations.effectiveAttachmentId,
+          attachmentId,
+        ),
+      );
+    expect(pending).toMatchObject({
+      logicalId: "project-alias",
+      generation: 2,
+      effectiveGeneration: 1,
+      desired: { version: "replacement-pending" },
+    });
 
     await db.delete(schema.runs).where(eq(schema.runs.id, runId));
   });
@@ -1102,6 +1147,19 @@ nodes:
       .where(eq(schema.projectPackageAttachments.id, attachmentId));
 
     expect(att.packageInstallId).toBe(installV2);
+    const heads = await db
+      .select()
+      .from(schema.projectDependencyDeclarations)
+      .where(eq(schema.projectDependencyDeclarations.projectId, projectId));
+    expect(heads).toMatchObject([
+      {
+        logicalId: "project-alias",
+        generation: 3,
+        effectiveGeneration: 3,
+        effectiveAttachmentId: attachmentId,
+        desired: { source: pkgV2, version: "attpkg/v2.0.0" },
+      },
+    ]);
 
     // v1 member revisions survive for pinned history.
     const v1Revisions = await db
@@ -1218,6 +1276,29 @@ nodes:
         trustStatus: "untrusted",
       });
 
+      // The per-project binding remains unresolved while the global revision
+      // is trusted. A second fan-out after resolving the slot can enable it.
+      const pendingRemap = randomUUID();
+      await db.insert(schema.flowRunnerRemaps).values({
+        id: pendingRemap,
+        projectId,
+        flowRevisionId: before.enabledRevisionId,
+        slotKey: "pending-slot",
+        status: "Pending",
+      });
+      await trustPackageRevision({ packageInstallId: installed.id, db });
+      const [blocked] = await db
+        .select()
+        .from(schema.flows)
+        .where(eq(schema.flows.id, memberFlowId));
+      expect(blocked).toMatchObject({
+        trustStatus: "trusted",
+        enablementState: "Installed",
+      });
+      await db
+        .delete(schema.flowRunnerRemaps)
+        .where(eq(schema.flowRunnerRemaps.id, pendingRemap));
+
       await trustPackageRevision({ packageInstallId: installed.id, db });
 
       const [after] = await db
@@ -1266,8 +1347,16 @@ nodes:
           and(
             eq(schema.capabilityRecords.projectId, projectId),
             eq(schema.capabilityRecords.source, "flow-package"),
+            eq(schema.capabilityRecords.selectable, true),
           ),
         ),
+    ).toHaveLength(0);
+
+    expect(
+      await db
+        .select()
+        .from(schema.projectDependencyDeclarations)
+        .where(eq(schema.projectDependencyDeclarations.projectId, projectId)),
     ).toHaveLength(0);
 
     // re-SET: attach v2 again — ingestion records come back.
@@ -1287,15 +1376,204 @@ nodes:
         and(
           eq(schema.capabilityRecords.projectId, projectId),
           eq(schema.capabilityRecords.source, "flow-package"),
+          eq(schema.capabilityRecords.selectable, true),
         ),
       );
 
     expect(records.map((r: any) => r.capabilityRefId).sort()).toEqual([
+      "att-bundle",
       "att-mcp",
       "att-protect",
       "skill-one",
     ]);
   });
+});
+
+it("allows a package to take a cleared legacy import name without reviving the old revision on detach", async () => {
+  const id = randomUUID(),
+    slug = "cleared-" + id.slice(0, 8);
+  const repo = await mkdtemp(join(tmpdir(), "cleared-import-"));
+  dirsToClean.push(repo);
+  await db.insert(schema.projects).values({
+    id,
+    taskKey: slug.toUpperCase(),
+    slug,
+    name: slug,
+    repoPath: repo,
+  });
+  const old = randomUUID();
+  await db.insert(schema.capabilityImports).values({
+    id: old,
+    projectId: id,
+    capabilityRefId: "att-bundle",
+    source: "https://example.invalid/old",
+    versionTag: "legacy",
+    resolvedRevision: "legacy",
+    manifestDigest: "digest",
+    manifest: {},
+    installedPath: "/old",
+    packageStatus: "Installed",
+    trustStatus: "trusted",
+    setupStatus: "done",
+  });
+  await db.insert(schema.capabilityRecords).values({
+    id: randomUUID(),
+    projectId: id,
+    capabilityRefId: "att-bundle",
+    source: "flow-package",
+    kind: "agent_definition",
+    label: "old",
+    agents: [],
+    version: "legacy",
+    revision: "legacy",
+    material: {},
+    disabledAt: new Date(),
+    selectable: false,
+  });
+  const install = await installPackageRevision({
+    db,
+    source: pkgV1,
+    trustStatus: "trusted",
+    version: "attpkg/cleared",
+  });
+  const result = await attachPackage({
+    db,
+    projectId: id,
+    projectSlug: slug,
+    workspaceRoot: repo,
+    packageInstallId: install.id,
+  });
+  expect(result).toBeTruthy();
+  const eligible = () =>
+    testDatabase.pool.query(
+      "SELECT id FROM project_ready_capability_imports($1) WHERE catalog_enabled",
+      [id],
+    );
+  expect((await eligible()).rows).toHaveLength(1);
+  await detachPackage({
+    db,
+    projectId: id,
+    attachmentId: result!.attachmentId,
+  });
+  expect((await eligible()).rows).toHaveLength(0);
+  expect(
+    (
+      await testDatabase.pool.query(
+        "SELECT id FROM capability_imports WHERE id=$1",
+        [old],
+      )
+    ).rows,
+  ).toEqual([{ id: old }]);
+});
+
+it("operator CLI attaches explicit coordinates beside a repaired platform pin despite stale repository YAML", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "cli-attach-project-"));
+  const root = await mkdtemp(join(tmpdir(), "cli-attach-package-"));
+  dirsToClean.push(repo, root);
+  const id = randomUUID();
+  const slug = `cli-${id.slice(0, 8)}`;
+  const manifestPath = join(repo, "maister.yaml");
+  await writeFile(
+    manifestPath,
+    "schemaVersion: 2\nproject:\n  name: CLI\nflows: []\npackages:\n  - {id: attpkg, source: file:///old, version: stale}\ncapability_imports:\n  - id: stale\n    source: file:///missing-from-old-yaml\n    version: v1\n",
+  );
+  await db.insert(schema.projects).values({
+    id,
+    taskKey: slug.toUpperCase(),
+    slug,
+    name: "CLI",
+    repoPath: repo,
+    maisterYamlPath: manifestPath,
+  });
+  const sibling = await installPackageRevision({
+    source: pkgV2,
+    version: "catalog-version",
+    db,
+  });
+  const attached = await attachPackage({
+    projectId: id,
+    projectSlug: slug,
+    packageInstallId: sibling.id,
+    workspaceRoot: repo,
+    db,
+  });
+  await db
+    .update(schema.projectDependencyDeclarations)
+    .set({
+      desired: { source: pkgV2, version: "repaired" },
+      generation: 2,
+    })
+    .where(
+      eq(
+        schema.projectDependencyDeclarations.effectiveAttachmentId,
+        attached!.attachmentId,
+      ),
+    );
+  const [selection] = await db
+    .update(schema.capabilityRecords)
+    .set({ selectedByDefault: false })
+    .where(
+      and(
+        eq(schema.capabilityRecords.projectId, id),
+        eq(schema.capabilityRecords.capabilityRefId, "att-bundle"),
+      ),
+    )
+    .returning({ id: schema.capabilityRecords.id });
+  await mkdir(join(root, "flows/cli-flow"), { recursive: true });
+  await writeFile(
+    join(root, "flows/cli-flow/flow.yaml"),
+    FLOW_YAML("cli-flow"),
+  );
+  await writeFile(
+    join(root, "maister-package.yaml"),
+    "schemaVersion: 1\nname: cli-package\nflows:\n  - { id: cli-flow, path: flows/cli-flow }\n",
+  );
+  await promisify(execFile)(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "--import",
+      "./scripts/_register-shim.mjs",
+      "scripts/install-package.ts",
+      "--project",
+      slug,
+      "--source",
+      root,
+      "--version",
+      "cli-version",
+    ],
+    { env: { ...process.env, DB_URL: testDatabase.databaseUrl } },
+  ).catch((error: Error & { stdout: string }) => {
+    throw new Error(error.stdout, { cause: error });
+  });
+  const actual = await db
+    .select()
+    .from(schema.projectPackageAttachments)
+    .where(eq(schema.projectPackageAttachments.projectId, id));
+  const [retained] = await db
+    .select()
+    .from(schema.capabilityRecords)
+    .where(eq(schema.capabilityRecords.id, selection.id));
+  expect(retained).toMatchObject({
+    selectedByDefault: false,
+    selectable: true,
+    disabledAt: null,
+  });
+  expect(actual).toHaveLength(2);
+  expect(actual).toContainEqual(
+    expect.objectContaining({
+      id: attached?.attachmentId,
+      packageInstallId: sibling.id,
+    }),
+  );
+  const { rows } = await db.execute(
+    sql`select logical_id, desired->>'version' as version from project_dependency_declarations where project_id = ${id} order by logical_id`,
+  );
+  expect(rows).toEqual([
+    { logical_id: "attpkg", version: "repaired" },
+    { logical_id: "cli-package", version: "cli-version" },
+  ]);
 });
 
 // ADR-179 (D27/D34/D18): the manifest value model at the ingestion seam.
@@ -1696,7 +1974,11 @@ describe("package trust fan-out across projects (integration)", () => {
   it("trusting a revision fans to EVERY attached project (platform-wide by design, ADR-088)", async () => {
     const fanDir = await mkdtemp(join(tmpdir(), "attach-fan-"));
 
-    await buildMinimalPackage(fanDir, { name: "fanpkg", flowId: "fan-flow" });
+    await buildMinimalPackage(fanDir, {
+      name: "fanpkg",
+      flowId: "fan-flow",
+      mcpId: "fan-mcp",
+    });
     const p1 = await seedProject("fan-p1");
     const p2 = await seedProject("fan-p2");
     const installed = await installPackageRevision({
@@ -1720,7 +2002,31 @@ describe("package trust fan-out across projects (integration)", () => {
       db,
     });
 
+    const visible = async () =>
+      (
+        await testDatabase.pool.query(
+          "SELECT project_id FROM capability_records WHERE project_id=ANY($1) AND capability_ref_id='fan-mcp' AND selectable AND disabled_at IS NULL ORDER BY project_id",
+          [[p1, p2]],
+        )
+      ).rows.map((row) => row.project_id);
+
+    expect(await visible()).toEqual([]);
+    const consumingFlow = {
+      ...parseYaml(FLOW_YAML("fan-consumer")),
+      mcps: ["fan-mcp"],
+    };
+
+    await expect(
+      assertProjectFlowCapabilities(testDatabase.db, p1, consumingFlow),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "flow_capability_unavailable", ref: "fan-mcp" },
+    });
     await trustPackageRevision({ packageInstallId: installed.id, db });
+    expect(await visible()).toEqual([p1, p2].sort());
+    await expect(
+      assertProjectFlowCapabilities(testDatabase.db, p1, consumingFlow),
+    ).resolves.toBeUndefined();
 
     for (const projectIdN of [p1, p2]) {
       const rows = await db

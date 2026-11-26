@@ -32,24 +32,24 @@ function git(cwd: string, ...args: string[]): void {
   });
 }
 
-function buildPackageRepo(): string {
+function buildPackageRepo(name = RUN_TAG): string {
   const repo = mkdtempSync(join(tmpdir(), "maister-e2e-pkg-"));
 
   git(repo, "init", "-b", "main");
-  const pkgDir = join(repo, "packages", RUN_TAG);
+  const pkgDir = join(repo, "packages", name);
 
   mkdirSync(join(pkgDir, "flows/e2e-flow"), { recursive: true });
   writeFileSync(
     join(pkgDir, "maister-package.yaml"),
-    `schemaVersion: 1\nname: ${RUN_TAG}\nflows:\n  - { id: ${RUN_TAG}-flow, path: flows/e2e-flow }\n`,
+    `schemaVersion: 1\nname: ${name}\nflows:\n  - { id: ${name}-flow, path: flows/e2e-flow }\n`,
   );
   writeFileSync(
     join(pkgDir, "flows/e2e-flow/flow.yaml"),
-    `schemaVersion: 1\nname: ${RUN_TAG}-flow\ncompat:\n  engine_min: 1.1.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
+    `schemaVersion: 1\nname: ${name}-flow\ncompat:\n  engine_min: 1.1.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
   );
   git(repo, "add", "-A");
   git(repo, "commit", "-m", "init");
-  git(repo, "tag", `${RUN_TAG}/v1.0.0`);
+  git(repo, "tag", `${name}/v1.0.0`);
 
   return repo;
 }
@@ -504,3 +504,255 @@ test("package source → discovery → install → attach → detach round-trip"
     await db.end();
   }
 });
+
+test("AC10 registers a clone, repairs its failed dependency and reviews the corrected pin in Git", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const unique = randomUUID().slice(0, 8);
+  const slug = `recovery-${unique}`;
+  const sibling = `sibling-${unique}`;
+  const repair = `repair-${unique}`;
+  const good = join(buildPackageRepo(sibling), "packages", sibling);
+  const fixed = join(buildPackageRepo(repair), "packages", repair);
+  const repo = mkdtempSync(join(tmpdir(), "maister-e2e-upstream-"));
+
+  git(repo, "init", "-b", "main");
+  writeFileSync(
+    join(repo, "maister.yaml"),
+    [
+      "schemaVersion: 2",
+      "project:",
+      `  name: ${slug}`,
+      "flows: []",
+      "packages:",
+      "  - id: broken",
+      `    source: "${repo}/missing"`,
+      "    version: v1",
+      "  - id: sibling",
+      `    source: "${good}"`,
+      "    version: v1",
+      "",
+    ].join("\n"),
+  );
+  git(repo, "add", "maister.yaml");
+  git(repo, "commit", "-m", "declare dependencies");
+
+  await page.goto("/projects/new");
+  await page
+    .getByRole("textbox", { name: "Git URL", exact: true })
+    .fill(`file://${repo}`);
+  await page
+    .locator('input[name="taskKey"]')
+    .fill(`R${unique.slice(0, 6).toUpperCase()}`);
+  const created = page.waitForResponse(
+    (r) => r.url().endsWith("/api/projects") && r.request().method() === "POST",
+  );
+
+  await page.getByRole("button", { name: "Register project" }).click();
+  const response = await created;
+
+  expect(response.status(), await response.text()).toBe(201);
+  expect((await response.json()).slug).toBe(slug);
+  await expect(page).toHaveURL((url) => url.pathname === `/projects/${slug}`);
+  await page.getByRole("link", { name: "Declared dependencies" }).click();
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("tab") === "packages",
+  );
+  await page.reload();
+  const broken = page
+    .locator('li[id^="dependency-"]')
+    .filter({ has: page.getByRole("heading", { name: /^broken/ }) });
+  const valid = page
+    .locator('li[id^="dependency-"]')
+    .filter({ has: page.getByRole("heading", { name: /^sibling/ }) });
+  const refresh = page.getByRole("button", {
+    name: "Refresh status",
+    exact: true,
+  });
+
+  await expect(async () => {
+    await refresh.click();
+    await expect(broken).toContainText("Installation failed", {
+      timeout: 2500,
+    });
+    await expect(valid).toContainText("Installation succeeded", {
+      timeout: 2500,
+    });
+  }).toPass({ timeout: 45_000 });
+  const retried = page.waitForResponse(
+    (r) => r.url().endsWith("/retry") && r.request().method() === "POST",
+  );
+
+  await broken.getByRole("button", { name: "Retry installation" }).click();
+  expect((await retried).status()).toBe(202);
+  const readUrl = `/api/projects/${slug}/packages`;
+
+  await expect
+    .poll(
+      async () => {
+        const result = await page.request.get(readUrl);
+        const rows = (await result.json()).declarations as {
+          ref: string;
+          attempt: number;
+          state: string;
+        }[];
+
+        return rows.find((row) => row.ref === "broken");
+      },
+      { timeout: 45_000 },
+    )
+    .toMatchObject({ attempt: 2, state: "failed" });
+  await page
+    .context()
+    .addCookies([
+      { name: "NEXT_LOCALE", value: "ru", url: new URL(page.url()).origin },
+    ]);
+  await page.reload();
+  await expect(broken).toContainText("Ошибка установки");
+  await expect(broken).toContainText("Нет установленной ревизии");
+  await broken.getByRole("button", { name: "Изменить версию пакета" }).click();
+  const dialog = page.getByRole("dialog");
+
+  await dialog.getByLabel("Источник", { exact: true }).fill(fixed);
+  await dialog.getByRole("button", { name: "Сохранить версию пакета" }).click();
+  await expect(async () => {
+    await page.getByRole("button", { name: "Обновить состояние" }).click();
+    await expect(broken).toContainText("Установлено успешно", {
+      timeout: 2500,
+    });
+  }).toPass({ timeout: 45_000 });
+  await page
+    .getByRole("link", { name: "Проверить изменения в настройках Git" })
+    .click();
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("tab") === "settings",
+  );
+  await expect(page.getByTestId("branch-sync-settings")).toBeVisible();
+  const preview = page.waitForResponse(
+    (result) =>
+      result.url().endsWith("/persist-config/preview") &&
+      result.request().method() === "POST",
+  );
+
+  await page
+    .getByTestId("config-persist-open")
+    .filter({ visible: true })
+    .click();
+  const reviewed = await preview;
+
+  expect(reviewed.status(), await reviewed.text()).toBe(200);
+  await expect(page.getByRole("dialog")).toContainText(fixed);
+  await expect(page.getByRole("dialog")).toContainText(`${repo}/missing`);
+});
+
+for (const outcome of ["failed", "interrupted"] as const) {
+  test(`${outcome} setup after package trust can be repaired from reloaded project settings`, async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const slug = loadFixtures().byKey.board.projectSlug;
+    const name = "trust-" + randomUUID().slice(0, 8);
+    const root = testInfo.outputPath("trusted-package");
+    const pkg = join(root, "package");
+    const marker = join(root, "ready");
+    const invocations = join(root, "invocations");
+
+    mkdirSync(join(pkg, "bundle"), { recursive: true });
+    writeFileSync(
+      join(pkg, "maister-package.yaml"),
+      JSON.stringify({
+        schemaVersion: 1,
+        name,
+        flows: [],
+        capabilities: [{ id: name + "-bundle", path: "bundle" }],
+      }),
+    );
+    writeFileSync(
+      join(pkg, "bundle", "setup.sh"),
+      `#!/bin/sh\necho setup >> "${invocations}"\nif [ ! -f "${marker}" ]; then ${outcome === "interrupted" ? 'kill -TERM "$$"' : "exit 1"}; fi\n`,
+    );
+    const installed = await page.request.post("/api/admin/package-installs", {
+      data: { localPath: pkg },
+    });
+
+    expect(installed.status(), await installed.text()).toBe(201);
+    const { id } = (await installed.json()) as { id: string };
+
+    // Model a pre-existing third-party installation using isolated local material.
+    await withE2EDb((db) =>
+      db.query(
+        "UPDATE package_installs SET trust_status='untrusted' WHERE id=$1",
+        [id],
+      ),
+    );
+    const attached = await page.request.post(`/api/projects/${slug}/packages`, {
+      data: { packageInstallId: id },
+    });
+
+    expect(attached.ok(), await attached.text()).toBe(true);
+    await page.goto(`/projects/${slug}?tab=packages`);
+    const row = page
+      .getByRole("row")
+      .filter({ has: page.getByRole("link", { name, exact: true }) });
+
+    await row.getByRole("button", { name: "Trust", exact: true }).click();
+    const result = page.waitForResponse(
+      (r) => r.url().endsWith("/trust") && r.request().method() === "POST",
+    );
+
+    await page.getByTestId("package-trust-confirm-submit").click();
+    const trustResponse = await result;
+    const receipt = (await trustResponse.json()) as {
+      details: {
+        trustAccepted: boolean;
+        projectSlug: string;
+        declarationId: string;
+      };
+    };
+
+    expect(receipt.details).toMatchObject({
+      trustAccepted: true,
+      projectSlug: slug,
+    });
+    await expect(page.getByTestId("package-trust-confirm")).toBeHidden();
+    await page
+      .locator(`a[href$="#dependency-${receipt.details.declarationId}"]`)
+      .click();
+    await page.reload();
+    const declaration = page.locator('li[id^="dependency-"]').filter({
+      has: page.getByRole("heading", { name: new RegExp(name) }),
+    });
+
+    await expect(async () => {
+      await page
+        .getByRole("button", { name: "Refresh status", exact: true })
+        .click();
+      await expect(declaration).toContainText(
+        outcome === "failed" ? "Setup failed" : "Setup requires verification",
+        { timeout: 2000 },
+      );
+    }).toPass({ timeout: 45_000 });
+    writeFileSync(marker, "ready");
+    if (outcome === "failed") {
+      await declaration
+        .getByRole("button", { name: "Retry installation" })
+        .click();
+    } else {
+      await declaration.getByRole("button", { name: "Recover setup" }).click();
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "Authorize setup recovery" })
+        .click();
+    }
+    await expect(async () => {
+      await page
+        .getByRole("button", { name: "Refresh status", exact: true })
+        .click();
+      await expect(declaration).toContainText("Installation succeeded", {
+        timeout: 2000,
+      });
+    }).toPass({ timeout: 45_000 });
+    expect(readFileSync(invocations, "utf8")).toBe("setup\nsetup\n");
+  });
+}

@@ -24,7 +24,7 @@ export async function DELETE(
   const { slug, attachmentId } = await ctx.params;
 
   try {
-    const { project, db } = await authorizeManagePackages(slug);
+    const { project, db, user } = await authorizeManagePackages(slug);
     const [att] = await db
       .select()
       .from(projectPackageAttachments)
@@ -39,6 +39,7 @@ export async function DELETE(
 
     const result = await detachPackage({
       projectId: project.id,
+      actorUserId: user.id,
       attachmentId,
       db,
     });

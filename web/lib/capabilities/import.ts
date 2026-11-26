@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
 import type { TrustStatus } from "@/lib/flows/trust";
 import type {
   AgentDefinitionCapabilityConfig,
@@ -8,30 +9,43 @@ import type {
 import type { PlatformMcpCapability } from "@/lib/capabilities/types";
 
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import {
-  cp,
-  mkdir,
-  mkdtemp,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
-import path, { dirname, join } from "node:path";
+import path, { join } from "node:path";
 import { promisify } from "node:util";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { capabilityRefIdSchema } from "@/lib/manifest-path-segments";
+import { localDirectoryPath } from "@/lib/runtime-file-url";
+import { dependencyCloneFailure } from "@/lib/project-dependencies/failure";
+import {
+  localDirectoryContentDigest,
+  materialLayoutDigest,
+} from "@/lib/project-dependencies/content-digest";
+import {
+  materialConflict,
+  publishMaterial,
+  snapshotLocalMaterial,
+} from "@/lib/project-dependencies/material";
+import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
+import {
+  reconcileDependencyCatalog,
+  refreshProjectPackageSkills,
+} from "@/lib/project-dependencies/catalog";
+import {
+  enqueueTrustedSetup,
+  finishTrustedSetup,
+} from "@/lib/project-dependencies/post-trust-store";
+import { runMaterialSetup } from "@/lib/project-dependencies/setup";
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { upsertCapabilitiesFromConfig } from "@/lib/capabilities/catalog";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
-  flowIdSchema,
   sourceUrlSchema,
   systemCapabilityCachePath,
   versionTagSchema,
@@ -48,10 +62,9 @@ const log = pino({
 });
 
 const CLONE_TIMEOUT_MS = 120_000;
-const SETUP_SH_TIMEOUT_MS = 60_000;
+
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 const LOCAL_REVISION_LEN = 40;
-const SETUP_DONE_SENTINEL = ".maister-setup-done";
 
 // ADR-088: validate a package-supplied revision override at this sink's
 // invariant (40-hex) before it reaches systemCapabilityCachePath. Mirrors
@@ -81,9 +94,7 @@ function parseCapabilityRevisionOverride(
 
 // First 40 hex chars of a simple sha256 of the source string — used as the
 // content-addressed identity for local sources that have no git history.
-async function localSourceRevision(source: string): Promise<string> {
-  const { createHash } = await import("node:crypto");
-
+function localSourceRevision(source: string): string {
   return createHash("sha256")
     .update(source, "utf8")
     .digest("hex")
@@ -94,7 +105,7 @@ export type InstalledCapabilityRevision = {
   importRowId: string;
   resolvedRevision: string;
   installedPath: string;
-  trustStatus: TrustStatus;
+  trustStatus: TrustStatus | "trusted";
   setupStatus: "not_required" | "pending" | "done" | "failed";
 };
 
@@ -112,7 +123,19 @@ function wrapStage(opts: {
   return new MaisterError(
     "FLOW_INSTALL",
     `capability install failed [stage=${opts.stage}] ${opts.source}@${opts.version}: ${opts.message}`,
-    opts.cause ? { cause: asError(opts.cause) } : undefined,
+    {
+      cause: opts.cause,
+      details: {
+        reason:
+          opts.stage === "clone"
+            ? dependencyCloneFailure(opts.cause)
+            : opts.stage === "validate-manifest"
+              ? "invalid_manifest"
+              : opts.stage === "finalize"
+                ? "finalize_failed"
+                : "install_failed",
+      },
+    },
   );
 }
 
@@ -245,65 +268,8 @@ async function gitRevParseHead(opts: {
   }
 }
 
-// Low-level setup.sh runner. Returns the resulting setupStatus.
-// A non-zero exit returns "failed" (the caller marks the import Failed).
-// NEVER call this from installCapabilityRevision — trust must be confirmed first.
-async function runSetupSh(opts: {
-  target: string;
-  signal?: AbortSignal;
-}): Promise<"not_required" | "done" | "failed"> {
-  const setupPath = join(opts.target, "setup.sh");
-
-  if (!(await pathExists(setupPath))) {
-    log.debug({ target: opts.target }, "no setup.sh, skipping");
-
-    return "not_required";
-  }
-
-  const sentinelPath = join(opts.target, SETUP_DONE_SENTINEL);
-
-  if (await pathExists(sentinelPath)) {
-    log.debug(
-      { target: opts.target },
-      "setup.sh sentinel present, skipping (once-only semantic)",
-    );
-
-    return "done";
-  }
-
-  log.info({ setupPath }, "running capability setup.sh");
-
-  try {
-    const { stdout, stderr } = await execFileAsync("bash", [setupPath], {
-      cwd: opts.target,
-      signal: buildExecSignal(opts.signal, SETUP_SH_TIMEOUT_MS),
-      maxBuffer: EXEC_MAX_BUFFER,
-    });
-
-    log.debug({ stdout, stderr, setupPath }, "setup.sh done");
-    await writeFile(sentinelPath, new Date().toISOString(), "utf8");
-
-    return "done";
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException & { stderr?: string };
-
-    if (e.name === "AbortError") {
-      log.info({ setupPath }, "setup.sh aborted by signal");
-      throw new MaisterError(
-        "FLOW_INSTALL",
-        `capability setup.sh aborted for ${setupPath}`,
-        { cause: e },
-      );
-    }
-
-    log.warn(
-      { err: e.message, stderr: e.stderr, setupPath },
-      "setup.sh non-zero exit; import marked setup_status=failed",
-    );
-
-    return "failed";
-  }
-}
+// Native package labels can also contain semver build metadata.
+const capabilityVersionSchema = capabilityRefIdSchema.or(versionTagSchema);
 
 // Validate the refId and version fields on the boundary (R-PATH, ADR-042).
 // Throws FLOW_INSTALL on any violation.
@@ -313,10 +279,10 @@ function validateImportBoundary(opts: {
   source: string;
 }): void {
   const checks: Array<
-    [ReturnType<(typeof flowIdSchema)["safeParse"]>, string]
+    [ReturnType<(typeof capabilityRefIdSchema)["safeParse"]>, string]
   > = [
-    [flowIdSchema.safeParse(opts.capabilityRefId), "capabilityRefId"],
-    [versionTagSchema.safeParse(opts.version), "version"],
+    [capabilityRefIdSchema.safeParse(opts.capabilityRefId), "capabilityRefId"],
+    [capabilityVersionSchema.safeParse(opts.version), "version"],
     [sourceUrlSchema.safeParse(opts.source), "source"],
   ];
 
@@ -422,7 +388,7 @@ async function ensureCapabilityImportRow(opts: {
 // code from a possibly-untrusted source before any trust decision. The row
 // records setupStatus `not_required` (no setup.sh) or `pending` (deferred).
 // setup.sh runs only after trust is confirmed, via runCapabilityRevisionSetup.
-export async function installCapabilityRevision(opts: {
+type CapabilityInstallOptions = {
   source: string;
   version: string;
   capabilityRefId: string;
@@ -430,12 +396,32 @@ export async function installCapabilityRevision(opts: {
   // ADR-088: package sub-installs inherit the package's resolved revision
   // (tag SHA or package content digest); see flows.ts resolvedRevisionOverride.
   resolvedRevisionOverride?: string;
+  trustStatusOverride?: "untrusted" | "trusted" | "trusted_by_policy";
+  onResolve?: (
+    revision: string,
+    witness: string,
+    layoutDigest: string,
+  ) => Promise<void>;
+  authorizePublication?: (tx: Db) => Promise<void>;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
-}): Promise<InstalledCapabilityRevision> {
-  const { source, version, capabilityRefId, projectId, signal } = opts;
-  const db = opts.db ?? getDb();
+};
+export type PreparedCapability = Pick<
+  CapabilityInstallOptions,
+  "source" | "version" | "capabilityRefId"
+> & {
+  resolvedRevision: string;
+  installedPath: string;
+  contentWitness: string;
+  hasSetup: boolean;
+};
+
+export async function prepareCapabilityRevision(
+  opts: CapabilityInstallOptions,
+): Promise<PreparedCapability> {
+  const { source, version, capabilityRefId, signal } = opts;
+  const database = opts.db ?? getDb();
 
   validateImportBoundary({ capabilityRefId, version, source });
 
@@ -444,180 +430,227 @@ export async function installCapabilityRevision(opts: {
     capabilityRefId,
   );
 
-  let resolvedRevision: string;
-  let target: string;
-  let tmpDir: string | null = null;
-  let manifest: Record<string, unknown> = {};
-
-  if (isLocalSource(source)) {
-    const absSource = source.startsWith("file://")
-      ? source.slice("file://".length)
-      : source;
-
-    resolvedRevision =
-      revisionOverride ?? (await localSourceRevision(absSource));
-    target = systemCapabilityCachePath(capabilityRefId, resolvedRevision);
-  } else {
-    tmpDir = await mkdtemp(
-      path.join(os.tmpdir(), `maister-cap-clone-${capabilityRefId}-`),
-    );
-
-    try {
-      await gitClone({ source, version, target: tmpDir, signal });
-      resolvedRevision =
-        revisionOverride ??
-        (await gitRevParseHead({
-          dir: tmpDir,
-          source,
-          version,
-          signal,
-        }));
-      target = systemCapabilityCachePath(capabilityRefId, resolvedRevision);
-    } catch (err) {
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      throw err;
-    }
-  }
-
-  log.info(
-    { capabilityRefId, version, source, resolvedRevision },
-    "installing capability revision",
-  );
-
-  const { importRowId, skipFinalize } = await ensureCapabilityImportRow({
-    db,
-    projectId,
-    capabilityRefId,
-    source,
-    version,
-    resolvedRevision,
-    installedPath: target,
-  });
+  const local = localDirectoryPath(source);
+  const sourcePath =
+    local === null
+      ? await mkdtemp(
+          path.join(os.tmpdir(), `maister-cap-clone-${capabilityRefId}-`),
+        )
+      : await snapshotLocalMaterial(local);
 
   try {
-    if (skipFinalize) {
-      if (tmpDir)
-        await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      log.info(
-        { target, resolvedRevision },
-        "capability revision already Installed; reusing cache",
-      );
+    if (local === null)
+      await gitClone({ source, version, target: sourcePath, signal });
+    const resolvedRevision =
+      revisionOverride ??
+      (local === null
+        ? await gitRevParseHead({ dir: sourcePath, source, version, signal })
+        : localSourceRevision(local));
+    const target = systemCapabilityCachePath(capabilityRefId, resolvedRevision);
 
-      const row: Array<{
-        setupStatus: InstalledCapabilityRevision["setupStatus"];
-        trustStatus: string;
-      }> = await db
-        .select({
-          setupStatus: capabilityImports.setupStatus,
-          trustStatus: capabilityImports.trustStatus,
-        })
+    log.info(
+      { capabilityRefId, version, source, resolvedRevision },
+      "installing capability revision",
+    );
+    const hash = (dir: string) =>
+      localDirectoryContentDigest(dir, new Set([".git"]));
+    const witness = await hash(sourcePath);
+
+    const layoutDigest = await materialLayoutDigest(sourcePath);
+    await opts.onResolve?.(resolvedRevision, witness, layoutDigest);
+
+    return await database.transaction(async (db: Db) => {
+      await opts.authorizePublication?.(db);
+      await db.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${target},0))`,
+      );
+      const owners = await db
+        .select()
         .from(capabilityImports)
-        .where(eq(capabilityImports.id, importRowId));
+        .where(eq(capabilityImports.installedPath, target));
+
+      for (const owner of owners) {
+        if (
+          owner.resolvedRevision !== resolvedRevision ||
+          (owner.manifest?.contentWitness &&
+            owner.manifest.contentWitness !== witness)
+        )
+          materialConflict();
+      }
+      await publishMaterial({
+        beforePublish: () => opts.authorizePublication?.(db),
+        source: sourcePath,
+        target,
+        revision: resolvedRevision,
+        digest: witness,
+        layoutDigest,
+        hash,
+        hasHistoricalOwner: async () =>
+          owners.some(
+            (row) => row.source === source && row.packageStatus === "Installed",
+          ),
+      });
+
+      return {
+        source,
+        version,
+        capabilityRefId,
+        resolvedRevision,
+        installedPath: target,
+        contentWitness: witness,
+        hasSetup: await pathExists(join(target, "setup.sh")),
+      };
+    });
+  } finally {
+    await rm(sourcePath, { recursive: true, force: true });
+  }
+}
+
+/** Bind a sealed revision to this project. Trust and the project fence are
+ * re-evaluated in the transaction that publishes its effective state. */
+export async function bindPreparedCapability(
+  opts: Pick<
+    CapabilityInstallOptions,
+    "db" | "projectId" | "trustStatusOverride"
+  >,
+  prepared: PreparedCapability,
+): Promise<InstalledCapabilityRevision> {
+  const { projectId } = opts;
+  const {
+    source,
+    version,
+    capabilityRefId,
+    resolvedRevision,
+    installedPath: target,
+    contentWitness,
+  } = prepared;
+  const database = opts.db ?? getDb();
+
+  return database.transaction(async (db: Db) => {
+    const manifest = { contentWitness };
+    const { importRowId, skipFinalize } = await ensureCapabilityImportRow({
+      db,
+      projectId,
+      capabilityRefId,
+      source,
+      version,
+      resolvedRevision,
+      installedPath: target,
+    });
+
+    try {
+      if (skipFinalize) {
+        log.info(
+          { target, resolvedRevision },
+          "capability revision already Installed; reusing cache",
+        );
+
+        // Older installed imports have no content witness. The staging pass
+        // verified their original bytes before allowing this material to bind.
+        await db
+          .update(capabilityImports)
+          .set({
+            manifest: sql`coalesce(${capabilityImports.manifest}, '{}'::jsonb) || jsonb_build_object('contentWitness', ${contentWitness}::text)`,
+          })
+          .where(
+            and(
+              eq(capabilityImports.id, importRowId),
+              sql`${capabilityImports.manifest}->>'contentWitness' IS NULL`,
+            ),
+          );
+        const [row] = await db
+          .select({
+            setupStatus: schemaModule.capabilityImports.setupStatus,
+            trustStatus: schemaModule.capabilityImports.trustStatus,
+          })
+          .from(schemaModule.capabilityImports)
+          .where(eq(schemaModule.capabilityImports.id, importRowId));
+
+        if (!row)
+          throw new MaisterError(
+            "FLOW_INSTALL",
+            "The prepared capability import disappeared.",
+          );
+
+        return {
+          importRowId,
+          resolvedRevision,
+          installedPath: target,
+          trustStatus: row.trustStatus,
+          setupStatus: row.setupStatus,
+        };
+      }
+
+      // Attempt to read a manifest file if present; store {} otherwise.
+      // Capability bundles may not have a canonical manifest format yet —
+      // the digest is over the resolved revision string for now.
+      const manifestDigest = createHash("sha256")
+        .update(resolvedRevision, "utf8")
+        .digest("hex");
+
+      // SECURITY (ADR-042): NEVER execute setup.sh during install — that would
+      // run arbitrary code from a possibly-untrusted source. The row records
+      // setupStatus `not_required` (no setup.sh) or `pending` (deferred).
+      // setup.sh runs only after trust is confirmed, via runCapabilityRevisionSetup.
+      const setupStatus: InstalledCapabilityRevision["setupStatus"] =
+        prepared.hasSetup ? "pending" : "not_required";
 
       const trustStatus =
-        (row[0]?.trustStatus as TrustStatus | undefined) ?? "untrusted";
+        opts.trustStatusOverride ?? resolveCapabilityTrust(source);
+
+      await db
+        .update(capabilityImports)
+        .set({
+          packageStatus: "Installed",
+          setupStatus,
+          trustStatus,
+          manifest,
+          manifestDigest,
+          updatedAt: new Date(),
+        })
+        .where(eq(capabilityImports.id, importRowId));
+
+      log.info(
+        {
+          capabilityRefId,
+          importRowId,
+          resolvedRevision,
+          target,
+          setupStatus,
+          trustStatus,
+        },
+        "capability revision install complete (setup deferred until trust confirmed)",
+      );
 
       return {
         importRowId,
         resolvedRevision,
         installedPath: target,
         trustStatus,
-        setupStatus: row[0]?.setupStatus ?? "not_required",
+        setupStatus,
       };
+    } catch (err) {
+      await db
+        .update(capabilityImports)
+        .set({ packageStatus: "Failed" })
+        .where(eq(capabilityImports.id, importRowId))
+        .catch(() => {});
+      if (err instanceof MaisterError) throw err;
+      throw wrapStage({
+        source,
+        version,
+        stage: "finalize",
+        message: asError(err).message,
+        cause: err,
+      });
     }
+  });
+}
 
-    const cachePopulated = await pathExists(target);
-
-    if (!cachePopulated) {
-      await mkdir(dirname(target), { recursive: true });
-
-      if (isLocalSource(source)) {
-        const absSource = source.startsWith("file://")
-          ? source.slice("file://".length)
-          : source;
-
-        await cp(absSource, target, {
-          recursive: true,
-          errorOnExist: false,
-          force: false,
-        });
-        log.info({ target }, "local-copy-done");
-      } else if (tmpDir) {
-        await rename(tmpDir, target);
-        tmpDir = null;
-        log.info({ target, resolvedRevision }, "renamed clone to cache");
-      }
-    } else if (tmpDir) {
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      tmpDir = null;
-    }
-
-    // Attempt to read a manifest file if present; store {} otherwise.
-    // Capability bundles may not have a canonical manifest format yet —
-    // the digest is over the resolved revision string for now.
-    const { createHash } = await import("node:crypto");
-    const manifestDigest = createHash("sha256")
-      .update(resolvedRevision, "utf8")
-      .digest("hex");
-
-    // SECURITY (ADR-042): NEVER execute setup.sh during install — that would
-    // run arbitrary code from a possibly-untrusted source. The row records
-    // setupStatus `not_required` (no setup.sh) or `pending` (deferred).
-    // setup.sh runs only after trust is confirmed, via runCapabilityRevisionSetup.
-    const setupStatus: InstalledCapabilityRevision["setupStatus"] =
-      (await pathExists(join(target, "setup.sh"))) ? "pending" : "not_required";
-
-    const trustStatus = resolveCapabilityTrust(source);
-
-    await db
-      .update(capabilityImports)
-      .set({
-        packageStatus: "Installed",
-        setupStatus,
-        trustStatus,
-        manifest,
-        manifestDigest,
-        updatedAt: new Date(),
-      })
-      .where(eq(capabilityImports.id, importRowId));
-
-    log.info(
-      {
-        capabilityRefId,
-        importRowId,
-        resolvedRevision,
-        target,
-        setupStatus,
-        trustStatus,
-      },
-      "capability revision install complete (setup deferred until trust confirmed)",
-    );
-
-    return {
-      importRowId,
-      resolvedRevision,
-      installedPath: target,
-      trustStatus,
-      setupStatus,
-    };
-  } catch (err) {
-    await db
-      .update(capabilityImports)
-      .set({ packageStatus: "Failed" })
-      .where(eq(capabilityImports.id, importRowId))
-      .catch(() => {});
-    if (tmpDir)
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-
-    if (err instanceof MaisterError) throw err;
-    throw wrapStage({
-      source,
-      version,
-      stage: "finalize",
-      message: asError(err).message,
-      cause: err,
-    });
-  }
+export async function installCapabilityRevision(
+  opts: CapabilityInstallOptions,
+): Promise<InstalledCapabilityRevision> {
+  return bindPreparedCapability(opts, await prepareCapabilityRevision(opts));
 }
 
 // Execute a capability bundle's setup.sh AFTER trust is confirmed (ADR-042).
@@ -638,13 +671,21 @@ export async function runCapabilityRevisionSetup(opts: {
 
   const rows: Array<{
     trustStatus: string;
+    packageInstallId: string | null;
     setupStatus: string;
+    projectId: string;
     installedPath: string;
+    resolvedRevision: string;
+    manifest: { contentWitness?: string };
   }> = await db
     .select({
       trustStatus: capabilityImports.trustStatus,
+      packageInstallId: capabilityImports.packageInstallId,
+      projectId: capabilityImports.projectId,
       setupStatus: capabilityImports.setupStatus,
       installedPath: capabilityImports.installedPath,
+      resolvedRevision: capabilityImports.resolvedRevision,
+      manifest: capabilityImports.manifest,
     })
     .from(capabilityImports)
     .where(eq(capabilityImports.id, importRowId));
@@ -695,16 +736,28 @@ export async function runCapabilityRevisionSetup(opts: {
     "running capability setup.sh (trust confirmed)",
   );
 
-  const newSetupStatus = await runSetupSh({ target: installedPath, signal });
+  await requireParentPackageTrust(db, row.packageInstallId);
+  const newSetupStatus = await runMaterialSetup({
+    kind: "capability",
+    db,
+    revision: row.resolvedRevision,
+    contentWitness: row.manifest?.contentWitness,
+    target: installedPath,
+    signal,
+  });
 
-  await db
-    .update(capabilityImports)
-    .set({
-      setupStatus: newSetupStatus,
-      ...(newSetupStatus === "failed" ? { packageStatus: "Failed" } : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(capabilityImports.id, importRowId));
+  await db.transaction(async (tx: Db) => {
+    await tx
+      .update(capabilityImports)
+      .set({
+        setupStatus: newSetupStatus,
+        packageStatus: newSetupStatus === "failed" ? "Failed" : "Installed",
+        updatedAt: new Date(),
+      })
+      .where(eq(capabilityImports.id, importRowId));
+    if (row.packageInstallId)
+      await refreshProjectPackageSkills(tx, row.projectId);
+  });
 
   log.info(
     { importRowId, setupStatus: newSetupStatus },
@@ -752,6 +805,7 @@ export async function installAndIngestCapabilityImports(opts: {
       version: entry.version,
       capabilityRefId: entry.id,
       projectId: opts.projectId,
+      trustStatusOverride: entry.trust === "explicit" ? "untrusted" : undefined,
       db,
       signal: opts.signal,
     });
@@ -766,6 +820,14 @@ export async function installAndIngestCapabilityImports(opts: {
       });
     }
 
+    // A deliberate manifest SET can restore a previously cleared legacy projection.
+    // Source trust, setup and effective-revision selection still apply.
+    const ready = await db.execute(sql`
+      SELECT 1 FROM project_ready_capability_imports(${opts.projectId})
+      WHERE id=${installed.importRowId}
+    `);
+
+    if (!ready.rows.length) continue;
     importDerived.push({
       id: entry.id,
       kind: "agent_definition",
@@ -814,6 +876,7 @@ export async function installAndIngestCapabilityImports(opts: {
 //     (502, retryable) per ADR-042 — NOT EXECUTOR_UNAVAILABLE.
 export async function confirmCapabilityTrust(opts: {
   projectId: string;
+  actorUserId?: string;
   capabilityRefId: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
@@ -821,10 +884,22 @@ export async function confirmCapabilityTrust(opts: {
 }): Promise<{ trustStatus: "trusted"; setupStatus: string }> {
   const db = opts.db ?? getDb();
 
-  const importRowId: string = await db.transaction(async (tx: any) => {
-    const rows: Array<{ id: string; setupStatus: string }> = await tx
+  const { importRowId, queued } = await db.transaction(async (tx: Db) => {
+    await tx
+      .select({ id: schemaModule.projects.id })
+      .from(schemaModule.projects)
+      .where(eq(schemaModule.projects.id, opts.projectId))
+      .for("update");
+    const rows: Array<{
+      id: string;
+      packageInstallId: string | null;
+      setupStatus: string;
+      trustStatus: string;
+    }> = await tx
       .select({
         id: capabilityImports.id,
+        packageInstallId: capabilityImports.packageInstallId,
+        trustStatus: capabilityImports.trustStatus,
         setupStatus: capabilityImports.setupStatus,
       })
       .from(capabilityImports)
@@ -832,13 +907,19 @@ export async function confirmCapabilityTrust(opts: {
         and(
           eq(capabilityImports.projectId, opts.projectId),
           eq(capabilityImports.capabilityRefId, opts.capabilityRefId),
+          // A staged or historical candidate cannot receive the user's trust
+          // for another effective revision with the same manifest reference.
+          sql`NOT EXISTS (SELECT 1 FROM project_dependency_declarations d
+            WHERE d.project_id = ${opts.projectId} AND d.kind='capability_import' AND d.logical_id = ${opts.capabilityRefId}
+              AND d.effective_revision IS DISTINCT FROM ${capabilityImports.resolvedRevision})`,
         ),
       )
       // Most-recent revision is the operative one. NOT filtered on
       // packageStatus: a prior setup failure leaves the row packageStatus
       // 'Failed' (T2.3) yet setupStatus 'failed' is the retryable marker — the
       // re-confirm MUST still find it.
-      .orderBy(desc(capabilityImports.createdAt))
+      .orderBy(desc(capabilityImports.createdAt), desc(capabilityImports.id))
+      .limit(1)
       .for("update");
 
     const row = rows[0];
@@ -850,26 +931,43 @@ export async function confirmCapabilityTrust(opts: {
       );
     }
 
-    if (row.setupStatus === "done" || row.setupStatus === "not_required") {
+    if (
+      row.trustStatus !== "untrusted" &&
+      (row.setupStatus === "done" || row.setupStatus === "not_required")
+    ) {
       throw new MaisterError(
         "CONFLICT",
         `capability "${opts.capabilityRefId}" trust already confirmed (setup ${row.setupStatus})`,
       );
     }
 
+    await requireParentPackageTrust(tx, row.packageInstallId);
     await tx
       .update(capabilityImports)
       .set({ trustStatus: "trusted", updatedAt: new Date() })
       .where(eq(capabilityImports.id, row.id));
 
-    return row.id;
+    return {
+      importRowId: row.id,
+      queued: await enqueueTrustedSetup(
+        tx,
+        opts.actorUserId,
+        { kind: "capability", id: row.id },
+        opts.projectId,
+      ),
+    };
   });
 
+  await finishTrustedSetup(db, queued, opts.signal);
   const { setupStatus } = await runCapabilityRevisionSetup({
     importRowId,
     db,
     signal: opts.signal,
   });
+
+  await db.transaction((tx: Db) =>
+    reconcileDependencyCatalog(tx, opts.projectId),
+  );
 
   if (setupStatus === "failed") {
     throw new MaisterError(

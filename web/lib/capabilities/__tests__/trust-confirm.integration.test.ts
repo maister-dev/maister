@@ -61,7 +61,7 @@ async function buildFixture(
   if (setup !== "none") {
     await writeFile(
       join(repoDir, "setup.sh"),
-      `#!/usr/bin/env bash\necho "ran" > ./sentinel.txt\nexit ${setup === "ok" ? 0 : 1}\n`,
+      `#!/usr/bin/env bash\necho "ran" > ./sentinel.txt\n${setup === "ok" ? "exit 0" : `test -f "${join(parentDir, "service-ready")}"`}\n`,
     );
     await chmod(join(repoDir, "setup.sh"), 0o755);
   }
@@ -225,22 +225,28 @@ describe("confirmCapabilityTrust", () => {
       setupStatus: "failed",
     });
 
-    // Re-confirm: setupStatus=failed is NOT a terminal 409 state — it re-runs
-    // setup (which fails again → FLOW_INSTALL, never CONFLICT).
-    let second: unknown;
-
-    try {
-      await confirmCapabilityTrust({
-        projectId,
-        capabilityRefId: "trust-fail",
-        db,
-      });
-    } catch (e) {
-      second = e;
-    }
-
-    expect(isMaisterError(second)).toBe(true);
-    expect((second as { code: string }).code).toBe("FLOW_INSTALL");
+    // The operator fixes the failed setup. A successful retry restores both
+    // the native installation and the selection used by launch admission.
+    await writeFile(join(fixturesDir, "service-ready"), "ready");
+    await expect(
+      confirmCapabilityTrust({ projectId, capabilityRefId: "trust-fail", db }),
+    ).resolves.toMatchObject({ setupStatus: "done" });
+    expect(
+      (
+        await db
+          .select()
+          .from(schema.capabilityImports)
+          .where(eq(schema.capabilityImports.id, installed.importRowId))
+      )[0],
+    ).toMatchObject({ packageStatus: "Installed", setupStatus: "done" });
+    expect(
+      (
+        await testDatabase.pool.query(
+          "SELECT selectable,disabled_at FROM capability_records WHERE project_id=$1 AND capability_ref_id='trust-fail'",
+          [projectId],
+        )
+      ).rows,
+    ).toEqual([{ selectable: true, disabled_at: null }]);
   });
 
   it("no setup.sh (not_required) → CONFLICT (nothing to gate)", async () => {
@@ -266,6 +272,101 @@ describe("confirmCapabilityTrust", () => {
 
     expect(isMaisterError(caught)).toBe(true);
     expect((caught as { code: string }).code).toBe("CONFLICT");
+  });
+
+  it("grants explicit trust to a bundle without setup before making it selectable", async () => {
+    const installed = await installCapabilityRevision({
+      source: repoNone,
+      version: "v1.0.0",
+      capabilityRefId: "explicit-none",
+      projectId,
+      db,
+      trustStatusOverride: "untrusted",
+    });
+    expect(installed.trustStatus).toBe("untrusted");
+    await expect(
+      confirmCapabilityTrust({
+        projectId,
+        capabilityRefId: "explicit-none",
+        db,
+      }),
+    ).resolves.toMatchObject({
+      trustStatus: "trusted",
+      setupStatus: "not_required",
+    });
+  });
+
+  it("keeps a package member behind the original package trust decision", async () => {
+    const row = await installUntrusted(repoOk, "untrusted-package-member");
+    await db.insert(schema.packageInstalls).values({
+      id: "untrusted-package",
+      sourceUrl: "https://example.invalid/remote.git",
+      name: "origin",
+      versionLabel: "v1",
+      resolvedRevision: "revision",
+      manifest: {},
+      manifestDigest: "digest",
+      installedPath: fixturesDir,
+      packageStatus: "Installed",
+      trustStatus: "untrusted",
+    });
+    await db
+      .update(schema.capabilityImports)
+      .set({ packageInstallId: "untrusted-package" })
+      .where(eq(schema.capabilityImports.id, row.importRowId));
+    await expect(
+      confirmCapabilityTrust({
+        projectId,
+        capabilityRefId: "untrusted-package-member",
+        db,
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "package_trust_required" },
+    });
+    expect(
+      (
+        await db
+          .select()
+          .from(schema.capabilityImports)
+          .where(eq(schema.capabilityImports.id, row.importRowId))
+      )[0],
+    ).toMatchObject({ trustStatus: "untrusted", setupStatus: "pending" });
+  });
+
+  it("confirms the effective standalone revision when newer material exists", async () => {
+    const ref = "current-import";
+    const first = await installCapabilityRevision({
+      source: repoNone,
+      version: "v1.0.0",
+      capabilityRefId: ref,
+      projectId,
+      db,
+      trustStatusOverride: "untrusted",
+    });
+    await db
+      .insert(schema.projectDependencyDeclarations)
+      .values({
+        projectId,
+        kind: "capability_import",
+        logicalId: ref,
+        ordinal: 0,
+        desired: { source: repoNone, version: "v1.0.0" },
+        effectiveGeneration: 1,
+        effectiveRevision: first.resolvedRevision,
+      });
+    const newer = await installUntrusted(repoOk, ref);
+    await expect(
+      confirmCapabilityTrust({ projectId, capabilityRefId: ref, db }),
+    ).resolves.toMatchObject({ setupStatus: "not_required" });
+    expect(
+      (
+        await db
+          .select()
+          .from(schema.capabilityImports)
+          .where(eq(schema.capabilityImports.id, newer.importRowId))
+      )[0],
+    ).toMatchObject({ trustStatus: "untrusted", setupStatus: "pending" });
   });
 
   it("unknown ref → PRECONDITION", async () => {

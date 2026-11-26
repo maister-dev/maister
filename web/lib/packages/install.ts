@@ -2,9 +2,8 @@ import "server-only";
 
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
-import path, { join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { fileURLToPath } from "node:url";
 
 import pino from "pino";
 
@@ -29,7 +28,12 @@ import {
 } from "@/lib/flows";
 import { resolveTrust } from "@/lib/flows/trust";
 import { loadMaisterPackageManifest } from "@/lib/packages/manifest";
-import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
+import {
+  confinedPackageDirectory,
+  materialLayoutDigest,
+} from "@/lib/project-dependencies/content-digest";
+import { snapshotLocalMaterial } from "@/lib/project-dependencies/material";
+import { localDirectoryPath, runtimeFileUrl } from "@/lib/runtime-file-url";
 
 const log = pino({
   name: "package-install",
@@ -49,75 +53,92 @@ export function packageVersionLabel(version: string): string {
   return version.replaceAll("/", "-");
 }
 
-function isLocalPackageSource(source: string): string | null {
-  if (source.startsWith("file://")) return source.slice("file://".length);
-  if (path.isAbsolute(source)) return source;
-
-  return null;
-}
-
 export type ResolvedPackage = {
+  layoutDigest: string;
   pkgRoot: string;
+  /** Source coordinate retained by legacy member records, including local aliases. */
+  sourceRoot: string;
   resolvedRevision: string;
   versionLabel: string;
   manifest: MaisterPackageManifest;
   cleanup: () => Promise<void>;
 };
 
+type LocalPackageDirectory = Pick<ResolvedPackage, "pkgRoot" | "cleanup">;
+
+async function snapshotPackageDirectory(
+  source: string,
+): Promise<LocalPackageDirectory> {
+  const pkgRoot = await snapshotLocalMaterial(source);
+
+  return {
+    pkgRoot,
+    cleanup: () => rm(pkgRoot, { recursive: true, force: true }),
+  };
+}
+
 // Resolve a package source ONCE: local dir (file:// or absolute, honoring the
 // optional `path` subdir) or a tag-pinned shallow git clone into a tmp dir.
-// The caller MUST await `cleanup()` (no-op for local sources) — installPackage
-// does this in its `finally`.
-export async function resolvePackageSource(opts: {
-  source: string;
-  version: string;
-  path?: string;
-  signal?: AbortSignal;
-}): Promise<ResolvedPackage> {
+// Managed installs derive manifest, revision and cache bytes from a private copy.
+export async function resolvePackageSource(
+  opts: {
+    source: string;
+    version: string;
+    path?: string;
+    signal?: AbortSignal;
+  },
+  prepareLocal: (
+    source: string,
+  ) => Promise<LocalPackageDirectory> = snapshotPackageDirectory,
+): Promise<ResolvedPackage> {
   const versionLabel = packageVersionLabel(opts.version);
-  const localRoot = isLocalPackageSource(opts.source);
+  const localRoot = localDirectoryPath(opts.source);
 
   if (localRoot !== null) {
-    const pkgRoot = opts.path
-      ? fileURLToPath(runtimePathUrl(localRoot, opts.path))
-      : localRoot;
+    let pkgRoot = localRoot;
 
     try {
+      if (opts.path)
+        pkgRoot = await confinedPackageDirectory(localRoot, opts.path);
       const st = await stat(runtimeFileUrl(pkgRoot));
 
       if (!st.isDirectory()) throw new Error("not a directory");
     } catch (err) {
+      if (err instanceof MaisterError) throw err;
       throw new MaisterError(
         "FLOW_INSTALL",
         `package install failed [stage=resolve] ${opts.source}@${opts.version}: ${asError(err).message}`,
-        { cause: asError(err) },
+        { cause: asError(err), details: { reason: "source_not_found" } },
       );
     }
 
-    const manifest = await loadMaisterPackageManifest(pkgRoot);
-    const resolvedRevision = (await localDirectoryContentDigest(pkgRoot)).slice(
-      0,
-      LOCAL_REVISION_LEN,
-    );
+    const { pkgRoot: prepared, cleanup } = await prepareLocal(pkgRoot);
 
-    log.info(
-      {
-        source: opts.source,
-        version: opts.version,
-        pkgRoot,
-        name: manifest.name,
-        revision: resolvedRevision.slice(0, 12),
-      },
-      "package source resolved (local)",
-    );
+    try {
+      const layoutDigest = await materialLayoutDigest(prepared);
+      const manifest = await loadMaisterPackageManifest(prepared);
+      const resolvedRevision = (
+        await localDirectoryContentDigest(prepared)
+      ).slice(0, LOCAL_REVISION_LEN);
 
-    return {
-      pkgRoot,
-      resolvedRevision,
-      versionLabel,
-      manifest,
-      cleanup: async () => {},
-    };
+      log.info(
+        { source: opts.source, name: manifest.name, resolvedRevision },
+        "package source resolved (local)",
+      );
+
+      return {
+        pkgRoot: prepared,
+        sourceRoot: join(localRoot, opts.path ?? "."),
+        layoutDigest,
+        resolvedRevision,
+        versionLabel,
+        manifest,
+        cleanup,
+      };
+    } catch (error) {
+      await cleanup();
+      throw error;
+    }
   }
 
   const tmpDir = await mkdtemp(join(os.tmpdir(), "maister-package-clone-"));
@@ -138,7 +159,10 @@ export async function resolvePackageSource(opts: {
       version: opts.version,
       signal: opts.signal,
     });
-    const pkgRoot = opts.path ? join(tmpDir, opts.path) : tmpDir;
+    const pkgRoot = opts.path
+      ? await confinedPackageDirectory(tmpDir, opts.path)
+      : tmpDir;
+    const layoutDigest = await materialLayoutDigest(pkgRoot);
     const manifest = await loadMaisterPackageManifest(pkgRoot);
 
     log.info(
@@ -151,7 +175,15 @@ export async function resolvePackageSource(opts: {
       "package source resolved (git clone-once)",
     );
 
-    return { pkgRoot, resolvedRevision, versionLabel, manifest, cleanup };
+    return {
+      pkgRoot,
+      sourceRoot: pkgRoot,
+      resolvedRevision,
+      versionLabel,
+      manifest,
+      cleanup,
+      layoutDigest,
+    };
   } catch (err) {
     await cleanup();
     throw err;
@@ -191,12 +223,16 @@ export type InstallPackageResult = {
 export async function installPackage(
   args: InstallPackageArgs,
 ): Promise<InstallPackageResult> {
-  const resolved = await resolvePackageSource({
-    source: args.source,
-    version: args.version,
-    path: args.path,
-    signal: args.signal,
-  });
+  const resolved = await resolvePackageSource(
+    {
+      source: args.source,
+      version: args.version,
+      path: args.path,
+      signal: args.signal,
+    },
+    // The legacy per-project API records member source paths for later use.
+    async (pkgRoot) => ({ pkgRoot, cleanup: async () => {} }),
+  );
 
   try {
     // Trust derives from the ORIGINAL package source (file:// sub-sources are
@@ -223,7 +259,7 @@ export async function installPackage(
 
       const result = await installFlowPlugin(
         {
-          source: pathToFileURL(flowDir).href,
+          source: pathToFileURL(join(resolved.sourceRoot, flow.path)).href,
           version: resolved.versionLabel,
           projectId: args.projectId,
           projectSlug: args.projectSlug,
@@ -250,7 +286,7 @@ export async function installPackage(
 
     for (const cap of resolved.manifest.capabilities) {
       const installed = await installCapabilityRevision({
-        source: pathToFileURL(join(resolved.pkgRoot, cap.path)).href,
+        source: pathToFileURL(join(resolved.sourceRoot, cap.path)).href,
         version: resolved.versionLabel,
         capabilityRefId: cap.id,
         projectId: args.projectId,

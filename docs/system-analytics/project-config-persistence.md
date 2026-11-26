@@ -216,13 +216,13 @@ the durable entry and a new actionable condition can appear after dismissal.
 - **CPC-08:** (Implemented) Dirty/staged/untracked/ignored target collisions and unsupported layouts refuse; before/after bytes, refs and full index fingerprint are identical. A final-seam concurrent edit/stage cannot enter the commit or be overwritten. Enforced by T4.1, T14.1 and IT-CPC-08 guarded-seam table; see [traceability](project-config-persistence-traceability.md).
 - **CPC-09:** (Implemented) Every bound DB/repository change, including exportable SET→CLEAR→SET, requires a fresh preview. Same accepted intent has one effect; changed payload/foreign identity is refused. A harmless Git index refresh with unchanged entries is not falsely treated as a user edit. Enforced by T2.1, T4.1, T6.1, T14.1 and IT-CPC-09 stale/idempotency/authorization table; see [traceability](project-config-persistence-traceability.md).
 - **CPC-10:** (Implemented) Each enumerated DB/FS/Git/push interruption reaches a specified outcome, releases or conservatively retains its fence, and has a tested retry/recovery path. No duplicate commit, reset, unrelated cleanup, or rollback of successful local commit occurs. Enforced by T2.1, T4.1, T5.1, T6.1, T14.1 and IT-CPC-10 process/DB-loss table; IT-CPC-05 for push windows; see [traceability](project-config-persistence-traceability.md).
-- **CPC-11:** (Implemented) Registration modes, source validation, owner/task-key defaults, package trust/pins and in-flight snapshots remain correct. Missing-manifest registration adds no file; existing-source bootstrap still materializes the same pins; actual launch observes the selected DB runner. Enforced by T7.1, T8.1 and IT-CPC-11 registration/execution table; retained owning pin/launch regressions; see [traceability](project-config-persistence-traceability.md).
+- **CPC-11:** (Implemented) Registration modes, source validation, owner/task-key defaults, package trust/pins and in-flight snapshots remain correct. Missing-manifest registration adds no file; existing-source registration retains the requested pins for independent installation; actual launch observes the selected DB runner. Enforced by T7.1, T8.1 and IT-CPC-11 registration/execution table; retained owning pin/launch regressions; see [traceability](project-config-persistence-traceability.md).
 - **CPC-12:** (Implemented) EN/RU wiring, methods/bodies/errors, applied migration/trigger behavior and analytics match the frozen contract; every acceptance/edge has one primary runnable test and all required suites pass without hidden omissions. Enforced by T1.1, T13.1, T10.1, T2.1–T9.1, T11.1, T12.1, T14.1 and CT-CPC-12 contract/schema gate plus the owning IT/E2E reports; see [traceability](project-config-persistence-traceability.md).
 
 ## Edge cases
 
 - **EDGE-CPC-01:** Omitted defaults versus explicit defaults; null/default runner and promotion SET/CLEAR/SET; clear package path; reordered mapping and semantically equal package order; no normalization-only commit. Owner: IT-CPC-03/07; T3.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
-- **EDGE-CPC-02:** All four package actions; both runner routes; DB-only mutation; missing install consistency refusal; no package-member duplication; failed runtime mutation does not advance committed config state. Owner: IT-CPC-01; T2.1/T7.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
+- **EDGE-CPC-02:** All four package actions; both runner routes; DB-only mutation; valid unresolved declarations remain exportable under the source policy; no package-member duplication; failed runtime mutation does not advance committed config state. Owner: IT-CPC-01; T2.1/T7.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-03:** Leading/inline/deleted-entry comments, standalone runner/flows, all eight capability arrays, import trust, roles, promotion.remote, unknown siblings, aliases/merge/duplicate keys; safe patch or explicit refusal. Owner: IT-CPC-07; T3.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-04:** Dirty/staged manifest and unrelated paths; untracked/ignored manifest; staged deletion/rename; user edit/stage at final publication seam; byte/ref/index nonmutation on refusal. Owner: IT-CPC-08; T4.1/T14.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-05:** Wrong/detached/unborn branch; moved target ref; changed source blob/mode; active merge/rebase/cherry-pick/revert/bisect; symlink/nonregular target; sparse/skip-worktree/unsupported Git format/layout; non-ENOENT read errors. Owner: IT-CPC-08/09; T3.1/T4.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
@@ -236,7 +236,7 @@ the durable entry and a new actionable condition can appear after dismissal.
 - **EDGE-CPC-13:** Push off/success/auth/network/non-FF failure; changed origin/destination/remote base/range; later local commit excluded; known-failed retry via fresh push review; lost ACK/DB receipt; next local save despite failed/unknown push. Owner: IT-CPC-05; T6.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-14:** GET status/receipt and new preview cause no Git/FS/recovery writes; recover cannot accept unused preview or authorize push; startup skips unconfirmed reviews, handles accepted intent only and issues no push. Owner: IT-CPC-10/09; T4.1/T6.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-15:** Expired unused preview versus accepted/prepared/published operation; explicit stale prepared-operation replacement versus unresolved publication fence; retention/prune only owned terminal artifacts; poison recovery row cannot starve next row. Owner: IT-CPC-10; T2.1/T4.1/T5.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
-- **EDGE-CPC-16:** Clone/local/new-empty with absent manifest; present-invalid refusal; naming/task-key/default-branch precedence; deferred git-init/compensation; existing package bootstrap and null-path CLI read handling. Owner: IT-CPC-11; T8.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
+- **EDGE-CPC-16:** Clone/local/new-empty with absent manifest; present-invalid refusal; naming/task-key/default-branch precedence; git-init before acceptance and ownership-aware compensation; durable dependency bootstrap and null-path CLI read handling. Owner: IT-CPC-11; T8.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-17:** Launch with runtime settings before first save and after each version/runner change; actual resolved runner/pin provenance; existing in-flight snapshot unchanged; persistence performs no install/trust/setup/import. Owner: IT-CPC-11 plus existing launch/pin owners; T7.1/T8.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-18:** Real Studio cut's deleted temporary source, mutable local directory changed since attachment, unsupported coordinate, supported source's attached revision match; no guessed/omitted source. Owner: IT-CPC-07 local-coordinate portion; T3.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
 - **EDGE-CPC-19:** Exact full-diff byte/size boundaries; UTF-8/newline/mode preservation; empty or malformed bodies; broken filesystem/Git/DB/remote reads produce explicit unavailable/refusal rather than absence/no-op. Owner: IT-CPC-04/07 plus actual-response schema samples; T3.1/T6.1. Refusal uses CONFIG/PRECONDITION/CONFLICT or explicit EXECUTOR_UNAVAILABLE; exact wire outcomes are in [OpenAPI](../api/web.openapi.yaml).
@@ -254,21 +254,24 @@ At issuance, use the immutable commit SHA and captured effective URL plus destin
 
 API receipts expose `cleanupState` and optional `cleanupReason` (stable allow-listed reason keys); push results expose the equivalent push cleanup status. These are required fields in the deployed new API family. Current runtime settings and the manifest schema do not gain any of these operational fields.
 
-Package installation retry is an additional export writer: `installPackageRevision`
-can update an existing install's status and manifest metadata, including
-`sourceSubpath`. The install-update trigger advances attached projects in
-sorted ID order for exported coordinates/status; the accepted-publication guard
-refuses changes while an intent is active. Trust/timestamp-only updates stay
-DB-only. Migration 0198 closes concurrent binding changes: before attachment
-insert/delete or semantic binding update, lock the referenced old/new install
-rows in sorted order with `FOR SHARE NOWAIT`. These locks conflict with metadata
-updates, unlike the foreign key's key-share lock. Contention returns
-`CONFLICT/operation_busy` without partial writes; retry after the other operation
-finishes. An update already waiting on a binding transaction observes the newly
-committed attachment before advancing revisions (READ COMMITTED trigger queries).
-No dependency on a pre-existing attachment or application-only locking remains.
-Real two/three-connection tests own both orders, pin switches, retry and accepted
-publication while the installation writer waits.
+Settings → Git exports each package declaration’s logical ID and desired source,
+version and optional path. Successful installation is independent of saving a
+safe remote pin. The project export revision changes on semantic pin edits.
+Processing, retry, trust, shared cache and effective attachment changes leave
+that revision intact. Accepted publication serializes against semantic edits
+on the project row.
+
+A v2 review binds the exact committed manifest blob and the content digest of
+each new or changed local pin. New reviews also record its layout digest, including
+executable bits and relative links confined to the source tree. An unresolved local entry with identical
+coordinates in that blob can remain verbatim through an unrelated edit even
+when its directory is unavailable. Source validation applies to every pin,
+including preserved entries. An installed local pin still requires content
+matching its effective revision. At confirmation and recovery, publication verifies
+each original local witness and checks any local pin installed since preview
+against its current source directory. Installations with a recorded layout digest
+must still match that layout. Older v2 reviews retain their original byte witness. A terminal v1 receipt replays by its
+original digest. Pending v1 reviews retain their installed-revision check.
 
 The immutable repository snapshot encodes canonical Git-quoted ASCII index entries as base64. `core.quotePath=true` keeps arbitrary path bytes, control characters and non-ASCII names lossless across the text/JSON boundary. Expected published index entries are derived from the immutable prepared commit tree, never a mutable private index. PostgreSQL JSONB cannot represent U+0000; the lossless encoded value remains part of the reviewed-state digest. Do not strip delimiters or normalize path text. Repeated persistence against a non-empty index is a real-Git/real-Postgres acceptance case.
 
@@ -326,3 +329,5 @@ proof before any repository mutation or receipt repair.
 ## Operational preparation recovery (Designed)
 
 Preparation, task launch dispatch and cleanup, Pull and promotion, and configuration publication and recovery share the common Git-directory mutation fence. Preparation holds it through Git mutation and durable publication. Logical settlement runs after release. An orphan remains subject to the existing process-group exclusion and recovery checks. See [Agent workspace preparation](agent-preparation.md).
+
+Registration dependency processing follows the [dependency lifecycle](project-dependency-installation.md).

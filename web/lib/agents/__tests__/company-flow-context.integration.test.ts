@@ -5223,38 +5223,22 @@ it("IT-CBS-03 resumes native form and human waits through the same company assig
     expect(
       (await answer(form.id, { component: "component-cache" })).status,
     ).toBe(200);
-    await expect
-      .poll(
-        async () =>
-          (
-            await database.pool.query<{ id: string }>(
-              "SELECT id FROM hitl_requests WHERE run_id=$1 AND kind='human' AND responded_at IS NULL",
-              [receipt.runId],
-            )
-          ).rows[0]?.id,
-        { timeout: 20000, interval: 50 },
-      )
-      .toBeTruthy();
-    const review = (
-      await database.pool.query<{ id: string }>(
-        "SELECT id FROM hitl_requests WHERE run_id=$1 AND kind='human' AND responded_at IS NULL",
-        [receipt.runId],
-      )
-    ).rows[0]!;
+    // The form answer dispatches a real coordinator turn before the human wait.
+    // Respond once its driver has released the parked Run to the next owner.
+    const reviewId = await vi.waitUntil(
+      async () =>
+        (
+          await database.pool.query<{ id: string }>(
+            `SELECT h.id FROM hitl_requests h JOIN runs r ON r.id=h.run_id
+             WHERE r.id=$1 AND r.status='NeedsInput' AND r.flow_driver_token IS NULL
+               AND h.kind='human' AND h.responded_at IS NULL`,
+            [receipt.runId],
+          )
+        ).rows[0]?.id,
+      { timeout: 60_000, interval: 100 },
+    );
 
-    await expect
-      .poll(
-        async () =>
-          (
-            await database.pool.query<{ status: string }>(
-              "SELECT status FROM runs WHERE id=$1",
-              [receipt.runId],
-            )
-          ).rows[0]?.status,
-        { timeout: 10000, interval: 50 },
-      )
-      .toBe("NeedsInput");
-    expect((await answer(review.id, { decision: "approve" })).status).toBe(200);
+    expect((await answer(reviewId, { decision: "approve" })).status).toBe(200);
     await expect
       .poll(
         async () =>

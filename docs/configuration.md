@@ -421,39 +421,36 @@ cover it. `.maister` stays host-only (ADR-023) — no compose change.
 #### `capability_imports[]` (Implemented)
 
 The optional `capability_imports[]` block declares git-pinned capability
-packages for the project. Each entry is fetched, trust-evaluated, and
-(conditionally) set up during project registration.
+packages for the project. Registration records each requested import. A worker
+fetches it after the project is registered, evaluates trust and runs eligible
+setup. The Packages tab shows the outcome of each import.
 
 ```yaml
 capability_imports:
   - id: aif-skills # SAFE_PATH_SEGMENT: /^[A-Za-z0-9._-]+$/
-    source: github.com/org/aif-skills
+    source: https://github.com/org/aif-skills
     version: v1.0.0 # tag-pinned (lock semantics); SAFE_PATH_SEGMENT
     trust:
       explicit # optional; forces trust-confirm UI even for
       # policy-trusted sources (default: follow policy)
 ```
 
-| Field     | Rule                                                                                                                                                                                                                                     |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`      | Non-empty string matching `SAFE_PATH_SEGMENT` (`/^[A-Za-z0-9._-]+$/`). No `.`, `..`, or embedded `/`. Validated at Zod schema layer AND inside `systemCapabilityCachePath` (defence-in-depth). Unique within the file.                   |
-| `source`  | Non-empty git URL. Resolved by `installCapabilityRevision` (`git clone --branch <version>`).                                                                                                                                             |
-| `version` | Tag-pinned (lock semantics). Non-empty string matching `SAFE_PATH_SEGMENT`. Passed verbatim to `git clone --branch`. The resolved 40-hex SHA is captured and stored in `capability_imports.resolved_revision`.                           |
-| `trust`   | Optional. `"explicit"` overrides policy-trust and requires an operator confirmation via `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust` before `setup.sh` runs, even if the source prefix would be `trusted_by_policy`. |
+| Field | Rule |
+| --- | --- |
+| `id` | Unique within the import list. Uses the capability identifier rules below. |
+| `source` | Supported Git coordinate or local directory. A Git import resolves the requested tag to its full commit SHA. |
+| `version` | Requested tag. Uses the capability identifier rules below. |
+| `trust` | Optional. `explicit` requires operator confirmation before setup, including for policy-trusted sources. |
 
-**Path safety (R-PATH):** Both `id` and `version` are validated against
-`SAFE_PATH_SEGMENT` at the schema layer (Zod `refine`) and again inside the
-path builder `systemCapabilityCachePath` (the `assertFieldSafe` guard from
-`web/lib/flow-paths.ts`). An import `id` of `../evil`, `..`, or `a/b` is
-rejected at both layers and never reaches `~/.maister/capabilities/`. This
-mirrors the existing `flowIdSchema` / `versionSchema` pattern (see ADR-043).
+Capability identifiers and manifest versions allow 1–128 ASCII letters, digits,
+dots, underscores and hyphens. A single dot and any occurrence of two consecutive
+dots are invalid. Registration validates the manifest. The installer checks the
+coordinates again, and the cache path builder validates the identifier and
+resolved revision used on disk.
 
-**Install lifecycle:** On project registration, each `capability_imports[]`
-entry drives `installCapabilityRevision` (fetch → record SHA → resolve trust),
-followed by `runCapabilityRevisionSetup` (trust-gated, physically separate).
-The resolved import is then ingested into `capability_records` via
-`upsertCapabilitiesFromConfig` (source `flow-package`). See
-[`db/capabilities-domain.md`](db/capabilities-domain.md) and ADR-043.
+The worker records the effective revision and projects eligible imports into
+the capability catalog. The Packages panel shows the saved request and its
+installation outcome. [Installation and recovery](system-analytics/project-dependency-installation.md)
 
 **Config-state symmetry (R-SYM):** Removing an entry from `capability_imports[]`
 disables the corresponding config/import-owned `capability_records` rows
@@ -485,17 +482,13 @@ packages:
 | `version` | Per-package tag, slash allowed: `/^[A-Za-z0-9._+/-]+$/`, no `..`, ≤ 128 chars. NOT `versionTagSchema` — member sub-installs receive the path-safe label (`/` → `-`); the raw tag is used only for `git clone --branch` and the package row. |
 | `path`    | Optional package subdir inside the source (escape-guarded relative path; no `..`/absolute). Defaults to the source root.                                                                                                                    |
 
-Bootstrap semantics: registration runs the SAME pipeline as the UI surface —
-`installPackageRevision` (one platform `package_installs` row per resolved
-revision; every member sub-install records that revision) followed by
-`attachPackage` (attachment group + `package_install_id` FK links +
-mcp/restriction ingestion) — so a bootstrapped package appears on the
-packages tab and is manageable (detach/upgrade/trust) immediately after
-registration. The runtime source of truth is the DB. UI attach, detach,
-upgrade and downgrade leave repository files unchanged. The separate reviewed
-configuration save commits the current pins while preserving comments and
-unrelated sections; committed pins can recreate the project on another
-MAIster instance.
+Registration stores the requested pin and queues installation in the project
+transaction. The Packages panel can therefore show a pending or failed request
+before its first attachment exists. The worker resolves the package revision and
+attaches its members. A failed replacement retains the previous effective
+attachment. Settings → Git lets the operator review and commit the desired pins,
+including corrections to an unresolved package. A separate confirmation pushes
+the commit.
 
 #### `maister-package.yaml` v1 (Implemented, ADR-088)
 
@@ -773,8 +766,10 @@ separate authorization model.
    runner or create an explicit reconfiguration requirement before project
    enablement/launch.
 2. Every `flows[].runner`, when not `inherit`, must reference a platform runner
-   or create an explicit reconfiguration requirement before project Flow
-   attachment is enabled.
+   or have a ready per-Flow replacement configured in the project. Otherwise
+   the attachment cannot be enabled or launched, even when a general project
+   runner is ready. Native findings Flows retain their initial `Installed`
+   state until their explicit enable action.
 3. No duplicate flow IDs; no duplicate `capability_imports[].id`.
 4. **(Implemented)** Every Flow node settings capability reference
    (`mcps[]`, `skills[]`, `restrictions[]`, `settingsProfile`, `tools.{claude|codex}`)

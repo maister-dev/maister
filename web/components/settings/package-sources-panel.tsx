@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -11,6 +11,9 @@ import {
   type PackageSourceRow,
 } from "@/components/settings/package-source-modal";
 import { PanelSection } from "@/components/settings/panel-section";
+import { TrustedSetupNotice } from "@/components/projects/trusted-setup-notice";
+import { requestPackageTrust } from "@/lib/project-dependencies/trust-response";
+import { apiErrorText } from "@/lib/api-error";
 
 export type { PackageSourceRow };
 
@@ -40,12 +43,13 @@ export function PackageSourcesPanel({
   installs,
 }: Props): ReactElement {
   const t = useTranslations("settings");
+  const tErrors = useTranslations("apiErrors");
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<PackageSourceRow | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ReactNode>(null);
   const noticeRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
@@ -105,18 +109,20 @@ export function PackageSourcesPanel({
     setBusyKey(`trust:${id}`);
     setNotice(null);
     try {
-      const res = await fetch(`/api/admin/package-installs/${id}/trust`, {
-        method: "POST",
-      });
+      const result = await requestPackageTrust(
+        `/api/admin/package-installs/${encodeURIComponent(id)}/trust`,
+      );
 
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          message?: string;
-        } | null;
+      if (result.kind === "unconfirmed") {
+        setNotice(apiErrorText(result.error, tErrors));
 
-        setNotice(body?.message ?? t("pkgTrustFailed"));
+        return;
       }
+      if (result.kind === "setup")
+        setNotice(<TrustedSetupNotice href={result.href} />);
       refresh();
+    } catch {
+      setNotice(tErrors("requestFailed"));
     } finally {
       setBusyKey(null);
     }

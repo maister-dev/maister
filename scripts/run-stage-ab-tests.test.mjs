@@ -64,7 +64,7 @@ test("isolation CI parts retain the complete disjoint whole-suite inventory", ()
 
   assert.deepEqual(parts.map(({ files }) => files), [laneSuites.isolation.slice(0, 2), laneSuites.isolation.slice(2, 6), laneSuites.isolation.slice(6)]);
   assert.deepEqual(parts.flatMap(({ files }) => files), laneSuites.isolation);
-  assert.deepEqual(parts.map(({ files }) => files.flatMap((file) => isolationCaseTitles(file, "darwin")).length), [20, 23, 10]);
+  assert.deepEqual(parts.map(({ files }) => files.flatMap((file) => isolationCaseTitles(file, "darwin")).length), [21, 24, 11]);
   assert.deepEqual(parseLaneInvocation(["isolation"], "darwin"), { slice: "isolation", files: laneSuites.isolation });
   for (const args of [["isolation", "--part", "0/3"], ["isolation", "--part", "4/3"],
     ["isolation", "--part", "1/2"], ["web", "--part", "1/3"], ["supervisor", "--part", "1/3"]])
@@ -171,7 +171,7 @@ test("the complete isolation manifest passes and rejects duplicate or skipped re
   assert.throws(() => validateLaneReport(skipped, files, "linux"), /case failed or was skipped/);
 });
 
-test("the native boot reporter accepts exactly the nine declared production worker controls", () => {
+test("the native boot reporter accepts exactly the ten declared production worker controls", () => {
   const file = "test-support/__tests__/durable-workers-boot.integration.test.ts";
   const source = readFileSync(new URL(`../web/${file}`, import.meta.url), "utf8");
   const titles = [
@@ -186,7 +186,7 @@ test("the native boot reporter accepts exactly the nine declared production work
     numRuntimeErrorTestSuites: 0, success: true,
   };
 
-  assert.equal(titles.length, 9);
+  assert.equal(titles.length, 10);
   validateLaneReport(report, [file]);
   for (const missing of titles) {
     const incomplete = structuredClone(report);
@@ -223,10 +223,10 @@ test("platform selection requires the complete Linux and Darwin inventories", ()
   const darwin = parseLaneInvocation(["isolation"], "darwin");
 
   assert.deepEqual(linux.files, [...laneSuites.isolation, linuxOwner]);
-  assert.equal(linux.files.flatMap((file) => isolationCaseTitles(file, "linux")).length, 57);
+  assert.equal(linux.files.flatMap((file) => isolationCaseTitles(file, "linux")).length, 60);
   assert.deepEqual(isolationCaseTitles(linuxOwner, "linux"), linuxTitles);
   assert.deepEqual(darwin.files, laneSuites.isolation);
-  assert.equal(darwin.files.flatMap((file) => isolationCaseTitles(file, "darwin")).length, 53);
+  assert.equal(darwin.files.flatMap((file) => isolationCaseTitles(file, "darwin")).length, 56);
 });
 
 test("the native retiring-helper case is required on macOS only", () => {

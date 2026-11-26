@@ -423,6 +423,18 @@ advance is its own transaction; the run-insert tx is unchanged (a board launch c
 no `trigger_event_id` and never conflicts on the dedup). Multi-package = one choice per
 backing package.
 
+A shared adoption requires a settled desired pin. An outstanding independent
+replacement returns HTTP 409 with reason `dependency_pin_unsettled`. The launcher
+can keep the effective cut or choose an offered `try_once` cut. If launch fails
+after adoption, compensation restores the prior pin only while the adopted
+generation and attachment are still current. Subsequent operator edits survive
+the failed launch.
+
+If working-copy link publication blocks the launch, the launch reports
+`launch_flow_link_pending`. A Studio cut that already adopted the revision
+reports the target as adopted with `flowLinkPending`. The project worker
+repairs that target's link. Retrying the cut is unnecessary.
+
 **`try_once` (ADR-132)** validates like `adopt` (unknown install / unoffered
 option → 409 `CONFLICT`) but translates into an **ephemeral per-run pin**: the
 run's flow revision resolves from the newer cut's install and is snapshotted on

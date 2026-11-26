@@ -304,7 +304,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         [
           "taskAgentPackageContentDigest",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
       ],
@@ -318,7 +318,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["captureAcceptedDirectory", "node:fs/promises.lstat", "stat"],
         [
           "captureAcceptedDirectory",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
         ["withTaskLaunchCapabilityBundles", "node:fs/promises.mkdir", "write"],
@@ -346,7 +346,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         [
           "flowAssetContentDigest",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
         ["assertAssetWitness", "node:fs/promises.readFile", "read"],
@@ -407,7 +407,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         [
           "capabilityContentDigest",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
       ],
@@ -429,7 +429,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         [
           "assertTaskLaunchMaterializationReceipt",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
         [
@@ -444,7 +444,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         [
           "acceptedTaskLaunchExecution.materialize",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
       ],
@@ -526,10 +526,25 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
     ...classified(
       "lib/packages/attach.ts",
       "repository-worktree",
-      "Upgrade reads pinned package definitions before the attachment transaction",
+      "Attachment and upgrade verify the cached package tree and its member sources before consuming pinned definitions.",
       [
         [
-          "upgradeAttachment",
+          "verifyPackageBytes",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "verifyCachedPackage",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "verifyPackageMemberSource",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "workerUpgradeAttachment",
           "lib/agents/package-contract.ts#readPackageAgentSources",
           "wrapper",
         ],
@@ -711,10 +726,20 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
       [
-        ["assertExportablePackages", "node:fs/promises.stat", "stat"],
         [
-          "assertExportablePackages",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "reviewPackageSources",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "reviewPackageSources",
+          "lib/project-dependencies/content-digest.ts#confinedPackageDirectory",
+          "wrapper",
+        ],
+        ["reviewPackageSources", "node:fs/promises.stat", "stat"],
+        [
+          "reviewPackageSources",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
       ],
@@ -843,6 +868,16 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
       [
+        [
+          "verifyReviewedPackages",
+          "lib/project-config-persistence/projection.ts#reviewPackageSources",
+          "wrapper",
+        ],
+        [
+          "previewProjectConfiguration",
+          "lib/project-config-persistence/status.ts#statusForObservation",
+          "wrapper",
+        ],
         ["verifyPrivateBytes", "node:fs/promises.realpath", "stat"],
         ["verifyPrivateBytes", "node:fs/promises.lstat", "stat"],
         ["verifyPrivateBytes", "node:fs/promises.readFile", "read"],
@@ -850,10 +885,242 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "lib/project-dependencies/content-digest.ts",
+      "repository-worktree",
+      "Resolve selected package directories and inspect file bytes, executable modes and symlink targets in the reviewed source tree.",
+      [
+        ["confinedPackageDirectory", "node:fs/promises.realpath", "stat"],
+        ["materialLayoutDigest", "node:fs/promises.realpath", "stat"],
+        ["walk", "node:fs/promises.realpath", "stat"],
+        ["walk", "node:fs/promises.lstat", "stat"],
+        ["matches", "node:fs/promises.lstat", "stat"],
+        ["matches", "node:fs/promises.readdir", "list"],
+        ["matches", "node:fs/promises.readlink", "read"],
+        ["matches", "node:fs/promises.readFile", "read"],
+        ["walk", "node:fs/promises.readdir", "list"],
+        ["walk", "node:fs/promises.readlink", "read"],
+        ["walk", "node:fs/promises.readFile", "read"],
+      ],
+    ),
+    ...classified(
+      "lib/flows.ts",
+      "manager-flow-state",
+      "Flow installation hashes the selected local source. Existing callers retain the path-generic content digest export.",
+      [
+        [
+          "installRevision",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "installRevision",
+          "lib/project-dependencies/material.ts#snapshotLocalMaterial",
+          "wrapper",
+        ],
+        [
+          "<module>",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "unresolved",
+        ],
+        [
+          "installRevision",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        [
+          "hashMaterial",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        [
+          "installRevision",
+          "lib/project-dependencies/material.ts#publishMaterial",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/packages/attach.ts",
+      "repository-worktree",
+      "Validate candidate links before member attachment and reconcile the selected workspace after the approved mutation.",
+      [
+        [
+          "verifyPackageBytes",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        [
+          "verifyPackageMemberSource",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        [
+          "verifyCachedPackage",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        [
+          "wireMembers",
+          "lib/project-dependencies/flow-links.ts#validateProjectFlowLink",
+          "unresolved",
+        ],
+      ],
+    ),
+    ...classified(
+      "app/api/projects/[slug]/packages/route.ts",
+      "repository-worktree",
+      "Attach the selected installed revision in this project's registered checkout.",
+      [["POST", "lib/packages/attach.ts#attachPackage", "wrapper"]],
+    ),
+    ...classified(
+      "app/api/projects/[slug]/packages/[attachmentId]/upgrade/route.ts",
+      "repository-worktree",
+      "Upgrade the selected attachment in the registered project checkout.",
+      [["POST", "lib/packages/attach.ts#upgradeAttachment", "wrapper"]],
+    ),
+    ...classified(
+      "app/api/studio/local-packages/[id]/cut-version/route.ts",
+      "repository-worktree",
+      "Adopt the verified Studio cut in the selected project after the operator confirms the change.",
+      [
+        ["POST", "lib/packages/attach.ts#attachPackage", "wrapper"],
+        ["POST", "lib/packages/attach.ts#upgradeAttachment", "wrapper"],
+      ],
+    ),
+    ...classified(
+      "lib/project-dependencies/executor.ts",
+      "repository-worktree",
+      "Worker supplies the managed Flow-link validator to installation, then reconciles committed selections on this project.",
+      [
+        [
+          "stagePackageMembers",
+          "lib/packages/attach.ts#preparePackageMembers",
+          "wrapper",
+        ],
+        [
+          "executeDependency",
+          "lib/project-dependencies/flow-links.ts#validateProjectFlowLink",
+          "unresolved",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/project-dependencies/operator.ts",
+      "repository-worktree",
+      "The operator installation paths validate candidate links and reconcile committed project attachments in their workspace.",
+      [
+        [
+          "installOperatorFlow",
+          "lib/project-dependencies/flow-links.ts#validateProjectFlowLink",
+          "unresolved",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/project-dependencies/flow-links.ts",
+      "repository-worktree",
+      "Publish the Flow symlink named by a committed project operation and remove a retired link only after checking its recorded repository scope and managed target.",
+      [
+        ["managedDirectory", "node:fs/promises.lstat", "stat"],
+        ["validateProjectFlowLink", "node:fs/promises.lstat", "stat"],
+        ["validateProjectFlowLink", "node:fs/promises.readlink", "read"],
+        ["applyLink", "node:fs/promises.lstat", "stat"],
+        ["applyLink", "node:fs/promises.readlink", "read"],
+        ["applyLink", "node:fs/promises.unlink", "remove"],
+        ["applyLink", "lib/flows.ts#ensureSymlink", "wrapper"],
+      ],
+    ),
+    ...classified(
+      "lib/project-dependencies/material.ts",
+      "repository-worktree",
+      "Publish immutable package, Flow and capability material from a verified source through a sibling staging directory under the installation cache.",
+      [
+        [
+          "publishMaterial",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        ["snapshotLocalMaterial", "node:fs/promises.mkdtemp", "write"],
+        ["snapshotLocalMaterial", "node:fs/promises.realpath", "stat"],
+        ["snapshotLocalMaterial", "node:fs/promises.cp", "write"],
+        ["snapshotLocalMaterial", "node:fs/promises.rm", "remove"],
+        [
+          "publishMaterial",
+          "lib/project-dependencies/content-digest.ts#containsSourceMaterial",
+          "wrapper",
+        ],
+        ["sealMaterial", "node:fs/promises.writeFile", "write"],
+        ["sealMaterial", "node:fs/promises.rename", "write"],
+        ["sealMaterial", "node:fs/promises.rm", "remove"],
+        ["publishMaterial", "node:fs/promises.readFile", "read"],
+        ["publishMaterial", "node:fs/promises.lstat", "stat"],
+        ["publishMaterial", "node:fs/promises.mkdir", "write"],
+        ["publishMaterial", "node:fs/promises.mkdtemp", "write"],
+        ["publishMaterial", "node:fs/promises.cp", "write"],
+        ["publishMaterial", "node:fs/promises.rename", "write"],
+        ["publishMaterial", "node:fs/promises.rm", "remove"],
+      ],
+    ),
+    ...classified(
+      "lib/project-dependencies/setup-identity.ts",
+      "repository-worktree",
+      "Match historical receipts to their recorded physical setup directory and script.",
+      [
+        ["isNewPublication", "node:fs/promises.readFile", "read"],
+        ["identifyHistoricalSetups", "node:fs/promises.realpath", "stat"],
+        ["identifyHistoricalSetups", "node:fs/promises.readFile", "read"],
+      ],
+    ),
+    ...classified(
+      "lib/project-dependencies/stage-setup.ts",
+      "repository-worktree",
+      "Trusted dependency setup operates only on the staged immutable material selected by the current worker generation.",
+      [
+        [
+          "settle",
+          "lib/project-dependencies/setup.ts#runMaterialSetup",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/project-dependencies/setup.ts",
+      "repository-worktree",
+      "Read the installed material's setup script, dispatch the gated child in its directory and publish its completion marker.",
+      [
+        [
+          "runMaterialSetup",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        ["runMaterialSetup", "node:fs/promises.realpath", "stat"],
+        ["runMaterialSetup", "node:fs/promises.readFile", "read"],
+        ["runMaterialSetup", "node:child_process.spawn", "spawn", "bash"],
+        ["runMaterialSetup", "node:fs/promises.writeFile", "write"],
+        ["runMaterialSetup", "node:fs/promises.rename", "write"],
+      ],
+    ),
+    ...classified(
+      "lib/registration-directory.ts",
+      "repository-worktree",
+      "Exclusive registration-directory creation and compensation using the recorded directory identity.",
+      [
+        ["createRegistrationDirectory", "node:fs/promises.mkdir", "write"],
+        ["createRegistrationDirectory", "node:fs/promises.lstat", "stat"],
+        ["cleanRegistrationDirectory", "node:fs/promises.lstat", "stat"],
+        ["cleanRegistrationDirectory", "node:fs/promises.rm", "remove"],
+      ],
+    ),
+    ...classified(
       "lib/project-config-persistence/status.ts",
       "repository-worktree",
       "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
       [
+        [
+          "statusForObservation",
+          "lib/project-config-persistence/projection.ts#reviewPackageSources",
+          "wrapper",
+        ],
         ["exists", "node:fs/promises.lstat", "stat"],
         ["inspectRepository", "node:fs/promises.realpath", "stat"],
         ["inspectRepository", "node:fs/promises.lstat", "stat"],
@@ -953,8 +1220,21 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "project registration reads maister.yaml from the operator-supplied checkout path",
       [
         ["pathExists", "node:fs/promises.stat", "stat"],
-        ["POST", "node:fs/promises.rm", "remove"],
-        ["register", "node:fs/promises.rm", "remove"],
+        [
+          "POST",
+          "lib/registration-directory.ts#cleanRegistrationDirectory",
+          "wrapper",
+        ],
+        [
+          "register",
+          "lib/registration-directory.ts#createRegistrationDirectory",
+          "wrapper",
+        ],
+        [
+          "register",
+          "lib/registration-directory.ts#cleanRegistrationDirectory",
+          "wrapper",
+        ],
         ["register", "lib/config.ts#loadProjectConfig", "wrapper"],
         ["register", "lib/repo-source.ts#gitInit", "wrapper"],
       ],
@@ -1149,16 +1429,36 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
+        [
+          "prepareCapabilityRevision",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "prepareCapabilityRevision",
+          "lib/project-dependencies/material.ts#snapshotLocalMaterial",
+          "wrapper",
+        ],
+        [
+          "prepareCapabilityRevision",
+          "lib/project-dependencies/material.ts#publishMaterial",
+          "wrapper",
+        ],
+        [
+          "runCapabilityRevisionSetup",
+          "lib/project-dependencies/setup.ts#runMaterialSetup",
+          "wrapper",
+        ],
         ["pathExists", "node:fs/promises.stat", "stat"],
+        [
+          "hash",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
         ["gitClone", "node:child_process.execFile", "spawn", "git"],
         ["gitRevParseHead", "node:child_process.execFile", "spawn", "git"],
-        ["runSetupSh", "node:child_process.execFile", "spawn", "bash"],
-        ["runSetupSh", "node:fs/promises.writeFile", "write"],
-        ["installCapabilityRevision", "node:fs/promises.mkdtemp", "write"],
-        ["installCapabilityRevision", "node:fs/promises.rm", "remove"],
-        ["installCapabilityRevision", "node:fs/promises.mkdir", "write"],
-        ["installCapabilityRevision", "node:fs/promises.cp", "write"],
-        ["installCapabilityRevision", "node:fs/promises.rename", "write"],
+        ["prepareCapabilityRevision", "node:fs/promises.mkdtemp", "write"],
+        ["prepareCapabilityRevision", "node:fs/promises.rm", "remove"],
       ],
     ),
     ...classified(
@@ -1404,6 +1704,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "manager-flow-state",
       "maister.yaml / flow.yaml / package manifests and the system flow cache under ~/.maister and .maister/<slug>/flows",
       [
+        [
+          "runRevisionSetup",
+          "lib/project-dependencies/setup.ts#runMaterialSetup",
+          "wrapper",
+        ],
         ["pathExists", "node:fs/promises.stat", "stat"],
         ["readSchemaDirectoryFiles", "node:fs/promises.lstat", "stat"],
         ["visit", "node:fs/promises.readdir", "list"],
@@ -1426,19 +1731,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["ensureSymlink", "node:fs/promises.lstat", "stat"],
         ["ensureSymlink", "node:fs/promises.symlink", "write"],
         ["ensureSymlink", "node:fs/promises.readlink", "read"],
-        ["ensureSymlink", "node:fs/promises.unlink", "remove"],
-        ["runSetupSh", "node:child_process.execFile", "spawn", "bash"],
-        ["runSetupSh", "node:fs/promises.writeFile", "write"],
+        ["ensureSymlink", "node:fs/promises.rename", "write"],
+        ["ensureSymlink", "node:fs/promises.rm", "remove"],
         ["gitRevParseHead", "node:child_process.execFile", "spawn", "git"],
         ["isLocalDirectorySource", "node:fs/promises.stat", "stat"],
-        ["walk", "node:fs/promises.readdir", "list"],
-        ["walk", "node:fs/promises.readlink", "read"],
-        ["walk", "node:fs/promises.readFile", "read"],
         ["installRevision", "node:fs/promises.mkdtemp", "write"],
         ["installRevision", "node:fs/promises.rm", "remove"],
-        ["installRevision", "node:fs/promises.mkdir", "write"],
-        ["installRevision", "node:fs/promises.cp", "write"],
-        ["installRevision", "node:fs/promises.rename", "write"],
         [
           "validatePackageRootSchemaReferences",
           "lib/config.ts#readAndValidateFormSchemaDoc",
@@ -2020,6 +2318,16 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["cutLocalPackageVersion", "node:fs/promises.rm", "remove"],
         [
+          "applyPackageVersionChoices",
+          "lib/packages/attach.ts#changeLaunchPackage",
+          "wrapper",
+        ],
+        [
+          "revertPackageVersionChoices",
+          "lib/packages/attach.ts#changeLaunchPackage",
+          "wrapper",
+        ],
+        [
           "cutLocalPackageVersion",
           "lib/local-packages/git.ts#gitHeadSha",
           "wrapper",
@@ -2036,10 +2344,18 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
+        [
+          "installPackageRevision",
+          "lib/project-dependencies/material.ts#publishMaterial",
+          "wrapper",
+        ],
         ["pathExists", "node:fs/promises.stat", "stat"],
         ["collectInventory", "node:fs/promises.readdir", "list"],
-        ["installPackageRevision", "node:fs/promises.rm", "remove"],
-        ["installPackageRevision", "node:fs/promises.cp", "write"],
+        [
+          "hashMaterial",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
         ["installPackageRevision", "lib/config.ts#loadFlowManifest", "wrapper"],
       ],
     ),
@@ -2073,7 +2389,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         [
           "discoverLocalSourcePackages",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
       ],
@@ -2083,6 +2399,22 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
+        [
+          "resolvePackageSource",
+          "lib/project-dependencies/content-digest.ts#materialLayoutDigest",
+          "wrapper",
+        ],
+        [
+          "resolvePackageSource",
+          "lib/project-dependencies/content-digest.ts#confinedPackageDirectory",
+          "wrapper",
+        ],
+        [
+          "snapshotPackageDirectory",
+          "lib/project-dependencies/material.ts#snapshotLocalMaterial",
+          "wrapper",
+        ],
+        ["snapshotPackageDirectory.cleanup", "node:fs/promises.rm", "remove"],
         ["resolvePackageSource", "node:fs/promises.stat", "stat"],
         ["resolvePackageSource", "node:fs/promises.mkdtemp", "write"],
         ["cleanup", "node:fs/promises.rm", "remove"],
@@ -2093,7 +2425,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         [
           "resolvePackageSource",
-          "lib/flows.ts#localDirectoryContentDigest",
+          "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
         ["resolvePackageSource", "lib/flows.ts#gitClone", "wrapper"],
@@ -2157,10 +2489,38 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "lib/runs/promote.ts",
+      "repository-worktree",
+      "Inspect the recorded Run worktree's merge base before preparing the promoted change.",
+      [
+        [
+          "promotePullRequestSideEffect",
+          "lib/worktree.ts#inspectDeliveryBase",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/runs/sync-target.ts",
+      "repository-worktree",
+      "Inspect the recorded candidate and target branches before synchronizing the Run checkout.",
+      [["syncRunTarget", "lib/worktree.ts#inspectDeliveryBase", "wrapper"]],
+    ),
+    ...classified(
       "lib/repo-source.ts",
       "repository-worktree",
       "git/worktree operations the manager keeps until the Stage C repository cut",
       [
+        [
+          "resolveProjectSource",
+          "lib/registration-directory.ts#createRegistrationDirectory",
+          "wrapper",
+        ],
+        [
+          "resolveProjectSource",
+          "lib/registration-directory.ts#cleanRegistrationDirectory",
+          "wrapper",
+        ],
         ["assertGitAvailable", "node:child_process.execFile", "spawn", "git"],
         ["runGhAuthToken", "node:child_process.execFile", "spawn", "gh"],
         ["cloneRepo", "node:fs/promises.mkdtemp", "write"],
@@ -2172,7 +2532,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["gitInit", "node:child_process.execFile", "spawn", "git"],
         ["pathExists", "node:fs/promises.stat", "stat"],
         ["resolveProjectSource", "node:fs/promises.mkdir", "write"],
-        ["resolveProjectSource", "node:fs/promises.rm", "remove"],
       ],
     ),
     ...classified(
@@ -2717,12 +3076,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       },
     ),
     ...classified(
-      "scripts/install-package.ts",
-      "manager-flow-state",
-      "operator CLIs over manager-owned package artifacts (install/import/export/validate); never run inside the web process",
-      [["main", "lib/config.ts#loadProjectConfig", "wrapper"]],
-    ),
-    ...classified(
       "scripts/smoke-production-image.ts",
       "build-tooling",
       "build/CI tooling over the checkout (.next artifacts, generated docs, image smoke); never runs inside the web process",
@@ -2877,7 +3230,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers(
     "lib/project-config-persistence/projection.ts",
     "repository-worktree",
-    [["assertExportablePackages", false]],
+    [["reviewPackageSources", true]],
   ),
   ...wrappers(
     "lib/project-config-persistence/publication-state.ts",
@@ -2955,6 +3308,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     "lib/project-config-persistence/status.ts",
     "repository-worktree",
     [
+      ["statusForObservation", true],
       ["currentConfigStatus", false],
       ["inspectRepository", false],
     ],
@@ -3066,10 +3420,10 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["workspacePackageSkillsPrompt", false],
   ]),
   ...wrappers("lib/capabilities/import.ts", "repository-worktree", [
-    ["confirmCapabilityTrust", false],
+    ["bindPreparedCapability", false],
     ["installAndIngestCapabilityImports", false],
     ["installCapabilityRevision", false],
-    ["runCapabilityRevisionSetup", false],
+    ["prepareCapabilityRevision", false],
   ]),
   ...wrappers("lib/capabilities/materialize-bundle.ts", "repository-worktree", [
     ["copyBundleArtifactsToWorktree", false],
@@ -3153,9 +3507,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["installFlowPlugin", false],
     ["installRevision", false],
     ["isLocalDirectorySource", true],
-    ["localDirectoryContentDigest", true],
     ["repairPackageRootSchemaCache", false],
-    ["runRevisionSetup", false],
   ]),
   ...wrappers("lib/flows/authored-bridge.ts", "manager-flow-state", [
     ["bridgePublishedAuthoredFlow", false],
@@ -3303,8 +3655,45 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["applyPackageVersionChoices", false],
     ["cutLocalPackageVersion", false],
   ]),
+  ...wrappers(
+    "lib/project-dependencies/content-digest.ts",
+    "repository-worktree",
+    [
+      ["localDirectoryContentDigest", true],
+      ["confinedPackageDirectory", true],
+      ["materialLayoutDigest", true],
+      ["containsSourceMaterial", true],
+    ],
+  ),
+  ...wrappers("lib/project-dependencies/flow-links.ts", "repository-worktree", [
+    ["validateProjectFlowLink", true],
+    ["finishFlowLinkPublication", false],
+    ["serviceFlowLinkPublication", false],
+  ]),
+  ...wrappers("lib/project-dependencies/material.ts", "repository-worktree", [
+    ["publishMaterial", true],
+    ["snapshotLocalMaterial", true],
+  ]),
+  ...wrappers(
+    "lib/project-dependencies/setup-identity.ts",
+    "repository-worktree",
+    [["identifyHistoricalSetups", false]],
+  ),
+  ...wrappers("lib/project-dependencies/setup.ts", "repository-worktree", [
+    ["runMaterialSetup", true],
+  ]),
+  ...wrappers("lib/registration-directory.ts", "repository-worktree", [
+    ["createRegistrationDirectory", true],
+    ["cleanRegistrationDirectory", true],
+  ]),
   ...wrappers("lib/packages/attach.ts", "repository-worktree", [
+    ["attachPackage", true],
+    ["changeLaunchPackage", true],
     ["installPackageRevision", false],
+    ["prepareManualPackageMutation", false],
+    ["preparePackageMembers", true],
+    ["trustPackageRevision", false],
+    ["upgradeAttachment", true],
   ]),
   ...wrappers("lib/packages/catalog.ts", "repository-worktree", [
     ["createPackageSource", false],
@@ -3385,6 +3774,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["fetchRemote", false],
     ["forceWithLeasePush", false],
     ["hasConflictMarkers", false],
+    ["inspectDeliveryBase", true],
     ["logRangeBounded", false],
     ["pruneWorktrees", false],
     ["pushBranch", false],

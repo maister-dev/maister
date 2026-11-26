@@ -20,6 +20,10 @@ import {
 } from "@/lib/local-packages/versions";
 import { attachPackage, upgradeAttachment } from "@/lib/packages/attach";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import {
+  readAcceptedFlowLink,
+  type PendingFlowLink,
+} from "@/lib/project-dependencies/flow-links";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches sibling routes).
 const { projects } = schemaModule as unknown as Record<string, any>;
@@ -148,37 +152,65 @@ export async function POST(
     const cut = await cutLocalPackageVersion(pkg);
 
     let attachmentId: string | undefined;
+    let flowLinkPending: PendingFlowLink | undefined;
 
     if (attachTarget) {
-      const attached = await attachPackage({
-        projectId: attachTarget.id,
-        projectSlug: attachTarget.slug,
-        packageInstallId: cut.installId,
-        workspaceRoot: attachTarget.repoPath,
-      });
-
-      attachmentId = attached?.attachmentId;
+      try {
+        const attached = await attachPackage({
+          projectId: attachTarget.id,
+          projectSlug: attachTarget.slug,
+          packageInstallId: cut.installId,
+          actorGrant: { userId: user.id, action: "manageLocalPackages" },
+          workspaceRoot: attachTarget.repoPath,
+        });
+        attachmentId = attached?.attachmentId;
+      } catch (error) {
+        const accepted = readAcceptedFlowLink(error);
+        if (!accepted?.attachmentId) throw error;
+        attachmentId = accepted.attachmentId;
+        flowLinkPending = accepted.flowLinkPending;
+      }
     }
 
     // Post-cut adopts: per-project after-writes, failures reported — the cut
     // above is never rolled back (crash window (d)).
     let adoptions:
-      | { projectId: string; status: "adopted" | "failed"; error?: string }[]
+      | {
+          projectId: string;
+          status: "adopted" | "failed";
+          error?: string;
+          flowLinkPending?: PendingFlowLink;
+        }[]
       | undefined;
 
     if (parsed.data.adoptInProjectIds !== undefined) {
       adoptions = [];
       for (const target of adoptTargets) {
         try {
-          await upgradeAttachment({
+          const upgraded = await upgradeAttachment({
             projectId: target.projectId,
             projectSlug: target.slug,
             attachmentId: target.attachmentId,
             packageInstallId: cut.installId,
+            actorGrant: { userId: user.id, action: "manageLocalPackages" },
             workspaceRoot: target.repoPath,
           });
+          if (!upgraded)
+            throw new MaisterError(
+              "CONFLICT",
+              "The project attachment or target install is no longer available.",
+            );
           adoptions.push({ projectId: target.projectId, status: "adopted" });
         } catch (err) {
+          const accepted = readAcceptedFlowLink(err);
+          if (accepted) {
+            adoptions.push({
+              projectId: target.projectId,
+              status: "adopted",
+              flowLinkPending: accepted.flowLinkPending,
+            });
+            continue;
+          }
           adoptions.push({
             projectId: target.projectId,
             status: "failed",
@@ -210,6 +242,7 @@ export async function POST(
         installId: cut.installId,
         versionLabel: cut.versionLabel,
         attachmentId,
+        ...(flowLinkPending ? { flowLinkPending } : {}),
         ...(adoptions !== undefined ? { adoptions } : {}),
       },
       { status: 201 },

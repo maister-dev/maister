@@ -78,6 +78,7 @@ async function seedFlow(
     enablementState: string;
     trustStatus: string;
     metadata?: unknown;
+    requiredMcps?: string[];
     createdAt?: Date;
   },
 ): Promise<string> {
@@ -97,6 +98,7 @@ async function seedFlow(
   };
 
   if (opts.metadata !== undefined) manifest.metadata = opts.metadata;
+  if (opts.requiredMcps) manifest.mcps = opts.requiredMcps;
 
   await db.insert(schema.flowRevisions).values({
     id: revisionId,
@@ -253,6 +255,14 @@ describe("GET /api/v1/ext/projects/[slug]/flows", () => {
       enablementState: "Enabled",
       trustStatus: "untrusted",
       createdAt: new Date(Date.UTC(2026, 0, 3)),
+    });
+
+    // A delayed manifest import must not advertise Flow consumers before they can launch.
+    await seedFlow(projectId, {
+      flowRefId: "awaiting-import",
+      enablementState: "Enabled",
+      trustStatus: "trusted",
+      requiredMcps: ["pending-import"],
     });
 
     // Excluded: trusted but DISABLED (non-launchable enablement state).

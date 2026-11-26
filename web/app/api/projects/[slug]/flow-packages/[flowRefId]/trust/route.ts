@@ -1,5 +1,6 @@
 import "server-only";
 
+import { requireGlobalRole } from "@/lib/authz";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -29,6 +30,8 @@ export async function POST(
       schema: postBodySchema,
       method: "POST",
     });
+
+    if (body.trusted) await requireGlobalRole("admin");
 
     await setTrust({
       projectId: project.id,

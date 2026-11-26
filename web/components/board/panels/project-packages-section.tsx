@@ -4,21 +4,27 @@ import type {
   AvailablePackageInstallView,
   ProjectPackageAttachmentView,
 } from "@/lib/queries/packages";
-import type { ReactElement } from "react";
+import type { ProjectDependencyView } from "@/lib/project-dependencies/view";
+import type { ReactElement, ReactNode } from "react";
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { DependencyDeclarations } from "./dependency-declarations";
+
 import {
   studioPackagePath,
   withPackageInstall,
 } from "@/lib/studio/package-links";
-import { readApiErrorBody } from "@/lib/api-error";
+import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { TrustedSetupNotice } from "@/components/projects/trusted-setup-notice";
+import { requestPackageTrust } from "@/lib/project-dependencies/trust-response";
 
 type Props = {
+  declarations?: ProjectDependencyView[];
   slug: string;
   isAdmin: boolean;
   // Trust fans out to every project attached to the install — global admin
@@ -34,11 +40,15 @@ function installLabel(install: AvailablePackageInstallView): string {
     : `${install.name}@${install.versionLabel}`;
 }
 
+type PackageChange =
+  | { state: "applied" | "publicationBusy" | "failed" }
+  | { state: "linkPending"; occupiedRef?: string };
+
 async function call(
   url: string,
   method: "POST" | "DELETE",
   body?: unknown,
-): Promise<{ ok: boolean; publicationBusy?: boolean }> {
+): Promise<PackageChange> {
   const res = await fetch(url, {
     method,
     headers: { "content-type": "application/json" },
@@ -48,13 +58,29 @@ async function call(
   if (!res.ok) {
     const failure = await readApiErrorBody(res);
 
+    if (
+      res.status === 409 &&
+      failure?.code === "PRECONDITION" &&
+      failure.details?.reason === "project_flow_link_pending" &&
+      failure.details.mutationAccepted === true
+    )
+      return {
+        state: "linkPending",
+        occupiedRef:
+          failure.details.linkReason === "project_flow_link_conflict"
+            ? failure.details.memberRef
+            : undefined,
+      };
+
     return {
-      ok: false,
-      publicationBusy: failure?.details?.reason === "operation_busy",
+      state:
+        failure?.details?.reason === "operation_busy"
+          ? "publicationBusy"
+          : "failed",
     };
   }
 
-  return { ok: true };
+  return { state: "applied" };
 }
 
 // (ADR-088) Whole-package attachments of a project: attach from the platform
@@ -62,6 +88,7 @@ async function call(
 // panel on the packages tab.
 export function ProjectPackagesSection({
   slug,
+  declarations = [],
   isAdmin,
   canTrust,
   attachments,
@@ -72,7 +99,7 @@ export function ProjectPackagesSection({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ReactNode>(null);
   const [selectedInstall, setSelectedInstall] = useState("");
   const [trustingAttachment, setTrustingAttachment] =
     useState<ProjectPackageAttachmentView | null>(null);
@@ -99,15 +126,26 @@ export function ProjectPackagesSection({
     if (notice) noticeRef.current?.focus();
   }, [notice]);
 
-  function surface(result: { ok: boolean; publicationBusy?: boolean }): void {
-    if (!result.ok)
-      setNotice(
-        result.publicationBusy
-          ? tErr("configPublicationBusy")
-          : t("errorGeneric"),
-      );
-    else setNotice(t("appliedInMaister"));
-    if (result.ok) refresh();
+  function surface(result: PackageChange): void {
+    switch (result.state) {
+      case "publicationBusy":
+        setNotice(tErr("configPublicationBusy"));
+        return;
+      case "failed":
+        setNotice(t("errorGeneric"));
+        return;
+      case "linkPending":
+        setNotice(
+          result.occupiedRef
+            ? t("flowLinkOccupied", { flow: result.occupiedRef })
+            : t("flowLinkPending"),
+        );
+        break;
+      case "applied":
+        setNotice(t("appliedInMaister"));
+        break;
+    }
+    refresh();
   }
 
   async function attach(): Promise<void> {
@@ -119,9 +157,10 @@ export function ProjectPackagesSection({
       });
 
       surface(result);
-      if (result.ok) setSelectedInstall("");
+      if (result.state === "applied" || result.state === "linkPending")
+        setSelectedInstall("");
     } catch {
-      surface({ ok: false });
+      surface({ state: "failed" });
     } finally {
       setBusy(null);
     }
@@ -134,7 +173,7 @@ export function ProjectPackagesSection({
         await call(`/api/projects/${slug}/packages/${attachmentId}`, "DELETE"),
       );
     } catch {
-      surface({ ok: false });
+      surface({ state: "failed" });
     } finally {
       setBusy(null);
     }
@@ -156,7 +195,7 @@ export function ProjectPackagesSection({
         }),
       );
     } catch {
-      surface({ ok: false });
+      surface({ state: "failed" });
     } finally {
       setBusy(null);
     }
@@ -165,15 +204,26 @@ export function ProjectPackagesSection({
   async function trust(att: ProjectPackageAttachmentView): Promise<void> {
     setBusy(`trust:${att.id}`);
     try {
-      const result = await call(
+      const result = await requestPackageTrust(
         `/api/projects/${slug}/packages/${att.id}/trust`,
-        "POST",
       );
 
-      surface(result);
-      if (result.ok) setTrustingAttachment(null);
+      if (result.kind === "unconfirmed") {
+        setNotice(apiErrorText(result.error, tErr));
+
+        return;
+      }
+      setTrustingAttachment(null);
+      setNotice(
+        result.kind === "setup" ? (
+          <TrustedSetupNotice href={result.href} />
+        ) : (
+          t("appliedInMaister")
+        ),
+      );
+      refresh();
     } catch {
-      surface({ ok: false });
+      surface({ state: "failed" });
     } finally {
       setBusy(null);
     }
@@ -185,6 +235,9 @@ export function ProjectPackagesSection({
 
   return (
     <section className="mb-6 rounded-[16px] border border-line bg-paper p-6">
+      {declarations.length > 0 ? (
+        <DependencyDeclarations declarations={declarations} slug={slug} />
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="m-0 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
           {t("attachmentsTitle")}
@@ -258,7 +311,7 @@ export function ProjectPackagesSection({
         </p>
       ) : null}
 
-      {notice ? (
+      {notice && !trustingAttachment ? (
         <p
           ref={noticeRef}
           className="mb-3 rounded-[8px] border border-amber/40 bg-amber/10 px-3 py-2 text-[12px] text-ink"
@@ -330,7 +383,10 @@ export function ProjectPackagesSection({
                                 className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
                                 disabled={busy === `trust:${att.id}`}
                                 type="button"
-                                onClick={() => setTrustingAttachment(att)}
+                                onClick={() => {
+                                  setNotice(null);
+                                  setTrustingAttachment(att);
+                                }}
                               >
                                 {t("trust")}
                               </button>
@@ -410,6 +466,7 @@ export function ProjectPackagesSection({
           titleId="package-trust-confirm-title"
           onClose={() => setTrustingAttachment(null)}
         >
+          {notice ? <p role="alert">{notice}</p> : null}
           <div className="flex justify-end gap-2">
             <button
               className="h-8 rounded-[8px] border border-line px-3 text-[12px] text-mute hover:bg-ivory disabled:opacity-50"

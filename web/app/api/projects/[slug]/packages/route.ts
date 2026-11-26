@@ -9,11 +9,12 @@ import { z } from "zod";
 import { authorizeManagePackages } from "../flow-packages/_lib";
 
 import * as schemaModule from "@/lib/db/schema";
+import { attachPackage } from "@/lib/packages/attach";
 import {
-  attachPackage,
-  type PackageInstallManifest,
-} from "@/lib/packages/attach";
-import { deriveUpdateAvailable } from "@/lib/packages/catalog";
+  deriveUpdateAvailable,
+  readAttachedPackageFlowIds,
+} from "@/lib/packages/catalog";
+import { readProjectDeclarations } from "@/lib/project-dependencies/read";
 import { notFound, packageErrorResponse } from "@/lib/packages/http";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -35,14 +36,19 @@ export async function GET(
   const { slug } = await ctx.params;
 
   try {
-    const { project, db } = await authorizeManagePackages(slug);
+    const { project, db, user } = await authorizeManagePackages(slug);
+    const declarations = await readProjectDeclarations(
+      db,
+      project.id,
+      user.role === "admin",
+    );
     const attachments = await db
       .select()
       .from(projectPackageAttachments)
       .where(eq(projectPackageAttachments.projectId, project.id));
 
     if (attachments.length === 0) {
-      return NextResponse.json({ attachments: [] });
+      return NextResponse.json({ attachments: [], declarations });
     }
 
     const installs = await db
@@ -54,6 +60,7 @@ export async function GET(
           attachments.map((a: any) => a.packageInstallId),
         ),
       );
+    const members = await readAttachedPackageFlowIds(db, project.id, installs);
     const installById = new Map(installs.map((i: any) => [i.id, i]));
     const sources = await db.select().from(packageSources);
     const discoveredByUrl = new Map<string, DiscoveredPackageEntry[]>(
@@ -66,7 +73,6 @@ export async function GET(
 
     const dto = attachments.map((att: any) => {
       const install = installById.get(att.packageInstallId) as any;
-      const manifest = install?.manifest as PackageInstallManifest | undefined;
 
       return {
         id: att.id,
@@ -82,11 +88,11 @@ export async function GET(
               sourceKind: kindByUrl.get(install.sourceUrl),
             })
           : false,
-        flows: manifest?.spec.flows.map((f) => f.id) ?? [],
+        flows: members.get(att.packageInstallId) ?? [],
       };
     });
 
-    return NextResponse.json({ attachments: dto });
+    return NextResponse.json({ attachments: dto, declarations });
   } catch (err) {
     return packageErrorResponse(err, `projects/${slug}/packages GET`);
   }
@@ -99,7 +105,7 @@ export async function POST(
   const { slug } = await ctx.params;
 
   try {
-    const { project, db } = await authorizeManagePackages(slug);
+    const { project, db, user } = await authorizeManagePackages(slug);
     const parsed = attachBodySchema.safeParse(await req.json());
 
     if (!parsed.success) {
@@ -116,6 +122,7 @@ export async function POST(
       projectId: project.id,
       projectSlug: project.slug,
       packageInstallId: parsed.data.packageInstallId,
+      actorGrant: { userId: user.id, action: "managePackages" },
       workspaceRoot: project.repoPath,
       db,
     });

@@ -78,7 +78,7 @@ export async function seedAgentRun(
       ${`T${runId.replaceAll("-", "").slice(0, 7)}`.toUpperCase()},${repoPath},${path.join(repoPath, "maister.yaml")})`);
   await db.insert(packageInstalls).values({
     id: packageId,
-    sourceUrl: `github.com/fixture/${runId}`,
+    sourceUrl: `https://github.com/fixture/${runId}`,
     name: packageName,
     versionLabel: "v1.0.0",
     resolvedRevision: "rev-1",

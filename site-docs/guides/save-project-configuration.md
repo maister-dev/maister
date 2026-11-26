@@ -8,7 +8,7 @@ description: "Review and commit MAIster configuration separately from applying r
 - Project owner or administrator access, including permission to read repository files
 - The configured main branch checked out on the MAIster host
 - A clean checkout and index, with no unfinished Git operation
-- Portable package sources that still resolve to their installed revisions
+- Package source coordinates without embedded credentials
 
 Attaching, detaching, upgrading or downgrading packages applies configuration in
 MAIster. Changing the default runner also applies immediately. These actions
@@ -18,7 +18,7 @@ configuration; existing Runs retain their pinned revisions.
 ## Review and commit
 
 1. Open **Project → Settings → Git → Configuration in Git**.
-2. Refresh status. MAIster compares exportable runtime values with the manifest
+2. Refresh status. MAIster compares project settings and desired package pins with the manifest
    committed on the configured main branch. A portfolio label saying
    **unverified** requires this fresh check.
 3. Choose **Review configuration save**. Inspect the entire `maister.yaml` diff,
@@ -33,7 +33,15 @@ Git, MAIster reports that no change is needed and creates no empty commit.
 Comments and unrelated manifest content are preserved.
 
 The export includes project name, branch defaults, default runner, promotion
-mode and package pins. Queue, Brain, synchronization policies and source-only
+mode and the package pins requested in Settings. You can save a corrected remote
+source, version and optional path while installation is still pending or failed.
+Reviewing and saving these coordinates does not fetch the package. An unchanged
+unresolved local pin already in the committed manifest can be kept when saving
+another setting. For a new or changed local pin the directory must be readable
+during review and confirmation, with the same contents at both steps. For an
+installed local pin its contents must match the installed revision.
+
+Queue, Brain, synchronization policies and source-only
 Flow/capability settings have separate ownership. Saving this projection does
 not export every runtime setting or replace unrelated manifest sections.
 

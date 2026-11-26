@@ -94,7 +94,11 @@ describe("CutVersionDialog", () => {
         installId: "i1",
         versionLabel: "local-aaa",
         adoptions: [
-          { projectId: "p1", status: "adopted" },
+          {
+            projectId: "p1",
+            status: "adopted",
+            flowLinkPending: { memberRef: "core-flow" },
+          },
           { projectId: "p2", status: "failed", error: "worktree busy" },
         ],
       }),
@@ -113,8 +117,8 @@ describe("CutVersionDialog", () => {
     expect(body).toEqual({ adoptInProjectIds: ["p1", "p2"] });
     expect(onCut).toHaveBeenCalledWith("local-aaa");
     expect(
-      host.querySelector('[data-testid="cut-adopt-adopted"]'),
-    ).not.toBeNull();
+      host.querySelector('[data-testid="cut-adopt-adopted"]')?.textContent,
+    ).toContain("studio.local.cutFlowLinkPending");
     expect(
       host.querySelector('[data-testid="cut-adopt-failed"]')?.textContent,
     ).toContain("worktree busy");

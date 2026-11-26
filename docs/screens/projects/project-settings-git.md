@@ -22,6 +22,15 @@ An in-sync result or status-read failure cannot dismiss its receipt, push review
 or busy action. After opening review or a receipt, the banner remains until
 explicit dismissal or navigation, so closing restores focus to its opener.
 
+## Dependencies requiring attention
+
+Project managers see links from Settings to failed and uncertain dependency
+rows in Packages. A platform administrator can correct a package pin and then
+open Git review from that row. The review uses the requested coordinates even
+when installation has not finished. An edit, retry or setup recovery changes
+platform state. Saving and pushing the configuration each require their own
+confirmation.
+
 ## Configuration review
 
 Export state (unverified, missing, pending, in sync or blocked) is separate from

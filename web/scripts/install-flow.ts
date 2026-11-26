@@ -6,7 +6,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { installFlowPlugin } from "@/lib/flows";
+import { installOperatorFlow } from "@/lib/project-dependencies/operator";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
 const { projects } = schemaModule as unknown as Record<string, any>;
@@ -69,16 +69,12 @@ async function flushLogger(): Promise<void> {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  // FIXME(any): dual drizzle-orm peer-dep variants; see seed.ts.
-  const db = getDb() as unknown as {
-    select: () => {
-      from: (t: unknown) => {
-        where: (clause: unknown) => Promise<Array<Record<string, any>>>;
-      };
-    };
-  };
+  const db = getDb();
 
-  log.info({ project: args.project, flowId: args.flowId }, "lookup project row");
+  log.info(
+    { project: args.project, flowId: args.flowId },
+    "lookup project row",
+  );
   const rows = await db
     .select()
     .from(projects)
@@ -94,19 +90,23 @@ async function main(): Promise<void> {
   const project = rows[0];
 
   log.info(
-    { project: project.slug, projectId: project.id, repoPath: project.repoPath },
+    {
+      project: project.slug,
+      projectId: project.id,
+      repoPath: project.repoPath,
+    },
     "project found",
   );
 
-  const result = await installFlowPlugin({
-    source: args.source,
-    version: args.version,
-    projectId: project.id,
-    projectSlug: project.slug,
-    flowId: args.flowId,
-    workspaceRoot: args.workspaceRoot ?? project.repoPath,
-    db,
-  });
+  const result = await installOperatorFlow(
+    {
+      projectId: project.id,
+      projectSlug: project.slug,
+      workspaceRoot: args.workspaceRoot ?? project.repoPath,
+      db,
+    },
+    { source: args.source, version: args.version, flowId: args.flowId },
+  );
 
   log.info(
     {
@@ -130,7 +130,11 @@ main()
   .catch(async (err) => {
     if (isMaisterError(err)) {
       log.error(
-        { code: err.code, message: err.message, cause: (err.cause as Error)?.message },
+        {
+          code: err.code,
+          message: err.message,
+          cause: (err.cause as Error)?.message,
+        },
         "install-flow failed",
       );
     } else {

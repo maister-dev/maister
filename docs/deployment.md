@@ -58,6 +58,8 @@ pnpm install --frozen-lockfile
 pnpm --filter maister-web build          # builds the internal MCP facade, then the web app
 ```
 
+Build each web release in its own directory. Start the new process from the completed build and keep the previous release directory, including its entire `web/.next` tree, until the old process has drained. A running server can still load a server chunk on its first request for a feature.
+
 ## 3. Postgres (Docker)
 
 `compose.yml` defines only Postgres, published on `127.0.0.1:5432`:
@@ -432,14 +434,22 @@ running web service.
 
 ## 11. Updates
 
+Build the selected revision in a separate release checkout. Keep repository storage, runtime data and service credentials at their configured persistent paths. After the build completes, drain the old processes and switch the units to the new release. Retain the old release until its processes have exited.
+
+For an installation using the single checkout in the example units, schedule downtime before updating its files. Drain active work and settle accepted project configuration publications. Keep a database backup from the same release as the old application.
+
 ```bash
-cd /opt/maister && git pull
+sudo systemctl stop maister-web maister-supervisor
+cd /opt/maister
+git pull --ff-only
 pnpm install --frozen-lockfile
-pnpm --filter maister-web build          # rebuilds the internal MCP facade and the web app
+pnpm --filter maister-web build
 set -a; . /etc/maister/maister.env; set +a
 pnpm --filter maister-web db:migrate
-sudo systemctl restart maister-supervisor maister-web
+sudo systemctl start maister-supervisor maister-web
 ```
+
+Migrations 0369–0371 transfer package export ownership to project declarations and validate stored dependency sources. Stop old CLI and web writers before applying them. When new declarations exist, rollback requires the matching pre-cutover database backup. If source validation fails, use the reported project, declaration or attachment ID to repair the stored coordinates and retry.
 
 Run the MCP contract check from the smoke test before starting new agent runs.
 

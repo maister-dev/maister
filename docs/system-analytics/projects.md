@@ -8,20 +8,16 @@ A **project** is a single registered git repository that MAIster
 operates on. Registration resolves the project source through one of three
 **onboarding modes** (`clone | existing | new`, [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons),
 [`git-integration.md`](git-integration.md)) — then, **when the repo carries a
-`maister.yaml`**, loads it (v2), installs the Flow plugins it references, and
+`maister.yaml`**, loads it (v2), records the dependencies it declares, and
 creates rows in `projects` and `flows` with platform runner references. When the
 manifest is **absent**, registration validates minimal v2 defaults in memory
 and continues through the same pipeline without creating a file.
 The domain boundary covers project lifecycle (register, archive) and the
 immediate fanout that lifecycle triggers.
 
-## Registration cut-over (ADR-131 — Implemented)
+## Registration cutover
 
-Project registration classifies every installed Flow member before finalizing
-the project. A legacy steps[] member maps to FLOW_INSTALL/502 with the engine-3
-remediation. Registration compensation removes project, membership and flow
-projections plus slug-scoped artifacts; shared-cache compensation retains its
-existing semantics. No project is left partially usable.
+ADR-218 accepts the repository before installing dependencies. The [dependency lifecycle](project-dependency-installation.md) specifies worker recovery, readiness and failure handling. Legacy Flow members remain ineligible.
 
 ## Domain entities
 
@@ -90,7 +86,7 @@ stateDiagram-v2
     Present --> ParseManifest: loadProjectConfig
     ParseManifest --> PresentValid: zod parse + cross-ref OK
     ParseManifest --> PresentInvalid: parse / cross-ref fail
-    PresentValid --> RowsFromManifest: INSERT project + flows/packages install<br/>(maister_yaml_path set)
+    PresentValid --> RowsFromManifest: INSERT project + dependency requests<br/>(maister_yaml_path set)
     PresentInvalid --> [*]: CONFIG 422<br/>(NOT a fallback)
     Absent --> InMemoryDefaults: serialize and validate defaults without writing
     InMemoryDefaults --> RowsFromDefaults: INSERT project and owner<br/>(maister_yaml_path NULL)
@@ -99,7 +95,7 @@ stateDiagram-v2
     Registered --> [*]
 ```
 
-Status: **Implemented** — the present-manifest path remains unchanged; the
+Status: **Implemented** — the
 manual `POST /api/projects` path validates missing-manifest defaults in memory. `MAISTER_PROJECTS_DIR` auto-discovery remains `maister.yaml`-gated because
 it needs a marker to find a project.
 
@@ -164,69 +160,11 @@ sequenceDiagram
 Status: **Implemented** — `web/lib/repo-source.ts:resolveProjectSource`,
 called by `web/app/api/projects/route.ts` before `loadProjectConfig`.
 `resolveProjectSource` never mutates an existing local dir; for a non-git dir
-it returns `gitStatus:"initialized"` and the route runs `git init` only as the
-LAST registration step (after the manifest validates and the project is
-committed), reverting the created `.git` on any failure. On a clone we created,
-a downstream register failure removes the clone (the route's outer compensation).
+it returns `gitStatus:"initialized"`. The route completes required initialization after validation and before acceptance.
 
 ### Register a project (Implemented)
 
-```mermaid
-sequenceDiagram
-    actor U as Operator
-    participant W as Web tier
-    participant RS as lib/repo-source
-    participant CFG as lib/config
-    participant FL as lib/flows
-    participant DB as Postgres
-    participant FS as Filesystem
-
-    U->>W: POST /api/projects { repoUrl | target }
-    W->>RS: resolveProjectSource(body)
-    RS-->>W: { dir, repoUrl, provider, gitStatus }
-    W->>FS: stat(dir/maister.yaml)
-    alt manifest missing
-        W->>CFG: parseProjectConfig(serialized defaults), no file write
-    else manifest present
-        W->>CFG: loadProjectConfig(dir + /maister.yaml)
-        CFG->>FS: readFile maister.yaml
-    end
-    CFG->>CFG: zod parse + cross-ref checks
-    alt CONFIG error
-        CFG-->>W: throw MaisterError(CONFIG)
-        W-->>U: 422 CONFIG + offending field
-    end
-    W->>DB: SELECT WHERE slug=? OR repo_path=?
-    alt collision
-        DB-->>W: existing row
-        W-->>U: 409 CONFLICT (slug/repo_path taken)
-    end
-    opt manifest names project.default_runner
-        W->>DB: SELECT platform_acp_runners WHERE id = default_runner
-        alt absent, disabled or not Ready
-            W-->>U: 422 CONFIG (runner not configured / not ready)
-        end
-    end
-    W->>DB: BEGIN tx: INSERT project (+ repo_url, provider, maister_yaml_path) + executors + owner membership
-    alt unique violation (concurrent duplicate)
-        DB-->>W: 23505
-        W-->>U: 409 CONFLICT
-    end
-    DB-->>W: committed
-    loop for each flows[]
-        W->>FL: install(source, version)
-        FL->>FS: git clone --branch {tag}<br/>into ~/.maister/flows/{id}@{sha}
-        FL->>FS: symlink into .maister/{slug}/flows/{id}
-        FL->>CFG: loadFlowManifest(flow.yaml)
-        alt FLOW_INSTALL error
-            FL-->>W: throw MaisterError(FLOW_INSTALL)
-            W->>DB: DELETE project (cascade: executors/flows/members)
-            W->>FS: rm .maister/{slug} subtree
-            W-->>U: 502 FLOW_INSTALL<br/>fully rolled back, retryable
-        end
-    end
-    W-->>U: 201 { slug, projectId, gitStatus }
-```
+The [registration sequence](project-dependency-installation.md#process-flows) binds project creation and queued dependency requests in one transaction.
 
 Registration inserts an initial owner membership row for the registering admin.
 Per-project member management (list, add, role change, remove) is documented
@@ -274,11 +212,7 @@ flowchart TD
   ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)).
 - Archived projects (`archived_at IS NOT NULL`) keep their `repo_path`
   reserved against new registrations per ADR-019.
-- Project registration is atomic: `projects` + Flow attachments + project/Flow
-  runner bindings insert in one transaction, or nothing does. The optional `git init`
-  of a non-git local dir runs only after the manifest validates and flows
-  install, and its `.git` is reverted on any failure — a failed registration
-  never mutates the operator's directory.
+- Registration atomically records project, owner and dependency intent. A failed independent installation retains the project.
 - Concurrent `POST /api/projects` calls are serialized by a process-wide lock
   (`withRegistrationLock`) so two registrations cannot race on the same derived
   clone target (single-host control plane).
@@ -324,14 +258,7 @@ flowchart TD
 - **Concurrent duplicate register (TOCTOU past the collision check)** → the
   unique constraint on `slug` / `repo_path` fires inside the insert
   transaction; translated to `CONFLICT` (409), not a 500.
-- **Flow plugin `git clone --branch <tag>` fails** → `FLOW_INSTALL` (502).
-  Registration is **fully rolled back** (project row deleted, cascading to
-  executors/flows/owner membership; slug artifact subtree removed), so the
-  identical `maister.yaml` can be retried with no leftover row. The shared
-  system cache (`~/.maister/flows/<id>@<sha>`) is intentionally retained.
-- **Flow's `flow.yaml` schema mismatch** → `CONFIG` raised by
-  `loadFlowManifest`, surfaced as `FLOW_INSTALL` at the registration
-  boundary (same full rollback as above).
+- External Flow or capability failures are reported on the dependency.
 
 ## Linked artifacts
 
@@ -339,7 +266,7 @@ flowchart TD
   [ADR-019 Project slug + repo_path uniqueness](../decisions.md#adr-019-project-slug--repo_path-uniqueness-soft-archival),
   [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots).
 - ERD: [`../db/projects-domain.md`](../db/projects-domain.md).
-- API: registration Route Handler (Designed) — see
+- API: registration Route Handler (Implemented) — see
   [`../architecture.md`](../architecture.md) §Component map.
 - Config reference: [`../configuration.md`](../configuration.md).
 - Related domains: [`instance-config.md`](instance-config.md) (roots),

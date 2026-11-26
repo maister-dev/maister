@@ -24,6 +24,7 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { requireReadyDeclaredFlowRunner } from "@/lib/acp-runners/declared-flow-runner";
 import { runnerAdmissionError } from "@/lib/flows/runner-admission-error";
 import { isAutomaticTaskLaunchDrain } from "@/lib/tasks/launch-capacity";
 import {
@@ -170,7 +171,6 @@ const {
   flows,
   platformAcpRunners,
   platformRuntimeSettings,
-  projectFlowRunnerDefaults,
   projectFlowRoles,
   projects,
   runs,
@@ -625,6 +625,7 @@ async function* executeFlowLaunch(
   assertUpgradeMaintenanceAllows("run_admission");
   // FIXME(any): narrow this injected database seam to the operations used here.
   const _db = (db ?? getDb()) as unknown as {
+    execute: ExecutionDb["execute"];
     select: any;
     insert: any;
     update: any;
@@ -1181,6 +1182,10 @@ async function* executeFlowLaunch(
       : storedRevision;
 
     assertFlowLaunchable(flow.flowRefId, flow, revision ?? null);
+    const projectFlowDefaultRunnerId = await requireReadyDeclaredFlowRunner(
+      _db,
+      flow.id,
+    );
 
     const manifest = parseExecutableStoredFlowManifest(revision.manifest, {
       code: "CONFIG",
@@ -1256,17 +1261,6 @@ async function* executeFlowLaunch(
       ? await loadRunnerCatalog(_db)
       : runnerRows.map(runnerCatalogEntry);
 
-    const projectFlowDefaultRows = await _db
-      .select({ runnerId: projectFlowRunnerDefaults.runnerId })
-      .from(projectFlowRunnerDefaults)
-      .where(
-        and(
-          eq(projectFlowRunnerDefaults.projectId, project.id),
-          eq(projectFlowRunnerDefaults.flowId, flow.id),
-        ),
-      );
-    const projectFlowDefaultRunnerId =
-      projectFlowDefaultRows[0]?.runnerId ?? null;
     // M42 (ADR-114): resolve EVERY logical session of the flow to a concrete host
     // runner. A flow with no runner-bearing node still gets the implicit `default`
     // session (the legacy single-runner-per-run behavior). Resolution THROWS on an

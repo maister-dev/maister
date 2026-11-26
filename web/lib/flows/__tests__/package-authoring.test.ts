@@ -406,7 +406,8 @@ describe("authored Flow package body validation", () => {
     const relativeSourceDir = join(parent, relativeSource);
     const calls: string[] = [];
     let insertCallCount = 0;
-    const db = {
+    const dbOperations = {
+      execute: async () => ({ rows: [] }),
       insert: () => ({
         values: () => {
           insertCallCount += 1;
@@ -441,6 +442,12 @@ describe("authored Flow package body validation", () => {
           },
         }),
       }),
+    };
+
+    const db = {
+      ...dbOperations,
+      transaction: <T>(apply: (tx: typeof dbOperations) => Promise<T>) =>
+        apply(dbOperations),
     };
 
     await writeFile(join(sourceDir, "flow.yaml"), validFlowYaml(), "utf8");

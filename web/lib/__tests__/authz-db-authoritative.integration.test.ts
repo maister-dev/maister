@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { getProjectDependencyDeclarations } from "@/lib/queries/packages";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -124,6 +125,11 @@ describe("authz is DB-authoritative on role (integration)", () => {
     const resolved = await getSessionUser();
 
     expect(resolved?.mustChangePassword).toBe(true);
+    await expect(
+      getProjectDependencyDeclarations("private"),
+    ).rejects.toMatchObject({
+      code: "PASSWORD_CHANGE_REQUIRED",
+    });
   });
 
   it("denies disabled users even when an old session still exists", async () => {
@@ -135,6 +141,11 @@ describe("authz is DB-authoritative on role (integration)", () => {
     sessionRef.value = { user: { id: "u-disabled", role: "admin" } };
 
     await expect(requireGlobalRole("admin")).rejects.toMatchObject({
+      code: "ACCOUNT_INACTIVE",
+    });
+    await expect(
+      getProjectDependencyDeclarations("private"),
+    ).rejects.toMatchObject({
       code: "ACCOUNT_INACTIVE",
     });
   });

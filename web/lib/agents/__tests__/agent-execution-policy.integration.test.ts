@@ -100,6 +100,7 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "agent_project_links"`);
   await pool.query(`DELETE FROM "agents"`);
   await pool.query(`DELETE FROM "project_package_attachments"`);
+  await pool.query(`DELETE FROM "capability_imports"`);
   await pool.query(`DELETE FROM "package_installs"`);
   await pool.query(`DELETE FROM "projects"`);
 
@@ -222,6 +223,13 @@ async function seedPackageCapabilitySkills(): Promise<void> {
     "utf8",
   );
 
+  await pool.query(
+    `INSERT INTO capability_imports
+    (id, project_id, capability_ref_id, source, version_tag, resolved_revision, manifest_digest,
+     manifest, installed_path, package_install_id, package_status, trust_status, setup_status)
+    VALUES ($1,$2,'review','local','v1.0.0','rev-pkg-1','digest','{}',$3,$4,'Installed','trusted','done')`,
+    [randomUUID(), projectId, capabilityRoot, installId],
+  );
   const manifest = {
     spec: {
       schemaVersion: 1,
@@ -434,6 +442,28 @@ describe("startAgentSession — autoApply → supervisor auto-approve (M39 T5.2,
 
     expect(host.createSessionCalls()).toHaveLength(1);
     expect(host.createSessionCalls()[0].autoApprovePermissions).toBe(false);
+  });
+
+  it("keeps a failed capability of the trusted providing package out of the project agent session", async () => {
+    await seedPackageCapabilitySkills();
+    await pool.query(
+      "UPDATE capability_imports SET setup_status='failed' WHERE project_id=$1",
+      [projectId],
+    );
+    const id = await seedAgent({ stem: "blocked-skill" });
+    const host = await recordingHost();
+    const runId = await launchRunningAgent(id);
+
+    await startAgentSession(runId, { db, executionHosts: host.hosts });
+    expect(host.createSessionCalls()).toHaveLength(1);
+    await expect(
+      readFile(
+        path.join(host.adoptedPath(), ".claude/skills/aif-review/SKILL.md"),
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(path.join(host.adoptedPath(), ".claude/agents/helper.md")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("materializes skills and Claude subagents from the pinned providing package", async () => {

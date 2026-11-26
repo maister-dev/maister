@@ -1,5 +1,12 @@
 import "server-only";
 
+import type { CapabilityRefIdSets } from "@/lib/config";
+
+import {
+  missingFlowCapability,
+  emptyCapabilityRefs,
+} from "./project-capability-refs";
+
 import { evaluateFlowLaunchability } from "@/lib/flows/launchability-gate";
 import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
 
@@ -7,6 +14,7 @@ export type ProjectFlowLaunchabilityInput = {
   enabledRevisionId: string | null;
   enablementState: string;
   hasReadyRunner: boolean;
+  capabilityRefs?: CapabilityRefIdSets;
   revision: {
     engineMax: string | null;
     engineMin: string | null;
@@ -27,6 +35,7 @@ export function isProjectFlowLaunchable({
   enabledRevisionId,
   enablementState,
   hasReadyRunner,
+  capabilityRefs = emptyCapabilityRefs,
   revision,
   trustStatus,
 }: ProjectFlowLaunchabilityInput): boolean {
@@ -37,7 +46,11 @@ export function isProjectFlowLaunchable({
 
   if (!verdict.ok || revision === null) return false;
 
+  if (!hasReadyRunner) return false;
+  const stored = classifyStoredFlowManifest(revision.manifest);
+
   return (
-    hasReadyRunner && classifyStoredFlowManifest(revision.manifest).compatible
+    stored.compatible &&
+    missingFlowCapability(stored.manifest, capabilityRefs) === null
   );
 }

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   mkdtemp,
   mkdir,
@@ -37,59 +36,10 @@ const schema = schemaModule as unknown as Record<string, any>;
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 
-// installFlowPlugin behavior is swapped per test.
-const installFlowPlugin = vi.fn(
-  async (_args: Record<string, unknown>): Promise<unknown> => undefined,
-);
-
-// ADR-088: packages[] orchestration is spy-tested here (the real install +
-// attach pipeline is covered by lib/packages attach tests and the
-// projects-register-packages real-fixture test); behavior swapped per test.
-const installPackageRevision = vi.fn(
-  async (_args: Record<string, unknown>): Promise<unknown> => ({
-    id: "pkg-install-1",
-    name: "pkg",
-    versionLabel: "pkg/v1.0.0",
-    resolvedRevision: "a".repeat(40),
-    reused: false,
-    manifest: {
-      spec: {
-        schemaVersion: 1,
-        name: "pkg",
-        flows: [],
-        capabilities: [],
-        mcps: [],
-        restrictions: [],
-      },
-      inventory: { skills: [], agents: [], platformAgents: [] },
-    },
-  }),
-);
-const attachPackage = vi.fn(
-  async (_args: Record<string, unknown>): Promise<unknown> => ({
-    attachmentId: "att-1",
-    memberFlows: [],
-  }),
-);
-
 // The seeded bootstrap admin (migration 0005) is the FK target for the owner
 // membership; requireGlobalRole is mocked to return it (avoids @/auth →
 // next-auth in the Vitest module graph).
 const ADMIN_ID = "usr_bootstrap_admin";
-
-const baseManifest = {
-  schemaVersion: 1,
-  name: "Bugfix",
-  compat: { engine_min: "1.1.0" },
-  nodes: [
-    {
-      id: "implement",
-      type: "ai_coding",
-      action: { prompt: "implement" },
-      transitions: { success: "done" },
-    },
-  ],
-};
 
 const seedConfig = {
   schemaVersion: 2,
@@ -99,7 +49,9 @@ const seedConfig = {
     main_branch: "main",
     branch_prefix: "maister/",
   },
-  flows: [{ id: "bugfix", source: "github.com/x/y", version: "v1.0.0" }],
+  flows: [
+    { id: "bugfix", source: "https://github.com/x/y", version: "v1.0.0" },
+  ],
   capabilities: {
     mcps: [],
     skills: [],
@@ -115,7 +67,6 @@ const seedConfig = {
   packages: [],
 };
 let currentConfig: Record<string, any> = seedConfig;
-let currentManifest: Record<string, any> = baseManifest;
 // ADR-093: drive register()'s real maister.yaml presence check + source.
 let currentConfigError: unknown = null;
 let currentResolved: Record<string, any> = {
@@ -144,36 +95,10 @@ vi.mock("@/lib/config", async (original) => ({
 
     return currentConfig;
   }),
-  buildCapabilityRefIds: vi.fn(() => ({
-    mcp: new Set<string>(),
-    skill: new Set<string>(),
-    restriction: new Set<string>(),
-    setting: new Set<string>(),
-  })),
 }));
 
-vi.mock("@/lib/flows", () => ({
-  installFlowPlugin: (...args: unknown[]) =>
-    installFlowPlugin(...(args as [Record<string, unknown>])),
-}));
-
-// The route only needs the pure label helper from packages/install — mocking
-// it severs the heavy real-module graph (flows, capabilities) from this test.
-vi.mock("@/lib/packages/install", () => ({
-  packageVersionLabel: (version: string) => version.replaceAll("/", "-"),
-}));
-
-vi.mock("@/lib/packages/attach", () => ({
-  installPackageRevision: (...args: unknown[]) =>
-    installPackageRevision(...(args as [Record<string, unknown>])),
-  attachPackage: (...args: unknown[]) =>
-    attachPackage(...(args as [Record<string, unknown>])),
-}));
-
-// This saga test is about flow-install rollback, not source resolution; mock
-// resolveProjectSource so no real git clone/init runs. clonedByUs:false means
-// the route's clone-cleanup path never fires.
-vi.mock("@/lib/repo-source", () => ({
+vi.mock("@/lib/repo-source", async (original) => ({
+  ...(await original<typeof import("@/lib/repo-source")>()),
   resolveProjectSource: vi.fn(async () => currentResolved),
   gitInit: vi.fn(async () => undefined),
 }));
@@ -227,52 +152,6 @@ async function seedNotReadyPlatformRunner(id: string): Promise<void> {
   });
 }
 
-async function installFlow(args: Record<string, unknown>) {
-  const revisionId = randomUUID();
-  const flowRowId = randomUUID();
-  const resolvedRevision = randomUUID().replaceAll("-", "");
-  const manifest = currentManifest;
-
-  await db.insert(schema.flowRevisions).values({
-    id: revisionId,
-    flowRefId: args.flowId,
-    source: args.source,
-    versionLabel: args.version,
-    resolvedRevision,
-    manifestDigest: randomUUID().replaceAll("-", ""),
-    manifest,
-    schemaVersion: 1,
-    installedPath: `/tmp/maister/flows/${args.flowId}`,
-    setupStatus: "not_required",
-    packageStatus: "Installed",
-  });
-  await db.insert(schema.flows).values({
-    id: flowRowId,
-    projectId: args.projectId,
-    flowRefId: args.flowId,
-    source: args.source,
-    version: args.version,
-    revision: resolvedRevision,
-    installedPath: `/tmp/maister/flows/${args.flowId}`,
-    manifest,
-    schemaVersion: 1,
-    enabledRevisionId: revisionId,
-    enablementState: "Enabled",
-    trustStatus: "trusted_by_policy",
-  });
-
-  return {
-    flowRowId,
-    revisionId,
-    installedPath: `/tmp/maister/flows/${args.flowId}`,
-    symlinkPath: `/tmp/maister/projects/${args.flowId}`,
-    manifest,
-    revision: resolvedRevision,
-    trustStatus: "trusted_by_policy",
-    enablementState: "Enabled",
-  };
-}
-
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "projects_test",
@@ -296,14 +175,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  installFlowPlugin.mockReset();
-  installFlowPlugin.mockImplementation((args: Record<string, unknown>) =>
-    installFlow(args),
-  );
-  installPackageRevision.mockClear();
-  attachPackage.mockClear();
   currentConfig = seedConfig;
-  currentManifest = baseManifest;
   currentConfigError = null;
   currentResolved = {
     dir: withManifestDir,
@@ -317,52 +189,7 @@ beforeEach(async () => {
   await db.delete(schema.platformAcpRunners);
 });
 
-describe("POST /api/projects — flow-install failure saga (integration)", () => {
-  it("rolls the whole project back when a flow install fails, leaving no row", async () => {
-    installFlowPlugin.mockRejectedValueOnce(
-      new MaisterError("FLOW_INSTALL", "clone failed"),
-    );
-
-    const res = await POST(request());
-
-    expect(res.status).toBe(502);
-    const body = await res.json();
-
-    expect(body.code).toBe("FLOW_INSTALL");
-
-    // Full compensation: project + cascade children are gone.
-    expect(await projectRows("saga-proj")).toHaveLength(0);
-
-    const flows = await db.select().from(schema.flows);
-
-    expect(flows).toHaveLength(0);
-  });
-
-  it("allows an identical retry to succeed (no leftover 409)", async () => {
-    const res = await POST(request());
-
-    expect(res.status).toBe(201);
-    const body = await res.json();
-
-    expect(body.slug).toBe("saga-proj");
-
-    const rows = await projectRows("saga-proj");
-
-    expect(rows).toHaveLength(1);
-
-    const members = await db
-      .select()
-      .from(schema.projectMembers)
-      .where(eq(schema.projectMembers.projectId, rows[0].id));
-
-    expect(members).toHaveLength(1);
-    expect(members[0].role).toBe("owner");
-
-    const flows = await db.select().from(schema.flows);
-
-    expect(flows).toHaveLength(1);
-  });
-
+describe("POST /api/projects — runner validation (integration)", () => {
   it("stores a project default runner only when it exists in the platform catalog", async () => {
     await seedPlatformRunner("claude-code");
     currentConfig = {
@@ -392,174 +219,6 @@ describe("POST /api/projects — flow-install failure saga (integration)", () =>
     expect(res.status).toBe(422);
     expect(body.code).toBe("CONFIG");
     expect(await projectRows("saga-proj")).toHaveLength(0);
-  });
-
-  it("creates a pending Flow runner remap and disables the attachment for missing step targets", async () => {
-    currentManifest = {
-      ...baseManifest,
-      nodes: [
-        {
-          ...baseManifest.nodes[0],
-          settings: { runner_type: "acp", runner: "claude-glm" },
-        },
-      ],
-    };
-
-    const res = await POST(request());
-
-    expect(res.status).toBe(201);
-
-    const rows = await projectRows("saga-proj");
-    const flowRows = await db
-      .select()
-      .from(schema.flows)
-      .where(eq(schema.flows.projectId, rows[0].id));
-    const remaps = await db
-      .select()
-      .from(schema.flowRunnerRemaps)
-      .where(eq(schema.flowRunnerRemaps.projectId, rows[0].id));
-
-    expect(flowRows[0].enablementState).toBe("Disabled");
-    expect(remaps).toHaveLength(1);
-    expect(remaps[0]).toMatchObject({
-      slotKey: "session:implement",
-      status: "Pending",
-      mappedRunnerId: null,
-    });
-  });
-
-  it("does not create Flow runner remaps when step targets already exist", async () => {
-    await seedPlatformRunner("claude-glm");
-    currentManifest = {
-      ...baseManifest,
-      nodes: [
-        {
-          ...baseManifest.nodes[0],
-          settings: { runner_type: "acp", runner: "claude-glm" },
-        },
-      ],
-    };
-
-    const res = await POST(request());
-
-    expect(res.status).toBe(201);
-
-    const rows = await projectRows("saga-proj");
-    const flowRows = await db
-      .select()
-      .from(schema.flows)
-      .where(eq(schema.flows.projectId, rows[0].id));
-    const remaps = await db
-      .select()
-      .from(schema.flowRunnerRemaps)
-      .where(eq(schema.flowRunnerRemaps.projectId, rows[0].id));
-
-    expect(flowRows[0].enablementState).toBe("Enabled");
-    expect(remaps).toHaveLength(0);
-  });
-});
-
-describe("POST /api/projects — packages[] bootstrap (ADR-088, integration)", () => {
-  it("installs + attaches each packages[] entry and ingests package-derived capabilities", async () => {
-    currentConfig = {
-      ...seedConfig,
-      flows: [],
-      packages: [
-        {
-          id: "aif",
-          source: "github.com/org/maister-plugins",
-          version: "aif/v2.0.0",
-          path: "packages/aif",
-        },
-      ],
-    };
-    installPackageRevision.mockResolvedValueOnce({
-      id: "aif-install-1",
-      name: "aif",
-      versionLabel: "aif/v2.0.0",
-      resolvedRevision: "b".repeat(40),
-      reused: false,
-      manifest: {
-        spec: {
-          schemaVersion: 1,
-          name: "aif",
-          flows: [],
-          capabilities: [{ id: "aif-bundle", path: "capability" }],
-          mcps: [],
-          restrictions: [],
-        },
-        inventory: { skills: [], agents: [], platformAgents: [] },
-      },
-    });
-
-    const res = await POST(request());
-
-    expect(res.status).toBe(201);
-    expect(installPackageRevision).toHaveBeenCalledTimes(1);
-    expect(installPackageRevision.mock.calls[0][0]).toMatchObject({
-      source: "github.com/org/maister-plugins",
-      version: "aif/v2.0.0",
-      path: "packages/aif",
-      trustStatus: "untrusted",
-    });
-    // Registration rides the SAME attach pipeline as the UI surface.
-    expect(attachPackage).toHaveBeenCalledTimes(1);
-    expect(attachPackage.mock.calls[0][0]).toMatchObject({
-      projectSlug: "saga-proj",
-      packageInstallId: "aif-install-1",
-    });
-
-    // The package-derived bundle entry rode the SAME SET/CLEAR ingest as
-    // config capability_imports (additionalImportDerived plumbing), built
-    // from the install manifest with the path-safe version label.
-    const records = await db
-      .select()
-      .from(schema.capabilityRecords)
-      .where(eq(schema.capabilityRecords.capabilityRefId, "aif-bundle"));
-
-    expect(records).toHaveLength(1);
-    expect(records[0].kind).toBe("agent_definition");
-    expect(records[0].source).toBe("flow-package");
-    expect(records[0].version).toBe("aif-v2.0.0");
-  });
-
-  it("rolls the whole project back when a package install fails (same compensation)", async () => {
-    currentConfig = {
-      ...seedConfig,
-      flows: [],
-      packages: [
-        {
-          id: "aif",
-          source: "github.com/org/maister-plugins",
-          version: "aif/v2.0.0",
-        },
-      ],
-    };
-    installPackageRevision.mockRejectedValueOnce(
-      new MaisterError("FLOW_INSTALL", "package clone failed"),
-    );
-
-    const res = await POST(request());
-
-    expect(res.status).toBe(502);
-    expect(await projectRows("saga-proj")).toHaveLength(0);
-
-    // Retry succeeds with the default install + attach mocks.
-    currentConfig = {
-      ...seedConfig,
-      flows: [],
-      packages: [
-        {
-          id: "aif",
-          source: "github.com/org/maister-plugins",
-          version: "aif/v2.0.0",
-        },
-      ],
-    };
-    const retry = await POST(request());
-
-    expect(retry.status).toBe(201);
-    expect(await projectRows("saga-proj")).toHaveLength(1);
   });
 });
 
@@ -598,7 +257,9 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
     expect(rows[0].name).toBe("no-manifest");
     expect(rows[0].mainBranch).toBe("main"); // non-git dir → tier-3 fallback
     expect(rows[0].taskKey).toBe("NOM"); // deriveTaskKey("no-manifest")
-    expect(installFlowPlugin).not.toHaveBeenCalled();
+    expect(
+      await db.select().from(schema.projectDependencyDeclarations),
+    ).toHaveLength(0);
     await expect(
       readFile(join(noManifestDir, "maister.yaml"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
@@ -649,7 +310,9 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0].maisterYamlPath).toBe(join(withManifestDir, "maister.yaml"));
-    expect(installFlowPlugin).toHaveBeenCalled();
+    expect(
+      await db.select().from(schema.projectDependencyDeclarations),
+    ).toHaveLength(1);
   });
 
   // ADR-181 (RED 5): project.public_branch_template materializes at

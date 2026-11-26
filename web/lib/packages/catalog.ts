@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
 import type { DiscoveredPackageEntry } from "@/lib/db/schema";
 
 import { execFile } from "node:child_process";
@@ -9,7 +10,7 @@ import os from "node:os";
 import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 
-import { eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
@@ -34,6 +35,52 @@ const log = pino({
 
 const GIT_TIMEOUT_MS = 60_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
+
+const storedMembers = z.object({
+  spec: z.object({ flows: z.array(z.object({ id: z.string() })) }),
+});
+
+export function storedPackageFlowIds(manifest: unknown): string[] | undefined {
+  const parsed = storedMembers.safeParse(manifest);
+  return parsed.success
+    ? parsed.data.spec.flows.map((member) => member.id)
+    : undefined;
+}
+
+/** Older installations can lack the inventory in JSON. Their native member
+ * rows still identify exactly which Flows belong to the project's attachment. */
+export async function readAttachedPackageFlowIds(
+  db: Db,
+  projectId: string,
+  installs: readonly { id: string; manifest: unknown }[],
+): Promise<Map<string, string[]>> {
+  const members = new Map<string, string[]>();
+  const historical: string[] = [];
+  for (const install of installs) {
+    const declared = storedPackageFlowIds(install.manifest);
+    if (declared) members.set(install.id, declared);
+    else historical.push(install.id);
+  }
+  if (!historical.length) return members;
+  const { flows } = schemaModule;
+  const native = await db
+    .select({ installId: flows.packageInstallId, ref: flows.flowRefId })
+    .from(flows)
+    .where(
+      and(
+        eq(flows.projectId, projectId),
+        inArray(flows.packageInstallId, historical),
+      ),
+    )
+    .orderBy(asc(flows.flowRefId));
+  for (const row of native) {
+    if (row.installId === null) continue;
+    const refs = members.get(row.installId) ?? [];
+    refs.push(row.ref);
+    members.set(row.installId, refs);
+  }
+  return members;
+}
 
 // --- pure helpers (unit-tested) ---------------------------------------------
 

@@ -2,6 +2,10 @@ import { z } from "zod";
 
 import { ACP_CONTEXT_FAILURE_REASONS } from "../../runtime/acp-context-failure";
 
+import {
+  capabilityRefIdSchema,
+  SAFE_PATH_SEGMENT,
+} from "@/lib/manifest-path-segments";
 import { waitConditionSchema, waitSeconds } from "@/lib/waits/manifest";
 import {
   classifyFlowManifestShape,
@@ -30,25 +34,7 @@ import {
 
 export { TERMINAL_TRANSITION_TARGET } from "@/lib/flows/graph/transition-target";
 
-// Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
-// (and its transitive MaisterError dep) into config.schema.ts, which must remain
-// importable in any context (tests, client-adjacent shared modules).
-const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
-
-const notCapDotRef = (s: string): boolean =>
-  s !== "." && s !== ".." && !s.includes("..");
-
-// Safe identifier for capability ref ids — mirrors flowIdSchema from flow-paths.ts
-// but with a wider max (128 chars) to accommodate longer capability names.
-export const capabilityRefIdSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(SAFE_PATH_SEGMENT, "capabilityRefId must match /^[A-Za-z0-9._-]+$/")
-  .refine(
-    notCapDotRef,
-    "capabilityRefId must not be '.', '..' or contain '..'",
-  );
+export { capabilityRefIdSchema } from "@/lib/manifest-path-segments";
 
 export const flowEntrySchema = z.object({
   id: z.string().min(1),

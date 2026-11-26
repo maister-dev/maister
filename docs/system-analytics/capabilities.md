@@ -241,7 +241,7 @@ sequenceDiagram
     participant Setup as runCapabilityRevisionSetup
     U->>Rt: POST .../trust {confirm:true}
     Rt->>DB: SELECT ... FOR UPDATE (assert import row)
-    alt setupStatus in {done, not_required}
+    alt trusted and setupStatus in {done, not_required}
         Rt-->>U: 409 (nothing to do)
     else
         Rt->>DB: trustStatus = trusted   (BEFORE)
@@ -397,9 +397,7 @@ These are the steady-state invariants the materialization code MUST satisfy
   `SAFE_PATH_SEGMENT` + `notDotRef` at the Zod schema AND inside
   `systemCapabilityCachePath`; a traversal id MUST throw
   `MaisterError("FLOW_INSTALL")` and write nothing outside the cache.
-- The trust route's idempotency marker MUST be `setupStatus`: `409` ONLY when
-  `setupStatus ∈ {done, not_required}`, NEVER merely because `trustStatus` is set;
-  a `trusted`+`failed` row MUST re-run setup on re-POST.
+- A platform administrator can confirm an untrusted bundle that needs no setup. A repeated confirmation of an already trusted, ready bundle returns 409. Known setup failure supports retry, while ambiguous execution requires an explicit, quiescence-checked recovery decision. Package members inherit the execution boundary of their originating package.
 - `ENFORCEABILITY_BY_AGENT` MUST only ever flip `instructed → enforced`; the
   launch/runtime guard MUST stay an allow-list of `enforced` cells. Since ADR-130,
   `tools`/`mcps`/`hooks` are `enforced` for **all five** adapters (adapter-agnostic
@@ -497,3 +495,5 @@ These are the steady-state invariants the materialization code MUST satisfy
   `web/lib/flows/enforcement.ts`, `web/lib/flows/graph/{runner-graph,ledger}.ts`,
   `web/lib/flow-paths.ts`, `web/app/api/runs/route.ts`,
   `web/app/api/projects/[slug]/capabilities/[capabilityRefId]/trust/route.ts`.
+
+Registration dependency processing follows the [dependency lifecycle](project-dependency-installation.md).

@@ -24,9 +24,13 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { readAcceptedFlowLink } from "@/lib/project-dependencies/flow-links";
 import {
   installPackageRevision,
-  upgradeAttachment,
+  type PackageAdoption,
+  type LaunchAttachmentFence,
+  captureLaunchPackageFence,
+  changeLaunchPackage,
 } from "@/lib/packages/attach";
 
 const log = pino({
@@ -365,7 +369,7 @@ export async function detectAvailablePackageVersions(opts: {
 
 // What `applyPackageVersionChoices` advanced — enough to re-pin (revert) each
 // attachment to its prior install if the launch fails after the adopt.
-export type AdoptRevert = { attachmentId: string; priorInstallId: string };
+export type AdoptRevert = PackageAdoption;
 
 // ADR-132: a `try_once` choice translated into an ephemeral per-run pin
 // instruction — the launch resolves the flow revision from this TARGET cut
@@ -413,6 +417,7 @@ export async function applyPackageVersionChoices(opts: {
   // invalid choice (unknown install / unoffered option / adopt with no newer cut)
   // refuses before any attachment is advanced.
   type AdoptStep = {
+    expected: LaunchAttachmentFence;
     attachmentId: string;
     priorInstallId: string;
     localPackageId: string;
@@ -460,6 +465,12 @@ export async function applyPackageVersionChoices(opts: {
     }
 
     steps.push({
+      expected: await captureLaunchPackageFence(
+        db,
+        opts.projectId,
+        avail.attachmentId,
+        avail.packageInstallId,
+      ),
       attachmentId: avail.attachmentId,
       priorInstallId: avail.packageInstallId,
       localPackageId: avail.localPackageId,
@@ -507,19 +518,19 @@ export async function applyPackageVersionChoices(opts: {
         targetInstallId = cut.installId;
       }
 
-      await upgradeAttachment({
-        projectId: opts.projectId,
-        projectSlug: opts.projectSlug,
-        attachmentId: step.attachmentId,
-        packageInstallId: targetInstallId,
-        workspaceRoot: opts.workspaceRoot,
-        db,
-        signal: opts.signal,
-      });
-      reverts.push({
-        attachmentId: step.attachmentId,
-        priorInstallId: step.priorInstallId,
-      });
+      await changeLaunchPackage(
+        {
+          projectId: opts.projectId,
+          projectSlug: opts.projectSlug,
+          attachmentId: step.attachmentId,
+          packageInstallId: targetInstallId,
+          workspaceRoot: opts.workspaceRoot,
+          db,
+          signal: opts.signal,
+          onCommitted: (receipt) => reverts.push(receipt),
+        },
+        step.expected,
+      );
       log.info(
         {
           projectId: opts.projectId,
@@ -537,6 +548,20 @@ export async function applyPackageVersionChoices(opts: {
       workspaceRoot: opts.workspaceRoot,
       db,
     });
+    const pending = readAcceptedFlowLink(err);
+    if (pending)
+      throw new MaisterError(
+        "PRECONDITION",
+        "The run could not start because a project Flow link is awaiting repair.",
+        {
+          cause: err,
+          details: {
+            ...pending.flowLinkPending,
+            reason: "launch_flow_link_pending",
+            attachmentId: pending.attachmentId,
+          },
+        },
+      );
     throw err;
   }
 
@@ -561,19 +586,45 @@ export async function revertPackageVersionChoices(
 
   for (const revert of reverts) {
     try {
-      await upgradeAttachment({
-        projectId: opts.projectId,
-        projectSlug: opts.projectSlug,
-        attachmentId: revert.attachmentId,
-        packageInstallId: revert.priorInstallId,
-        workspaceRoot: opts.workspaceRoot,
-        db,
-      });
+      await changeLaunchPackage(
+        {
+          projectId: opts.projectId,
+          projectSlug: opts.projectSlug,
+          attachmentId: revert.attachmentId,
+          packageInstallId: revert.priorInstallId,
+          workspaceRoot: opts.workspaceRoot,
+          db,
+        },
+        revert.applied,
+        revert.priorPin,
+      );
       log.info(
         { projectId: opts.projectId, ...revert },
         "version-adopt reverted after a failed launch",
       );
     } catch (err) {
+      const pending = readAcceptedFlowLink(err);
+      if (pending) {
+        log.warn(
+          {
+            projectId: opts.projectId,
+            attachmentId: revert.attachmentId,
+            ...pending.flowLinkPending,
+          },
+          "restored package pin awaits Flow link repair",
+        );
+        continue;
+      }
+      if (
+        err instanceof MaisterError &&
+        err.details?.reason === "stale_generation"
+      ) {
+        log.info(
+          { projectId: opts.projectId, attachmentId: revert.attachmentId },
+          "kept newer package choice after a failed launch",
+        );
+        continue;
+      }
       log.error(
         { projectId: opts.projectId, ...revert, err: (err as Error).message },
         "version-adopt revert FAILED — manual re-pin may be required",

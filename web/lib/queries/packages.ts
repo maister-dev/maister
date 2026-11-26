@@ -14,6 +14,8 @@ import { pathToFileURL } from "node:url";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { readProjectDeclarations } from "@/lib/project-dependencies/read";
+import { requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { loadFlowManifest } from "@/lib/config";
@@ -28,6 +30,8 @@ import { resolveConfinedFlowYaml } from "@/lib/flows/package-content";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import {
   classifyVersionTargets,
+  readAttachedPackageFlowIds,
+  storedPackageFlowIds,
   defaultPackageSourceUrls,
   deriveUpdateAvailable,
   type PackageVersionTarget,
@@ -60,6 +64,12 @@ const log = pino({
   name: "project-package-compatibility",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+export async function getProjectDependencyDeclarations(projectId: string) {
+  const { user } = await requireProjectAction(projectId, "managePackages");
+
+  return readProjectDeclarations(getDb(), projectId, user.role === "admin");
+}
 
 export type ProjectPackageVersionTarget = PackageVersionTarget & {
   compatible: boolean;
@@ -204,7 +214,7 @@ async function assessPackageCompatibility(
       {
         packageInstallId: install.id,
         packageName: install.name,
-        flowIds: manifest?.spec?.flows?.map((flow) => flow.id) ?? [],
+        flowIds: storedPackageFlowIds(manifest) ?? [],
         err: err instanceof Error ? err.message : String(err),
       },
       "package flow manifest compatibility check failed",
@@ -273,6 +283,11 @@ export async function getProjectPackageAttachments(
       attachments.map((a: any) => a.packageInstallId),
     ),
   );
+  const members = await readAttachedPackageFlowIds(
+    db,
+    projectId,
+    installs.map((row) => row.install),
+  );
   const attachedInstallIds = attachments.map(
     (attachment: any) => attachment.packageInstallId as string,
   );
@@ -334,7 +349,6 @@ export async function getProjectPackageAttachments(
   return attachments.map((att: any) => {
     const installed = installById.get(att.packageInstallId);
     const install = installed?.install;
-    const manifest = install?.manifest as PackageInstallManifest | undefined;
     const sourceKind = install ? kindByUrl.get(install.sourceUrl) : undefined;
     const discoveredEntry = install
       ? (discoveredByUrl.get(install.sourceUrl) ?? []).find(
@@ -398,7 +412,7 @@ export async function getProjectPackageAttachments(
         ...(compatibilityByInstallId.get(target.installId) ??
           UNKNOWN_PACKAGE_COMPATIBILITY),
       })),
-      flows: manifest?.spec?.flows?.map((f) => f.id) ?? [],
+      flows: members.get(att.packageInstallId) ?? [],
     };
   });
 }
@@ -414,7 +428,6 @@ export async function getAvailablePackageInstalls(): Promise<
 
   return Promise.all(
     installs.map(async ({ install, sourceLocalPackageName }) => {
-      const manifest = install.manifest as PackageInstallManifest | undefined;
       const compatibility = await resolveCompatibility(install);
 
       return {
@@ -423,7 +436,7 @@ export async function getAvailablePackageInstalls(): Promise<
         versionLabel: install.versionLabel,
         resolvedRevision: install.resolvedRevision,
         trustStatus: install.trustStatus,
-        flows: manifest?.spec?.flows?.map((f) => f.id) ?? [],
+        flows: storedPackageFlowIds(install.manifest) ?? [],
         sourceLocalPackageId: install.sourceLocalPackageId ?? null,
         sourceLocalPackageName,
         ...compatibility,

@@ -49,14 +49,10 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-vi.mock("@/lib/scheduler", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
-
-  return {
-    ...actual,
-    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
-  };
-});
+vi.mock(
+  import("@/lib/scheduler/start-allocated-run"),
+  () => import("@/test-support/queued-allocated-run"),
+);
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
@@ -291,12 +287,13 @@ describe("(a) task.created -> agent_triggers consumer enqueues a triager run", (
     ]);
 
     const rows = await pool.query(
-      `SELECT "run_kind", "trigger_source", "trigger_event_id", "task_id" FROM "runs" WHERE "agent_id" = $1`,
+      `SELECT "run_kind", "status", "trigger_source", "trigger_event_id", "task_id" FROM "runs" WHERE "agent_id" = $1`,
       [AGENT_ID],
     );
 
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0].run_kind).toBe("agent");
+    expect(rows.rows[0].status).toBe("Pending");
     expect(rows.rows[0].trigger_source).toBe("domain_event");
     expect(Number(rows.rows[0].trigger_event_id)).toBe(5001);
     expect(rows.rows[0].task_id).toBe(taskId);

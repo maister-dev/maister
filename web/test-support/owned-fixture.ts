@@ -13,6 +13,7 @@ import {
   registerProcess,
   registerSpawnedProcess,
   signalInvocationGroup,
+  signalInvocationProcess,
   type Invocation,
 } from "./process-invocation";
 
@@ -21,11 +22,8 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// The half of a REAL fixture process that is identical for the supervisor and
-// the web: register it under the invocation before anything can outlive the
-// test, fail its startup loudly with the log tail, and kill it as a GROUP with
-// bounded escalation, asserting nothing survives. Only the role, the readiness
-// probe and the grace window differ — everything below used to exist twice.
+// Register the web or supervisor under its invocation before readiness.
+// Bound graceful shutdown with verified group escalation, then prove the group is empty.
 
 export type OwnedFixture = {
   pid: number;
@@ -45,10 +43,6 @@ export type OwnedFixtureInput = {
   bootId: string;
   killGraceMs: number;
   outcome?: Promise<LinuxApplicationOutcome>;
-  gracefulSignal?(
-    identity: ProcessIdentity,
-    signal: NodeJS.Signals,
-  ): Promise<void>;
   // Resolves when the process is serving. A returned string replaces the
   // provisional boot id and re-registers the process under it.
   ready(exited: Promise<number | null>): Promise<string | undefined>;
@@ -137,9 +131,12 @@ export async function startOwnedFixture(
     outcome,
     async kill(signal: NodeJS.Signals = "SIGKILL") {
       if (!leaderGone()) {
-        if (signal !== "SIGKILL" && input.gracefulSignal)
-          await input.gracefulSignal(capturedIdentity, signal);
-        else await signalInvocationGroup(invocation, pid, signal);
+        // The watchdog's in-flight ownership inspector shares the service group.
+        // Let the service drain its children before escalating to the whole group.
+        if (signal === "SIGKILL")
+          await signalInvocationGroup(invocation, pid, signal);
+        else
+          await signalInvocationProcess(invocation, capturedIdentity, signal);
         // Closure and namespace status are separate: a rejected status frame
         // must still contain the captured child and preserve its log.
         await Promise.race([

@@ -3,11 +3,12 @@ import "server-only";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { FlowRevisionExecTrust } from "@/lib/db/schema";
 import type { TrustStatus } from "@/lib/flows/trust";
+import type { Db } from "@/lib/execution-host/db";
+import type { DependencyTransaction } from "@/lib/project-dependencies/package-writes";
 
 import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
-  cp,
   lstat,
   mkdir,
   mkdtemp,
@@ -18,17 +19,26 @@ import {
   rm,
   stat,
   symlink,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path, { dirname, join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  publishMaterial,
+  snapshotLocalMaterial,
+} from "@/lib/project-dependencies/material";
+import { dependencyCloneFailure } from "@/lib/project-dependencies/failure";
+import {
+  localDirectoryContentDigest,
+  materialLayoutDigest,
+} from "@/lib/project-dependencies/content-digest";
+export { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
+import { runMaterialSetup } from "@/lib/project-dependencies/setup";
 import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
 import {
   loadFlowManifest,
@@ -62,7 +72,7 @@ import {
   systemCachePath,
   versionTagSchema,
 } from "@/lib/flow-paths";
-import { runtimeFileUrl } from "@/lib/runtime-file-url";
+import { localDirectoryPath, runtimeFileUrl } from "@/lib/runtime-file-url";
 
 // FIXME(any): remove the schema-module bridge once Drizzle's generated table
 // types remain stable across service and integration-test boundaries.
@@ -76,7 +86,7 @@ const log = pino({
 });
 
 const CLONE_TIMEOUT_MS = 120_000;
-const SETUP_SH_TIMEOUT_MS = 60_000;
+
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 
 // First 40 hex chars of the local package sha256 — content-addresses all local
@@ -108,7 +118,10 @@ function parseRevisionOverride(
   return parsed.data;
 }
 
-const inFlightInstalls = new Map<string, Promise<InstallResult>>();
+const inFlightInstalls = new WeakMap<
+  InstallFlowPluginArgs,
+  { trust: TrustStatus | undefined; promise: Promise<InstallResult> }
+>();
 
 export type InstallFlowPluginArgs = {
   source: string;
@@ -116,6 +129,12 @@ export type InstallFlowPluginArgs = {
   projectId: string;
   projectSlug: string;
   flowId: string;
+  preparedRevision?: InstalledRevision;
+  projectLink?: (link: {
+    workspaceRoot: string;
+    linkPath: string;
+    target: string;
+  }) => Promise<void>;
   workspaceRoot?: string;
   roleRefs?: readonly string[];
   // Project capability registry (block + capability_imports), built by the
@@ -123,10 +142,8 @@ export type InstallFlowPluginArgs = {
   // loader rejects node settings refs absent from it (M14 carve-b). Omitted by
   // generic callers (enable/upgrade) that have no project context → no check.
   capabilityRefIds?: CapabilityRefIdsInput;
-  // Override the exec_trust value written to flow_revisions. When absent,
-  // exec_trust is derived from trustStatus: trusted_by_policy → 'trusted',
-  // untrusted → 'untrusted'. Authored-bridge callers set this to 'untrusted'
-  // to suppress setup.sh execution regardless of logic-trust (§4.2, §6.4).
+  // Override this install's executable authorization. Authored-bridge callers
+  // defer setup.sh regardless of logic trust (§4.2, §6.4).
   execTrustOverride?: FlowRevisionExecTrust;
   // ADR-088: package sub-installs inherit the PACKAGE's resolved revision
   // (tag SHA or package content digest) so all members share one immutable
@@ -191,7 +208,19 @@ function wrapInstallStage(opts: {
   return new MaisterError(
     "FLOW_INSTALL",
     `flow install failed [stage=${opts.stage}] ${opts.source}@${opts.version}: ${opts.message}`,
-    opts.cause ? { cause: asError(opts.cause) } : undefined,
+    {
+      cause: opts.cause,
+      details: {
+        reason:
+          opts.stage === "clone"
+            ? dependencyCloneFailure(opts.cause)
+            : opts.stage === "validate-manifest"
+              ? "invalid_manifest"
+              : opts.stage === "finalize"
+                ? "finalize_failed"
+                : "install_failed",
+      },
+    },
   );
 }
 
@@ -551,71 +580,16 @@ export async function ensureSymlink(opts: {
     { target, linkPath, previousTarget: currentTarget },
     "symlink: repointing",
   );
-  await unlink(linkPath);
-  await symlink(target, linkPath);
-}
+  const stage = join(dirname(linkPath), ".maister-link-" + randomUUID());
 
-const SETUP_DONE_SENTINEL = ".maister-setup-done";
-
-// Low-level setup.sh runner. NEVER call this from the install path — it
-// executes arbitrary package code and must only run once trust is established
-// (see runRevisionSetup). Returns the resulting setup_status; a non-zero exit
-// returns "failed" (the caller marks the revision Failed).
-async function runSetupSh(opts: {
-  target: string;
-  signal?: AbortSignal;
-}): Promise<"not_required" | "done" | "failed"> {
-  const setupPath = join(opts.target, "setup.sh");
-
-  if (!(await pathExists(setupPath))) {
-    log.debug({ target: opts.target }, "no setup.sh, skipping");
-
-    return "not_required";
-  }
-
-  const sentinelPath = join(opts.target, SETUP_DONE_SENTINEL);
-
-  if (await pathExists(sentinelPath)) {
-    log.debug(
-      { target: opts.target, sentinelPath },
-      "setup.sh sentinel present, skipping (once-only semantic)",
-    );
-
-    return "done";
-  }
-
-  log.info({ setupPath }, "running setup.sh");
-
+  await symlink(target, stage);
   try {
-    const { stdout, stderr } = await execFileAsync("bash", [setupPath], {
-      cwd: opts.target,
-      signal: buildExecSignal(opts.signal, SETUP_SH_TIMEOUT_MS),
-      maxBuffer: EXEC_MAX_BUFFER,
-    });
-
-    log.debug({ stdout, stderr, setupPath }, "setup.sh done");
-    await writeFile(sentinelPath, new Date().toISOString(), "utf8");
-
-    return "done";
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException & { stderr?: string };
-
-    if (e.name === "AbortError") {
-      log.info({ setupPath }, "setup.sh aborted by signal");
-
-      throw wrapInstall(`setup.sh aborted for ${setupPath}`, err);
-    }
-
-    log.warn(
-      { err: e.message, stderr: e.stderr, setupPath },
-      "setup.sh non-zero exit; revision marked setup_status=failed",
-    );
-
-    return "failed";
+    await rename(stage, linkPath);
+  } finally {
+    await rm(stage, { force: true });
   }
 }
 
-// Capture the upstream git commit SHA inside an already-cloned directory.
 export async function gitRevParseHead(opts: {
   dir: string;
   source: string;
@@ -655,17 +629,7 @@ export type LocalDirectorySourceResult =
 export async function isLocalDirectorySource(
   source: string,
 ): Promise<LocalDirectorySourceResult> {
-  let candidate: string | null = null;
-
-  if (source.startsWith("file://")) {
-    try {
-      candidate = fileURLToPath(source);
-    } catch {
-      candidate = null;
-    }
-  } else if (path.isAbsolute(source)) {
-    candidate = source;
-  }
+  const candidate = localDirectoryPath(source);
 
   if (!candidate) return { kind: "git" };
 
@@ -686,75 +650,6 @@ export async function isLocalDirectorySource(
   } catch {
     return { kind: "git" };
   }
-}
-
-export async function localDirectoryContentDigest(
-  sourceDir: string,
-): Promise<string> {
-  const root = resolvePath(sourceDir);
-  const entries = await listLocalDirectoryDigestEntries(root);
-  const hash = createHash("sha256");
-
-  for (const entry of entries) {
-    hash.update(entry.kind);
-    hash.update("\0");
-    hash.update(entry.relativePath);
-    hash.update("\0");
-    hash.update(entry.content);
-    hash.update("\0");
-  }
-
-  return hash.digest("hex");
-}
-
-type LocalDirectoryDigestEntry = {
-  kind: "file" | "symlink";
-  relativePath: string;
-  content: string;
-};
-
-async function listLocalDirectoryDigestEntries(
-  root: string,
-): Promise<LocalDirectoryDigestEntry[]> {
-  const entries: LocalDirectoryDigestEntry[] = [];
-
-  async function walk(dir: string): Promise<void> {
-    const dirEntries = await readdir(dir, { withFileTypes: true });
-
-    for (const entry of dirEntries) {
-      const absolutePath = join(dir, entry.name);
-      const relativePath = path
-        .relative(root, absolutePath)
-        .split(path.sep)
-        .join("/");
-
-      if (entry.isDirectory()) {
-        await walk(absolutePath);
-        continue;
-      }
-      if (entry.isSymbolicLink()) {
-        entries.push({
-          kind: "symlink",
-          relativePath,
-          content: await readlink(absolutePath),
-        });
-        continue;
-      }
-      if (entry.isFile()) {
-        const content = await readFile(absolutePath);
-
-        entries.push({
-          kind: "file",
-          relativePath,
-          content: content.toString("base64"),
-        });
-      }
-    }
-  }
-
-  await walk(root);
-
-  return entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 }
 
 async function loadManifestOrThrow(
@@ -891,6 +786,8 @@ async function ensureRevisionIntentRow(opts: {
 // project enablement pointer — used by installFlowPlugin (install+enable) and
 // by lifecycle.upgradeFlow (install beside).
 export async function installRevision(opts: {
+  onResolve?: (revision: string, layoutDigest: string) => Promise<void>;
+  authorizePublication?: (tx: Db) => Promise<void>;
   source: string;
   version: string;
   flowId: string;
@@ -930,71 +827,93 @@ export async function installRevision(opts: {
 
   let resolvedRevision: string;
   let target: string;
-  let tmpDir: string | null = null;
-  let manifestForIntent: FlowYamlV1;
+  const sourceDir =
+    sourceKind.kind === "local"
+      ? await snapshotLocalMaterial(sourceKind.absPath)
+      : await mkdtemp(path.join(os.tmpdir(), `maister-flow-clone-${flowId}-`));
+  const hashMaterial = (dir: string) =>
+    localDirectoryContentDigest(dir, new Set([".git"]));
+  // Lock the physical destination (whose name contains a shortened SHA)
+  // before publishing any bytes or changing an existing revision's state.
+  let revisionId: string;
+  let skipFinalize: boolean;
 
-  if (sourceKind.kind === "local") {
-    manifestForIntent = await loadManifestOrThrow(
-      join(sourceKind.absPath, "flow.yaml"),
+  try {
+    if (sourceKind.kind === "git") {
+      await gitClone({ source, version, target: sourceDir, signal });
+    }
+    resolvedRevision =
+      revisionOverride ??
+      (sourceKind.kind === "local"
+        ? (await localDirectoryContentDigest(sourceDir)).slice(
+            0,
+            LOCAL_REVISION_LEN,
+          )
+        : await gitRevParseHead({ dir: sourceDir, source, version, signal }));
+    const layoutDigest = await materialLayoutDigest(sourceDir);
+    await opts.onResolve?.(resolvedRevision, layoutDigest);
+    target = systemCachePath(flowId, resolvedRevision);
+    const manifestForIntent = await loadManifestOrThrow(
+      join(sourceDir, "flow.yaml"),
       source,
       version,
       { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
     );
-    resolvedRevision =
-      revisionOverride ??
-      (await localDirectoryContentDigest(sourceKind.absPath)).slice(
-        0,
-        LOCAL_REVISION_LEN,
-      );
-    target = systemCachePath(flowId, resolvedRevision);
-  } else {
-    tmpDir = await mkdtemp(
-      path.join(os.tmpdir(), `maister-flow-clone-${flowId}-`),
-    );
 
-    try {
-      await gitClone({ source, version, target: tmpDir, signal });
-      resolvedRevision =
-        revisionOverride ??
-        (await gitRevParseHead({
-          dir: tmpDir,
+    log.info(
+      { flowId, version, source, resolvedRevision },
+      "installing flow revision",
+    );
+    const witness = await hashMaterial(sourceDir);
+
+    ({ revisionId, skipFinalize } = await db.transaction(
+      async (tx: DependencyTransaction) => {
+        await opts.authorizePublication?.(tx);
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${target},0))`,
+        );
+        await publishMaterial({
+          beforePublish: () => opts.authorizePublication?.(tx),
+          source: sourceDir,
+          target,
+          revision: resolvedRevision,
+          digest: witness,
+          layoutDigest,
+          hash: hashMaterial,
+          hasHistoricalOwner: async () => {
+            const [prior] = await tx
+              .select({ id: flowRevisions.id })
+              .from(flowRevisions)
+              .where(
+                and(
+                  eq(flowRevisions.installedPath, target),
+                  eq(flowRevisions.resolvedRevision, resolvedRevision),
+                  eq(flowRevisions.source, source),
+                  eq(flowRevisions.packageStatus, "Installed"),
+                ),
+              );
+
+            return Boolean(prior);
+          },
+        });
+
+        return ensureRevisionIntentRow({
+          db: tx,
+          flowId,
           source,
           version,
-          signal,
-        }));
-      target = systemCachePath(flowId, resolvedRevision);
-      manifestForIntent = await loadManifestOrThrow(
-        join(tmpDir, "flow.yaml"),
-        source,
-        version,
-        { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
-      );
-    } catch (err) {
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      throw err;
-    }
+          resolvedRevision,
+          installedPath: target,
+          schemaVersionGuess: manifestForIntent.schemaVersion,
+          manifestForIntent,
+        });
+      },
+    ));
+  } finally {
+    await rm(sourceDir, { recursive: true, force: true });
   }
-
-  log.info(
-    { flowId, version, source, resolvedRevision },
-    "installing flow revision",
-  );
-
-  const { revisionId, skipFinalize } = await ensureRevisionIntentRow({
-    db,
-    flowId,
-    source,
-    version,
-    resolvedRevision,
-    installedPath: target,
-    schemaVersionGuess: manifestForIntent.schemaVersion,
-    manifestForIntent,
-  });
-
   try {
     if (skipFinalize) {
-      if (tmpDir)
-        await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       log.info(
         { target, resolvedRevision },
         "revision already Installed; reusing cache",
@@ -1025,30 +944,6 @@ export async function installRevision(opts: {
         manifest,
         setupStatus: setupRow[0]?.setupStatus ?? "not_required",
       };
-    }
-
-    const cachePopulated =
-      (await pathExists(target)) &&
-      (await pathExists(join(target, "flow.yaml")));
-
-    if (!cachePopulated) {
-      await mkdir(dirname(target), { recursive: true });
-
-      if (sourceKind.kind === "local") {
-        await cp(sourceKind.absPath, target, {
-          recursive: true,
-          errorOnExist: false,
-          force: false,
-        });
-        log.info({ target }, "local-copy-done");
-      } else if (tmpDir) {
-        await rename(tmpDir, target);
-        tmpDir = null;
-        log.info({ target, resolvedRevision }, "renamed clone to cache");
-      }
-    } else if (tmpDir) {
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      tmpDir = null;
     }
 
     const manifest = await loadManifestOrThrow(
@@ -1123,8 +1018,6 @@ export async function installRevision(opts: {
       .set({ packageStatus: "Failed" })
       .where(eq(flowRevisions.id, revisionId))
       .catch(() => {});
-    if (tmpDir)
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 
     if (err instanceof MaisterError) throw err;
     throw wrapInstallStage({
@@ -1151,7 +1044,10 @@ export async function runRevisionSetup(opts: {
   signal?: AbortSignal;
 }): Promise<"not_required" | "done" | "failed"> {
   const db = opts.db ?? getDb();
-  const setupStatus = await runSetupSh({
+  const setupStatus = await runMaterialSetup({
+    kind: "flow",
+    db,
+    revision: opts.revisionId,
     target: opts.installedPath,
     signal: opts.signal,
   });
@@ -1160,7 +1056,7 @@ export async function runRevisionSetup(opts: {
     .update(flowRevisions)
     .set({
       setupStatus,
-      ...(setupStatus === "failed" ? { packageStatus: "Failed" } : {}),
+      packageStatus: setupStatus === "failed" ? "Failed" : "Installed",
     })
     .where(eq(flowRevisions.id, opts.revisionId));
 
@@ -1246,18 +1142,20 @@ async function installFlowPluginImpl(
   const workspaceRoot = args.workspaceRoot ?? process.cwd();
   const db = args.db ?? getDb();
 
-  const rev = await installRevision({
-    source,
-    version,
-    flowId,
-    roleRefs,
-    db,
-    signal,
-    capabilityRefIds: args.capabilityRefIds,
-    resolvedRevisionOverride: args.resolvedRevisionOverride,
-    sharedSchemaDir: args.sharedSchemaDir,
-    resultProfiles: args.resultProfiles,
-  });
+  const rev =
+    args.preparedRevision ??
+    (await installRevision({
+      source,
+      version,
+      flowId,
+      roleRefs,
+      db,
+      signal,
+      capabilityRefIds: args.capabilityRefIds,
+      resolvedRevisionOverride: args.resolvedRevisionOverride,
+      sharedSchemaDir: args.sharedSchemaDir,
+      resultProfiles: args.resultProfiles,
+    }));
 
   const trustStatus = trustStatusOverride ?? resolveTrust(source);
 
@@ -1270,10 +1168,14 @@ async function installFlowPluginImpl(
     args.execTrustOverride ??
     (trustStatus === "untrusted" ? "untrusted" : "trusted");
 
-  await db
-    .update(flowRevisions)
-    .set({ execTrust })
-    .where(eq(flowRevisions.id, rev.revisionId));
+  // New revisions default to untrusted. Reusing a revision cannot revoke an
+  // earlier grant for the same executable content in another project.
+  if (execTrust === "trusted") {
+    await db
+      .update(flowRevisions)
+      .set({ execTrust })
+      .where(eq(flowRevisions.id, rev.revisionId));
+  }
 
   // git/policy installs (execTrust=trusted) run setup.sh now; authored-bridge
   // installs (execTrust=untrusted) skip setup and auto-enable without it.
@@ -1321,9 +1223,16 @@ async function installFlowPluginImpl(
   // Package attachment materializes the project-level `.maister/` flow link
   // before any run exists. Prime the same repo-local excludes used by run
   // materialization so attaching a package never dirties the consumer repo.
-  await ensureWorktreeGitExclude(workspaceRoot);
-  await ensureSymlink({ target: rev.installedPath, linkPath: symlinkPath });
-  log.info({ symlinkPath }, "symlink ready");
+  if (args.projectLink) {
+    await args.projectLink({
+      workspaceRoot,
+      linkPath: symlinkPath,
+      target: rev.installedPath,
+    });
+  } else {
+    await ensureWorktreeGitExclude(workspaceRoot);
+    await ensureSymlink({ target: rev.installedPath, linkPath: symlinkPath });
+  }
 
   const flowRowId = await upsertFlowEnablementRow({
     db,
@@ -1372,24 +1281,19 @@ export async function installFlowPlugin(
 ): Promise<InstallResult> {
   validateBoundary(args);
 
-  // Dedup key includes projectId so concurrent installs of the same flow tag
-  // to DIFFERENT projects each run their own per-project pipeline.
-  const dedupKey = `${args.projectId}::${args.flowId}@${args.version}`;
-  const existing = inFlightInstalls.get(dedupKey);
+  // Only identical calls may share file, trust, cancellation and transaction ownership.
+  const existing = inFlightInstalls.get(args);
 
-  if (existing) {
-    log.debug({ dedupKey }, "join in-flight install");
-
-    return existing;
-  }
-
+  if (existing && existing.trust === trustStatusOverride)
+    return existing.promise;
   const promise = installFlowPluginImpl(args, trustStatusOverride).finally(
     () => {
-      inFlightInstalls.delete(dedupKey);
+      if (inFlightInstalls.get(args)?.promise === promise)
+        inFlightInstalls.delete(args);
     },
   );
 
-  inFlightInstalls.set(dedupKey, promise);
+  inFlightInstalls.set(args, { trust: trustStatusOverride, promise });
 
   return promise;
 }

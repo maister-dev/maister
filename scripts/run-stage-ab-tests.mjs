@@ -74,6 +74,7 @@ export const laneSuites = {
     "test-support/__tests__/durable-workers-concurrency.integration.test.ts",
     // R9 S1 owns production restarts and therefore runs in the serial slice.
     "lib/scratch-runs/__tests__/dispatch-window.integration.test.ts",
+    "test-support/__tests__/capability-finalize.integration.test.ts",
   ],
 };
 // The package directory each slice runs in.
@@ -201,11 +202,15 @@ export const requiredIsolationCases = {
     "applies the agent_turn owner after the production web restarts",
     "applies the scratch_message owner after the production web restarts",
     "R18: a deferred accepted launch survives web death and binds once through the restarted production worker without another request",
+    "AC03: the restarted production worker reclaims a pre-effect dependency lease and realizes its pending sibling without another request",
     "R1: a registry missing a schema kind refuses to compose with CONFIG and starts nothing",
     "R2: composing the agent registry beside the consensus-draft one is a CONFIG failure by design",
     "R4: stopping with nothing started resolves",
-    "R5: a double start returns the same four handles",
+    "R5: a double start returns the same worker handles",
     "R3: start refuses while the application is stopping"
+  ],
+  "test-support/__tests__/capability-finalize.integration.test.ts": [
+    "persists both capability digests through production registration"
   ],
   "test-support/__tests__/durable-workers-concurrency.integration.test.ts": [
     "D1: a live waiter and the durable worker on one command apply it exactly once",
@@ -219,6 +224,7 @@ export const requiredIsolationCases = {
     "I4: the supervisor and its private root are untouched by the web's death and restart"
   ],
   [processCleanupSuite]: [
+    "O-drain: graceful fixture stop lets an in-flight ownership inspection finish",
     "O-build-lock: a proved dead owner is reclaimed and the verified artifact is reused",
     "O-exit: 'success' retains the exact outcome and finishes cleanup",
     "O-exit: 'assertion failure' retains the exact outcome and finishes cleanup",

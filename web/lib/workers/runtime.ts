@@ -10,6 +10,7 @@ import {
   type DurableWorkerName,
 } from "./health";
 
+import { startProjectDependencyWorker } from "@/lib/project-dependencies/worker";
 import { startTaskLaunchWorker } from "@/lib/tasks/launch-worker";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
@@ -137,6 +138,9 @@ export function startDurableWorkers(): DurableWorkers {
     agentContinuation: slotted("agentContinuation", () =>
       startAgentContinuationWorker({ db }),
     ),
+    projectDependency: slotted("projectDependency", () =>
+      startProjectDependencyWorker({ db }),
+    ),
     taskLaunch: slotted("taskLaunch", () => startTaskLaunchWorker({ db })),
   };
 }
@@ -148,6 +152,7 @@ export async function stopDurableWorkers(): Promise<void> {
     "flowContinuation",
     "agentContinuation",
     "taskLaunch",
+    "projectDependency",
   ];
   const stopped = await Promise.allSettled(
     names.map(async (name) => {

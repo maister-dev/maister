@@ -363,7 +363,7 @@ jobs:
           if-no-files-found: error
 
   execution-isolation-complete:
-    name: A/B isolation complete (macOS Intel, 7 suites / 53 cases)
+    name: A/B isolation complete (macOS Intel, 8 suites / 56 cases)
     needs: [execution-isolation]
     # Validate failed parts, but do not delay a newer PR run after cancellation.
     if: ${{ !cancelled() }}

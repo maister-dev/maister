@@ -26,6 +26,11 @@ import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import {
+  declaredRunnerMappings,
+  declaredFlowRunnerUnavailable,
+} from "@/lib/acp-runners/declared-flow-runner";
+import { readProjectCapabilityRefs } from "@/lib/flows/project-capability-refs";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import {
   activeSessionAcpSessionId,
@@ -117,6 +122,7 @@ export interface ProjectFlowRunnerRemap {
   flowRef: string;
   flowRevisionId: string;
   slotKey: string;
+  declaredRunnerId?: string;
   mappedRunnerId: string | null;
   status: "Pending" | "Mapped";
 }
@@ -225,7 +231,7 @@ export async function listLaunchableFlowSummaries(
   projectId: string,
   client: NodePgDatabase<typeof schema> = db(),
 ): Promise<ExtFlowSummary[]> {
-  const [rows, hasReadyRunner] = await Promise.all([
+  const [rows, hasReadyRunner, capabilityRefs] = await Promise.all([
     client
       .select({
         id: flows.id,
@@ -233,6 +239,7 @@ export async function listLaunchableFlowSummaries(
         manifest: flows.manifest,
         enabledRevisionId: flows.enabledRevisionId,
         enablementState: flows.enablementState,
+        runnerUnavailable: declaredFlowRunnerUnavailable(flows.id),
         trustStatus: flows.trustStatus,
         engineMax: flowRevisions.engineMax,
         engineMin: flowRevisions.engineMin,
@@ -246,6 +253,7 @@ export async function listLaunchableFlowSummaries(
       .where(eq(flows.projectId, projectId))
       .orderBy(asc(flows.createdAt)),
     hasReadyPlatformRunner(client),
+    readProjectCapabilityRefs(client, [projectId]),
   ]);
 
   return rows
@@ -253,7 +261,8 @@ export async function listLaunchableFlowSummaries(
       isProjectFlowLaunchable({
         enabledRevisionId: row.enabledRevisionId,
         enablementState: row.enablementState,
-        hasReadyRunner,
+        hasReadyRunner: hasReadyRunner && !row.runnerUnavailable,
+        capabilityRefs: capabilityRefs.get(projectId),
         revision: row.enabledRevisionId
           ? {
               engineMax: row.engineMax,
@@ -332,6 +341,7 @@ export async function getProjectPageData(
         manifest: flows.manifest,
         enabledRevisionId: flows.enabledRevisionId,
         enablementState: flows.enablementState,
+        runnerUnavailable: declaredFlowRunnerUnavailable(flows.id),
         trustStatus: flows.trustStatus,
       })
       .from(flows)
@@ -469,13 +479,15 @@ export async function getProjectPageData(
       ]),
   );
 
+  const capabilityRefs = await readProjectCapabilityRefs(client, [project.id]);
   const projectFlows: ProjectFlow[] = flowRows.map((f) => ({
     id: f.id,
     enabled: f.enabledRevisionId !== null,
     launchable: isProjectFlowLaunchable({
       enabledRevisionId: f.enabledRevisionId,
       enablementState: f.enablementState,
-      hasReadyRunner,
+      hasReadyRunner: hasReadyRunner && !f.runnerUnavailable,
+      capabilityRefs: capabilityRefs.get(project.id),
       revision: f.enabledRevisionId
         ? (revisionById.get(f.enabledRevisionId) ?? null)
         : null,
@@ -625,7 +637,10 @@ export async function getProjectPageData(
     project,
     flows: projectFlows,
     runners: projectRunners,
-    flowRunnerRemaps: projectFlowRunnerRemaps,
+    flowRunnerRemaps: [
+      ...(await declaredRunnerMappings(client, project.id)),
+      ...projectFlowRunnerRemaps,
+    ],
     members,
     activeWorkspaces,
     executingCount: executingRows[0]?.count ?? 0,
@@ -727,5 +742,12 @@ export async function getFlowRunnerBindingScope(
     enabled: runner.enabled,
   }));
 
-  return { remaps, runners, slotLabels };
+  return {
+    remaps: [
+      ...(await declaredRunnerMappings(client, projectId, flowRevisionId)),
+      ...remaps,
+    ],
+    runners,
+    slotLabels,
+  };
 }
