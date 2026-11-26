@@ -211,6 +211,7 @@ flowchart LR
 
 - Read the current segment, history generation and projected rows from a consistent snapshot. The panel discards an older-generation response and replaces local history after a clear. A same-generation context reset retains transcript messages.
 - A `librarian.work` event prompts a fresh authorized read without advancing message replay. An older effect settling, expiry of a pending card and changed grants each invalidate the relevant projection.
+- **(Implemented) Bounded single-transaction card evaluation and eligible-set reuse.** `getLibrarianConversationView` computes `readEligibleConfirmationIds` once and passes the eligible pending card set into `getLinkedWork`, avoiding duplicate `prepareKnowledgeCard` work. Both `getLinkedWork` (including vault `governedEffectLink` lookups) and `readEligibleConfirmationIds` evaluate governed cards sequentially inside a single outer transaction with per-card `tx.transaction` savepoints to isolate `MaisterError` denials without bursting `pg.Pool` connections.
 
 ## Expectations
 

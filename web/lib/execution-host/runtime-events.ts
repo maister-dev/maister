@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ACP_CONTEXT_UPDATE_TYPES } from "../../../runtime/acp-context";
 import { parseCommandEventPayloadV2 } from "../../../runtime/command-evidence";
+import { containsHostFilesystemPath } from "../../../runtime/host-path-safety";
 
 /** Exact host-owned session payload; the reference event is availability evidence. */
 export const SessionContentReferenceSchema = z
@@ -122,8 +123,6 @@ const HOST_KEY = /^[A-Za-z0-9_-]{8,64}$/;
 const HOST_SESSION_ID = /^[A-Za-z0-9._-]{1,128}$/;
 const SECRET_KEY =
   /authorization|cookie|(^|[_-])(access|refresh|auth)?token(s)?$|secret|password|api[_-]?key|headers|environment|^env$/i;
-const ABSOLUTE_PATH = /(?:^|\s)\/(?:[^\s]*)/;
-const FILE_URI = /^file:\/\//i;
 const MAX_RUNTIME_EVENT_BYTES = 1_048_576;
 const MAX_RUNTIME_EVENT_DEPTH = 16;
 const MAX_RUNTIME_EVENT_KEYS = 256;
@@ -149,10 +148,7 @@ export function assertRuntimeEventPayloadSafe(
         `runtime event payload contains a secret-bearing key: ${key}`,
       );
     }
-    if (
-      typeof current === "string" &&
-      (FILE_URI.test(current) || ABSOLUTE_PATH.test(current))
-    ) {
+    if (typeof current === "string" && containsHostFilesystemPath(current)) {
       throw new Error("runtime event payload contains a host filesystem path");
     }
     if (Array.isArray(current)) {
@@ -234,9 +230,7 @@ function assertJsonValue(
 
 function redactJsonValue(value: JsonValue): JsonValue {
   if (typeof value === "string") {
-    return FILE_URI.test(value) || ABSOLUTE_PATH.test(value)
-      ? "[REDACTED_HOST_PATH]"
-      : value;
+    return containsHostFilesystemPath(value) ? "[REDACTED_HOST_PATH]" : value;
   }
   if (Array.isArray(value)) return value.map(redactJsonValue);
   if (value && typeof value === "object") {

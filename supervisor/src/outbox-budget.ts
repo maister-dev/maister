@@ -362,6 +362,7 @@ export function reservedRegularUsage(
 // and at most one mutually exclusive guardrail event. Prompt completion and
 // declared output availability use the producer wallet when pressured.
 export const FRAME_EVENT_ROWS = 4;
+export const MAX_FRAME_SLICE_EVENT_ROWS = 64;
 export const FRAME_EVENT_BYTES = FRAME_EVENT_ROWS * 1_048_576;
 
 export function reserveFrameCapacity(
@@ -372,11 +373,25 @@ export function reserveFrameCapacity(
     bootId: string;
     walletId: string;
     nowMs: number;
+    rowCount?: number;
   },
 ): boolean {
+  const rowCount = input.rowCount ?? FRAME_EVENT_ROWS;
+
+  if (
+    !Number.isSafeInteger(rowCount) ||
+    rowCount < FRAME_EVENT_ROWS ||
+    rowCount > MAX_FRAME_SLICE_EVENT_ROWS
+  ) {
+    throw new HostRuntimeEventError(
+      "command_invariant_conflict",
+      "runtime frame row reservation is outside its protocol bound",
+    );
+  }
   const snapshot = refreshOutboxBudget(db, limits, input.nowMs);
 
-  if (snapshot.pressured || !frameFitsUnderHard(snapshot, limits)) return false;
+  if (snapshot.pressured || !frameFitsUnderHard(snapshot, limits, rowCount))
+    return false;
   if (
     !db
       .prepare(
@@ -395,7 +410,7 @@ export function reserveFrameCapacity(
     input.reservationId,
     input.bootId,
     input.walletId,
-    FRAME_EVENT_ROWS,
+    rowCount,
     FRAME_EVENT_BYTES,
   );
 
@@ -405,12 +420,13 @@ export function reserveFrameCapacity(
 function frameFitsUnderHard(
   snapshot: OutboxBudgetSnapshot,
   limits: RuntimeLimits,
+  rowCount = FRAME_EVENT_ROWS,
 ): boolean {
   const used = reservedRegularUsage(snapshot);
 
   return (
     used.retainedBytes + FRAME_EVENT_BYTES <= limits.eventHardBytes &&
-    used.retainedCount + FRAME_EVENT_ROWS <= limits.eventHardRows
+    used.retainedCount + rowCount <= limits.eventHardRows
   );
 }
 

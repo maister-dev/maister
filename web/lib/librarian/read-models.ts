@@ -5,6 +5,7 @@ import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
+import { withCardSavepoint } from "./confirmation-availability";
 import {
   effectContextSchema,
   isKnowledgeCardProposal,
@@ -28,7 +29,6 @@ import {
   workspaces,
 } from "@/lib/db/schema";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
-import { isMaisterError } from "@/lib/errors";
 import { librarianCardProposalSchema } from "@/lib/librarian/cards";
 import { getVisibleProjects } from "@/lib/queries/visible-projects";
 import { renderStatementPrompt } from "@/lib/tasks/statement";
@@ -104,7 +104,7 @@ function resultRunId(result: unknown): string | null {
 }
 
 async function governedEffectLink(
-  db: Db,
+  tx: ExecutionDb,
   ownerId: string,
   card: typeof librarianCards.$inferSelect,
   result: unknown,
@@ -132,34 +132,45 @@ async function governedEffectLink(
   const [revisionId] = effect.revisionIds;
 
   if (typeof revisionId !== "string") return undefined;
-  try {
-    const { target } = await db.transaction((tx) =>
-      resolveLibrarianVault(tx, ownerId, card.target.vaultId!, "read"),
-    );
-    const selection = new URLSearchParams({
-      tab: "memory",
-      memoryRevision: revisionId,
-    });
 
-    if (target.slug)
-      return {
-        kind: "vault",
-        href: `/projects/${encodeURIComponent(target.slug)}/agents/${encodeURIComponent(target.agent_id)}?${selection}`,
-      };
-    if (!target.binding_id) return undefined;
-    selection.set("locationId", `installation:${target.binding_id}`);
+  return withCardSavepoint(
+    tx,
+    async (sp) => {
+      const { target } = await resolveLibrarianVault(
+        sp as unknown as Db,
+        ownerId,
+        card.target.vaultId!,
+        "read",
+      );
+      const selection = new URLSearchParams({
+        tab: "memory",
+        memoryRevision: revisionId,
+      });
 
-    return { kind: "vault", href: `/knowledge/memory?${selection}` };
-  } catch (error) {
-    if (isMaisterError(error) && error.code === "PRECONDITION")
-      return undefined;
-    throw error;
-  }
+      if (target.slug)
+        return {
+          kind: "vault" as const,
+          href: `/projects/${encodeURIComponent(target.slug)}/agents/${encodeURIComponent(target.agent_id)}?${selection}`,
+        };
+      if (!target.binding_id) return undefined;
+      selection.set("locationId", `installation:${target.binding_id}`);
+
+      return { kind: "vault" as const, href: `/knowledge/memory?${selection}` };
+    },
+    (error) => {
+      if (error.code === "PRECONDITION") return undefined;
+      throw error;
+    },
+  );
 }
 
 export async function getLinkedWork(
   ownerId: string,
   db: Db = getDb(),
+  options?: {
+    eligiblePendingCardIds?: ReadonlySet<string>;
+    evaluatedPendingCardIds?: ReadonlySet<string>;
+  },
 ): Promise<LibrarianLinkedWork> {
   const [owner] = await db
     .select({ role: users.role })
@@ -300,52 +311,110 @@ export async function getLinkedWork(
     workspaceRows.map((workspace) => [workspace.runId, workspace]),
   );
   const hitlById = new Map(hitlRows.map((question) => [question.id, question]));
-  const cards = await Promise.all(
-    cardRows.map(async (card): Promise<LibrarianCardView> => {
-      const parsed = librarianCardProposalSchema.safeParse(card.payload);
+  const preparedRows = cardRows.map((card) => {
+    const parsed = librarianCardProposalSchema.safeParse(card.payload);
+    const effectContext = effectContextSchema.safeParse(card.effectContext);
+    const effects =
+      parsed.success && isKnowledgeCardProposal(parsed.data)
+        ? parsed.data
+        : null;
+
+    return { card, parsed, effectContext, effects };
+  });
+  const effectAvailableByCardId = new Map<string, boolean>();
+  const effectLinkByCardId = new Map<string, LibrarianCardView["effectLink"]>();
+  const canReuseEligibility = (cardId: string, status: string): boolean =>
+    status === "pending" &&
+    Boolean(options?.eligiblePendingCardIds) &&
+    (options?.evaluatedPendingCardIds
+      ? options.evaluatedPendingCardIds.has(cardId)
+      : true);
+  const needsTxEvaluation = preparedRows.some(
+    ({ card, effectContext, effects }) => {
+      if (!effects || !effectContext.success) return false;
+      if (canReuseEligibility(card.id, card.status)) return false;
+
+      return true;
+    },
+  );
+
+  if (needsTxEvaluation) {
+    await db.transaction(async (tx) => {
+      const execTx = tx as unknown as ExecutionDb;
+
+      for (const { card, effectContext, effects } of preparedRows) {
+        if (!effects || !effectContext.success) continue;
+        const projectId = card.target.projectId;
+        let effectAvailable: boolean;
+
+        if (canReuseEligibility(card.id, card.status)) {
+          effectAvailable =
+            options!.eligiblePendingCardIds!.has(card.id) &&
+            (projectId ? visibleById.has(projectId) : true);
+        } else {
+          effectAvailable = await withCardSavepoint(
+            execTx,
+            async (sp) => {
+              if (card.status === "pending") {
+                const prepared = await prepareKnowledgeCard(
+                  sp,
+                  ownerId,
+                  effects,
+                  effectContext.data.restrictions,
+                );
+
+                if (
+                  !matchesGovernedCardEffect(
+                    card,
+                    effectContext.data.preview,
+                    prepared,
+                  )
+                )
+                  return false;
+              } else {
+                await authorizeSourceRestrictions(
+                  sp as unknown as Db,
+                  { kind: "user", userId: ownerId },
+                  effectContext.data.restrictions,
+                );
+              }
+
+              return projectId ? visibleById.has(projectId) : true;
+            },
+            () => false,
+          );
+        }
+
+        effectAvailableByCardId.set(card.id, effectAvailable);
+        if (effectAvailable) {
+          const link = await governedEffectLink(
+            execTx,
+            ownerId,
+            card,
+            effectByKey.get(`card:${card.id}`),
+          );
+
+          if (link) effectLinkByCardId.set(card.id, link);
+        }
+      }
+    });
+  } else {
+    for (const { card, effectContext, effects } of preparedRows) {
+      if (!effects || !effectContext.success) continue;
+      const projectId = card.target.projectId;
+      const effectAvailable =
+        Boolean(options?.eligiblePendingCardIds?.has(card.id)) &&
+        (projectId ? visibleById.has(projectId) : true);
+
+      effectAvailableByCardId.set(card.id, effectAvailable);
+    }
+  }
+
+  const cards = preparedRows.map(
+    ({ card, parsed, effectContext }): LibrarianCardView => {
       const task = card.target.taskId ? taskById.get(card.target.taskId) : null;
       const projectId = card.target.projectId;
-      const effectContext = effectContextSchema.safeParse(card.effectContext);
-      const effects =
-        parsed.success && isKnowledgeCardProposal(parsed.data)
-          ? parsed.data
-          : null;
-      const effectAvailable =
-        effects && effectContext.success
-          ? await db.transaction(async (tx) => {
-              try {
-                if (card.status === "pending") {
-                  const prepared = await prepareKnowledgeCard(
-                    tx as unknown as ExecutionDb,
-                    ownerId,
-                    effects,
-                    effectContext.data.restrictions,
-                  );
-
-                  if (
-                    !matchesGovernedCardEffect(
-                      card,
-                      effectContext.data.preview,
-                      prepared,
-                    )
-                  )
-                    return false;
-                } else {
-                  await authorizeSourceRestrictions(
-                    tx,
-                    { kind: "user", userId: ownerId },
-                    effectContext.data.restrictions,
-                  );
-                }
-
-                return projectId ? visibleById.has(projectId) : true;
-              } catch (error) {
-                if (!isMaisterError(error)) throw error;
-
-                return false;
-              }
-            })
-          : false;
+      const effectAvailable = effectAvailableByCardId.get(card.id) ?? false;
       const newEffect = [
         "knowledge_proposal",
         "brain_proposal",
@@ -361,14 +430,7 @@ export async function getLinkedWork(
             : card.target.runId
               ? !!runById.get(card.target.runId)
               : true);
-      const effectLink = effectAvailable
-        ? await governedEffectLink(
-            db,
-            ownerId,
-            card,
-            effectByKey.get(`card:${card.id}`),
-          )
-        : undefined;
+      const effectLink = effectLinkByCardId.get(card.id);
 
       return {
         id: card.id,
@@ -404,7 +466,7 @@ export async function getLinkedWork(
         available,
         expiresAt: card.expiresAt.toISOString(),
       };
-    }),
+    },
   );
   const cardsById = new Map(cards.map((card) => [card.id, card]));
   const operations = operationRows.map((operation): LibrarianOperationView => {
@@ -464,6 +526,7 @@ export async function getLinkedWork(
       cards: cards.length,
       operations: operations.length,
       tasks: linkedTasks.length,
+      reusedEligibleSet: Boolean(options?.eligiblePendingCardIds),
     },
     "linked work loaded",
   );

@@ -213,19 +213,39 @@ function currentTarget(
   return runCardTarget(proposal, { ...run, projectId: run.projectId });
 }
 
+export async function withCardSavepoint<T>(
+  tx: Db,
+  fn: (sp: Db) => Promise<T>,
+  onMaisterError: (error: MaisterError) => T,
+): Promise<T> {
+  try {
+    return await tx.transaction((sp) => fn(sp as unknown as Db));
+  } catch (error) {
+    if (isMaisterError(error)) return onMaisterError(error);
+    throw error;
+  }
+}
+
+export type EligibleConfirmationsResult = {
+  eligibleIds: string[];
+  evaluatedGovernedPendingIds: ReadonlySet<string>;
+};
+
 /** Uses the same scoped observation as the history page and its attention count. */
-export async function readEligibleConfirmationIds(
+export async function readEligibleConfirmations(
   db: Db,
   owner: ConfirmationOwner,
   access?: Access,
-): Promise<string[]> {
+): Promise<EligibleConfirmationsResult> {
   const candidates = (await pendingCandidates(db, owner.id)).flatMap((card) => {
     const proposal = librarianCardProposalSchema.safeParse(card.payload);
 
     return proposal.success ? [{ card, proposal: proposal.data }] : [];
   });
 
-  if (!candidates.length) return [];
+  if (!candidates.length) {
+    return { eligibleIds: [], evaluatedGovernedPendingIds: new Set() };
+  }
   const digests = [
     ...new Set(
       candidates.flatMap(({ proposal }) =>
@@ -252,6 +272,15 @@ export async function readEligibleConfirmationIds(
   const forgotten = new Set(tombstones.map(({ digest }) => digest));
 
   const eligible: string[] = [];
+  const evaluatedGovernedPendingIds = new Set<string>();
+  const governedCandidates: Array<{
+    card: Candidate;
+    proposal: Extract<
+      LibrarianCardProposal,
+      { action: "knowledge_proposal" | "brain_proposal" | "vault_edit" }
+    >;
+    context: ReturnType<typeof effectContextSchema.parse>;
+  }> = [];
 
   for (const { card, proposal } of candidates) {
     if (isKnowledgeCardProposal(proposal)) {
@@ -264,21 +293,8 @@ export async function readEligibleConfirmationIds(
         owner.resetState !== "none"
       )
         continue;
-      try {
-        const prepared = await db.transaction((tx) =>
-          prepareKnowledgeCard(
-            tx as unknown as ExecutionDb,
-            owner.userId,
-            proposal,
-            context.data.restrictions,
-          ),
-        );
-
-        if (matchesGovernedCardEffect(card, context.data.preview, prepared))
-          eligible.push(card.id);
-      } catch (error) {
-        if (!isMaisterError(error)) throw error;
-      }
+      evaluatedGovernedPendingIds.add(card.id);
+      governedCandidates.push({ card, proposal, context: context.data });
       continue;
     }
     const target = currentTarget(
@@ -292,5 +308,39 @@ export async function readEligibleConfirmationIds(
     if (target && matchesFrozenCardTarget(card, target)) eligible.push(card.id);
   }
 
-  return eligible;
+  if (governedCandidates.length > 0) {
+    await db.transaction(async (tx) => {
+      for (const { card, proposal, context } of governedCandidates) {
+        const matched = await withCardSavepoint(
+          tx as unknown as Db,
+          async (sp) => {
+            const prepared = await prepareKnowledgeCard(
+              sp as unknown as ExecutionDb,
+              owner.userId,
+              proposal,
+              context.restrictions,
+            );
+
+            return matchesGovernedCardEffect(card, context.preview, prepared);
+          },
+          () => false,
+        );
+
+        if (matched) eligible.push(card.id);
+      }
+    });
+  }
+
+  return { eligibleIds: eligible, evaluatedGovernedPendingIds };
+}
+
+/** Uses the same scoped observation as the history page and its attention count. */
+export async function readEligibleConfirmationIds(
+  db: Db,
+  owner: ConfirmationOwner,
+  access?: Access,
+): Promise<string[]> {
+  const { eligibleIds } = await readEligibleConfirmations(db, owner, access);
+
+  return eligibleIds;
 }

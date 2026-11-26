@@ -389,31 +389,33 @@ export class RuntimeObjectRegistry {
     } finally {
       closeSync(directory);
     }
-    this.state.insertRuntimeObject({
-      id: objectId,
-      runId: input.runId,
-      assignmentId: input.assignmentId,
-      assignmentEpoch: input.assignmentEpoch,
-      hostSessionId: input.hostSessionId,
-      kind: "raw_transcript",
-      logicalName: input.logicalName,
-      mimeType: input.mimeType,
+    this.state.sealCapturedRuntimeObject(
+      {
+        id: objectId,
+        runId: input.runId,
+        assignmentId: input.assignmentId,
+        assignmentEpoch: input.assignmentEpoch,
+        hostSessionId: input.hostSessionId,
+        kind: "raw_transcript",
+        logicalName: input.logicalName,
+        mimeType: input.mimeType,
+        sizeBytes,
+        sha256: hash.digest("hex"),
+        generation: 1,
+        retentionClass: "run",
+        state: "available",
+        privatePath,
+        ...identity,
+        producerPath: null,
+        createdAt: timestamp,
+        sealedAt: timestamp,
+        expiresAt: null,
+        deletedAt: null,
+        lastError: null,
+      },
+      `object:${objectId}`,
       sizeBytes,
-      sha256: hash.digest("hex"),
-      generation: 1,
-      retentionClass: "run",
-      state: "available",
-      privatePath,
-      ...identity,
-      producerPath: null,
-      createdAt: timestamp,
-      sealedAt: timestamp,
-      expiresAt: null,
-      deletedAt: null,
-      lastError: null,
-    });
-
-    this.state.sealRuntimeFile(`object:${objectId}`, sizeBytes);
+    );
 
     return publicMetadata(requireObject(this.state, objectId));
   }

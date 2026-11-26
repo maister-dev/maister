@@ -34,6 +34,15 @@ on `execution_event_consumers.last_served_at` and the independent
 run FK: deleting its last examined run must not restart the scan. Consumer
 leases, domain application and retry/rearm behavior are defined in the
 [event-plane worker contract](../system-analytics/execution-event-plane.md#durable-bounded-projection-and-reconciliation-workers).
+Migration `0376_execution_event_consumer_horizon` (Implemented) adds
+`execution_event_consumers.max_available_sequence bigint NOT NULL DEFAULT -1`
+with `CHECK (max_available_sequence >= -1)`
+(`execution_event_consumers_max_available_sequence_check`), backfills it from
+`MAX(execution_events.run_sequence)` for accepted events, and adds partial index
+`execution_event_consumers_due_service_idx ON (last_served_at ASC NULLS FIRST,
+run_id, consumer_name) WHERE state <> 'poisoned' AND max_available_sequence >
+COALESCE(last_run_sequence, -1)` so due claims avoid probing `execution_events`
+for caught-up historical runs.
 
 Migration `0160_runtime_object_declarations` adds paired immutable expected
 size/hash to the `0133` runtime-object catalog. The sealed tuple remains separate:

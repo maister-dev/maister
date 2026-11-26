@@ -1,10 +1,13 @@
+import type { SessionRecord, SessionTextFrameEvents } from "../types";
+
 import { randomUUID } from "node:crypto";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { createWriteStream, mkdtempSync, rmSync, statSync } from "node:fs";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
 import pino from "pino";
@@ -12,6 +15,8 @@ import pino from "pino";
 import { HostRuntimeEventError } from "../host-runtime-errors";
 import { SupervisorHealthResponseSchema } from "../types";
 import { ACTIVE_FRAME_SCHEMA, outboxBudgetSnapshot } from "../outbox-budget";
+import { boundedAcpStream, captureAcpFrames } from "../bounded-acp-stream";
+import { producerPressure } from "../producer-pressure";
 import { RuntimeEventPublisher } from "../runtime-event-publisher";
 import {
   openHostState,
@@ -828,10 +833,20 @@ describe("Stage B durable host event outbox", () => {
       expect(
         state.pendingRuntimeEvents(streamId).map(({ sequence }) => sequence),
       ).toEqual(["0"]);
+      const snapshotReads = vi.spyOn(fs, "statfsSync");
+
+      syncBuiltinESMExports();
+      state.runtimeStorageSnapshot();
+      const explicitSnapshotMeasurements = snapshotReads.mock.calls.length;
+
+      snapshotReads.mockRestore();
+      syncBuiltinESMExports();
       expect(frameOnlyVersion).toEqual(version);
-      // One admission measurement and one fresh post-reservation observation.
-      expect(admissionMeasurements).toBe(2);
-      expect(releaseMeasurements).toBe(1);
+      // Bounded amortization reuses healthy physical snapshots across up to 16
+      // back-to-back ops; explicit diagnostic snapshot always measures fresh.
+      expect(admissionMeasurements).toBeLessThanOrEqual(2);
+      expect(releaseMeasurements).toBeLessThanOrEqual(1);
+      expect(explicitSnapshotMeasurements).toBe(1);
       expect(
         admissionStatements.filter((sql) =>
           sql.includes("FROM runtime_file_budget WHERE id = 1"),
@@ -1346,6 +1361,362 @@ describe("Stage B durable host event outbox", () => {
         state.close();
         await cleanupRuntimeRoot(host.runtimeRoot);
       }
+    }
+  });
+
+  it("batches consecutive text frames in a single chunk into one SQLite transaction and flushes before tool_call", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "maister-chunk-batch-"));
+    const state = openHostState({ stateDir });
+    const observer = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+    const logger = pino({ level: "silent" });
+    const publisher = new RuntimeEventPublisher(state, logger);
+    const receipt = createReceipt();
+    const sessionId = receipt.hostSessionId!;
+    const source = new PassThrough();
+    const stdin = new PassThrough();
+    let resolveDrained: () => void = () => {};
+    const drained = new Promise<void>((resolve) => {
+      resolveDrained = resolve;
+    });
+
+    try {
+      state.reserveProducerReceipt(receipt, 0);
+      const record = {
+        sessionId,
+        runId: receipt.runId,
+        sessionName: "main",
+        assignmentId: receipt.assignmentId!,
+        assignmentEpoch: receipt.epoch,
+        createdByCommandId: receipt.commandId,
+        terminalPublished: false,
+      } as unknown as SessionRecord;
+      const pressure = producerPressure(
+        state,
+        record,
+        undefined,
+        undefined,
+        logger,
+      );
+      const tap = captureAcpFrames({
+        source,
+        directory: stateDir,
+        log: createWriteStream(join(stateDir, "stdout.log")),
+        beforeFrame: pressure.beforeFrame,
+        beforeWrite: pressure.beforeWrite,
+        shouldDrain: pressure.shouldDrain,
+        onFailure: () => {},
+        onDrained: resolveDrained,
+      });
+      let monotonic = 0;
+      const order: string[] = [];
+      const stream = boundedAcpStream({
+        source: tap,
+        stdin,
+        client: {
+          async requestPermission() {
+            return { outcome: { outcome: "cancelled" } };
+          },
+          async sessionUpdate(params) {
+            order.push(`update:${params.update.sessionUpdate}`);
+            publisher.publishSessionEvent(record, {
+              type: "session.update",
+              sessionId,
+              monotonicId: ++monotonic,
+              update: params.update,
+            });
+          },
+        },
+        onLine(line) {
+          order.push("line:non-text");
+          publisher.publishSessionEvent(record, {
+            type: "session.line",
+            sessionId,
+            monotonicId: ++monotonic,
+            line,
+          });
+        },
+        onTextFrameBatch(frames) {
+          order.push(`batch:${frames.length}`);
+          const pairs: SessionTextFrameEvents[] = frames.map(
+            ({ line, params }) => [
+              {
+                type: "session.line",
+                sessionId,
+                monotonicId: ++monotonic,
+                line,
+              },
+              {
+                type: "session.update",
+                sessionId,
+                monotonicId: ++monotonic,
+                update: params.update,
+              },
+            ],
+          );
+
+          publisher.publishTextFrames(record, pairs);
+        },
+        onFailure: () => {},
+      });
+      const reader = stream.readable.getReader();
+      const textFrames = Array.from({ length: 6 }, (_, i) =>
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-batch",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: `token-${i}` },
+            },
+          },
+        }),
+      );
+      const toolCallFrame = JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "acp-batch",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tc-1",
+            title: "Read",
+            kind: "read",
+            status: "pending",
+          },
+        },
+      });
+      const resultFrame = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { stopReason: "end_turn" },
+      });
+
+      const version = (): number =>
+        Number(observer.prepare("PRAGMA data_version").get()!.data_version);
+      const appendSpy = vi.spyOn(state, "appendRuntimeFrameEvents");
+      const before = version();
+
+      source.end(`${[...textFrames, toolCallFrame, resultFrame].join("\n")}\n`);
+      const next = await reader.read();
+
+      expect(next.done).toBe(false);
+      await expect(reader.read()).resolves.toEqual({
+        done: true,
+        value: undefined,
+      });
+      await drained;
+      reader.releaseLock();
+
+      // 6 text frames committed in 1 appendRuntimeFrameEvents batch of 12 events,
+      // flushed BEFORE the tool_call update.
+      expect(appendSpy).toHaveBeenCalledTimes(1);
+      expect(appendSpy.mock.calls[0]?.[0]).toHaveLength(12);
+      expect(order[0]).toBe("batch:6");
+      expect(order[1]).toBe("line:non-text");
+      expect(order[2]).toBe("update:tool_call");
+      expect(version() - before).toBeGreaterThanOrEqual(1);
+      expect(state.runtimeEventOutboxStats().retainedCount).toBe(15);
+
+      // Atomicity: a failed event mid-batch rolls back all events & TEMP frame credits
+      const batchReservation = state.tryReserveRuntimeFrame(
+        receipt.commandId,
+        1024,
+        14,
+      );
+
+      expect(batchReservation).not.toBeNull();
+      const baseEvent = {
+        ...eventDraft(),
+        funding: {
+          partition: "regular" as const,
+          reservationId: batchReservation!,
+        },
+      };
+      const statsBeforeFail = state.runtimeEventOutboxStats();
+      const budgetBeforeFail = statsBeforeFail.budget;
+
+      expect(() =>
+        state.appendRuntimeFrameEvents([
+          baseEvent,
+          baseEvent,
+          baseEvent,
+          {
+            ...baseEvent,
+            draft: { ...baseEvent.draft, assignmentId: randomUUID() },
+          },
+        ]),
+      ).toThrow(/reservation/);
+      expect(state.runtimeEventOutboxStats().retainedCount).toBe(
+        statsBeforeFail.retainedCount,
+      );
+      expect(state.runtimeEventOutboxStats().budget).toEqual(budgetBeforeFail);
+      state.releaseRuntimeFrame(batchReservation!);
+    } finally {
+      vi.restoreAllMocks();
+      source.destroy();
+      stdin.destroy();
+      await drained;
+      observer.close();
+      state.close();
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("funds a 12-frame non-text chunk slice with up to 4 events/frame and flushes prior text frames on mid-slice UTF-8 failure", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "maister-nontext-slice-"));
+    const state = openHostState({ stateDir });
+    const logger = pino({ level: "silent" });
+    const publisher = new RuntimeEventPublisher(state, logger);
+    const receipt = createReceipt();
+    const sessionId = receipt.hostSessionId!;
+    const source = new PassThrough();
+    const stdin = new PassThrough();
+    const failures: unknown[] = [];
+    let resolveDrained: () => void = () => {};
+    const drained = new Promise<void>((resolve) => {
+      resolveDrained = resolve;
+    });
+
+    try {
+      state.reserveProducerReceipt(receipt, 0);
+      const record = {
+        sessionId,
+        runId: receipt.runId,
+        sessionName: "main",
+        assignmentId: receipt.assignmentId!,
+        assignmentEpoch: receipt.epoch,
+        createdByCommandId: receipt.commandId,
+        terminalPublished: false,
+      } as unknown as SessionRecord;
+      const pressure = producerPressure(
+        state,
+        record,
+        undefined,
+        undefined,
+        logger,
+      );
+      const tap = captureAcpFrames({
+        source,
+        directory: stateDir,
+        log: createWriteStream(join(stateDir, "stdout.log")),
+        beforeFrame: pressure.beforeFrame,
+        maxSliceFrames: pressure.maxSliceFrames,
+        beforeWrite: pressure.beforeWrite,
+        shouldDrain: pressure.shouldDrain,
+        onFailure: (error) => failures.push(error),
+        onDrained: resolveDrained,
+      });
+      let monotonic = 0;
+      const stream = boundedAcpStream({
+        source: tap,
+        stdin,
+        client: {
+          async requestPermission() {
+            return { outcome: { outcome: "cancelled" } };
+          },
+          async sessionUpdate(params) {
+            // Emit 3 events per non-text frame (line + update + usage) = 36 rows > 34
+            publisher.publishSessionEvent(record, {
+              type: "session.update",
+              sessionId,
+              monotonicId: ++monotonic,
+              update: params.update,
+            });
+            publisher.publishSessionEvent(record, {
+              type: "session.update",
+              sessionId,
+              monotonicId: ++monotonic,
+              update: params.update,
+            });
+          },
+        },
+        onLine(line) {
+          publisher.publishSessionEvent(record, {
+            type: "session.line",
+            sessionId,
+            monotonicId: ++monotonic,
+            line,
+          });
+        },
+        onTextFrameBatch(frames) {
+          const pairs: SessionTextFrameEvents[] = frames.map(
+            ({ line, params }) => [
+              {
+                type: "session.line",
+                sessionId,
+                monotonicId: ++monotonic,
+                line,
+              },
+              {
+                type: "session.update",
+                sessionId,
+                monotonicId: ++monotonic,
+                update: params.update,
+              },
+            ],
+          );
+
+          publisher.publishTextFrames(record, pairs);
+        },
+        onFailure: (error) => failures.push(error),
+      });
+      const reader = stream.readable.getReader();
+      const nonTextFrames = Array.from({ length: 12 }, (_, i) =>
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-nontext",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: `tc-${i}`,
+              title: `Tool ${i}`,
+              kind: "read",
+              status: "pending",
+            },
+          },
+        }),
+      );
+      const validTextFrames = Array.from({ length: 3 }, (_, i) =>
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-nontext",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: `before-bad-${i}` },
+            },
+          },
+        }),
+      );
+
+      // Chunk 1: 12 non-text frames emitting 3 rows each (36 rows total in one slice)
+      source.write(`${nonTextFrames.join("\n")}\n`);
+      // Chunk 2: 3 valid text frames followed by invalid UTF-8 in the same slice
+      source.end(
+        Buffer.concat([
+          Buffer.from(`${validTextFrames.join("\n")}\n`, "utf8"),
+          Buffer.from([0x7b, 0xff, 0xfe, 0x7d, 0x0a]),
+        ]),
+      );
+
+      await expect(reader.read()).rejects.toMatchObject({
+        code: "ACP_PROTOCOL",
+      });
+      await drained;
+      reader.releaseLock();
+
+      // 12 non-text * 3 rows = 36 rows + 3 flushed text frames * 2 rows = 6 rows -> 42 total
+      expect(state.runtimeEventOutboxStats().retainedCount).toBe(42);
+      expect(failures.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      source.destroy();
+      stdin.destroy();
+      await drained;
+      state.close();
+      rmSync(stateDir, { recursive: true, force: true });
     }
   });
 });

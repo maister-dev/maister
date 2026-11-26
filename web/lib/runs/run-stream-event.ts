@@ -203,7 +203,7 @@ export async function appendManagerRunStreamEvent(
       .set({ nextExecutionEventSequence: runSequence + 1n })
       .where(eq(runs.id, input.runId));
 
-    await seedCanonicalProjectionConsumers(tx, input.runId);
+    await seedCanonicalProjectionConsumers(tx, input.runId, runSequence);
 
     return { eventId, runSequence };
   });

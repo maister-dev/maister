@@ -6,6 +6,7 @@ import Ajv from "ajv";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
+import { Pool } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 
@@ -29,8 +30,26 @@ import {
 } from "@/test-support/pg-container";
 
 let database: StartedPostgresTestDb;
+let prepareKnowledgeCardCalls = 0;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
+vi.mock("@/lib/librarian/knowledge-card-effects", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/librarian/knowledge-card-effects")
+    >();
+
+  return {
+    ...actual,
+    prepareKnowledgeCard: (
+      ...args: Parameters<typeof actual.prepareKnowledgeCard>
+    ) => {
+      prepareKnowledgeCardCalls += 1;
+
+      return actual.prepareKnowledgeCard(...args);
+    },
+  };
+});
 
 beforeAll(async () => {
   database = await startMainAndBrainPostgresTestDb({
@@ -454,4 +473,226 @@ it("waits before locking a confirmation whose source is being redacted", async (
       )
     ).rows,
   ).toEqual([]);
+});
+
+it("REQ-D5-03 + REQ-D5-04 + REQ-D5-05: renders >=12 governed cards on a max=2 pool without duplicate prepareKnowledgeCard calls or nested vault transactions", async () => {
+  const { db, pool } = database;
+  const { project, userId, vaultId, submit } = await fixture();
+  const { decideLibrarianCard } =
+    await import("@/lib/librarian/card-decisions");
+  const { getLibrarianConversationView, getLibrarianWorkView } =
+    await import("@/lib/librarian/view");
+  const { getLinkedWork } = await import("@/lib/librarian/read-models");
+
+  const pendingEligibleIds: string[] = [];
+  const pendingStaleIds: string[] = [];
+  const pendingExpiredIds: string[] = [];
+  const acceptedVaultIds: string[] = [];
+  const acceptedKnowledgeIds: string[] = [];
+
+  for (let i = 0; i < 4; i += 1) {
+    const res = await submit({
+      action: "brain_proposal",
+      projectSlug: project.slug,
+      kind: "state",
+      draft: { title: `Brain fact ${i}`, content: `Brain content ${i}` },
+    });
+
+    expect(res.status).toBe(201);
+    pendingEligibleIds.push(((await res.json()) as { cardId: string }).cardId);
+  }
+
+  for (let i = 0; i < 4; i += 1) {
+    const res = await submit({
+      action: "knowledge_proposal",
+      content: {
+        change: "add",
+        owner: { kind: "project", projectId: project.id },
+        title: `Knowledge note ${i}`,
+        assertion: `Assertion ${i}`,
+        kind: "observation",
+        basis: "inferred",
+        evidence: [],
+        missingEvidence: [],
+        limitations: [],
+      },
+    });
+
+    expect(res.status).toBe(201);
+    pendingEligibleIds.push(((await res.json()) as { cardId: string }).cardId);
+  }
+
+  for (let i = 0; i < 2; i += 1) {
+    const res = await submit({
+      action: "brain_proposal",
+      projectSlug: project.slug,
+      kind: "state",
+      draft: { title: `Stale brain ${i}`, content: `Stale content ${i}` },
+    });
+
+    expect(res.status).toBe(201);
+    const { cardId } = (await res.json()) as { cardId: string };
+
+    await pool.query(
+      `UPDATE librarian_cards SET effect_context=jsonb_set(effect_context,'{preview}','"tampered"') WHERE id=$1`,
+      [cardId],
+    );
+    pendingStaleIds.push(cardId);
+  }
+
+  {
+    const res = await submit({
+      action: "brain_proposal",
+      projectSlug: project.slug,
+      kind: "state",
+      draft: { title: "Expired brain fact", content: "Expired content" },
+    });
+
+    expect(res.status).toBe(201);
+    const { cardId } = (await res.json()) as { cardId: string };
+
+    await pool.query(
+      `UPDATE librarian_cards SET expires_at = now() - interval '1 hour' WHERE id=$1`,
+      [cardId],
+    );
+    pendingExpiredIds.push(cardId);
+  }
+
+  for (let i = 0; i < 2; i += 1) {
+    const res = await submit({
+      action: "vault_edit",
+      vaultId,
+      command: {
+        command: "create",
+        path: `/memories/notes/accepted-vault-${i}.md`,
+        file_text: `Accepted vault note ${i}`,
+        ifRevisionId: null,
+        ifHash: null,
+        requestKey: randomUUID(),
+      },
+    });
+
+    expect(res.status).toBe(201);
+    const { cardId } = (await res.json()) as { cardId: string };
+
+    await decideLibrarianCard(
+      { cardId, user: { id: userId, role: "admin" }, decision: "accept" },
+      db,
+    );
+    acceptedVaultIds.push(cardId);
+  }
+
+  for (let i = 0; i < 2; i += 1) {
+    const res = await submit({
+      action: "knowledge_proposal",
+      content: {
+        change: "add",
+        owner: { kind: "project", projectId: project.id },
+        title: `Accepted knowledge ${i}`,
+        assertion: `Accepted assertion ${i}`,
+        kind: "observation",
+        basis: "inferred",
+        evidence: [],
+        missingEvidence: [],
+        limitations: [],
+      },
+    });
+
+    expect(res.status).toBe(201);
+    const { cardId } = (await res.json()) as { cardId: string };
+
+    await decideLibrarianCard(
+      { cardId, user: { id: userId, role: "admin" }, decision: "accept" },
+      db,
+    );
+    acceptedKnowledgeIds.push(cardId);
+  }
+
+  const smallPool = new Pool({
+    connectionString: database.databaseUrl,
+    max: 2,
+    connectionTimeoutMillis: 2_000,
+  });
+  const smallDb = drizzle(smallPool, { schema });
+  const singlePool = new Pool({
+    connectionString: database.databaseUrl,
+    max: 1,
+    connectionTimeoutMillis: 2_000,
+  });
+  const singleDb = drizzle(singlePool, { schema });
+
+  try {
+    prepareKnowledgeCardCalls = 0;
+    const conversationView = await getLibrarianConversationView(
+      userId,
+      smallDb,
+    );
+
+    // 10 active pending governed cards (8 eligible + 2 stale) are prepared once
+    // in readEligibleConfirmations; the 1 expired pending card is evaluated
+    // once inside getLinkedWork's shared transaction (11 total, never 20+).
+    expect(prepareKnowledgeCardCalls).toBe(11);
+    expect(conversationView.pendingCards.map((c) => c.id).sort()).toEqual(
+      [...pendingEligibleIds].sort(),
+    );
+    for (const expiredId of pendingExpiredIds) {
+      expect(
+        conversationView.cards.find((c) => c.id === expiredId),
+      ).toMatchObject({
+        status: "expired",
+        available: true,
+        effectPreview: expect.any(String),
+      });
+    }
+    for (const staleId of pendingStaleIds) {
+      expect(
+        conversationView.cards.find((c) => c.id === staleId)?.available,
+      ).toBe(false);
+    }
+    for (const vaultCardId of acceptedVaultIds) {
+      expect(
+        conversationView.cards.find((c) => c.id === vaultCardId),
+      ).toMatchObject({
+        available: true,
+        effectLink: expect.objectContaining({ kind: "vault" }),
+      });
+    }
+    for (const knowledgeCardId of acceptedKnowledgeIds) {
+      expect(
+        conversationView.cards.find((c) => c.id === knowledgeCardId),
+      ).toMatchObject({
+        available: true,
+        effectLink: expect.objectContaining({ kind: "proposal" }),
+      });
+    }
+
+    const workView = await getLibrarianWorkView(userId, smallDb);
+
+    expect(workView.indicator.state).toBe("action_required");
+
+    // Direct getLinkedWork caller without precomputed eligible set must also
+    // complete without bursting or opening nested vault transactions on max=1.
+    const directLinked = await getLinkedWork(
+      userId,
+      singleDb as unknown as Parameters<typeof getLinkedWork>[1],
+    );
+
+    expect(directLinked.cards).toHaveLength(15);
+    for (const expiredId of pendingExpiredIds) {
+      expect(directLinked.cards.find((c) => c.id === expiredId)).toEqual(
+        conversationView.cards.find((c) => c.id === expiredId),
+      );
+    }
+    for (const vaultCardId of acceptedVaultIds) {
+      expect(
+        directLinked.cards.find((c) => c.id === vaultCardId),
+      ).toMatchObject({
+        available: true,
+        effectLink: expect.objectContaining({ kind: "vault" }),
+      });
+    }
+  } finally {
+    await smallPool.end();
+    await singlePool.end();
+  }
 });

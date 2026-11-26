@@ -19,12 +19,29 @@ export function maskUrl(url: string): string {
 
 export function buildClient(): ReturnType<typeof drizzle<typeof schema>> {
   const url = resolvePostgresDbUrl();
+  const rawMax = process.env.MAISTER_DB_POOL_MAX;
+  const parsedMax =
+    rawMax !== undefined && rawMax.trim() !== "" ? Number(rawMax) : Number.NaN;
+  const max = Number.isInteger(parsedMax) && parsedMax > 0 ? parsedMax : 25;
+  const connectionTimeoutMillis = 10_000;
+  const idleTimeoutMillis = 30_000;
 
-  log.info({ driver: "postgres", url: maskDbUrl(url) }, "db client init");
+  log.info(
+    {
+      driver: "postgres",
+      url: maskDbUrl(url),
+      max,
+      connectionTimeoutMillis,
+      idleTimeoutMillis,
+    },
+    "db client init",
+  );
 
   const pool = createPostgresPool({
     connectionString: url,
-    max: Number(process.env.MAISTER_DB_POOL_MAX ?? 10),
+    max,
+    connectionTimeoutMillis,
+    idleTimeoutMillis,
     // Complete the writer declaration before lending the connection; hook
     // failures reject the caller instead of publishing an undeclared session.
     onConnect: declareWriterCapability,

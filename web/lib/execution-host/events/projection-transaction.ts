@@ -188,9 +188,41 @@ async function acquireClient(pool: Pool): Promise<PoolClient> {
   }
 }
 
+function isTransactionControlSql(normalizedText: string): boolean {
+  return /^(begin|commit|rollback|abort)\b/.test(normalizedText);
+}
+
+async function resolveBackendPid(
+  client: PoolClient,
+  remaining: () => number,
+): Promise<number> {
+  const clientProcessId = (client as unknown as { processID?: number })
+    .processID;
+
+  if (Number.isSafeInteger(clientProcessId) && (clientProcessId ?? 0) > 0) {
+    return clientProcessId!;
+  }
+  // pg supports a per-query read timeout; its current declaration omits it.
+  const pidQuery: QueryConfig & { query_timeout: number } = {
+    text: "SELECT pg_backend_pid() AS pid",
+    query_timeout: remaining(),
+  };
+  const pidResult = await client.query<{ pid: number }>(pidQuery);
+  const backendPid = pidResult.rows[0]?.pid;
+
+  if (!Number.isSafeInteger(backendPid) || (backendPid ?? 0) <= 0) {
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "PostgreSQL did not return a valid projection backend identity",
+    );
+  }
+
+  return backendPid!;
+}
+
 /** Runs DB-only projection work with a cumulative deadline and fenced COMMIT.
- * Query timeouts shrink with the remaining transaction budget. Deadline
- * cancellation cannot silently return an unconfirmed connection to the pool.
+ * Transaction-local timeouts are configured once after BEGIN while a monotonic
+ * wall-clock timer + pg_cancel_backend enforces the cumulative 5 s budget.
  */
 export async function projectionTransaction<T>(
   db: Db,
@@ -242,6 +274,7 @@ export async function boundedPostgresTransaction<T>(
 
     return ms;
   };
+  let timeoutsConfigured = false;
   const guarded = new Proxy(client, {
     get(target, property, receiver): unknown {
       if (property !== "query") return Reflect.get(target, property, receiver);
@@ -253,7 +286,8 @@ export async function boundedPostgresTransaction<T>(
         if (!rollback) {
           const budget = remaining();
 
-          if (!text.startsWith("begin")) {
+          if (!isTransactionControlSql(text) && !timeoutsConfigured) {
+            timeoutsConfigured = true;
             await target.query(
               "SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $1, true), set_config('idle_in_transaction_session_timeout', $1, true)",
               [String(budget)],
@@ -272,20 +306,7 @@ export async function boundedPostgresTransaction<T>(
   });
 
   try {
-    // pg supports a per-query read timeout; its current declaration omits it.
-    const pidQuery: QueryConfig & { query_timeout: number } = {
-      text: "SELECT pg_backend_pid() AS pid",
-      query_timeout: remaining(),
-    };
-    const pidResult = await client.query<{ pid: number }>(pidQuery);
-    const backendPid = pidResult.rows[0]?.pid;
-
-    if (!Number.isSafeInteger(backendPid) || backendPid <= 0) {
-      throw new MaisterError(
-        "ACP_PROTOCOL",
-        "PostgreSQL did not return a valid projection backend identity",
-      );
-    }
+    const backendPid = await resolveBackendPid(client, remaining);
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
         expired = true;

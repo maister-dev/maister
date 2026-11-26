@@ -9,6 +9,51 @@ import { HostRuntimeEventError } from "./host-runtime-errors";
 import { SQLITE_WRITE_HEADROOM_BYTES } from "./runtime-limits";
 
 export const SQLITE_CHECKPOINT_TARGET_BYTES = 64 * 1024 * 1024;
+const AMORTIZE_MAX_OPS = 16;
+const AMORTIZE_MAX_BYTES = 512 * 1024;
+const AMORTIZE_MIN_MARGIN_BYTES = 8 * 1024 * 1024;
+const AMORTIZE_ESTIMATED_OP_BYTES = 32 * 1024;
+
+function canReuseSnapshot(input: {
+  file: string | null;
+  pressured: boolean;
+  cached: PhysicalStorageSnapshot | null;
+  cachedOps: number;
+  cachedEstimatedBytes: number;
+  deltaBytes: number;
+  headroom: number;
+  limits: RuntimeLimits;
+}): boolean {
+  const {
+    file,
+    pressured,
+    cached,
+    cachedOps,
+    cachedEstimatedBytes,
+    deltaBytes,
+    headroom,
+    limits,
+  } = input;
+
+  if (file === null || pressured || cached === null) return false;
+  if (cachedOps >= AMORTIZE_MAX_OPS) return false;
+  const projectedBytes = cachedEstimatedBytes + deltaBytes;
+
+  if (projectedBytes > AMORTIZE_MAX_BYTES) return false;
+
+  return (
+    cached.walBytes + projectedBytes + AMORTIZE_MIN_MARGIN_BYTES <
+      SQLITE_CHECKPOINT_TARGET_BYTES &&
+    cached.totalBytes + projectedBytes + headroom + AMORTIZE_MIN_MARGIN_BYTES <
+      limits.stateMaxBytes &&
+    (cached.filesystemFreeBytes === null ||
+      cached.filesystemFreeBytes >=
+        limits.runtimeMinFreeBytes +
+          headroom +
+          projectedBytes +
+          AMORTIZE_MIN_MARGIN_BYTES)
+  );
+}
 
 export type SqliteStorageSnapshot = Readonly<{
   databaseBytes: number;
@@ -38,7 +83,7 @@ export type SqliteStorage = {
     reservedBytes: number,
     operation: (snapshot: PhysicalStorageSnapshot) => T,
   ) => T | null;
-  write: <T>(operation: () => T) => T;
+  write: <T>(operation: () => T, estimatedBytes?: number) => T;
   writeTemporary: <T>(operation: () => T) => T;
   reportFailure: (error: unknown) => void;
   subscribeFailure: (listener: () => void) => () => void;
@@ -143,6 +188,14 @@ export function createSqliteStorage(input: {
   const { db, file, limits, logger } = input;
   let available = true;
   let pressured = false;
+  let cachedPhysical: PhysicalStorageSnapshot | null = null;
+  let cachedOps = 0;
+  let cachedEstimatedBytes = 0;
+  const invalidatePhysicalCache = (): void => {
+    cachedPhysical = null;
+    cachedOps = 0;
+    cachedEstimatedBytes = 0;
+  };
   const failureListeners = new Set<() => void>();
   const pageBytes = pragmaNumber(db, "page_size");
 
@@ -176,21 +229,46 @@ export function createSqliteStorage(input: {
             ),
     };
   };
-  const snapshot = (): SqliteStorageSnapshot => ({
-    ...physicalSnapshot(),
-    pageBytes,
-    pageCount: pragmaNumber(db, "page_count"),
-    freePages: pragmaNumber(db, "freelist_count"),
-  });
+  const snapshot = (): SqliteStorageSnapshot => {
+    invalidatePhysicalCache();
+
+    return {
+      ...physicalSnapshot(),
+      pageBytes,
+      pageCount: pragmaNumber(db, "page_count"),
+      freePages: pragmaNumber(db, "freelist_count"),
+    };
+  };
   const markFailed = (error: unknown): void => {
     const failure = storageFailureSignature(error);
 
     if (!available || !failure) return;
     available = false;
+    invalidatePhysicalCache();
     logger?.error(failure, "runtime-storage-unavailable");
     for (const listener of failureListeners) listener();
   };
-  const measure = (headroom: number): PhysicalStorageSnapshot => {
+  const measure = (
+    headroom: number,
+    deltaBytes = AMORTIZE_ESTIMATED_OP_BYTES,
+  ): PhysicalStorageSnapshot => {
+    if (
+      canReuseSnapshot({
+        file,
+        pressured,
+        cached: cachedPhysical,
+        cachedOps,
+        cachedEstimatedBytes,
+        deltaBytes,
+        headroom,
+        limits,
+      })
+    ) {
+      cachedOps += 1;
+      cachedEstimatedBytes += deltaBytes;
+
+      return cachedPhysical!;
+    }
     let measured = physicalSnapshot();
 
     if (
@@ -217,6 +295,14 @@ export function createSqliteStorage(input: {
         },
         "runtime-state-checkpoint",
       );
+    }
+
+    if (file !== null && !pressured) {
+      cachedPhysical = measured;
+      cachedOps = 1;
+      cachedEstimatedBytes = deltaBytes;
+    } else {
+      invalidatePhysicalCache();
     }
 
     return measured;
@@ -266,6 +352,7 @@ export function createSqliteStorage(input: {
           "runtime-state-pressure-changed",
         );
       pressured = nextPressure;
+      if (pressured) invalidatePhysicalCache();
 
       return pressured ? null : measured;
     } catch (error) {
@@ -294,11 +381,18 @@ export function createSqliteStorage(input: {
       // executes synchronously before any other reservation can spend it.
       return writeTemporary(() => operation(measured));
     },
-    write<T>(operation: () => T): T {
+    write<T>(operation: () => T, estimatedBytes?: number): T {
+      const delta =
+        estimatedBytes !== undefined &&
+        Number.isFinite(estimatedBytes) &&
+        estimatedBytes > 0
+          ? Math.ceil(estimatedBytes)
+          : AMORTIZE_ESTIMATED_OP_BYTES;
+
       return writeTemporary(() => {
         if (
           !fits(
-            measure(SQLITE_WRITE_HEADROOM_BYTES),
+            measure(SQLITE_WRITE_HEADROOM_BYTES, delta),
             SQLITE_WRITE_HEADROOM_BYTES,
           )
         ) {

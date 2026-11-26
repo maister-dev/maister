@@ -506,6 +506,7 @@ type WalkResult = {
   skippedCount: number;
   dispositions: Map<string, "accepted" | "stale_epoch">;
   promotedRunIds: Set<string>;
+  promotedRunMaxSequence: Map<string, bigint>;
 };
 
 type BatchEntry = {
@@ -707,6 +708,12 @@ async function applyPromotedPage(
       rows.forEach((event, index) =>
         assigned.push({ id: event.id, runSequence: first + BigInt(index) }),
       );
+      const lastSeq = first + BigInt(rows.length - 1);
+      const prevMax = input.walk.promotedRunMaxSequence.get(runId);
+
+      if (prevMax === undefined || lastSeq > prevMax) {
+        input.walk.promotedRunMaxSequence.set(runId, lastSeq);
+      }
       input.walk.promotedRunIds.add(runId);
     }
     const values = sql.join(
@@ -765,6 +772,7 @@ async function promoteContiguousPrefix(
     skippedCount: 0,
     dispositions: new Map(),
     promotedRunIds: new Set(),
+    promotedRunMaxSequence: new Map(),
   };
 
   for (;;) {
@@ -859,8 +867,13 @@ async function promoteContiguousPrefix(
     .limit(1);
 
   walk.firstGap = beyond[0] ? expected : null;
-  for (const runId of walk.promotedRunIds)
-    await seedCanonicalProjectionConsumers(tx, runId);
+  for (const runId of walk.promotedRunIds) {
+    await seedCanonicalProjectionConsumers(
+      tx,
+      runId,
+      walk.promotedRunMaxSequence.get(runId) ?? -1n,
+    );
+  }
 
   return walk;
 }

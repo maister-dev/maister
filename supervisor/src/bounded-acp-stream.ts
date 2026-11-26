@@ -14,6 +14,7 @@ import type {
   Writable as NodeWritable,
 } from "node:stream";
 
+import { isUtf8 } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { open, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,7 +24,6 @@ import { ReadableStream, WritableStream } from "node:stream/web";
 import { setImmediate as nextTurn } from "node:timers/promises";
 
 import pino from "pino";
-import { z } from "zod";
 
 // The SDK's `exports` map publishes no zod subpath (only the JSON schema), yet
 // these generated validators are exactly the inbound contract this producer
@@ -32,13 +32,14 @@ import {
   zRequestPermissionRequest,
   zSessionNotification,
 } from "../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js";
-
-import { SupervisorError, type SupervisorErrorDetails } from "./types";
-import { createAcpToolCallContext } from "./acp-tool-call-context";
 import { acpContextUpdateType } from "../../runtime/acp-context";
 import { parseUnsupportedAcpMessage } from "../../runtime/unsupported-acp-message";
 
+import { SupervisorError, type SupervisorErrorDetails } from "./types";
+import { createAcpToolCallContext } from "./acp-tool-call-context";
+
 export const MAX_ACP_FRAME_BYTES = 1_048_576;
+export const MAX_CHUNK_BATCH_FRAMES = 16;
 const MAX_PRODUCERS = 20;
 const PRODUCER_BUFFER_BYTES = 144 * 1024;
 const DECODE_BUFFER_BYTES = 7 * 1024 * 1024;
@@ -244,15 +245,77 @@ async function readCapturedFrame(
   return frame;
 }
 
+async function writeToSpool(
+  spool: FileHandle,
+  bytes: Uint8Array,
+  atOffset: number,
+): Promise<void> {
+  let written = 0;
+
+  while (written < bytes.byteLength) {
+    const result = await spool.write(
+      bytes,
+      written,
+      bytes.byteLength - written,
+      atOffset + written,
+    );
+
+    if (result.bytesWritten === 0) throw incomplete("producer_output_storage");
+    written += result.bytesWritten;
+  }
+}
+
+function scanCompleteLineSlice(
+  chunk: Buffer,
+  startOffset: number,
+  maxFrames: number,
+): { sliceEnd: number; frameEnds: number[] } {
+  const frameEnds: number[] = [];
+  let cursor = startOffset;
+
+  while (frameEnds.length < maxFrames && cursor < chunk.byteLength) {
+    const newline = chunk.indexOf(10, cursor);
+
+    if (newline === -1) break;
+    cursor = newline + 1;
+    frameEnds.push(cursor);
+  }
+
+  return { sliceEnd: cursor, frameEnds };
+}
+
 function publishCapturedFrame(
   frame: Uint8Array,
   onLine: ((line: string) => void) | undefined,
 ): void {
-  const line = new TextDecoder("utf-8", { fatal: true }).decode(
-    frame.subarray(0, -1),
-  );
+  const payload = frame.subarray(0, -1);
 
-  onLine?.(line);
+  if (!onLine) {
+    if (!isUtf8(payload)) throw incomplete("producer_frame_invalid");
+
+    return;
+  }
+  let line: string;
+
+  try {
+    line = new TextDecoder("utf-8", { fatal: true }).decode(payload);
+  } catch {
+    throw incomplete("producer_frame_invalid");
+  }
+  onLine(line);
+}
+
+export function isOrdinaryTextNotification(
+  params: SessionNotification,
+): boolean {
+  const { update } = params;
+
+  return (
+    (update.sessionUpdate === "agent_message_chunk" ||
+      update.sessionUpdate === "agent_thought_chunk" ||
+      update.sessionUpdate === "user_message_chunk") &&
+    update.content.type === "text"
+  );
 }
 
 export type CapturedStdoutSegment = {
@@ -273,7 +336,11 @@ export function captureAcpFrames(input: {
   onDrained: () => void;
   onStorageFailure?: (error: unknown) => void;
   storageAvailable?: () => boolean;
-  beforeFrame?: (frameBytes: number) => Promise<FrameAdmission>;
+  beforeFrame?: (
+    frameBytes: number,
+    frameCount?: number,
+  ) => Promise<FrameAdmission>;
+  maxSliceFrames?: () => number;
   beforeWrite?: (bytes: number) => Promise<LogWriteAdmission>;
   spoolPath?: string;
   onSpoolBytes?: (bytes: number) => void;
@@ -325,11 +392,133 @@ export function captureAcpFrames(input: {
         let offset = 0;
 
         while (offset < chunk.byteLength) {
+          if (input.shouldDrain?.()) draining = true;
+
+          // Fast-path complete newline-terminated lines inside the current
+          // chunk without touching `.acp-frame-*.tmp` unless drain triggers.
+          if (length === 0 && !draining) {
+            const maxFrames = Math.min(
+              MAX_CHUNK_BATCH_FRAMES,
+              Math.max(1, input.maxSliceFrames?.() ?? MAX_CHUNK_BATCH_FRAMES),
+            );
+            const { sliceEnd, frameEnds } = scanCompleteLineSlice(
+              chunk,
+              offset,
+              maxFrames,
+            );
+
+            if (frameEnds.length > 0) {
+              const slicePart = chunk.subarray(offset, sliceEnd);
+              const sliceBytes = slicePart.byteLength;
+              const writeAdmission = await input.beforeWrite?.(sliceBytes);
+
+              if (writeAdmission?.kind === "drain") {
+                draining = true;
+                await writeToSpool(spool, slicePart, length);
+                length += sliceBytes;
+                completeFrames += frameEnds.length;
+                trailingFrameBytes = 0;
+                input.onSpoolBytes?.(length);
+                await writeChunk(input.log, slicePart);
+                input.onLogBytes?.(sliceBytes);
+                if (log.isLevelEnabled("debug")) {
+                  log.debug(
+                    {
+                      frames: frameEnds.length,
+                      byteLength: sliceBytes,
+                      draining: true,
+                    },
+                    "acp-frame-slice-spilled",
+                  );
+                }
+                offset = sliceEnd;
+                continue;
+              }
+              await writeChunk(input.log, slicePart);
+              input.onLogBytes?.(sliceBytes);
+              const admission = input.beforeFrame
+                ? await input.beforeFrame(sliceBytes, frameEnds.length)
+                : undefined;
+
+              if (admission?.kind === "drain") {
+                draining = true;
+                await writeToSpool(spool, slicePart, length);
+                length += sliceBytes;
+                completeFrames += frameEnds.length;
+                trailingFrameBytes = 0;
+                input.onSpoolBytes?.(length);
+                if (log.isLevelEnabled("debug")) {
+                  log.debug(
+                    {
+                      frames: frameEnds.length,
+                      byteLength: sliceBytes,
+                      draining: true,
+                    },
+                    "acp-frame-slice-spilled",
+                  );
+                }
+                offset = sliceEnd;
+                continue;
+              }
+              const release = await acquireDecoder();
+              const multiFrame = frameEnds.length > 1;
+              let sliceOpen = false;
+              let frame: Buffer | null = null;
+
+              try {
+                if (multiFrame) {
+                  output.emit("frameSliceStart", frameEnds.length);
+                  sliceOpen = true;
+                }
+                let frameStart = offset;
+
+                for (const frameEnd of frameEnds) {
+                  const part = chunk.subarray(frameStart, frameEnd);
+
+                  publishCapturedFrame(part, input.onLine);
+                  frame = Buffer.from(part);
+                  yield frame;
+                  frame = null;
+                  firstLogByteOffset += part.byteLength;
+                  frameStart = frameEnd;
+                }
+                if (sliceOpen) {
+                  sliceOpen = false;
+                  output.emit("frameSliceEnd");
+                }
+                if (multiFrame && log.isLevelEnabled("debug")) {
+                  log.debug(
+                    {
+                      frames: frameEnds.length,
+                      byteLength: sliceBytes,
+                      draining: false,
+                    },
+                    "acp-frame-slice-batched",
+                  );
+                }
+              } finally {
+                if (sliceOpen) {
+                  sliceOpen = false;
+                  try {
+                    output.emit("frameSliceEnd");
+                  } catch {
+                    // Preserve the original frame error while still releasing
+                    // decoder and frame reservations below.
+                  }
+                }
+                frame = null;
+                release();
+                admission?.release();
+              }
+              offset = sliceEnd;
+              continue;
+            }
+          }
+
           const newline = chunk.indexOf(10, offset);
           const end = newline === -1 ? chunk.byteLength : newline + 1;
           const part = chunk.subarray(offset, end);
 
-          if (input.shouldDrain?.()) draining = true;
           if (
             length + part.byteLength >
             (draining ? 2_097_152 : MAX_ACP_FRAME_BYTES)
@@ -338,20 +527,7 @@ export function captureAcpFrames(input: {
           const writeAdmission = await input.beforeWrite?.(part.byteLength);
 
           if (writeAdmission?.kind === "drain") draining = true;
-          let written = 0;
-
-          while (written < part.byteLength) {
-            const result = await spool.write(
-              part,
-              written,
-              part.byteLength - written,
-              length + written,
-            );
-
-            if (result.bytesWritten === 0)
-              throw incomplete("producer_output_storage");
-            written += result.bytesWritten;
-          }
+          await writeToSpool(spool, part, length);
           length += part.byteLength;
           trailingFrameBytes += part.byteLength;
           input.onSpoolBytes?.(length);
@@ -453,7 +629,7 @@ export function captureAcpFrames(input: {
 }
 
 /** Bounds JSON parser work before allocating the decoded object graph. */
-function parseFrame(frame: Uint8Array): AnyMessage {
+function parseFrame(frame: Uint8Array, decodedLine: string): AnyMessage {
   if (frame.byteLength > MAX_ACP_FRAME_BYTES)
     throw incomplete("producer_frame_limit");
   let quoted = false;
@@ -479,7 +655,7 @@ function parseFrame(frame: Uint8Array): AnyMessage {
   let value: unknown;
 
   try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(frame));
+    value = JSON.parse(decodedLine);
   } catch {
     throw incomplete("producer_frame_invalid");
   }
@@ -511,6 +687,11 @@ function parseFrame(frame: Uint8Array): AnyMessage {
  * The source must be object-mode and yield one complete newline-terminated
  * frame per value, as produced by captureAcpFrames.
  */
+export type TextFrameEntry = Readonly<{
+  params: SessionNotification;
+  line: string;
+}>;
+
 export function boundedAcpStream(input: {
   source: NodeReadable;
   stdin: NodeWritable;
@@ -518,6 +699,8 @@ export function boundedAcpStream(input: {
   adapter?: ExecutorAgent;
   onLine?: (line: string) => void;
   onUpdateFrame?: (params: SessionNotification, line: string) => Promise<void>;
+  onTextFrameBatch?: (frames: readonly TextFrameEntry[]) => void;
+  isBatchableTextFrame?: (params: SessionNotification, line: string) => boolean;
   onFailure: (error: SupervisorError) => void;
 }): BoundedAcpStream {
   if (input.source.readableObjectMode !== true)
@@ -525,7 +708,34 @@ export function boundedAcpStream(input: {
   const iterator = input.source[Symbol.asyncIterator]();
   const pendingPermissions = new Set<Promise<void>>();
   const toolCalls = createAcpToolCallContext();
+  const pendingTextFrames: TextFrameEntry[] = [];
+  let inFrameSlice = false;
   let stopped = false;
+  const isBatchable =
+    input.isBatchableTextFrame ??
+    ((params: SessionNotification) => isOrdinaryTextNotification(params));
+  const flushPendingTextFrames = (): void => {
+    if (pendingTextFrames.length === 0) return;
+    const batch = pendingTextFrames.splice(0, pendingTextFrames.length);
+
+    input.onTextFrameBatch?.(batch);
+  };
+  const onFrameSliceStart = (): void => {
+    inFrameSlice = true;
+  };
+  const onFrameSliceEnd = (): void => {
+    inFrameSlice = false;
+    flushPendingTextFrames();
+  };
+  const detachSliceListeners = (): void => {
+    input.source.off("frameSliceStart", onFrameSliceStart);
+    input.source.off("frameSliceEnd", onFrameSliceEnd);
+  };
+
+  if (input.onTextFrameBatch) {
+    input.source.on("frameSliceStart", onFrameSliceStart);
+    input.source.on("frameSliceEnd", onFrameSliceEnd);
+  }
   const send = (message: AnyMessage): Promise<void> =>
     writeChunk(
       input.stdin,
@@ -586,6 +796,7 @@ export function boundedAcpStream(input: {
     const parsed = zSessionNotification.safeParse(params);
 
     if (!parsed.success) {
+      flushPendingTextFrames();
       input.onLine?.(line);
       const type = acpContextUpdateType(
         params && typeof params === "object" && "update" in params
@@ -601,12 +812,20 @@ export function boundedAcpStream(input: {
             "invalid ACP context update",
           );
         }
+
         return;
       }
 
       throw incomplete("producer_update_invalid");
     }
     toolCalls.observe(parsed.data);
+    if (input.onTextFrameBatch && isBatchable(parsed.data, line)) {
+      pendingTextFrames.push({ params: parsed.data, line });
+      if (!inFrameSlice) flushPendingTextFrames();
+
+      return;
+    }
+    flushPendingTextFrames();
     if (input.onUpdateFrame) {
       await input.onUpdateFrame(parsed.data, line);
     } else {
@@ -625,19 +844,29 @@ export function boundedAcpStream(input: {
             let next: IteratorResult<unknown> | null = await iterator.next();
 
             if (next.done) {
+              flushPendingTextFrames();
+              detachSliceListeners();
               controller.close();
 
               return;
             }
             let frame: Uint8Array | null = next.value as Uint8Array;
-            let line: string | null = new TextDecoder("utf-8", {
-              fatal: true,
-            }).decode(frame.subarray(0, -1));
+            let line: string | null;
+
+            try {
+              line = new TextDecoder("utf-8", {
+                fatal: true,
+              }).decode(frame.subarray(0, -1));
+            } catch {
+              flushPendingTextFrames();
+              throw incomplete("producer_frame_invalid");
+            }
             let message: AnyMessage | null;
 
             try {
-              message = parseFrame(frame);
+              message = parseFrame(frame, line);
             } catch (error) {
+              flushPendingTextFrames();
               input.onLine?.(line);
               throw error;
             }
@@ -647,7 +876,10 @@ export function boundedAcpStream(input: {
               message.method === "session/update" &&
               !("id" in message);
 
-            if (!textUpdate) input.onLine?.(line);
+            if (!textUpdate) {
+              flushPendingTextFrames();
+              input.onLine?.(line);
+            }
             if (!("method" in message)) {
               controller.enqueue(message);
 
@@ -687,6 +919,7 @@ export function boundedAcpStream(input: {
             line = null;
           }
         } catch (error) {
+          detachSliceListeners();
           const failure =
             error instanceof SupervisorError
               ? error
@@ -699,6 +932,7 @@ export function boundedAcpStream(input: {
       },
       async cancel() {
         stopped = true;
+        detachSliceListeners();
         await iterator.return?.();
       },
     },

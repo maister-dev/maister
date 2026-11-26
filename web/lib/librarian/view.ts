@@ -15,6 +15,7 @@ import {
 } from "./action-history";
 import {
   readEligibleConfirmationIds,
+  readEligibleConfirmations,
   type ConfirmationOwner,
 } from "./confirmation-availability";
 import { lockOwnerConversation } from "./conversation";
@@ -563,14 +564,17 @@ export async function getLibrarianConversationView(
   const { conversation, segment } = await db.transaction((tx) =>
     lockOwnerConversation(tx, ownerId),
   );
-  const [eligibleIds, linkedWork] = await Promise.all([
-    readEligibleConfirmationIds(db, conversation),
-    getLinkedWork(
-      ownerId,
-      db as unknown as ReturnType<typeof import("@/lib/db/client").getDb>,
-    ),
-  ]);
+  const { eligibleIds, evaluatedGovernedPendingIds } =
+    await readEligibleConfirmations(db, conversation);
   const eligible = new Set(eligibleIds);
+  const linkedWork = await getLinkedWork(
+    ownerId,
+    db as unknown as ReturnType<typeof import("@/lib/db/client").getDb>,
+    {
+      eligiblePendingCardIds: eligible,
+      evaluatedPendingCardIds: evaluatedGovernedPendingIds,
+    },
+  );
   const common = await librarianConversationCommon(
     db,
     conversation,

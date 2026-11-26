@@ -1,12 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Client } from "pg";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { MAX_COMPACTION_SUMMARY_LENGTH } from "../../../../runtime/acp-context";
 
 import * as fullSchema from "@/lib/db/schema";
+import { projectExecutionEvents } from "@/lib/execution-host/events/projector";
+import {
+  canonicalTranscriptProjector,
+  projectTranscriptEvent,
+} from "@/lib/execution-host/events/transcript-projector";
 import { coalesceSessionUpdates } from "@/lib/run-transcript/coalesce";
 import { parseScratchMessageContent } from "@/lib/run-transcript/transcript";
 import {
@@ -828,5 +834,348 @@ describe("projectRunTranscript", () => {
 
     expect(plan?.messages).toHaveLength(1);
     expect(impl?.messages).toHaveLength(1);
+  });
+
+  it("REQ-P4-04: coalesces a 100-event mixed stream in <= 15 domain SQL queries with byte-identical output to per-event replay", async () => {
+    const runA = await seed();
+    const runB = await seed();
+
+    const buildStream = (attemptId: string): string[] => {
+      const lines: string[] = [];
+      let seq = 1;
+
+      for (let i = 0; i < 30; i += 1) {
+        lines.push(textLine(attemptId, seq++, `tok-${i} `));
+      }
+      for (let i = 0; i < 25; i += 1) {
+        lines.push(
+          JSON.stringify({
+            type: "session.update",
+            monotonicId: seq++,
+            sessionName: "node",
+            nodeAttemptId: attemptId,
+            update: {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: `think-${i};` },
+            },
+          }),
+        );
+      }
+      for (let i = 0; i < 20; i += 1) {
+        lines.push(usageLine(attemptId, seq++, 1000 + i * 100));
+      }
+      lines.push(
+        JSON.stringify({
+          type: "session.update",
+          monotonicId: seq++,
+          sessionName: "node",
+          nodeAttemptId: attemptId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call-batch-1",
+            title: "Inspect file",
+            kind: "read",
+            status: "in_progress",
+            rawInput: { path: "src/app.ts" },
+            content: [],
+          },
+        }),
+      );
+      for (let i = 0; i < 10; i += 1) {
+        lines.push(
+          JSON.stringify({
+            type: "session.update",
+            monotonicId: seq++,
+            sessionName: "node",
+            nodeAttemptId: attemptId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "call-batch-1",
+              status: i === 9 ? "completed" : "in_progress",
+              ...(i === 0 ? { rawInput: { path: "src/app.ts", line: 1 } } : {}),
+              content:
+                i % 2 === 0
+                  ? [
+                      {
+                        type: "content",
+                        content: { type: "text", text: `line-${i}` },
+                      },
+                    ]
+                  : [],
+            },
+          }),
+        );
+      }
+      lines.push(
+        JSON.stringify({
+          type: "session.command",
+          monotonicId: seq++,
+          nodeAttemptId: attemptId,
+          kind: "session.steer",
+          phase: "accepted",
+        }),
+      );
+      for (let i = 0; i < 13; i += 1) {
+        lines.push(textLine(attemptId, seq++, `after-${i} `));
+      }
+
+      return lines;
+    };
+
+    const linesA = buildStream(runA.implAttemptId);
+    const linesB = buildStream(runB.implAttemptId);
+
+    expect(linesA).toHaveLength(100);
+    await writeEvents(runA.slug, runA.runId, linesA);
+    await writeEvents(runB.slug, runB.runId, linesB);
+
+    // Project runA via the canonical batch projector and count domain SQL queries.
+    const domainQueries: string[] = [];
+    const originalQuery = Client.prototype.query;
+    const querySpy = vi
+      .spyOn(Client.prototype, "query")
+      .mockImplementation(function (this: Client, ...args: unknown[]) {
+        const first = args[0];
+        const sqlText =
+          typeof first === "string"
+            ? first
+            : first && typeof first === "object" && "text" in first
+              ? String((first as { text: unknown }).text)
+              : "";
+        const lower = sqlText.toLowerCase();
+
+        if (
+          lower.includes('"runs"') ||
+          lower.includes('"node_attempts"') ||
+          lower.includes('"run_transcript_states"') ||
+          lower.includes('"run_messages"')
+        ) {
+          domainQueries.push(sqlText);
+        }
+
+        return (originalQuery as (...a: unknown[]) => unknown).apply(
+          this,
+          args,
+        );
+      } as typeof Client.prototype.query);
+
+    try {
+      const summary = await projectExecutionEvents({
+        db: db as unknown as Parameters<typeof projectExecutionEvents>[0]["db"],
+        runId: runA.runId,
+        projector: canonicalTranscriptProjector,
+      });
+
+      expect(summary).toMatchObject({
+        projected: 100,
+        poisoned: false,
+        lastRunSequence: "100",
+      });
+    } finally {
+      querySpy.mockRestore();
+    }
+
+    // Project runB strictly event-by-event using projectTranscriptEvent as ground truth.
+    const eventsB = await db
+      .select()
+      .from(fullSchema.executionEvents)
+      .where(eq(fullSchema.executionEvents.runId, runB.runId))
+      .orderBy(asc(fullSchema.executionEvents.runSequence));
+
+    await db.transaction(async (tx) => {
+      for (const event of eventsB) {
+        await projectTranscriptEvent(
+          tx as unknown as Parameters<typeof projectTranscriptEvent>[0],
+          event,
+        );
+      }
+    });
+
+    expect(domainQueries.length).toBeLessThanOrEqual(15);
+
+    const normalizeMessages = (
+      rows: (typeof fullSchema.runMessages.$inferSelect)[],
+    ) =>
+      rows.map((r) => ({
+        sequence: r.sequence,
+        role: r.role,
+        content:
+          r.role === "assistant"
+            ? r.content
+            : (JSON.parse(r.content) as unknown),
+        firstSupervisorEventId: r.firstSupervisorEventId,
+        supervisorEventId: r.supervisorEventId,
+        projectionToolKey: r.projectionToolKey,
+      }));
+
+    const msgsA = await db
+      .select()
+      .from(fullSchema.runMessages)
+      .where(eq(fullSchema.runMessages.runId, runA.runId))
+      .orderBy(asc(fullSchema.runMessages.sequence));
+    const msgsB = await db
+      .select()
+      .from(fullSchema.runMessages)
+      .where(eq(fullSchema.runMessages.runId, runB.runId))
+      .orderBy(asc(fullSchema.runMessages.sequence));
+
+    expect(normalizeMessages(msgsA)).toEqual(normalizeMessages(msgsB));
+
+    const [stateA] = await db
+      .select()
+      .from(fullSchema.runTranscriptStates)
+      .where(eq(fullSchema.runTranscriptStates.runId, runA.runId));
+    const [stateB] = await db
+      .select()
+      .from(fullSchema.runTranscriptStates)
+      .where(eq(fullSchema.runTranscriptStates.runId, runB.runId));
+
+    expect({
+      nextSequence: stateA?.nextSequence,
+      openTextSequence: stateA?.openTextSequence,
+      openThoughtSequence: stateA?.openThoughtSequence,
+      usageSequence: stateA?.usageSequence,
+    }).toEqual({
+      nextSequence: stateB?.nextSequence,
+      openTextSequence: stateB?.openTextSequence,
+      openThoughtSequence: stateB?.openThoughtSequence,
+      usageSequence: stateB?.usageSequence,
+    });
+  });
+
+  it("REQ-P4-05: rolls back coalesced savepoint and poisons exact failing event #37 on unstorable payload", async () => {
+    const { runId, slug, implAttemptId } = await seed();
+    const lines = Array.from({ length: 50 }, (_, i) =>
+      textLine(implAttemptId, i + 1, `chunk-${i + 1} `),
+    );
+
+    await writeEvents(slug, runId, lines);
+
+    const [event37] = await db
+      .select({ id: fullSchema.executionEvents.id })
+      .from(fullSchema.executionEvents)
+      .where(
+        and(
+          eq(fullSchema.executionEvents.runId, runId),
+          eq(fullSchema.executionEvents.runSequence, 37n),
+        ),
+      );
+
+    expect(event37).toBeDefined();
+
+    const summary = await projectExecutionEvents({
+      db: db as unknown as Parameters<typeof projectExecutionEvents>[0]["db"],
+      runId,
+      projector: {
+        ...canonicalTranscriptProjector,
+        prepare: async (_db, event) =>
+          event.runSequence === 37n
+            ? {
+                ...event,
+                payload: {
+                  ...event.payload,
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: "poison-\u0000-37" },
+                  },
+                },
+              }
+            : event,
+      },
+    });
+
+    expect(summary.poisoned).toBe(true);
+
+    const [consumer] = await db
+      .select({
+        state: fullSchema.executionEventConsumers.state,
+        poisonEventId: fullSchema.executionEventConsumers.poisonEventId,
+      })
+      .from(fullSchema.executionEventConsumers)
+      .where(
+        and(
+          eq(fullSchema.executionEventConsumers.runId, runId),
+          eq(
+            fullSchema.executionEventConsumers.consumerName,
+            canonicalTranscriptProjector.consumerName,
+          ),
+        ),
+      );
+
+    expect(consumer).toEqual({
+      state: "poisoned",
+      poisonEventId: event37!.id,
+    });
+
+    const committed = await db
+      .select()
+      .from(fullSchema.runMessages)
+      .where(eq(fullSchema.runMessages.runId, runId));
+
+    expect(committed).toHaveLength(0);
+  });
+
+  it("REQ-P4-05: rethrows transaction-wide lock timeout (55P03) from projectBatch without falling back to sequential replay", async () => {
+    const { runId, slug, implAttemptId } = await seed();
+    const lines = Array.from({ length: 10 }, (_, i) =>
+      textLine(implAttemptId, i + 1, `lock-${i} `),
+    );
+
+    await writeEvents(slug, runId, lines);
+    // Seed the run_transcript_states row so a second connection can hold a row lock on it.
+    await projectExecutionEvents({
+      db: db as unknown as Parameters<typeof projectExecutionEvents>[0]["db"],
+      runId,
+      projector: canonicalTranscriptProjector,
+    });
+    const moreLines = Array.from({ length: 20 }, (_, i) =>
+      textLine(implAttemptId, 11 + i, `blocked-${i} `),
+    );
+
+    await writeEvents(slug, runId, moreLines);
+    const events = await db
+      .select()
+      .from(fullSchema.executionEvents)
+      .where(eq(fullSchema.executionEvents.runId, runId))
+      .orderBy(asc(fullSchema.executionEvents.runSequence));
+    const batchEvents = events.slice(10);
+
+    expect(batchEvents).toHaveLength(20);
+
+    const blocker = await testDatabase.pool.connect();
+
+    await blocker.query("BEGIN");
+    await blocker.query(
+      "SELECT 1 FROM run_transcript_states WHERE run_id = $1 FOR UPDATE",
+      [runId],
+    );
+
+    let progressCalls = 0;
+
+    try {
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.execute(sql`SET LOCAL lock_timeout = '100ms'`);
+
+          return canonicalTranscriptProjector.projectBatch!(
+            tx as unknown as Parameters<
+              NonNullable<typeof canonicalTranscriptProjector.projectBatch>
+            >[0],
+            batchEvents,
+            () => {
+              progressCalls += 1;
+            },
+            performance.now() + 5_000,
+          );
+        }),
+      ).rejects.toThrow();
+
+      // Must rethrow 55P03 immediately rather than entering the 20-event
+      // sequential fallback loop (which would invoke onProgress for each event).
+      expect(progressCalls).toBe(0);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
   });
 });

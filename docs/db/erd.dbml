@@ -1750,6 +1750,7 @@ table execution_event_consumers {
   consumer_name text [not null]
   run_id text [not null]
   last_run_sequence bigint
+  max_available_sequence bigint [not null, default: `-1`]
   state text [not null, default: 'ready']
   attempts integer [not null, default: 0]
   next_retry_at "timestamp with time zone"
@@ -1765,6 +1766,8 @@ table execution_event_consumers {
     (consumer_name, run_id) [pk]
     (next_retry_at, claim_expires_at) [name: 'execution_event_consumers_retry_idx']
     (last_served_at, run_id, consumer_name) [name: 'execution_event_consumers_service_idx']
+    (last_served_at, run_id, consumer_name) [name: 'execution_event_consumers_due_service_idx']
+
     (run_id, consumer_name) [name: 'execution_event_consumers_poisoned_idx']
   }
 }

@@ -52,7 +52,16 @@ export async function backfillProjectionConsumers(
     if (!cursor) return { complete: false, seeded: 0 };
     if (cursor.completedAt) return { complete: true, seeded: 0 };
     const page = await tx
-      .select({ runId: runs.id })
+      .select({
+        runId: runs.id,
+        maxAvailableSequence: sql<string>`(
+          SELECT COALESCE(MAX(ee.run_sequence), -1)::text
+          FROM execution_events ee
+          WHERE ee.run_id = "runs"."id"
+            AND ee.ingest_disposition = 'accepted'
+            AND ee.run_sequence IS NOT NULL
+        )`,
+      })
       .from(runs)
       .where(
         and(
@@ -68,8 +77,22 @@ export async function backfillProjectionConsumers(
     if (page.length > 0) {
       await tx
         .insert(executionEventConsumers)
-        .values(page.map(({ runId }) => ({ consumerName, runId })))
-        .onConflictDoNothing();
+        .values(
+          page.map(({ runId, maxAvailableSequence }) => ({
+            consumerName,
+            runId,
+            maxAvailableSequence: BigInt(maxAvailableSequence),
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [
+            executionEventConsumers.consumerName,
+            executionEventConsumers.runId,
+          ],
+          set: {
+            maxAvailableSequence: sql`GREATEST(${executionEventConsumers.maxAvailableSequence}, EXCLUDED.max_available_sequence)`,
+          },
+        });
     }
     const complete = page.length < 100;
 

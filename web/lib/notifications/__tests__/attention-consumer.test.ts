@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildAttentionConsumer,
   deltaTypeFor,
+  emitDecisionsDelta,
 } from "@/lib/notifications/attention-consumer";
 
 vi.mock("@/lib/notifications/attention-publication", () => ({
@@ -150,5 +151,29 @@ describe("UT-NTF-12 consumer failure handling", () => {
     const consumer = consumerOver([], async () => 0);
 
     await expect(consumer.handle([event])).resolves.toBeUndefined();
+  });
+
+  it("REQ-D5-02: passes the active transaction handle as the 3rd argument to decisionsFor", async () => {
+    const txMarker = {
+      execute: async () => ({ rows: [] }),
+    };
+    const clientHandle = {
+      transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
+        fn(txMarker),
+    };
+    let receivedTx: unknown;
+
+    await emitDecisionsDelta(
+      clientHandle,
+      "user-1",
+      "member",
+      async (_userId, _role, tx) => {
+        receivedTx = tx;
+
+        return { decisions: 0, ordinaryDecisions: 0 };
+      },
+    );
+
+    expect(receivedTx).toBe(txMarker);
   });
 });

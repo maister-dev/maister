@@ -12,10 +12,23 @@ import { randomUUID } from "node:crypto";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { Client } from "pg";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { reconcileRunCostRollups } from "@/lib/runs/cost-rollups";
+import { projectExecutionEvents } from "@/lib/execution-host/events/projector";
+import {
+  canonicalCostProjector,
+  reconcileRunCostRollups,
+} from "@/lib/runs/cost-rollups";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -423,6 +436,241 @@ describe("reconcileRunCostRollups — by_runner", () => {
         cacheReadTokens: 0,
         cacheCreationTokens: 0,
       },
+    });
+  });
+
+  it("REQ-P4-06: batches 10 usage.recorded events across 2 models/sessions with 1 refreshRunnerBuckets and skips foreign nodeAttemptId", async () => {
+    const runId = await seedRun({});
+    const foreignRunId = await seedRun({});
+    const ownedAttemptId = randomUUID();
+    const foreignAttemptId = randomUUID();
+
+    await db.insert(schema.nodeAttempts).values([
+      {
+        id: ownedAttemptId,
+        runId,
+        nodeId: "implement",
+        nodeType: "ai_coding",
+        attempt: 1,
+        status: "Running",
+      },
+      {
+        id: foreignAttemptId,
+        runId: foreignRunId,
+        nodeId: "other",
+        nodeType: "ai_coding",
+        attempt: 1,
+        status: "Running",
+      },
+    ]);
+    await seedSession({
+      runId,
+      sessionName: "s-claude",
+      adapter: "claude",
+      model: "claude-sonnet-4-6",
+    });
+    await seedSession({
+      runId,
+      sessionName: "s-codex",
+      adapter: "codex",
+      model: "gpt-5",
+    });
+
+    await db.insert(schema.executionEvents).values([
+      ...Array.from({ length: 5 }, (_, i) => ({
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: `cost-batch:${runId}:claude:${i}`,
+        runId,
+        eventType: "usage.recorded",
+        payloadSchema: "maister.usage.recorded.v1",
+        payload: {
+          sessionName: "s-claude",
+          model: "claude-sonnet-4-6",
+          nodeAttemptId: ownedAttemptId,
+          inputTokens: 100,
+          outputTokens: 20,
+          cacheReadInputTokens: 10,
+          cacheCreationInputTokens: 5,
+          resumed: i === 0,
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(i),
+        ingestDisposition: "accepted",
+      })),
+      ...Array.from({ length: 4 }, (_, i) => ({
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: `cost-batch:${runId}:codex:${i}`,
+        runId,
+        eventType: "usage.recorded",
+        payloadSchema: "maister.usage.recorded.v1",
+        payload: {
+          sessionName: "s-codex",
+          model: "gpt-5",
+          nodeAttemptId: ownedAttemptId,
+          inputTokens: 50,
+          outputTokens: 15,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          resumed: i === 0,
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(5 + i),
+        ingestDisposition: "accepted",
+      })),
+      {
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: `cost-batch:${runId}:foreign`,
+        runId,
+        eventType: "usage.recorded",
+        payloadSchema: "maister.usage.recorded.v1",
+        payload: {
+          sessionName: "s-codex",
+          model: "gpt-5",
+          nodeAttemptId: foreignAttemptId,
+          inputTokens: 25,
+          outputTokens: 5,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: 9n,
+        ingestDisposition: "accepted",
+      },
+    ]);
+
+    let refreshRunnerCount = 0;
+    const originalQuery = Client.prototype.query;
+    const querySpy = vi
+      .spyOn(Client.prototype, "query")
+      .mockImplementation(function (this: Client, ...args: unknown[]) {
+        const first = args[0];
+        const sqlText =
+          typeof first === "string"
+            ? first
+            : first && typeof first === "object" && "text" in first
+              ? String((first as { text: unknown }).text)
+              : "";
+
+        if (sqlText.includes("SET by_runner =")) {
+          refreshRunnerCount += 1;
+        }
+
+        return (originalQuery as (...a: unknown[]) => unknown).apply(
+          this,
+          args,
+        );
+      } as typeof Client.prototype.query);
+
+    try {
+      const summary = await projectExecutionEvents({
+        db: client(),
+        runId,
+        projector: canonicalCostProjector,
+      });
+
+      expect(summary).toMatchObject({
+        projected: 10,
+        poisoned: false,
+        lastRunSequence: "9",
+      });
+    } finally {
+      querySpy.mockRestore();
+    }
+
+    expect(refreshRunnerCount).toBe(1);
+
+    const [rollup] = await db
+      .select()
+      .from(schema.runCostRollups)
+      .where(eq(schema.runCostRollups.runId, runId));
+
+    expect(rollup).toMatchObject({
+      sourceEventCount: 10,
+      inputTokens: 725,
+      outputTokens: 165,
+      cacheReadTokens: 50,
+      cacheCreationTokens: 25,
+      resumeInputTokens: 150,
+      resumeOutputTokens: 35,
+      resumeCacheReadTokens: 10,
+      resumeCacheCreationTokens: 5,
+      byModel: {
+        "claude-sonnet-4-6": {
+          inputTokens: 500,
+          outputTokens: 100,
+          cacheReadTokens: 50,
+          cacheCreationTokens: 25,
+        },
+        "gpt-5": {
+          inputTokens: 225,
+          outputTokens: 65,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        },
+      },
+      bySession: {
+        "s-claude": {
+          inputTokens: 500,
+          outputTokens: 100,
+          cacheReadTokens: 50,
+          cacheCreationTokens: 25,
+        },
+        "s-codex": {
+          inputTokens: 225,
+          outputTokens: 65,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        },
+      },
+      byRunner: {
+        "claude/claude-sonnet-4-6": {
+          inputTokens: 500,
+          outputTokens: 100,
+          cacheReadTokens: 50,
+          cacheCreationTokens: 25,
+        },
+        "codex/gpt-5": {
+          inputTokens: 225,
+          outputTokens: 65,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        },
+      },
+    });
+
+    const attemptRollups = await db
+      .select()
+      .from(schema.nodeAttemptCostRollups)
+      .where(eq(schema.nodeAttemptCostRollups.runId, runId));
+
+    expect(attemptRollups).toHaveLength(2);
+    const byModelAttempt = Object.fromEntries(
+      attemptRollups.map((r) => [String(r.model), r]),
+    );
+
+    expect(byModelAttempt["claude-sonnet-4-6"]).toMatchObject({
+      nodeAttemptId: ownedAttemptId,
+      sourceEventCount: 5,
+      inputTokens: 500,
+      outputTokens: 100,
+      cacheReadTokens: 50,
+      cacheCreationTokens: 25,
+      resumeInputTokens: 100,
+      resumeOutputTokens: 20,
+    });
+    expect(byModelAttempt["gpt-5"]).toMatchObject({
+      nodeAttemptId: ownedAttemptId,
+      sourceEventCount: 4,
+      inputTokens: 200,
+      outputTokens: 60,
+      resumeInputTokens: 50,
+      resumeOutputTokens: 15,
     });
   });
 });

@@ -2605,6 +2605,13 @@
       "when": 1795513945570,
       "tag": "0375_package_skill_readiness",
       "breakpoints": true
+    },
+    {
+      "idx": 376,
+      "version": "7",
+      "when": 1795618433824,
+      "tag": "0376_execution_event_consumer_horizon",
+      "breakpoints": true
     }
   ]
 }

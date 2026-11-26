@@ -172,8 +172,8 @@ export async function runDecisionsDeltaBackstop(
         // UNCACHED, as in the consumer: a long-lived sweep has no request to
         // scope the React memo, and a cached queue would hand every reader in
         // one pass the first reader's count.
-        async (userId, role) =>
-          readAttentionDecisionSnapshot(client, userId, role),
+        async (userId, role, tx) =>
+          readAttentionDecisionSnapshot(tx ?? client, userId, role),
       );
 
       if (sent) summary.emitted += 1;

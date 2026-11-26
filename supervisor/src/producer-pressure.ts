@@ -3,6 +3,8 @@ import type { HostState } from "./host-state";
 import type { ProducerFiles } from "./producer-files";
 import type { SessionRecord } from "./types";
 
+import { FRAME_EVENT_ROWS, MAX_FRAME_SLICE_EVENT_ROWS } from "./outbox-budget";
+
 export type LogWriteAdmission = { kind: "capture" } | { kind: "drain" };
 
 export type FrameAdmission =
@@ -30,7 +32,11 @@ export function producerPressure(
   pauseBound?: ProducerPauseBound,
   logger?: Logger,
 ): {
-  beforeFrame: (frameBytes: number) => Promise<FrameAdmission>;
+  beforeFrame: (
+    frameBytes: number,
+    frameCount?: number,
+  ) => Promise<FrameAdmission>;
+  maxSliceFrames: () => number;
   beforeWrite: (bytes: number) => Promise<LogWriteAdmission>;
   beginTeardown: () => void;
   shouldDrain: () => boolean;
@@ -133,12 +139,18 @@ export function producerPressure(
     });
 
   return {
-    beforeFrame(frameBytes) {
+    beforeFrame(frameBytes, frameCount = 1) {
+      const rowCount =
+        frameCount > 1
+          ? Math.min(MAX_FRAME_SLICE_EVENT_ROWS, frameCount * FRAME_EVENT_ROWS)
+          : undefined;
+
       return waitForCapacity<FrameAdmission>(
         () => {
           const reservationId = state.tryReserveRuntimeFrame(
             record.createdByCommandId,
             frameBytes,
+            rowCount,
           );
 
           if (!reservationId) return null;
@@ -155,6 +167,9 @@ export function producerPressure(
         () => ({ kind: "drain" }),
         true,
       );
+    },
+    maxSliceFrames() {
+      return state.maxReservableFrameCount?.() ?? 16;
     },
     beforeWrite(bytes) {
       return waitForCapacity<LogWriteAdmission>(
