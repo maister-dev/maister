@@ -688,3 +688,14 @@ See [the governing contract](waits.md).
   `web/lib/capabilities/cleanup.ts`, `web/lib/scheduler/job-admin.ts`,
   `web/lib/scheduler/job-admin-schema.ts`, and
   `web/app/(app)/admin/scheduler/page.tsx`.
+
+## Permanent execution host loss
+
+Temporary unavailability keeps Run capacity and workspace ownership on the
+same supervisor. An active global administrator may record permanent
+isolation against the stable host key and last observed boot ID. The
+transaction retires the host, holds unbound launch intents pinned to it and
+abandons its affected Runs. Their platform slots become available for fresh
+work. Original assignments and retained effects remain audit evidence.
+Recovery and workspace GC skip the isolated host. See the
+[deployment procedure](../deployment.md#local-two-supervisor-pilot).

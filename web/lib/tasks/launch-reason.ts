@@ -11,6 +11,7 @@ const REASON_KEYS: Readonly<Record<string, string>> = {
   shared_root_host_conflict: "sharedRootHostConflict",
   shared_root_host_unavailable: "sharedRootHostUnavailable",
   launch_execution_host_unavailable: "executionHostUnavailable",
+  execution_host_permanently_lost: "executionHostPermanentlyLost",
   launch_execution_host_capacity: "executionHostCapacity",
   launch_execution_host_draining: "executionHostDraining",
   execution_host_quiescence_pending: "executionHostQuiescence",

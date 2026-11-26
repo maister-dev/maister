@@ -5,7 +5,7 @@ import type { CommandEnvelope, CommandKind } from "./types";
 import type { LegacyRunsSummary } from "./legacy";
 import type { CommandRetirementSummary } from "./retirement";
 
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { setAssignmentWorkspace } from "./assignments";
@@ -42,7 +42,7 @@ import {
   retireEligibleCommands,
 } from "./retirement";
 import { reconcileStoredPromptEvidence } from "./prompt-evidence";
-import { DELIVERING_IN_FLIGHT_GRACE_MS } from "./types";
+import { DELIVERING_IN_FLIGHT_GRACE_MS, EXECUTION_HOST_PERMANENTLY_LOST } from "./types";
 import {
   reduceRuntimeObjectEvidence,
   RuntimeObjectEvidenceError,
@@ -55,7 +55,7 @@ import {
 } from "./steer-settlement";
 
 import { parseRuntimeObjectWireMetadata } from "@/lib/supervisor-client";
-import { executionAssignments, runs } from "@/lib/db/schema";
+import { executionAssignments, executionHosts, runs } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 
@@ -528,6 +528,11 @@ export async function recoverExecutionCommands(
   const recoverRow = async (row: ExecutionCommand): Promise<void> => {
     const at = now();
 
+    if ((await hostFor(row.executionHostId))?.readinessReason === EXECUTION_HOST_PERMANENTLY_LOST) {
+      summary.impasse += 1;
+
+      return;
+    }
     if (row.kind === "stand.dispatch") {
       // Only the retained stand receipt and resource fence can settle a restart.
       summary.skippedInFlight += 1;
@@ -894,6 +899,9 @@ export async function releaseStaleAssignments(
         eq(executionAssignments.state, "active"),
         lt(executionAssignments.createdAt, new Date(now.getTime() - graceMs)),
         inArray(executionAssignments.runId, staleRuns),
+        sql`NOT EXISTS (SELECT 1 FROM ${executionHosts} h
+          WHERE h.id=${executionAssignments.executionHostId}
+            AND h.readiness_reason=${EXECUTION_HOST_PERMANENTLY_LOST})`,
       ),
     )
     .returning({

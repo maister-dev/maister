@@ -2747,6 +2747,7 @@
         "sharedRootHostConflict": "Choose the supervisor that owns the parent workspace.",
         "sharedRootHostUnavailable": "Waiting for the parent workspace on its original supervisor.",
         "executionHostUnavailable": "Waiting for the selected supervisor to become available.",
+        "executionHostPermanentlyLost": "The selected supervisor was permanently retired. Select an available supervisor for a new launch.",
         "executionHostCapacity": "Waiting for a free slot on the selected supervisor.",
         "executionHostDraining": "The selected supervisor is finishing its existing work.",
         "executionHostQuiescence": "Waiting for the original supervisor to confirm that execution stopped.",

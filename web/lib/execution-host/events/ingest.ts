@@ -21,6 +21,7 @@ import { ZodError } from "zod";
 import { isWorkspaceTerminalPayload, workspaceEvidenceDigest, type WorkspaceOperationOwner, type WorkspaceTerminalEnvelope, type WorkspaceTerminalPayload } from "../../../../runtime/workspace-prepare";
 
 import { markHostReadiness } from "../hosts";
+import { EXECUTION_HOST_PERMANENTLY_LOST } from "../types";
 import { hasNativeOutputCommand } from "../runtime-object-intent";
 import { carriesWorkspaceGitEvidence, hasRetainedWorkspaceGitOwner, workspaceGitEvidence } from "../workspace-git-evidence";
 
@@ -235,7 +236,7 @@ async function lockOrCreateStream(
   // exclusive host lock here followed by the run sequence lock creates the
   // inverse order and can deadlock live event ingest with command admission.
   const hosts = await tx
-    .select({ id: executionHosts.id, hostKey: executionHosts.hostKey })
+    .select({ id: executionHosts.id, hostKey: executionHosts.hostKey, readinessReason: executionHosts.readinessReason })
     .from(executionHosts)
     .where(eq(executionHosts.id, input.executionHostId))
     .limit(1);
@@ -256,6 +257,10 @@ async function lockOrCreateStream(
       },
     );
   }
+  if (host.readinessReason === EXECUTION_HOST_PERMANENTLY_LOST)
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "Events from a permanently isolated host require operator review", {
+      details: { reason: EXECUTION_HOST_PERMANENTLY_LOST },
+    });
 
   const matching = await tx
     .select({

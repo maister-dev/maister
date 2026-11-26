@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
+import { EXECUTION_HOST_PERMANENTLY_LOST } from "./types";
 
 import {
   executionAssignments,
@@ -217,7 +218,8 @@ export async function markHostReadiness(
     const [row] = await tx
       .update(executionHosts)
       .set({ readiness, readinessReason: reason, updatedAt: now })
-      .where(eq(executionHosts.id, id))
+      .where(and(eq(executionHosts.id, id),
+        sql`${executionHosts.readinessReason} IS DISTINCT FROM ${EXECUTION_HOST_PERMANENTLY_LOST}`))
       .returning();
     return row ?? null;
   });

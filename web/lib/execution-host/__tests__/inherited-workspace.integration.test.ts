@@ -126,7 +126,7 @@ afterEach(async () => {
     if (result.status === "rejected") throw result.reason;
 });
 
-async function prepareWorkspaceFixture(options?: { usePullRequestProvider?: true; fixture?: string; fixtureArgs?: string[]; migrationTip?: string }) {
+async function prepareWorkspaceFixture(options?: { usePullRequestProvider?: true; fixture?: string; fixtureArgs?: string[]; upgradeRetainedSync?: true }) {
   const validation = `printf 'validation continued%s' "{{ review_comments ?? '' }}"`;
   root = await mkdtemp(join(tmpdir(), "stage-c-inherited-workspace-"));
   const repository = await initRepo(join(root, "approved-source"));
@@ -138,10 +138,10 @@ async function prepareWorkspaceFixture(options?: { usePullRequestProvider?: true
     ? await installLocalPullRequestProvider(root, repository)
     : null;
   const databaseOptions = { databaseName: "eh_inherited_workspace" };
-  database = options?.migrationTip
-    ? await startMainPostgresTestDbUpTo(databaseOptions, options.migrationTip)
+  database = options?.upgradeRetainedSync
+    ? await startMainPostgresTestDbUpTo(databaseOptions, "0398_stage-c-addressed-drop")
     : await startMainPostgresTestDb(databaseOptions);
-  if (options?.migrationTip) await declareCurrentTestDatabaseWriter(database);
+  if (options?.upgradeRetainedSync) await declareCurrentTestDatabaseWriter(database);
   const db = database.db as unknown as Db;
   session.userId = await seedActiveUser(database.db);
   const seeded = await seedGraphRun(
@@ -225,7 +225,6 @@ async function prepareWorkspaceFixture(options?: { usePullRequestProvider?: true
   if (registration.status !== "registered")
     throw new Error("fixture supervisor did not register");
   const { host } = registration;
-  startRuntimeEventConsumer({ db, transport, executionHostId: host.id });
   const initial = await db.transaction(async (tx) => {
     const assignment = await mintPlacement(tx, {
       host,
@@ -268,6 +267,20 @@ async function prepareWorkspaceFixture(options?: { usePullRequestProvider?: true
   });
   const readWorkspace = async () =>
     (await db.select().from(workspaces).where(eq(workspaces.runId, runId)))[0];
+  if (options?.upgradeRetainedSync) {
+    const previousWorkspace = await readWorkspace();
+    const previousAssignment = await getLatestAssignment(db, runId);
+    const previousCommands = await listCommandsForRun(db, runId);
+    await database.db.transaction(async (tx) => {
+      await applyMainMigration(tx, "0399_stage_c_retained_sync_resolver");
+      await applyMainMigration(tx, "0400_stage_c_quarantine_unverified_workspace_events");
+      await applyMainMigration(tx, "0401_stage_c_permanent_host_loss");
+    });
+    expect(await readWorkspace()).toEqual(previousWorkspace);
+    expect(await getLatestAssignment(db, runId)).toEqual(previousAssignment);
+    expect(await listCommandsForRun(db, runId)).toEqual(previousCommands);
+  }
+  startRuntimeEventConsumer({ db, transport, executionHostId: host.id });
   const projectEvidence = async () => {
     await projectCanonicalRuntimeObjects({ db, runId });
     await projectExecutionEvents({
@@ -655,7 +668,7 @@ it.each(["route", "recover before prompt", "invalid resolution", "auto-finalize"
   const { db, host, runId, repository, readWorkspace, supervisor: owningHost } =
     await prepareWorkspaceFixture({
       fixture: "mock-acp-resolve-retained-merge.mjs",
-      migrationTip: entrypoint === "recover before prompt" ? "0398_stage-c-addressed-drop" : undefined,
+      upgradeRetainedSync: entrypoint === "recover before prompt" ? true : undefined,
       fixtureArgs: entrypoint === "invalid resolution" ? ["--leave-staged"]
         : entrypoint === "auto-finalize" ? ["--rebase"] : undefined,
     });
@@ -687,17 +700,6 @@ it.each(["route", "recover before prompt", "invalid resolution", "auto-finalize"
     await releaseAssignmentForRun(tx, runId, "run_terminal");
   });
   startCanonicalProjectionWorker();
-
-  if (entrypoint === "recover before prompt") {
-    const previousWorkspace = await readWorkspace();
-    const previousAssignment = await getLatestAssignment(db, runId);
-    const previousCommands = await listCommandsForRun(db, runId);
-    if (!database) throw new Error("The resolver migration fixture has no database");
-    await database.db.transaction((tx) => applyMainMigration(tx, "0399_stage_c_retained_sync_resolver"));
-    expect(await readWorkspace()).toEqual(previousWorkspace);
-    expect(await getLatestAssignment(db, runId)).toEqual(previousAssignment);
-    expect(await listCommandsForRun(db, runId)).toEqual(previousCommands);
-  }
 
   let attemptId: string;
   if (entrypoint === "auto-finalize") {

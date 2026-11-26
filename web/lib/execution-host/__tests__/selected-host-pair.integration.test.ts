@@ -1,6 +1,7 @@
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHost } from "@/lib/db/schema";
 
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -11,8 +12,9 @@ import { eq } from "drizzle-orm";
 import { expect, it, vi } from "vitest";
 
 import { WORKSPACE_WORKLOAD_FILE } from "../../../../runtime/workspace-prepare";
-import { executionHosts, executionEventStreams, runs, workspaces } from "@/lib/db/schema";
-import { mintAssignment, releaseAssignmentForRun } from "@/lib/execution-host/assignments";
+import { closeDb } from "@/lib/db/client";
+import { executionHosts, executionEventStreams, runs, tasks, taskLaunchIntents, workspaces } from "@/lib/db/schema";
+import { getActiveAssignment, mintAssignment, releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { getCommand, listCommandsForRun } from "@/lib/execution-host/commands";
 import { transportForExecutionHost } from "@/lib/execution-host/default-transport";
@@ -22,16 +24,27 @@ import { canonicalLifecycleProjector } from "@/lib/execution-host/events/lifecyc
 import { projectExecutionEvents } from "@/lib/execution-host/events/projector";
 import { recordHostPressureRefusal, recordHostPressureSample } from "@/lib/execution-host/host-pressure";
 import { resolveTaskLaunchPlacement } from "@/lib/execution-host/project-preference";
+import { declareExecutionHostLoss } from "@/lib/execution-host/host-loss";
+import { declareExecutionHostRegistryWriter } from "@/lib/execution-host/hosts";
 import { hostForAssignment } from "@/lib/execution-host/resolver";
+import { releaseStaleAssignments } from "@/lib/execution-host/recovery";
 import { configuredAdditionalExecutionEndpoints } from "@/lib/execution-host/selected-endpoint";
 import { advanceAddressedWorkspaceAdmission, dispatchQueuedWorkspaceCommand } from "@/lib/execution-host/workspace-dispatch";
 import { readAddressedWorkspaceStatus, reserveHostWorkspace } from "@/lib/execution-host/workspace-preparation";
 import { reserveWorkspaceWorkload } from "@/lib/execution-host/workspace-workloads";
 import { promoteNextPending, tryStartRun } from "@/lib/scheduler";
-import { seedProject, seedRun } from "@/test-support/execution-host-seed";
-import { git, initRepo } from "@/test-support/git-fixture";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { acceptInteractiveTaskLaunch, taskLaunchSettingsToken } from "@/lib/tasks/launch-intent";
+import { claimTaskLaunchIntent } from "@/lib/tasks/launch-dispatch-claim";
+import { seedRun } from "@/test-support/execution-host-seed";
+import { git } from "@/test-support/git-fixture";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 import { startRealSupervisor } from "@/test-support/real-supervisor";
+import { seedTaskLaunchFixture } from "@/test-support/task-launch-admission";
+
+const session = vi.hoisted(() => ({ userId: "" }));
+
+vi.mock("@/auth", () => ({ auth: async () => ({ user: { id: session.userId } }) }));
 
 async function identityOf(url: string): Promise<{ hostKey: string; bootId: string }> {
   const health = await fetch(url + "/health");
@@ -42,12 +55,12 @@ async function identityOf(url: string): Promise<{ hostKey: string; bootId: strin
 it("C-13/C-14 isolate transport and retain a slot through partition, restart and drain", async () => {
   const database = await startMainPostgresTestDb({ databaseName: "stage_c_host_pair" });
   const db = database.db as unknown as Db;
-  const projectId = await seedProject(database.db);
   const root = await mkdtemp(join(tmpdir(), "stage-c-pair-source-"));
-  const repository = await initRepo(join(root, "upstream"));
+  const { projectId, userId: operatorId, repo: repository, flowId, runnerId } = await seedTaskLaunchFixture(database, root);
+  session.userId = operatorId;
   const env = { MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: repository }) };
-  const a = await startRealSupervisor({ env });
-  let b = await startRealSupervisor({ env });
+  const a = await startRealSupervisor({ env, fixtureAdapters: ["codex"] });
+  let b = await startRealSupervisor({ env, fixtureAdapters: ["codex"] });
   let partitioned = false;
   const connections = new Set<Socket>();
   const relay = createServer((client) => {
@@ -74,6 +87,7 @@ it("C-13/C-14 isolate transport and retain a slot through partition, restart and
     const peerUrl = `http://127.0.0.1:${listener.port}`;
     const [aIdentity, bIdentity] = await Promise.all([identityOf(a.url), identityOf(b.url)]);
     expect(aIdentity.hostKey).not.toBe(bIdentity.hostKey);
+    vi.stubEnv("DB_URL", database.databaseUrl);
     vi.stubEnv("MAISTER_SUPERVISOR_URL", a.url);
     vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", aIdentity.hostKey);
     const configurePeer = (draining = false): void => {
@@ -82,6 +96,7 @@ it("C-13/C-14 isolate transport and retain a slot through partition, restart and
       ]));
     };
     configurePeer();
+    const probePeer = () => ensureAdditionalExecutionDataPlane(configuredAdditionalExecutionEndpoints()[0], { db, healthTimeoutMs: 1_000 });
     const registered = await ensureLocalExecutionDataPlane({ db });
     if (registered.status !== "registered") throw new Error("A was not registered");
     const [peer] = await db.select().from(executionHosts).where(eq(executionHosts.hostKey, bIdentity.hostKey));
@@ -147,6 +162,17 @@ it("C-13/C-14 isolate transport and retain a slot through partition, restart and
     const bCheckout = await checkoutFor(runId);
     expect(aCheckout.executionWorkspaceId).not.toBe(bCheckout.executionWorkspaceId);
     expect(bCheckout).toMatchObject({ executionHostId: peer.id, worktreePath: null });
+    const [task] = await db.insert(tasks).values({
+      id: randomUUID(), projectId, number: 1, title: "Pinned launch", prompt: "Run the check", flowId, runnerId,
+    }).returning();
+    const selection = { executionHostId: registered.host.id };
+    const accepted = await acceptInteractiveTaskLaunch(db, await interactiveTaskLaunchPrincipal(), {
+      ...selection, taskId: task.id, expectedTaskRevision: task.revision,
+      expectedSettingsToken: await taskLaunchSettingsToken(db, task.id, selection),
+    }, randomUUID());
+    expect(await claimTaskLaunchIntent(db, accepted.intentId)).toMatchObject({
+      intentId: accepted.intentId, leaseToken: expect.any(String),
+    });
     await a.kill();
     expect((await ensureLocalExecutionDataPlane({ db })).status).toBe("unavailable");
     await expect(hostForAssignment(db, assignment)).resolves.toMatchObject({
@@ -159,12 +185,16 @@ it("C-13/C-14 isolate transport and retain a slot through partition, restart and
       workspace: { handle: bCheckout.executionWorkspaceId, observedCommit: commit },
     });
     b = await b.restart();
+    for (const connection of connections) connection.destroy();
     const restarted = await identityOf(b.url);
     expect(restarted.hostKey).toBe(bIdentity.hostKey);
     expect(restarted.bootId).not.toBe(bIdentity.bootId);
-    await expect(hostForAssignment(db, assignment)).resolves.toMatchObject({
-      id: peer.id, lastBootId: restarted.bootId,
-    });
+    await vi.waitFor(async () => {
+      expect(await probePeer()).toMatchObject({ status: "registered" });
+      await expect(hostForAssignment(db, assignment)).resolves.toMatchObject({
+        id: peer.id, lastBootId: restarted.bootId,
+      });
+    }, { timeout: 10_000 });
     await expect(bTransport.getWorkspaceCommandReceipt?.(commandId)).resolves.toMatchObject({
       phase: "completed", result: { workspace: { handle: bCheckout.executionWorkspaceId } },
     });
@@ -182,7 +212,7 @@ it("C-13/C-14 isolate transport and retain a slot through partition, restart and
       await advanceAddressedWorkspaceAdmission(db, runId);
       await projectExecutionEvents({ db, projector: canonicalLifecycleProjector, runId });
       expect(await checkoutFor(runId)).toMatchObject({ workspaceMaterializationGeneration: 1 });
-    });
+    }, { timeout: 10_000 });
     await expect(tryStartRun(runId, { db })).resolves.toMatchObject({ started: true });
     const workload = await reserveWorkspaceWorkload(db, {
       runId, assignmentId: assignment.id, declarationId: "hold-slot",
@@ -205,7 +235,6 @@ it("C-13/C-14 isolate transport and retain a slot through partition, restart and
       .rejects.toMatchObject({ details: { reason: "execution_host_quiescence_pending" } });
     partitioned = true;
     for (const connection of connections) connection.destroy();
-    const probePeer = () => ensureAdditionalExecutionDataPlane(configuredAdditionalExecutionEndpoints()[0], { db, healthTimeoutMs: 1_000 });
     await expect(probePeer()).resolves.toMatchObject({ status: "unavailable" });
     await expect(tryStartRun(candidates[0], { db })).resolves.toMatchObject({
       started: false, queueReason: "launch_execution_host_unavailable",
@@ -258,15 +287,55 @@ it("C-13/C-14 isolate transport and retain a slot through partition, restart and
     const occupied = candidates[decisions.findIndex(({ started }) => started)];
     const queued = candidates[decisions.findIndex(({ started }) => !started)];
     await releaseRun(occupied);
-    await releaseRun(aRun.runId);
+    await db.update(runs).set({ status: "Running" }).where(eq(runs.id, aRun.runId));
     const next = await seedRun(database.db, { projectId, runKind: "flow", status: "Pending" });
     await db.transaction((tx) => mintAssignment(tx, { runId: next, hostId: peer.id, reason: "launch" }));
     await db.update(runs).set({ startedAt: new Date(0) }).where(eq(runs.id, queued));
     const dispatch = vi.fn(async () => {});
     await expect(promoteNextPending({ db, runFlow: dispatch })).resolves.toMatchObject({ promotedRunId: queued });
     expect(dispatch).toHaveBeenCalledWith(queued);
+
+    const { runId: doomed, assignment: lostOwner } = aRun;
+    const loss = {
+      hostKey: aIdentity.hostKey, observedBootId: aIdentity.bootId, operatorId,
+      isolationEvidenceRef: "fixture/supervisor-a-stopped",
+    };
+    await expect(declareExecutionHostLoss(db, { ...loss, operatorId: randomUUID() })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(declareExecutionHostLoss(db, { ...loss, observedBootId: randomUUID() })).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(declareExecutionHostLoss(db, loss)).resolves.toMatchObject({
+      executionHostId: registered.host.id, abandonedRuns: [doomed], heldIntents: [accepted.intentId], replayed: false,
+    });
+    const [held] = await db.select().from(taskLaunchIntents).where(eq(taskLaunchIntents.id, accepted.intentId));
+    expect(held).toMatchObject({
+      state: "held", reason: "execution_host_permanently_lost", dueAt: null, leaseToken: null, leaseExpiresAt: null,
+      effectiveExecutionHostId: registered.host.id, runId: null,
+    });
+    await expect(declareExecutionHostLoss(db, loss)).resolves.toMatchObject({ replayed: true });
+    expect((await db.select({ status: runs.status }).from(runs).where(eq(runs.id, doomed)))[0].status).toBe("Abandoned");
+    expect((await db.select({ status: runs.status }).from(runs).where(eq(runs.id, queued)))[0].status).toBe("Running");
+    expect(await getActiveAssignment(db, doomed)).toMatchObject({ id: lostOwner.id, state: "active" });
+    expect(await checkoutFor(doomed)).toEqual(aCheckout);
+    await releaseStaleAssignments({ db, graceMs: 0 });
+    expect(await getActiveAssignment(db, doomed)).toMatchObject({ id: lostOwner.id, state: "active" });
+    await expect(hostForAssignment(db, lostOwner)).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    await expect(db.transaction(async (tx) => {
+      await declareExecutionHostRegistryWriter(tx);
+      await tx.update(executionHosts).set({ retiredAt: null }).where(eq(executionHosts.id, registered.host.id));
+    })).rejects.toMatchObject({ cause: { code: "23514" } });
+
+    await stopRuntimeEventConsumers();
+    vi.stubEnv("MAISTER_ADDITIONAL_EXECUTION_HOSTS", undefined);
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", peerUrl);
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", bIdentity.hostKey);
+    await expect(ensureLocalExecutionDataPlane({ db })).resolves.toMatchObject({
+      status: "registered", host: { id: peer.id, transport: { kind: "local_direct" } },
+    });
+    await expect(readAddressedWorkspaceStatus(db, bCheckout)).resolves.toMatchObject({
+      workspace: { handle: bCheckout.executionWorkspaceId },
+    });
   } finally {
     await stopRuntimeEventConsumers();
+    await closeDb();
     vi.unstubAllEnvs();
     for (const connection of connections) connection.destroy();
     if (relay.listening) await new Promise<void>((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()));

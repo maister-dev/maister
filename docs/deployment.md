@@ -803,11 +803,35 @@ the configured endpoint with the original SQLite and workspace bytes to
 reconcile delayed receipts. A new key requires operator review and cannot
 take over retained work from the old key.
 
-If the original host is permanently lost, keep its assignments and writer
-claims held and preserve the command evidence. Record the affected Runs and
-inspect the corresponding Git refs with the repository owner. Restoring the
-original host and its durable state is the supported path to reconcile those
-assignments. A replacement can accept new work under its own key.
+For a permanent loss, first isolate the original machine outside MAIster.
+Power it off or revoke its access to every affected Git provider, runtime
+credential and control-plane endpoint. Record the independent isolation
+evidence in your incident system. An unreachable endpoint alone leaves the
+host recoverable.
+
+Use the stable key and `last_boot_id` from the Web database and the ID of an
+active global administrator. Check the key and boot ID against the host you
+isolated before recording loss.
+
+```sql
+SELECT host_key, last_boot_id, readiness, retired_at FROM execution_hosts;
+```
+
+Run the command from the Web deployment with its own database configuration.
+
+```bash
+pnpm --filter maister-web execution:host:declare-lost \
+  --host-key "$lost_host_key" --observed-boot "$last_observed_boot" \
+  --operator-id "$administrator_id" --isolation-evidence "$incident_reference" --apply
+```
+
+The permanent record retires the identity and moves its affected active Runs
+to Abandoned. It preserves their assignments, workspaces, writer claims and
+receipts. Inspect repository and PR effects separately. For a lost default,
+point Web's default endpoint and key to the surviving supervisor and remove
+that supervisor's additional-host descriptor. Its registered ID and ownership
+carry over. Update any project defaults explicitly pinned to the lost host.
+Launch fresh Runs through normal admission.
 
 Take backups during a maintenance window after both hosts have drained and
 Web and supervisors have stopped writing. Capture PostgreSQL and each host's

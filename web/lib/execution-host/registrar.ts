@@ -5,9 +5,11 @@ import type { HostCapabilities } from "./hosts";
 import type { AdditionalExecutionEndpoint, SelectedExecutionEndpoint } from "./selected-endpoint";
 
 import pino, { type Logger } from "pino";
+import { eq } from "drizzle-orm";
 
 import {
   countLiveAssignmentsForHost,
+  declareExecutionHostRegistryWriter,
   findActiveLocalHost,
   getHostByKey,
   insertLocalHost,
@@ -20,10 +22,12 @@ import {
 } from "./hosts";
 import { defaultTransport, pinnedExecutionHostTransport } from "./default-transport";
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
-import { HOST_IDENTITY_MISMATCH_REASON } from "./types";
+import { EXECUTION_HOST_PERMANENTLY_LOST, HOST_IDENTITY_MISMATCH_REASON } from "./types";
 
 import { getDb } from "@/lib/db/client";
+import { executionHosts } from "@/lib/db/schema";
 import { isUniqueViolation } from "@/lib/db/pg-error";
+import { MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -277,6 +281,28 @@ async function registerExecutionHost(
     db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
       const activeRow = peer ? await lockHostByKey(txDb, peer.hostKey) : await lockActiveLocalHost(txDb);
+      const observedRow = activeRow?.hostKey === observed.hostKey
+        ? activeRow : await lockHostByKey(txDb, observed.hostKey);
+      if (observedRow?.readinessReason === EXECUTION_HOST_PERMANENTLY_LOST)
+        return {
+          status: "unavailable", reason: EXECUTION_HOST_PERMANENTLY_LOST,
+          host: observedRow, message: "This supervisor identity was permanently isolated",
+        };
+      if (!peer && !activeRow && selected && observedRow?.transport.role === "secondary" && !observedRow.retiredAt) {
+        // An operator can nominate an existing peer once no default is active.
+        // Keep the peer's ID and all its retained assignments and workspaces.
+        await declareExecutionHostRegistryWriter(txDb);
+        await tx.update(executionHosts).set({ transport: { kind: "local_direct" } })
+          .where(eq(executionHosts.id, observedRow.id));
+        const host = await touchLocalHost(txDb, observedRow.id, {
+          bootId: observed.bootId, capabilities: observed.capabilities, now: now(),
+        });
+        if (!host) throw new MaisterError("CONFLICT", "Registered execution host disappeared during promotion", {
+          details: { hostId: observedRow.id },
+        });
+        const restarted = observedRow.lastBootId !== observed.bootId;
+        return { status: "registered", host, action: restarted ? "restart" : "touch", restarted };
+      }
       if (peer && activeRow && (activeRow.retiredAt !== null || activeRow.transport.role !== "secondary"))
         return {
           status: "unavailable", reason: HOST_IDENTITY_MISMATCH_REASON,

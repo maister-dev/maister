@@ -2780,6 +2780,13 @@
       "when": 1795709830757,
       "tag": "0400_stage_c_quarantine_unverified_workspace_events",
       "breakpoints": true
+    },
+    {
+      "idx": 401,
+      "version": "7",
+      "when": 1795710420560,
+      "tag": "0401_stage_c_permanent_host_loss",
+      "breakpoints": true
     }
   ]
 }

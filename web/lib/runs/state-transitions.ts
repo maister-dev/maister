@@ -44,6 +44,7 @@ import {
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
+import { EXECUTION_HOST_PERMANENTLY_LOST } from "@/lib/execution-host/types";
 import { closeConditionWaitsForRun } from "@/lib/waits/close";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -1338,11 +1339,13 @@ export async function abandonRunInTransaction(
   cause?: TerminalCause,
 ): Promise<boolean> {
   const endedAt = new Date();
+  const hostLost = cause?.reason === EXECUTION_HOST_PERMANENTLY_LOST;
   const rows = await tx
     .update(runs)
     .set({ status: "Abandoned", endedAt })
     .where(
-      and(eq(runs.id, runId), inArray(runs.status, [...ABANDONABLE_STATUSES])),
+      and(eq(runs.id, runId), inArray(runs.status,
+        hostLost ? [...ABANDONABLE_STATUSES, "HumanWorking"] : [...ABANDONABLE_STATUSES])),
     )
     .returning({
       id: runs.id,
@@ -1357,25 +1360,25 @@ export async function abandonRunInTransaction(
 
   if (rows[0].projectId && rows[0].runKind === "flow")
     await closeConditionWaitsForRun(tx, runId, "run_abandoned");
-  await releaseSyncClaimOnTerminal(tx, runId, "CRASH");
-  await releaseAssignmentForRun(tx, runId, "abandoned");
+  if (!hostLost) {
+    await releaseSyncClaimOnTerminal(tx, runId, "CRASH");
+    await releaseAssignmentForRun(tx, runId, "abandoned");
 
-  // M19 Phase 1 (T1.C): stamp the GC removal deadline on the run's
-  // workspace in the SAME tx so an abandoned run never lingers with a
-  // null scheduled_removal_at. Same endedAt instant the run row carries.
-  const scheduledRemovalAt = new Date(
-    endedAt.getTime() + gcAgeDays() * 86_400_000,
-  );
+    // Record the workspace GC deadline in the same transaction as the Run.
+    const scheduledRemovalAt = new Date(
+      endedAt.getTime() + gcAgeDays() * 86_400_000,
+    );
 
-  await tx
-    .update(workspaces)
-    .set({ scheduledRemovalAt })
-    .where(eq(workspaces.runId, runId));
+    await tx
+      .update(workspaces)
+      .set({ scheduledRemovalAt })
+      .where(eq(workspaces.runId, runId));
 
-  log.debug(
-    { runId, at: scheduledRemovalAt },
-    "[scheduler] scheduled_removal_at stamped",
-  );
+    log.debug(
+      { runId, at: scheduledRemovalAt },
+      "[scheduler] scheduled_removal_at stamped",
+    );
+  }
 
   await emitWebhookEvent({
     db: tx,

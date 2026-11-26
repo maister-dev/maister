@@ -1880,6 +1880,15 @@ table execution_events {
   }
 }
 
+table execution_host_losses {
+  execution_host_id text [pk, not null]
+  host_key text [not null]
+  observed_boot_id text [not null]
+  operator_id text [not null]
+  isolation_evidence_ref text [not null]
+  recorded_at "timestamp with time zone" [not null, default: `now()`]
+}
+
 table execution_host_pressure {
   execution_host_id text [pk, not null]
   pressured_since "timestamp with time zone" [not null]
@@ -5755,6 +5764,8 @@ ref execution_events_event_stream_id_execution_event_streams_id_fk: execution_ev
 ref execution_events_execution_assignment_id_execution_assignments_id_fk: execution_events.execution_assignment_id > execution_assignments.id [delete: set null, update: no action]
 
 ref execution_events_run_session_incarnation_id_run_session_incarnations_id_fk: execution_events.run_session_incarnation_id > run_session_incarnations.id [delete: set null, update: no action]
+
+ref execution_host_losses_execution_host_id_execution_hosts_id_fk: execution_host_losses.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
 
 ref execution_host_pressure_execution_host_id_execution_hosts_id_fk: execution_host_pressure.execution_host_id > execution_hosts.id [delete: cascade, update: no action]
 

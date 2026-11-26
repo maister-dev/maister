@@ -3029,6 +3029,24 @@ export const executionHosts = pgTable(
   }),
 );
 
+export const executionHostLosses = pgTable(
+  "execution_host_losses",
+  {
+    executionHostId: text("execution_host_id").primaryKey()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
+    hostKey: text("host_key").notNull(),
+    observedBootId: text("observed_boot_id").notNull(),
+    operatorId: text("operator_id").notNull(),
+    isolationEvidenceRef: text("isolation_evidence_ref").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true, mode: "date" })
+      .notNull().defaultNow(),
+  },
+  (t) => ({
+    evidenceRef: check("execution_host_losses_evidence_ref_check",
+      sql`${t.isolationEvidenceRef} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{2,159}$'`),
+  }),
+);
+
 // ADR-183 D-M0: the host's outbox-pressure record. A row exists exactly while
 // the manager believes the host is pressured: written by a health sample with
 // `stream.pressured=true` or by an `event_outbox_backpressure` refusal, deleted

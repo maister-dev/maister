@@ -32,6 +32,7 @@ import { gcAgeDays, gcArchivePush, worktreesRoot } from "@/lib/instance-config";
 import { deleteRunCheckpointRefs } from "@/lib/flows/graph/workspace-checkpoint";
 import { preserveWorktree } from "@/lib/gc/preserve";
 import { MaisterError } from "@/lib/errors";
+import { EXECUTION_HOST_PERMANENTLY_LOST } from "@/lib/execution-host/types";
 import { removeOwnedWorktree } from "@/lib/worktree";
 import {
   DISPOSABLE_WORKSPACE_RUN_STATUSES,
@@ -289,6 +290,9 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
       and(
         sql`coalesce(${runs.agentKind}, 'code_delivery') <> 'operational'`,
         isNull(workspaces.removedAt),
+        sql`NOT EXISTS (SELECT 1 FROM ${schemaModule.executionHosts} h
+          WHERE h.id=${workspaces.executionHostId}
+            AND h.readiness_reason=${EXECUTION_HOST_PERMANENTLY_LOST})`,
         inArray(runs.status, [...WORKTREE_TTL_RUN_STATUSES]),
         or(
           and(

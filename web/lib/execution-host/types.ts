@@ -19,6 +19,7 @@ export const EXECUTION_HOST_READINESS = [
   "unavailable",
 ] as const;
 export type ExecutionHostReadiness = (typeof EXECUTION_HOST_READINESS)[number];
+export const EXECUTION_HOST_PERMANENTLY_LOST = "execution_host_permanently_lost";
 
 export const ASSIGNMENT_STATES = ["active", "superseded", "released"] as const;
 export type AssignmentState = (typeof ASSIGNMENT_STATES)[number];
