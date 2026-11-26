@@ -744,6 +744,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   kept both intact. Six host C-10 cases and the Web sync integration passed
   with both typechecks and contract validation.
 
+  The normal Review sync request with `agent:true` now applies a clean
+  merge on its retained owner. RED returned 409 before checking the
+  repository. GREEN performed one leased publication and recorded a
+  mechanical success. The subsequent conflicting rebase retained the
+  checkout and public branch. A conflicted checkout still needs the
+  addressed resolver, including recovery and optional finalization.
+
   Addressed retention GC now follows the same preservation and release
   receipts. RED found the legacy path probe on a pathless workspace. GREEN
   skipped a future deadline and kept the local reconciler out of the

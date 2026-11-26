@@ -43,16 +43,21 @@ export async function syncAddressedWorkspace(input: {
 }): Promise<SyncRunOutcome> {
   const { db, operation, expectedStatus, strategy, target } = input;
   const { runId, actor } = operation;
+  if (operation.agent === true && expectedStatus !== "Review")
+    throw new MaisterError(
+      "PRECONDITION",
+      "The sync resolver requires a Run in Review",
+      { details: { reason: "agent_requires_review" } },
+    );
   if (
     actor.type !== "user" ||
     !actor.id ||
-    operation.agent === true ||
     operation.autoFinalize ||
     (target.kind === "published" && target.remote !== "origin")
   )
     throw new MaisterError(
       "PRECONDITION",
-      "Selected supervisor sync requires a human mechanical checkout update on the approved source",
+      "Selected supervisor sync requires a human checkout update on the approved source",
       {
         details: { reason: "workspace_protocol_unsupported" },
       },

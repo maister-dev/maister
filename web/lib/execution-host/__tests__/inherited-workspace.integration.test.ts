@@ -562,16 +562,16 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
     ]),
   });
   const { POST } = await import("@/app/api/runs/[runId]/sync/route");
-  const send = (strategy: "merge" | "rebase", push?: boolean) =>
+  const send = (strategy: "merge" | "rebase", push?: boolean, agent = false) =>
     POST(
       new NextRequest(`http://localhost/api/runs/${runId}/sync`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ strategy, agent: false, push }),
+        body: JSON.stringify({ strategy, agent, push }),
       }),
       { params: Promise.resolve({ runId }) },
     );
-  const response = await send("merge");
+  const response = await send("merge", undefined, true);
   const result = await response.json();
   expect(response.status, JSON.stringify(result)).toBe(200);
   expect(result).toMatchObject({ outcome: "synced", behind: 1, pushed: true });
@@ -592,6 +592,7 @@ it("C-10 updates a retained worktree through the normal sync route and settles i
     .where(eq(runSyncAttempts.id, result.attemptId));
   expect(attempt).toMatchObject({
     phase: "succeeded",
+    mode: "mechanical",
     strategy: "merge",
     pushed: true,
     headShaBefore: local,
