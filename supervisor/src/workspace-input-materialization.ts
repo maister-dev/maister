@@ -390,8 +390,7 @@ export async function verifyWorkspaceSessionInputs(
       manifestDigest: retained.materializationDigest,
       contexts: parseWorkspaceContextInputs(await readRetainedWorkspaceInput(
         directory, retained.materializationDigest, WORKSPACE_CONTEXT_INPUT, 64 * 1024,
-      )),
-      stepId,
+      )).filter((context) => context.stepId === stepId),
     });
 
     return {

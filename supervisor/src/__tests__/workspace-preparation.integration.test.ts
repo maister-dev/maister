@@ -127,6 +127,9 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
   if (prepared.phase !== "completed")
     throw new Error("workspace preparation did not complete");
   const { handle, generation } = prepared.result.workspace;
+  const owned = host.hostState.getWorkspace(handle);
+  if (!owned) throw new Error("missing addressed workspace");
+  const contexts = join(root, ".maister", owned.projectSlug, "runs", owned.runId, "context");
   const premature = await postJson(
     host.url + "/sessions",
     envelope("session.create", prepared.owner, createBody(handle)),
@@ -148,7 +151,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     host,
     prepared.owner,
     "capability_instructions",
-    JSON.stringify([
+    JSON.stringify(verifyNativeWrites ? [
       {
         stepId: "step-1",
         repositoryId: "sibling-id",
@@ -157,7 +160,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
         declaredRef: null,
         commit: contextRevision,
       },
-    ]),
+    ] : []),
   );
   const workload = await sealInput(
     host,
@@ -183,8 +186,17 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
       {
         id: "project-check",
         workload: "check",
-        command:
+        command: [
+          ...(verifyNativeWrites ? [
+            `for checkout in ${JSON.stringify(contexts)}/*; do`,
+            '  test "$(cat "$checkout/context.md")" = "# pinned context" || exit 61',
+            '  if touch "$checkout/workload-write"; then exit 62; fi',
+            '  if git -C "$checkout" update-ref refs/heads/workload-write HEAD; then exit 63; fi',
+            '  if mv "$checkout" "$checkout-moved"; then exit 64; fi',
+            "done",
+          ] : []),
           "printf '%s' '\"local check\"'; test -z \"${UNRELATED_MCP_TOKEN:-}\"",
+        ].join("\n"),
         timeoutMs: 5000,
         structuredOutput: "json",
       },

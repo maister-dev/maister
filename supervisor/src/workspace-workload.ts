@@ -30,6 +30,7 @@ import {
 import { flowTemplateEnvironment } from "../../runtime/flow-template-environment";
 import { renderStrict } from "../../runtime/flow-template-render";
 import { inspectProcessGroup } from "../../runtime/process-group";
+import { WORKSPACE_CONTEXT_INPUT } from "../../runtime/workspace-context-input";
 
 import { SupervisorError } from "./types";
 import { readHostProcessContext } from "./session-process-context";
@@ -39,6 +40,7 @@ import {
 } from "./workspace-input-materialization";
 import { executeWorkspaceWorkloadProcess } from "./workspace-workload-process";
 import { protectWorkspaceProcess } from "./workspace-read-only-process";
+import { loadWorkspaceContextMounts, parseWorkspaceContextInputs } from "./workspace-context-inputs";
 import { sealWorkspaceOutput } from "./workspace-output-object";
 import { copyPreparedFlowAssets, runFlowSetup } from "./workspace-flow-setup";
 
@@ -297,10 +299,19 @@ export async function runWorkspaceWorkload(
     request,
     declaration.command,
   );
+  const contextMounts = await loadWorkspaceContextMounts({
+    runDir: runDirectory,
+    manifestDigest: payload.inputDigest,
+    contexts: parseWorkspaceContextInputs(await readRetainedWorkspaceInput(
+      inputDirectory, payload.inputDigest, WORKSPACE_CONTEXT_INPUT, 64 * 1024,
+    )),
+  });
   const launch = await protectWorkspaceProcess({
     ownershipKind: "host_owned",
     cwd: workspace.realPath,
     readOnlyCheckout: retained.preparationMode === "readOnlyCheckout" ? true : undefined,
+    contextMounts,
+    ...(contextMounts.length ? { contextRoot: join(runDirectory, "context") } : {}),
   }, { binary: "bash", arguments: ["-c", command] });
   assertOwner();
   let processGroup: number | undefined;

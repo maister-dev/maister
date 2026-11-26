@@ -191,13 +191,11 @@ export async function loadWorkspaceContextMounts(
     runDir: string;
     manifestDigest: string;
     contexts: readonly WorkspaceContextInput[];
-    stepId: string;
   }>,
 ): Promise<ContextMount[]> {
   const mounts: ContextMount[] = [];
 
   for (const context of input.contexts) {
-    if (context.stepId !== input.stepId) continue;
     const path = contextPath(input.runDir, input.manifestDigest, context);
 
     await verifyContextCheckout(path, context.commit);

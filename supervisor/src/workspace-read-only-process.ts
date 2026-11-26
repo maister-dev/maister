@@ -21,7 +21,7 @@ function protectionUnavailable(cause?: unknown): SupervisorError {
 export async function protectWorkspaceProcess(
   workspace: Pick<
     WorkspaceResolution, "ownershipKind" | "readOnlyCheckout" | "cwd" | "contextMounts"
-  >,
+  > & Readonly<{ contextRoot?: string }>,
   launch: NativeLaunch,
 ): Promise<NativeLaunch> {
   if (workspace.ownershipKind !== "host_owned") return launch;
@@ -32,6 +32,11 @@ export async function protectWorkspaceProcess(
   if (checkouts.length === 0) return launch;
 
   const roots = new Set<string>();
+  if (workspace.contextRoot) {
+    const root = await realpath(workspace.contextRoot);
+    if (root !== workspace.contextRoot) throw protectionUnavailable();
+    roots.add(root);
+  }
   for (const checkout of checkouts) {
     roots.add(await realpath(checkout));
     for (const argument of ["--absolute-git-dir", "--git-common-dir"]) {

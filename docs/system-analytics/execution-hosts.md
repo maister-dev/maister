@@ -1171,6 +1171,13 @@ substituted host or handle on placement. A previous epoch's checkpoint can be
 restored by the current owner only for the same Run, workspace and generation.
 The old epoch cannot admit a new workload.
 
+Before starting an addressed workload, the host verifies every sibling
+checkout declared in its sealed input generation. The workload's native
+process driver protects the context directory, each checkout and its Git
+administrative directories from writes. This covers siblings attached to
+other steps of the same Run, even when a workload receives no context mount
+in its arguments. Hosts without an enforceable driver refuse the workload.
+
 Manual takeover records the selected supervisor's claim-time HEAD. The
 handoff panel shows the supervisor and workspace ID. Return requires a clean
 checkout with commits after that HEAD and records the sealed log and diff.
