@@ -10,7 +10,7 @@ tools; coding happens in the Runs it helps you launch.
 
 ## Answer a private question
 
-A question appears in the conversation when the librarian needs your input. Choose a suggested response or type your own, then select **Send answer**. You can close the panel and return to the same question. **Answer queued** means the response has been saved. **Answer delivered** appears when the librarian finishes the continuation. Resetting context closes unanswered questions and cancels answers still awaiting delivery.
+A question appears in the conversation when the librarian needs your input. Choose a suggested response or type your own, then select **Send answer**. You can close the panel and return to the same question. Answer the open question or select **Stop response** before sending a new message. **Answer queued** means the response has been saved. **Answer delivered** appears when the librarian finishes the continuation. If delivery stays unconfirmed after a failed continuation, the conversation still shows your saved answer. Resetting context closes unanswered questions and cancels answers still awaiting delivery.
 
 ## Prerequisites
 

@@ -1,0 +1,112 @@
+openapi: 3.0.3
+info:
+  title: GitHub REST API used by Studio catalog import
+  version: "public"
+  description: |
+    Consumed read-only subset of the GitHub REST OpenAPI description.
+    MAIster uses tokenless public access and requests JSON. It rejects
+    truncated trees and verifies blob content against the referenced Git SHA.
+externalDocs:
+  description: Upstream GitHub REST OpenAPI description
+  url: https://github.com/github/rest-api-description
+servers:
+  - url: https://api.github.com
+paths:
+  /repos/{owner}/{repo}/commits/{ref}:
+    parameters:
+      - $ref: "#/components/parameters/Owner"
+      - $ref: "#/components/parameters/Repository"
+      - name: ref
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: resolveCatalogCommit
+      responses:
+        "200":
+          description: Commit identity and its root tree
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sha, commit]
+                properties:
+                  sha: {$ref: "#/components/schemas/GitSha"}
+                  commit:
+                    type: object
+                    required: [tree]
+                    properties:
+                      tree:
+                        type: object
+                        required: [sha]
+                        properties:
+                          sha: {$ref: "#/components/schemas/GitSha"}
+  /repos/{owner}/{repo}/git/trees/{sha}:
+    parameters:
+      - $ref: "#/components/parameters/Owner"
+      - $ref: "#/components/parameters/Repository"
+      - $ref: "#/components/parameters/Hash"
+    get:
+      operationId: getCatalogTree
+      parameters:
+        - name: recursive
+          in: query
+          schema: {type: string, enum: ["1"]}
+      responses:
+        "200":
+          description: Root tree and its entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tree, truncated]
+                properties:
+                  truncated: {type: boolean}
+                  tree:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, sha, type, mode]
+                      properties:
+                        path: {type: string}
+                        sha: {$ref: "#/components/schemas/GitSha"}
+                        type: {type: string}
+                        mode: {type: string}
+                        size: {type: integer, minimum: 0}
+  /repos/{owner}/{repo}/git/blobs/{sha}:
+    parameters:
+      - $ref: "#/components/parameters/Owner"
+      - $ref: "#/components/parameters/Repository"
+      - $ref: "#/components/parameters/Hash"
+    get:
+      operationId: getCatalogBlob
+      responses:
+        "200":
+          description: Base64 blob consumed by the importer
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [encoding, content]
+                properties:
+                  encoding: {type: string, enum: [base64]}
+                  content: {type: string, format: byte}
+components:
+  parameters:
+    Owner:
+      name: owner
+      in: path
+      required: true
+      schema: {type: string}
+    Repository:
+      name: repo
+      in: path
+      required: true
+      schema: {type: string}
+    Hash:
+      name: sha
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/GitSha"}
+  schemas:
+    GitSha: {type: string, pattern: '^[a-f0-9]{40}$'}

@@ -224,6 +224,47 @@ function renameReferences(
     : yaml;
 }
 
+const catalogOriginPath = /^catalog-origins\/[a-f0-9]{64}\.json$/;
+
+export function rewriteSkillFolderImports(
+  files: AuthoredFlowPackageFile[],
+  oldPath: string,
+  newPath: string | null,
+): AuthoredFlowPackageFile[] {
+  if (oldPath === newPath) return files;
+  let next = files;
+
+  for (const file of files) {
+    if (!catalogOriginPath.test(file.path)) continue;
+    const origin = JSON.parse(file.content) as {
+      kind: string;
+      destination: string;
+    };
+
+    if (
+      origin.kind !== "skill" ||
+      (origin.destination !== oldPath &&
+        !origin.destination.startsWith(oldPath + "/"))
+    )
+      continue;
+    const destination =
+      newPath === null
+        ? null
+        : newPath + origin.destination.slice(oldPath.length);
+
+    next = rewritePackageIdentity(
+      next,
+      "skills",
+      origin.destination.split("/").at(-1)!,
+      destination?.split("/").at(-1) ?? null,
+      origin.destination,
+      destination,
+    );
+  }
+
+  return next;
+}
+
 export function rewritePackageIdentity(
   files: AuthoredFlowPackageFile[],
   kind: "mcps" | "skills",
@@ -233,7 +274,7 @@ export function rewritePackageIdentity(
   newPath: string | null,
 ): AuthoredFlowPackageFile[] {
   return files.flatMap((file) => {
-    if (/^catalog-origins\/[a-f0-9]{64}\.json$/.test(file.path)) {
+    if (catalogOriginPath.test(file.path)) {
       const origin = JSON.parse(file.content) as {
         destination: string;
         files: Record<string, string>;
@@ -262,6 +303,7 @@ export function rewritePackageIdentity(
         },
       ];
     }
+    if (id === nextId) return [file];
     if (/^(?:maister-agents|agents)\/[^/]+\.md$/.test(file.path))
       return [
         {
@@ -295,10 +337,11 @@ export function rewriteMcpIdentity(
 
   if (
     newPath &&
-    (!/^mcps\/[A-Za-z0-9][A-Za-z0-9._-]*\.(ya?ml|json)$/.test(newPath) ||
-      (newPath !== oldPath && files.some((f) => f.path === newPath)))
+    !/^mcps\/[A-Za-z0-9][A-Za-z0-9._-]*\.(ya?ml|json)$/.test(newPath)
   )
-    throw new MaisterError("CONFLICT", "Invalid or existing MCP destination");
+    throw new MaisterError("PRECONDITION", "Invalid MCP destination");
+  if (newPath && newPath !== oldPath && files.some((f) => f.path === newPath))
+    throw new MaisterError("CONFLICT", "MCP destination already exists");
   const nextId = newPath ? name(newPath) : null;
   const manifest = files.find((f) => f.path === PACKAGE_MANIFEST_FILENAME);
   const declared = manifest && manifestMcp(manifest.content, id);

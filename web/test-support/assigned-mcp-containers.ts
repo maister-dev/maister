@@ -214,6 +214,7 @@ export async function withAssignedMcpHosts(
               ]
             : ["--import", "tsx", "src/main.ts"]),
         );
+
         clean.push(() => docker("rm", "-f", name(key)));
         const publicReceipt = filterImage
           ? await probeFixedPublicMcp({

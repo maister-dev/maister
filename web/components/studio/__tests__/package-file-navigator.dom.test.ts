@@ -62,6 +62,7 @@ const labels = {
   cancel: "Cancel",
   errorConflict: "conflict",
   errorPrecondition: "invalid",
+  errorConfiguration: "invalid configuration",
 };
 
 const draftFiles: AuthoredFlowPackageFile[] = [
@@ -261,6 +262,95 @@ describe("PackageFileNavigator (ADR-116 file navigator)", () => {
     const next = onChange.mock.calls.at(-1)?.[0] as AuthoredFlowPackageFile[];
 
     expect(next.some((f) => f.path === "maister-package.yaml")).toBe(false);
+  });
+
+  it("keeps an imported skill's update record and agent reference in sync through a folder rename and deletion", () => {
+    const originPath = `catalog-origins/${"a".repeat(64)}.json`;
+    const oldDestination = "capability/skills/design";
+    const newDestination = "capability/skills/prototype";
+    const newContent =
+      "---\ncapability_profile: { skills: [design, common] }\n---\nDesign";
+    const onChange = vi.fn();
+    const c = mount(onChange, [
+      { kind: "skill", path: `${oldDestination}/SKILL.md`, content: "skill" },
+      {
+        kind: "agent_definition",
+        path: "maister-agents/designer.md",
+        content: newContent,
+      },
+      {
+        kind: "asset",
+        path: originPath,
+        content: JSON.stringify({
+          kind: "skill",
+          destination: oldDestination,
+          files: { [`${oldDestination}/SKILL.md`]: "hash" },
+        }),
+      },
+    ]);
+    const expand = (container: HTMLElement, folder: string) =>
+      act(() =>
+        folderRow(container, folder)
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="file-nav-folder-toggle"]',
+          )!
+          .click(),
+      );
+    const action = (container: HTMLElement, folder: string, button: string) =>
+      act(() =>
+        folderRow(container, folder)
+          .querySelector<HTMLButtonElement>(`[data-testid="${button}"]`)!
+          .click(),
+      );
+
+    expand(c, "capability");
+    expand(c, "capability/skills");
+    action(c, oldDestination, "file-nav-rename");
+    const input = c.querySelector<HTMLInputElement>(
+      '[data-testid="file-nav-rename-input"]',
+    )!;
+    const setValue = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(input),
+      "value",
+    )?.set;
+
+    setValue?.call(input, "prototype");
+    act(() => input.dispatchEvent(new Event("input", { bubbles: true })));
+    act(() =>
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      ),
+    );
+    const renamed = onChange.mock.calls.at(
+      -1,
+    )?.[0] as AuthoredFlowPackageFile[];
+
+    expect(
+      renamed.find((file) => file.path === `${newDestination}/SKILL.md`)
+        ?.content,
+    ).toBe("skill");
+    expect(
+      JSON.parse(renamed.find((file) => file.path === originPath)!.content),
+    ).toMatchObject({
+      destination: newDestination,
+      files: { [`${newDestination}/SKILL.md`]: "hash" },
+    });
+    expect(
+      renamed.find((file) => file.kind === "agent_definition")?.content,
+    ).toContain("skills: [ prototype, common ]");
+    const removed = vi.fn();
+    const afterRename = mount(removed, renamed);
+
+    expand(afterRename, "capability");
+    expand(afterRename, "capability/skills");
+    action(afterRename, newDestination, "file-nav-remove");
+    action(afterRename, newDestination, "file-nav-remove-confirm");
+    const remaining = removed.mock.calls.at(
+      -1,
+    )?.[0] as AuthoredFlowPackageFile[];
+
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.content).toContain("skills: [ common ]");
   });
 
   it("moves a file into a folder by drag-and-drop", () => {

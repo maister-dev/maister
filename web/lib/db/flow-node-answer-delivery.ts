@@ -37,7 +37,7 @@ function matchingSuccessor(q: QuestionIdentity): SQL {
     AND (c.accepted_at IS NOT NULL OR c.state='succeeded')
     AND c.run_id=${q.runId} AND c.owner_ref->>'runId'=${q.runId}
     AND c.owner_ref->>'nodeAttemptId'=${q.flowNodeAttemptId}
-    AND c.owner_ref->'promptOrdinal'=to_jsonb((${q.schema}->'flowQuestion'->>'promptOrdinal')::int+1)
+    AND c.owner_ref->'promptOrdinal'=to_jsonb((${q.schema}->'flowQuestion'->>'promptOrdinal')::numeric+1)
     AND resumed.run_id=${q.runId} AND source.run_id=${q.runId} AND resumed.id<>source.id
     AND resumed.run_session_id=c.owner_ref->>'runSessionId' AND resumed.run_session_id=source.run_session_id
     AND resumed.host_session_id=c.target_session_id AND resumed.acp_session_id=source.acp_session_id

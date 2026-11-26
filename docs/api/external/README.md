@@ -14,6 +14,9 @@
 | [OpenAI Responses API](https://platform.openai.com/docs/api-reference)             | `codex-acp` (transitive — not called directly by MAIster)              | HTTPS                      | Upstream. MAIster does not call it directly; the adapter binary does.                                                                                                    |
 | Anthropic-API-compatible third-party providers (z.ai GLM, OpenRouter, anyscale, …) | Same as Anthropic — adapter switches base URL via `ANTHROPIC_BASE_URL` | HTTPS                      | Provider-specific. The shape is Anthropic-compatible; no MAIster-specific divergence. See [configuration](../../configuration.md#anthropic-compatible-provider-routing). |
 | Git CLI (`git worktree`, `git diff`, `git merge`)                                  | `web/lib/worktree.ts`                                                  | POSIX subprocess           | No contract file — invoked via `child_process`. The exact argv and exit codes used are documented inline in `worktree.ts`.                                               |
+| [GitHub REST](https://github.com/github/rest-api-description) | `web/lib/local-packages/catalog-sources.ts` | HTTPS JSON | [Commit, tree and blob reads](github-catalog.openapi.yaml) |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io/docs) | `web/lib/local-packages/catalog-registry.ts` | HTTPS JSON | [Server search and versioned records](mcp-registry.openapi.yaml) |
+| [npm public Registry](https://github.com/npm/registry/blob/main/docs/REGISTRY-API.md) | Web catalog preview and assigned supervisor preparation | HTTPS JSON and tarball bytes | [Version metadata and tarball reads](npm-registry.openapi.yaml) |
 
 ## When to add a file here
 

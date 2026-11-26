@@ -428,6 +428,21 @@ export async function submitOwnerMessage(
       throw new MaisterError("CONFLICT", "The conversation is being reset", {
         details: { reason: "reset_in_progress" },
       });
+    const [awaitingAnswer] = await tx
+      .select({ id: librarianTurns.id })
+      .from(librarianTurns)
+      .where(
+        and(
+          eq(librarianTurns.conversationId, locked.conversation.id),
+          eq(librarianTurns.status, "awaiting_answer"),
+        ),
+      )
+      .limit(1);
+
+    if (awaitingAnswer)
+      throw new MaisterError("CONFLICT", "Answer the open question first", {
+        details: { reason: "question_awaiting_answer" },
+      });
     await consumeDailyTurn(tx, locked.conversation, now);
     const { message } = await appendOwnerMessage(tx, locked, {
       clientMessageId: input.clientMessageId,

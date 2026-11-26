@@ -1353,12 +1353,26 @@ flowchart LR
 
 The workload uses the registered endpoint for its assignment. A local path on A never identifies an executable on B. Publish only after artifact and transitive inputs match the reviewed descriptor. Recheck current trust and fencing at launch. A clean host obtains and validates its own copy. A missing runtime or unavailable distribution leaves the required server unready with a typed reason.
 
-## Expectations
+New placements use the selected preferred host and require shared-workspace
+opt-in for a remote placement. Admission checks strict tools/MCP and read-only
+runner evidence where required on that selected host. A dispatch that would
+create or replace a session rechecks the corresponding assigned host's
+evidence. Adoption validates Web-created paths on the assigned host. Run
+dispatch, events, content, receipts and checkpoint recovery use the durable
+assignment's endpoint. Repository-backed deployment follows the path and
+permission requirements in [ADR-219](../decisions/adr-219.md).
 
-- **HST-01:** (Implemented) Project readiness and operator probes resolve the preferred host. New remote placements require the operator's shared-workspace opt-in. Adoption validates the Web-created paths on the assigned supervisor. Run dispatch, runtime events, content, command receipts and checkpoint recovery use the registered endpoint of the durable assignment. The B/C tool qualification records three tool responses, a stale-epoch refusal, a verified offline cache hit and a fresh installation after relocation. Repository-backed deployment uses the path and permission requirements in [ADR-219](../decisions/adr-219.md).
-- **HST-02:** (Implemented) The first stdio distribution is a self-contained npm tarball. The supervisor verifies the registry publisher, exact release, archive and file bytes, JavaScript binary, license presence, dependency and hook restrictions, host OS, CPU and Node engine range. It keys the cache by the descriptor digest and host runtime. On cold install it checks and reclaims a bounded batch of partial staging trees owned by confirmed dead processes. A new session rechecks the current digest allowlist and cache contents. The Studio preview and an approval refusal expose the same descriptor digest to the operator.
+For stdio, the assigned host verifies the approved self-contained npm
+descriptor and host compatibility, including the publisher, exact release,
+archive and file bytes, JavaScript binary, license, dependency and hook
+restrictions, OS, CPU and Node engine range. The cache is keyed by descriptor
+digest and runtime. Each new session rechecks approval and cache bytes. A cold
+install reclaims a bounded batch of staging trees owned by confirmed dead
+processes. The review and approval refusal show the same descriptor digest.
 
-To reproduce the B/C gate on a machine with Docker and OpenSSL, build the production image from the checkout and run the qualification project. The fixture provisions PostgreSQL, two read-only supervisors, a synthetic npm registry, HTTP MCP and a scoped facade endpoint. Its ACP client issues real tool calls over an isolated network. Each receipt records the execution host and assignment, command, epoch, digest, cache result, tool inventory and child exit.
+### Assigned-host qualification
+
+To reproduce the B/C gate on a machine with Docker and OpenSSL, build the production image from the checkout and run the qualification project. The fixture provisions PostgreSQL, two read-only supervisors, a synthetic npm registry, HTTP MCP and a scoped facade endpoint. Its ACP client issues real tool calls over an isolated network. Each receipt records the execution host and assignment, command, epoch, digest, cache result, tool inventory and child exit. The gate verifies assigned-host tool calls, stale-epoch refusal, offline cache reuse and relocation. Assigned placement and evidence routing have separate regression coverage.
 
 ```sh
 docker build --target production -t maister-mcp-qualification .
@@ -1394,6 +1408,8 @@ pnpm --filter maister-web exec vitest run --project qualification lib/execution-
 - **APR-03:** Negative dispatch proof is scoped to Run, host, assignment and epoch. Under the same Run and assignment locks as command admission, a current create or prompt command, incarnation or ambiguous current handle requires the dispatched execution path. Command retirement does not remove the dispatch witness. A teardown command is admitted under the exact current owner and settlement claim when applicable.
 - **APR-04:** Historical incarnation repair joins retained canonical terminal evidence by exact Run, host, assignment, epoch and host session. A successful checkpoint completion also matches the command ledger and reported session ID. An exact receipt projects a current active incarnation to checkpointed. Replay after projection cursor advance can settle a stale active or lost predecessor. A lost predecessor with checkpoint proof remains outside the open incarnation set and retains the checkpoint reason.
 
+
+### Host ledger invariants
 
 - **E-EH-01** — At most one non-retired `local_direct` execution host MUST
   exist. Enforced by: `execution_hosts_local_active_uq` partial unique index;
@@ -1455,6 +1471,11 @@ pnpm --filter maister-web exec vitest run --project qualification lib/execution-
   names, adapter/model, the counts `promptBytes`, `contentBlockCount`,
   `mcpServerCount`, `contextMountCount`, `has*` flags; nothing else is
   stored); sentinel tests C1, H7.
+
+## Expectations
+
+- **HST-01:** A session requiring evidence may dispatch only when its exact assigned host passes the applicable checks in `assertEnforcementEvidence` or `assertReadOnlySessionCreateEvidence`.
+- **HST-02:** `prepareMcpDistribution` must prepare an npm stdio distribution only when the assigned supervisor verifies the approved descriptor, artifact and host runtime.
 
 ## Edge cases
 

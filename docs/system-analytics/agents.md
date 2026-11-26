@@ -728,15 +728,16 @@ The reviewed company binding grants explicit installation reach as described in 
   diagnostic `agent definition could not be read or indexed`; raw paths and
   error details remain structured server logs.
 - **(ADR-130)** The adapter-agnostic `capability_guard` seam enforces strict
-  `tools`/`mcps` for **flow `ai_coding`/`judge`/`orchestrator` nodes** (Implemented:
-  derived `enforcementProfile` delivered on `StartSessionRequest`, evidence-gated,
-  out-of-profile call denied at the seam). **Standalone platform-agent launches and
-  flow-node `settings.agent` bindings do NOT yet derive/deliver the profile
-  (follow-up)** — the seam supports it (the interceptor is agent-agnostic), but the
-  agent launch path (`launch.ts`) is not wired to `deriveSessionEnforcementProfile`
-  in this milestone. The agent `capability_profile.mcps` frontmatter
-  is the intended MCP-server allow-set source when that wiring lands; see
-  [`guardrail-hooks.md`](guardrail-hooks.md) + [`flow-settings.md`](flow-settings.md).
+  `tools`/`mcps` for **Flow `ai_coding`/`judge`/`orchestrator` nodes**, including
+  eligible `settings.agent` session bindings. `StartSessionRequest` carries the
+  evidence-gated `enforcementProfile` derived from node enforcement intent and
+  the effective MCP server inventory. The pinned package agent supplies the
+  persona, unless the captured project link overrides it. The session resolver
+  applies the agent's skill selection and MCP declaration and the node's own
+  MCP settings. Standalone project agents use their admitted effective
+  capability profile and their own workspace/risk policy. See
+  [session capability delivery](capabilities.md#project-run-capability-inventory),
+  [guardrail hooks](guardrail-hooks.md) and [Flow settings](flow-settings.md).
 - An agent token minted for project A MUST reach project B only when an ENABLED
   `agent_project_links` row for that agent exists in B with
   `cross_project_reach = true`. *(Implemented — ADR-156.)*

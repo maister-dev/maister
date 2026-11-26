@@ -3,8 +3,12 @@ import type { Db } from "@/lib/execution-host/db";
 import { randomUUID } from "node:crypto";
 
 import { sql, eq, and } from "drizzle-orm";
+import { after, NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
+import { POST as postFlowNodeHumanAsk } from "@/app/api/v1/ext/flow-node/human-asks/route";
+import { computeDecisionsQueue } from "@/lib/queries/decisions";
+import { SCOPED_HUMAN_ASK_MAX_BYTES } from "@/lib/services/agent-question-contract";
 import {
   nodeAttempts,
   runs,
@@ -20,7 +24,6 @@ import {
 import {
   requestFlowNodeQuestion,
   activateFlowNodeQuestionOnHostEvents,
-  reconcileFlowNodeQuestion,
   recoverFlowNodeQuestions,
   settleFlowNodeQuestionWait,
 } from "@/lib/services/flow-node-question";
@@ -69,10 +72,21 @@ import {
   getHitlRequestsForRun,
   projectQuestionForm,
 } from "@/lib/queries/hitl";
+import { getCrossProjectHitlInbox } from "@/lib/queries/portfolio";
 import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
 
 let database: StartedPostgresTestDb;
 let db: Db;
+let requestDb: Db | undefined;
+
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
+vi.mock("@/lib/db/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/client")>()),
+  getDb: () => requestDb ?? db,
+}));
 
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
@@ -84,6 +98,17 @@ beforeAll(async () => {
 afterAll(async () => {
   await database?.stop();
 });
+
+function askRequest(body: unknown, secret?: string): NextRequest {
+  return new NextRequest("http://localhost/api/v1/ext/flow-node/human-asks", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(secret ? { authorization: `Bearer ${secret}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+}
 
 it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from their exact checkpoint witnesses", async () => {
   const fake = createFakeExecutionHost();
@@ -176,19 +201,47 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
           fields: [{ name: "path", type: "string" as const, required: true }],
         },
       };
-      const receipt = await requestFlowNodeQuestion(db, token.tokenId, input);
 
-      expect(await requestFlowNodeQuestion(db, token.tokenId, input)).toEqual(
-        receipt,
-      );
       await expect(
-        requestFlowNodeQuestion(db, token.tokenId, {
-          ...input,
-          question: "Other?",
-        }),
-      ).rejects.toMatchObject({ code: "CONFLICT" });
+        postFlowNodeHumanAsk(askRequest(input)),
+      ).resolves.toMatchObject({ status: 401 });
+      await expect(
+        postFlowNodeHumanAsk(
+          askRequest(
+            { ...input, question: "x".repeat(SCOPED_HUMAN_ASK_MAX_BYTES) },
+            token.secret,
+          ),
+        ),
+      ).resolves.toMatchObject({ status: 413 });
+      const accepted = await postFlowNodeHumanAsk(
+        askRequest(input, token.secret),
+      );
 
-      return receipt.questionId;
+      expect(accepted.status).toBe(202);
+      const receipt = (await accepted.json()) as {
+        questionId: string;
+        state: string;
+      };
+
+      expect(receipt).toEqual({
+        questionId: expect.any(String),
+        state: "checkpoint_pending",
+      });
+      expect(after).toHaveBeenCalledWith(expect.any(Function));
+
+      const replay = await postFlowNodeHumanAsk(
+        askRequest(input, token.secret),
+      );
+
+      expect(replay.status).toBe(202);
+      expect(await replay.json()).toEqual(receipt);
+      await expect(
+        postFlowNodeHumanAsk(
+          askRequest({ ...input, question: "Other?" }, token.secret),
+        ),
+      ).resolves.toMatchObject({ status: 409 });
+
+      return { questionId: receipt.questionId, input, secret: token.secret };
     };
     const stale = await issueFlowQuestionNodeToken({
       projectId,
@@ -210,7 +263,8 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
         },
       }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    const stepQuestion = await ask(design.id);
+    const designAsk = await ask(design.id);
+    const stepQuestion = designAsk.questionId;
 
     expect(await getHitlRequestsForRun(runId, projectId, { db })).toEqual([]);
     const rollbackWitness = new Error("discard test branch");
@@ -260,7 +314,7 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
                 .where(eq(hitlRequests.id, stepQuestion))
             )[0].activationState,
           ).toBe("failed");
-          if (race === "rejected-checkpoint")
+          if (race === "rejected-checkpoint") {
             expect(
               (
                 await tx
@@ -269,6 +323,21 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
                   .where(eq(nodeAttempts.id, design.id))
               )[0].status,
             ).toBe("Running");
+            requestDb = tx;
+            try {
+              const failed = await postFlowNodeHumanAsk(
+                askRequest(designAsk.input, designAsk.secret),
+              );
+
+              expect(failed.status).toBe(200);
+              expect(await failed.json()).toEqual({
+                questionId: stepQuestion,
+                state: "failed",
+              });
+            } finally {
+              requestDb = undefined;
+            }
+          }
           expect(
             await tx
               .select()
@@ -313,6 +382,9 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
           ),
         ),
     ).toEqual([]);
+    await expect(
+      postFlowNodeHumanAsk(askRequest(designAsk.input, designAsk.secret)),
+    ).resolves.toMatchObject({ status: 401 });
     const visible = await getHitlRequestsForRun(runId, projectId, { db });
 
     expect(visible.map((row) => row.id)).toEqual([stepQuestion]);
@@ -330,20 +402,25 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
     expect(
       inbox.items.find((item) => item.hitlRequestId === stepQuestion),
     ).toMatchObject({ runId, prompt: "Which path?", assignmentStatus: "open" });
-    const reviewQuestion = await ask(review.id);
+    const { questionId: reviewQuestion } = await ask(review.id);
+    const [neverActivated] = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.id, reviewQuestion));
 
+    expect(neverActivated.activationState).toBe("pending_termination");
+    expect(neverActivated.schema).not.toHaveProperty("checkpointCommandId");
     await expect
       .poll(async () => {
-        await reconcileFlowNodeQuestion(db, installed.hosts, reviewQuestion);
+        // Advance the retry window while canonical checkpoint evidence arrives.
+        await db
+          .update(hitlRequests)
+          .set({ flowReconciledAt: new Date(0) })
+          .where(eq(hitlRequests.id, reviewQuestion));
 
-        return (
-          await db
-            .select()
-            .from(hitlRequests)
-            .where(eq(hitlRequests.id, reviewQuestion))
-        )[0].activationState;
+        return recoverFlowNodeQuestions(db, installed.hosts);
       })
-      .toBe("active");
+      .toBe(1);
     expect(
       (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
     ).toBe("Running");
@@ -420,6 +497,36 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
       status: 202,
       receipt: { state: "accepted" },
     });
+    const [attention, projectInbox, globalInbox, runQuestions] =
+      await Promise.all([
+        computeDecisionsQueue(human.id, human.role, { projectId }, db),
+        getHitlInbox(projectId, {
+          db,
+          recipient: { kind: "user", userId: human.id },
+        }),
+        getCrossProjectHitlInbox(human.id, human.role, {}, db),
+        getHitlRequestsForRun(runId, projectId, { db }),
+      ]);
+    const questions = attention.items.flatMap((item) =>
+      item.kind === "hitl" ? [item.hitl.hitlRequestId] : [],
+    );
+
+    expect(questions).toContain(stepQuestion);
+    expect(questions).not.toContain(reviewQuestion);
+    for (const { items } of [projectInbox, globalInbox])
+      expect(items).toContainEqual(
+        expect.objectContaining({
+          hitlRequestId: reviewQuestion,
+          answerState: "answer_stored",
+        }),
+      );
+    expect(runQuestions).toContainEqual(
+      expect.objectContaining({
+        id: reviewQuestion,
+        flowAnswerAcceptedAt: expect.any(Date),
+        respondedAt: null,
+      }),
+    );
     expect(
       await answerFlowNodeQuestion(db, runId, reviewQuestion, human.id, {
         path: "cart",
@@ -538,9 +645,22 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
     await db
       .insert(projectMembers)
       .values({ projectId, userId: designer.id, role: "member" });
-    await answerFlowNodeQuestion(db, runId, stepQuestion, designer.id, {
-      path: "payment",
-    });
+    const paths = ["payment", "shipping"] as const;
+    const racers = await Promise.allSettled(
+      paths.map((path) =>
+        answerFlowNodeQuestion(db, runId, stepQuestion, designer.id, { path }),
+      ),
+    );
+
+    expect(racers.map((outcome) => outcome.status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    expect(
+      racers.find((outcome) => outcome.status === "rejected"),
+    ).toMatchObject({ reason: { code: "CONFLICT" } });
+    const designPath = paths[racers[0].status === "fulfilled" ? 0 : 1];
+
     expect(
       (await db.select().from(runs).where(eq(runs.id, runId)))[0].currentStepId,
     ).toBe("review");
@@ -644,7 +764,7 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
     }));
     for (const [target, qid, path] of [
       [review, reviewQuestion, "cart"],
-      [design, stepQuestion, "payment"],
+      [design, stepQuestion, designPath],
     ] as const) {
       const fresh =
         target.id === review.id

@@ -863,6 +863,8 @@ includes the tokens below. The UI still branches on `code`;
 | `librarian_not_admitted` | `UNAUTHORIZED` / 403 | A librarian turn token calls an external endpoint that does not admit librarian authority. | Use a listed librarian tool; the token cannot gain that route's authority. |
 | `librarian_daily_cap` | `BUDGET_EXCEEDED` / 429 | The owner's daily turn counter reached the configured limit under the conversation lock. | Wait for the next UTC day or ask an administrator to adjust the cap. |
 | `message_not_queued` | `CONFLICT` / 409 | Withdraw reaches a message whose turn has already started or whose delivery state is no longer queued. | Read the latest message state; Stop response is available for a running turn. |
+| `question_awaiting_answer` | `CONFLICT` / 409 | A new composer message arrives while the active turn is parked on a structured question. An exact message replay returns its existing receipt. | Answer the question or stop the response. |
+| `question_closed` | `CONFLICT` / 410 | The owner tries to answer a closed card or a card from a prior segment. | Refresh the conversation. A closed question cannot accept an answer. |
 | `target_changed` | `CONFLICT` / 409 | `POST /api/librarian/cards/{cardId}/decide` re-reads the bound target under its lock and finds it drifted — task `revision`, reviewed head SHA, HITL request or question revision, run status — or finds the card past `expires_at` (LOP-08). | The card executes nothing. The librarian proposes a fresh card against the current target. |
 | `governed_preview_limit` | `PRECONDITION` / 409 | A complete governed confirmation preview exceeds 16,384 UTF-16 code units. | No card is created. A smaller effect can be proposed for inspection. |
 | `governed_memory_source` | `PRECONDITION` / 409 | A direct personal-memory write or suggestion comes from a turn with retained governed sources. | The scoped source stays on the turn and the personal-memory store is unchanged. |
@@ -891,6 +893,57 @@ statement accept on a task off `Backlog` → `PRECONDITION` (the existing
 `BACKLOG_GATED_FIELDS` gate). See
 [`system-analytics/librarian-operations.md`](system-analytics/librarian-operations.md)
 and [`system-analytics/librarian-conversation.md`](system-analytics/librarian-conversation.md).
+
+## Studio catalog, package delivery and execution host reasons (Implemented)
+
+| `details.reason` | Code | Meaning |
+| --- | --- | --- |
+| `approval_revoked` | `CONFIG` (HTTP 403) | The source approval no longer authorizes the preview. A pending apply can also return this reason in its aborted receipt. |
+| `upstream_access_denied` | `CONFIG` | The approved source refused public access. |
+| `preview_limit_reached` | `EXECUTOR_UNAVAILABLE` (HTTP 429) | The draft's active preview limit is full. |
+| `remote_requirements_unsupported` | `CONFIG` | The preview cannot represent the required remote transport configuration. It can include safe HTTP header and URL variable names. |
+| `distribution_requirements_unsupported` | `CONFIG` | The preview cannot represent the declared installation or stdio configuration. It can include safe environment variable names. |
+| `origin_changed` | `CONFLICT` | The chosen import origin no longer matches the draft. |
+| `already_imported` | `CONFLICT` | An existing import owns this source. |
+| `skill_id_exists` | `CONFLICT` | The logical skill already exists in the draft. |
+| `mcp_ref_exists` | `CONFLICT` | The draft already uses the requested MCP ref. |
+| `mcp_descriptor_diverged` | `CONFLICT` | The existing MCP file and the manifest declaration have diverged. |
+| `destination_occupied` | `CONFLICT` | The proposed import destination already contains draft files. |
+| `request_key_reused` | `CONFLICT` | A request key already identifies a different payload. |
+| `draft_changed` | `CONFLICT` | The reviewed base or file preimage has changed. A pending apply can also return this reason in its aborted receipt. |
+| `resolutions_required` | `CONFLICT` | The preview has unresolved file changes. |
+| `operation_in_progress` | `CONFLICT` | Another operation holds the draft lease. |
+| `package_agent_reference` | `CONFIG` | The agent selects an undeclared MCP or a missing or ambiguous packaged skill. |
+| `package_sync_contract_conflict` | `PRECONDITION` | Package source sync cannot reconcile the manifest contract. |
+| `launch_settings_changed` | `CONFLICT` | Package delivery settings changed while the task was being admitted. |
+| `launch_capabilities_changed` | `PRECONDITION` | The launch cannot reproduce the selected capability bundle. |
+| `agent_mcp_target_unavailable` | `PRECONDITION` | A required captured standalone agent MCP changed or is unavailable on resume. |
+| `remote_shared_workspace_required` | `CONFIG` | Preferred remote placement requires `MAISTER_EXECUTION_HOST_SHARED_WORKSPACE=1` and identical shared workspace paths. |
+| `execution_host_endpoint_missing` | `EXECUTOR_UNAVAILABLE` | No endpoint is configured for the durable assignment's supervisor. |
+| `execution_host_resolution_in_transaction` | `PRECONDITION` | Remote host resolution must finish before the claim transaction. |
+| `execution_host_tls_files_required` | `CONFIG` | HTTPS routing lacks a configured CA, client certificate or client key. |
+| `execution_host_tls_file_unreadable` | `CONFIG` | The TLS file selected by the named variable is unreadable. |
+| `execution_host_unavailable` | `EXECUTOR_UNAVAILABLE` | The assigned supervisor could not be reached. |
+| `execution_host_unregistered_for_claim` | `EXECUTOR_UNAVAILABLE` | No ready local supervisor is registered for the claim. |
+| `mcp_distribution_unsupported` | `PRECONDITION` | The distribution, archive or executable falls outside the supported npm stdio contract. |
+| `mcp_distribution_runtime` | `PRECONDITION` | The npm MCP needs a different OS, architecture or Node runtime. |
+| `mcp_distribution_untrusted` | `PRECONDITION` | The current supervisor does not approve the reviewed npm descriptor digest. |
+| `mcp_distribution_integrity` | `PRECONDITION` | Archive, publisher, exact release, descriptor or cache integrity could not be verified. |
+| `package_skill_view_integrity` | `PRECONDITION` | The assigned supervisor could not verify the private skill tree. Session creation reports that the process did not start. |
+
+## Flow node question reasons (Implemented — ADR-220)
+
+| `details.reason` | Code | Meaning |
+| --- | --- | --- |
+| `flow_question_prompt_acceptance_pending` | `EXECUTOR_UNAVAILABLE` | The originating prompt's acceptance is unsettled. Reuse the same request key. |
+| `question_checkpoint_failed` | `CONFLICT` | The original checkpoint command reached a definitive terminal outcome without a usable checkpoint. |
+| `node_question_closed` | `CONFLICT` | The source Run or attempt is no longer answerable. |
+| `node_question_responder_revoked` | `UNAUTHORIZED` | The responder's current account or project permission no longer authorizes delivery. |
+| `node_question_resume_conflict` | `CONFLICT` | The accepted question no longer owns the original parked attempt. |
+| `node_question_checkpoint_unavailable` | `CONFLICT` | The host has no matching proof of the original checkpoint. |
+
+`node_question` is a `run.needs_input` event reason. Librarian
+`not_claimable` is an internal turn claim result.
 
 ## Project configuration persistence reasons (Implemented — ADR-194)
 

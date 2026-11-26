@@ -16,6 +16,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isMaisterError } from "../../runtime/maister-error";
 import { packageSkillTreeDigest } from "../../runtime/package-skill-tree";
 
 import { SupervisorError, type StartSessionRequest } from "./types";
@@ -53,20 +54,54 @@ const adapters = {
   },
 } as const;
 
+function skillViewIntegrityFailure(cause?: unknown): SupervisorError {
+  return new SupervisorError(
+    "PRECONDITION",
+    "The accepted package skill view is missing or changed",
+    { cause, details: { reason: "package_skill_view_integrity" } },
+  );
+}
+
+async function assertSkillTreeDigest(
+  directory: string,
+  expectedDigest: string,
+): Promise<void> {
+  if ((await packageSkillTreeDigest(directory)) !== expectedDigest)
+    throw skillViewIntegrityFailure();
+}
+
 async function verifiedSettings(file: string, digest: string): Promise<Buffer> {
   const bytes = await readFile(file);
 
   if (createHash("sha256").update(bytes).digest("hex") !== digest)
-    throw new SupervisorError(
-      "PRECONDITION",
-      "The pinned agent adapter settings changed",
-    );
+    throw skillViewIntegrityFailure();
 
   return bytes;
 }
 
 /** The assigned host derives private adapter state from its own adopted workspace and authenticated create payload. */
 export async function preparePackageSkillHome(
+  request: StartSessionRequest,
+  workspace: WorkspaceResolution,
+): Promise<Record<string, string>> {
+  try {
+    return await prepareSkillHome(request, workspace);
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : null;
+
+    if (
+      code === "ENOENT" ||
+      code === "ENOTDIR" ||
+      code === "EISDIR" ||
+      code === "ELOOP" ||
+      (isMaisterError(error) && error.code === "CONFIG")
+    )
+      throw skillViewIntegrityFailure(error);
+    throw error;
+  }
+}
+
+async function prepareSkillHome(
   request: StartSessionRequest,
   workspace: WorkspaceResolution,
 ): Promise<Record<string, string>> {
@@ -98,11 +133,7 @@ export async function preparePackageSkillHome(
     request.nodeAttemptId,
   );
 
-  if ((await realpath(source)) !== source)
-    throw new SupervisorError(
-      "PRECONDITION",
-      "The selected package skill view has a replaced directory",
-    );
+  if ((await realpath(source)) !== source) throw skillViewIntegrityFailure();
   const logicalOwner = createHash("sha256")
     .update(
       JSON.stringify([
@@ -122,16 +153,15 @@ export async function preparePackageSkillHome(
   const config = path.join(home, adapter.suffix);
   const target = path.join(config, "skills");
 
-  try {
-    await lstat(home);
-    if (
-      (await realpath(home)) !== home ||
-      (await packageSkillTreeDigest(target)) !== view.skillsDigest
-    )
-      throw new SupervisorError(
-        "PRECONDITION",
-        "The agent's private skill view changed before resume",
-      );
+  const existing = await lstat(home).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+
+    return null;
+  });
+
+  if (existing) {
+    if ((await realpath(home)) !== home) throw skillViewIntegrityFailure();
+    await assertSkillTreeDigest(target, view.skillsDigest);
     if (view.settingsDigest)
       await verifiedSettings(
         path.join(config, "settings.json"),
@@ -139,8 +169,6 @@ export async function preparePackageSkillHome(
       );
 
     return { [adapter.key]: home };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const staged = await mkdtemp(path.join(parent, ".prepare-"));
 
@@ -153,14 +181,10 @@ export async function preparePackageSkillHome(
       path.join(stagedConfig, "skills"),
       { recursive: true },
     );
-    if (
-      (await packageSkillTreeDigest(path.join(stagedConfig, "skills"))) !==
-      view.skillsDigest
-    )
-      throw new SupervisorError(
-        "PRECONDITION",
-        "The selected skill bytes differ from the accepted view",
-      );
+    await assertSkillTreeDigest(
+      path.join(stagedConfig, "skills"),
+      view.skillsDigest,
+    );
     const globalHome = process.env[adapter.key]
       ? path.join(process.env[adapter.key]!, adapter.suffix)
       : path.join(homedir(), adapter.global);

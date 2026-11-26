@@ -267,17 +267,18 @@ paths:
         and accepted prompt. If the exact prompt is already delivering or its session activation is still being recorded, the
         server waits up to eight seconds for acceptance and the live session while rechecking ownership. If they are still
         pending, retry with the same request key. The 64 KiB JSON body carries a stable request key, a question and its form. Exact retries while
-        checkpointing reuse the pending receipt. Once the checkpoint is proved the credential is revoked and the question
-        appears in the project Inbox and Run detail.
+        checkpointing reuse the pending receipt. A definitive checkpoint refusal can be replayed as `failed` while the source
+        credential is still current. A proved checkpoint revokes the credential and opens the question in the project Inbox
+        and Run detail. Later calls using that credential return 401.
       security:
         - projectToken: []
       parameters: []
       responses:
         "200":
-          description: Replayed question
+          description: Replayed question while its source credential remains current
           content:
             application/json:
-              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "open"}
+              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "failed"}
               schema:
                 type: object
                 additionalProperties: false

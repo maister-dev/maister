@@ -178,12 +178,8 @@ export function SkillScreen({
                   ),
                 );
                 setMigrationError("");
-              } catch (error) {
-                setMigrationError(
-                  error instanceof Error
-                    ? error.message
-                    : labels.migrationError,
-                );
+              } catch {
+                setMigrationError(labels.migrationError);
               }
             }}
           >

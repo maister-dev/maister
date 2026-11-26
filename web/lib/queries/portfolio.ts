@@ -1307,6 +1307,8 @@ export interface CrossProjectHitlScope {
   projectIds?: readonly string[];
   /** Explicit project scopes never implicitly widen to company-owned work. */
   companyIds?: readonly string[];
+  /** The decisions queue excludes Flow answers already awaiting delivery. */
+  flowQuestionState?: "awaiting_answer";
 }
 
 export async function getCrossProjectHitlInbox(
@@ -1425,6 +1427,9 @@ export async function getCrossProjectHitlInbox(
         ),
         isNull(hitlRequests.respondedAt),
         visibleFlowNodeQuestion(),
+        scope.flowQuestionState === "awaiting_answer"
+          ? isNull(hitlRequests.flowAnswerAcceptedAt)
+          : undefined,
         or(
           inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
           and(

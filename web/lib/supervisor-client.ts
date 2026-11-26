@@ -1565,7 +1565,11 @@ async function request<T>(spec: WireRequest): Promise<WireResponse<T>> {
     try {
       res = spec.longLived
         ? await fetchLongLivedSupervisor(url, init, spec.ctx)
-        : await fetchSupervisor(url, { ...init, cache: "no-store" });
+        : await fetchSupervisor(
+            url,
+            { ...init, cache: "no-store" },
+            spec.timeoutMs ?? ADMIN_READ_TIMEOUT_MS,
+          );
     } catch (err) {
       throw networkErrorToMaister(err, spec.ctx);
     }

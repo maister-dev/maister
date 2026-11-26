@@ -25,6 +25,7 @@ import type { ProjectAssignmentAdmission } from "@/lib/specialist-assignments/pr
 import type { DelegatedWorkRequest } from "@/lib/specialist-assignments/delegated-intake";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 import type { ChildInputOrigin } from "@/lib/orchestrator/native-child-input";
+import type { AgentMcpTarget } from "@/lib/capabilities/mcp-targets";
 
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, stat } from "node:fs/promises";
@@ -36,12 +37,9 @@ import pino from "pino";
 import { installationEnforcementProfile } from "../../../runtime/installation-agent-tools";
 
 import {
-  agentMcpTargets,
-  matchesAgentMcpTarget,
-  availableAgentMcpCatalog,
-  type AgentMcpTarget,
   captureProjectAgentProfile,
   connectedAgentMcpRefs,
+  resolveRetainedAgentMcpCatalog,
   retainedProjectAgentProfile,
 } from "./project-instance-profile";
 import {
@@ -747,6 +745,8 @@ export async function loadAgentContext(
   return { agent, effective, link, project };
 }
 
+// Runner resolution is reused by the transactional admission recheck. The
+// smoke gate runs only after the launch selects its execution host.
 export async function resolveRunnerForAgent(
   _db: Db,
   ctx: LoadedAgentContext,
@@ -768,7 +768,7 @@ export async function resolveRunnerForAgent(
 
   const runnerRows = await _db.select().from(platformAcpRunners);
 
-  const resolution = resolveAgentRunner({
+  return resolveAgentRunner({
     launchOverrideRunnerId,
     link: { runnerOverrideId: ctx.link.runnerOverrideId },
     agent: {
@@ -780,15 +780,6 @@ export async function resolveRunnerForAgent(
     platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
     runners: runnerRows.map(runnerCatalogEntry),
   });
-
-  await assertReadOnlySessionEvidence({
-    hosts: executionHosts,
-    adapterId: resolution.runnerSnapshot.adapter,
-    runnerId: resolution.runnerId,
-    workspace,
-  });
-
-  return resolution;
 }
 
 async function packageSkillMaterializationRoots(
@@ -1951,6 +1942,13 @@ async function launchAgentRunWithAdmission(
   assertBoundTaskLaunchHost(acceptedExecution?.intent.effectiveExecutionHostId, placementHost);
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
   const placementTransport = transportForExecutionHost(placementHost);
+
+  await assertReadOnlySessionEvidence({
+    checkDiagnostics: () => placementTransport.diagnostics(),
+    adapterId: resolution.runnerSnapshot.adapter,
+    runnerId: resolution.runnerId,
+    workspace,
+  });
 
   // Hold the shared worktree directory's mutex through provenance, row commit
   // and failure compensation. Keep its files outside the project checkout;
@@ -4226,9 +4224,6 @@ export async function resolveAgentProfileMcpServers(args: {
     import("@/lib/mcp/binding-service"),
     import("@/lib/mcp/materialization-gate"),
   ]);
-  const catalog = args.frozenTargets
-    ? await availableAgentMcpCatalog(args.db, args.projectId)
-    : await loadSelectableCapabilities(args.projectId, args.db);
   // ADR-130 (D5): an agent's declared capability_profile.mcps resolve through the
   // SAME binding-aware resolver as flows/scratch — one resolution path.
   const mcpBindings = await loadProjectMcpBindings(
@@ -4238,25 +4233,22 @@ export async function resolveAgentProfileMcpServers(args: {
   const overlays = args.frozenTargets
     ? await loadProjectMcpOverlays(args.projectId, args.db)
     : undefined;
-  let selectedMcpIds = declared;
+  const { catalog, selectedMcpIds } =
+    args.frozenTargets && overlays
+      ? await resolveRetainedAgentMcpCatalog({
+          db: args.db,
+          projectId: args.projectId,
+          refs: declared,
+          targets: args.frozenTargets,
+          bindings: mcpBindings,
+          overlays,
+        })
+      : {
+          catalog: await loadSelectableCapabilities(args.projectId, args.db),
+          selectedMcpIds: declared,
+        };
 
   if (args.frozenTargets) {
-    const targets = new Map(
-      args.frozenTargets.map((target) => [target.refId, target]),
-    );
-    const current = agentMcpTargets(declared, catalog, mcpBindings, overlays!);
-
-    selectedMcpIds = current
-      .filter((candidate) => {
-        const retained = targets.get(candidate.refId);
-
-        return matchesAgentMcpTarget(
-          retained,
-          candidate,
-          mcpBindings.find((binding) => binding.refId === candidate.refId),
-        );
-      })
-      .map((target) => target.refId);
     const withheld = declared.filter((ref) => !selectedMcpIds.includes(ref));
     const missingRequired = withheld.find((ref) =>
       args.requiredMcpRefs?.includes(ref),

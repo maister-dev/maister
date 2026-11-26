@@ -7,6 +7,40 @@ const editSession = z.string().trim().min(1).max(256);
 
 export const catalogKind = z.enum(["skill", "mcp"]);
 export type CatalogKind = z.infer<typeof catalogKind>;
+const catalogFailureReason = z.enum([
+  "approval_revoked",
+  "upstream_access_denied",
+  "preview_limit_reached",
+  "remote_requirements_unsupported",
+  "distribution_requirements_unsupported",
+  "origin_changed",
+  "already_imported",
+  "skill_id_exists",
+  "mcp_ref_exists",
+  "mcp_descriptor_diverged",
+  "destination_occupied",
+  "request_key_reused",
+  "draft_changed",
+  "resolutions_required",
+]);
+
+export const catalogRequirementName = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/);
+export const maxCatalogRequirementNames = 8;
+const catalogRequirements = z.object({
+  names: z.array(catalogRequirementName).max(maxCatalogRequirementNames),
+  more: z.boolean(),
+});
+
+export type CatalogRequirements = z.infer<typeof catalogRequirements>;
+export const catalogFailureDetails = z.object({
+  reason: catalogFailureReason,
+  headers: catalogRequirements.optional(),
+  urlVariables: catalogRequirements.optional(),
+  environmentVariables: catalogRequirements.optional(),
+});
+export type CatalogFailureDetails = z.infer<typeof catalogFailureDetails>;
 export const searchQuery = z
   .object({
     kind: catalogKind,
@@ -76,6 +110,7 @@ export type CatalogPreview = {
   affectedRefs: string[];
   notices: string[];
   configuration: string[];
+  migratesLegacyManifest?: boolean;
   runnerCompatibility: {
     transport: "stdio" | "http";
     compatibleAdapters: AdapterId[];

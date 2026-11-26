@@ -345,9 +345,10 @@ and `repo_path` are unique across registered projects. Refuse to register
 on: `schemaVersion` mismatch (project file or any installed Flow's
 manifest), legacy `steps[]`, duplicate IDs within either file, unknown
 runner reference, or unknown graph transition/rework target,
-slug collision, `repo_path` collision. Trust the Flow's `setup.sh` on
-first install. Current target trusts internal Flow sources; sandboxing +
-trust UI is Phase 2.
+slug collision, `repo_path` collision. Review the package source and trust
+its `setup.sh` before first install. Studio also imports declarative artifacts
+from operator-approved public catalogs. Import review and assigned-host npm
+execution approval are separate decisions ([ADR-221](docs/decisions/adr-221.md)).
 
 Templating: full Mustache-style interpolation (strict mode — unknown var
 throws `CONFIG`) with session context, task fields, per-step output vars,
@@ -502,7 +503,8 @@ opened as `pr_state='open'` and clears a previous PR's fields.
 - **Flow plugin engine**: install plugins from `git URL + tag` to
   `~/.maister/flows/<id>@<tag>/` system cache; symlink into each consuming
   project's `.maister/<slug>/flows/`. Manifest (`flow.yaml`) is the source
-  of the typed-node graph DSL. Trust internal Flow sources today.
+  of the typed-node graph DSL. Package installation follows the existing
+  source and setup trust gates. Public Studio imports follow ADR-221.
 - **Multi-executor via ACP**: `claude` and `codex` both required.
   Per-step executor override resolution per §5.
 - **`supervisor/` daemon**: separate Node process owning ACP sessions,
@@ -640,8 +642,8 @@ agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   `specialist-assignments.md`, `stand-maintenance.md`) · task external source
   binding, completion after a confirmed PR merge, run duration/execution
   timing, active-rail attention membership (ADR-206..209; `tasks.md`,
-  `runs.md`) · Studio catalog imports, package capability delivery and retired
-  node skill lists (ADR-218) · pinned shared-workspace supervisors (ADR-219)
+  `runs.md`) · reviewed public Studio catalog imports (ADR-221) · package
+  capability delivery and retired node skill lists (ADR-218) · pinned shared-workspace supervisors (ADR-219)
   · Flow node questions with Inbox and checkpoint continuation (ADR-220).
 
 Historical product backlog/wave rationale: `docs/pv/improvement-roadmap.md`.

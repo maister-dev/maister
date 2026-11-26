@@ -829,6 +829,7 @@ export const REASON_TOKENS = [
   "mcp_distribution_runtime",
   "mcp_distribution_untrusted",
   "mcp_distribution_integrity",
+  "package_skill_view_integrity",
   "context_exhausted",
   "max_output_tokens",
 ] as const;

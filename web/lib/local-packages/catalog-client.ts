@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { CatalogFailureDetails } from "./catalog-contract";
+
 import { setTimeout as delay } from "node:timers/promises";
 
 import pino from "pino";
@@ -27,18 +29,16 @@ export class CatalogError extends MaisterError {
   constructor(
     readonly status: number,
     message: string,
+    details?: CatalogFailureDetails,
   ) {
     super(
       status === 409
         ? "CONFLICT"
-        : status === 401
-          ? "UNAUTHENTICATED"
-          : status === 403
-            ? "UNAUTHORIZED"
-            : status === 503 || status === 429
-              ? "EXECUTOR_UNAVAILABLE"
-              : "CONFIG",
+        : status === 503 || status === 429
+          ? "EXECUTOR_UNAVAILABLE"
+          : "CONFIG",
       message,
+      { details },
     );
     Object.setPrototypeOf(this, CatalogError.prototype);
   }
@@ -89,6 +89,10 @@ export const jsonFromCatalog: CatalogClient = async (url) => {
           throw new CatalogError(422, "Catalog redirects are unsupported");
         if (status === 404)
           throw new CatalogError(404, "Catalog item unavailable");
+        if (status === 401 || status === 403)
+          throw new CatalogError(422, "Catalog source refused public access", {
+            reason: "upstream_access_denied",
+          });
         throw new CatalogError(
           status >= 500 ? 503 : 422,
           `Catalog source returned HTTP ${status}`,

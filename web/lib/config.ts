@@ -35,7 +35,10 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { FLOW_NATIVE_CONTRACT_ENGINE_MIN } from "@/lib/run-results/flow-native-contract";
 import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
-import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
+import {
+  parseGraphOnlyFlowManifest,
+  parseRetainedGraphShape,
+} from "@/lib/flows/manifest-parser";
 import {
   collectContentArtifactIds,
   isInjectableArtifactId,
@@ -394,14 +397,32 @@ function toCapabilityRefIdSets(
   };
 }
 
-export async function loadFlowManifest(
+type FlowManifestReadOptions = {
+  roleRefs?: readonly string[] | ReadonlySet<string>;
+  capabilityRefIds?: CapabilityRefIdsInput;
+  errorCode?: "CONFIG" | "FLOW_INSTALL";
+  surface?: string;
+};
+
+export function loadFlowManifest(
   flowYamlPath: string,
-  opts?: {
-    roleRefs?: readonly string[] | ReadonlySet<string>;
-    capabilityRefIds?: CapabilityRefIdsInput;
-    errorCode?: "CONFIG" | "FLOW_INSTALL";
-    surface?: string;
-  },
+  opts?: FlowManifestReadOptions,
+): Promise<FlowYamlV1> {
+  return readFlowManifest(flowYamlPath, parseGraphOnlyFlowManifest, opts);
+}
+
+/** Load an already published graph for installation or read-only inspection. */
+export function loadRetainedFlowManifest(
+  flowYamlPath: string,
+  opts?: FlowManifestReadOptions,
+): Promise<FlowYamlV1> {
+  return readFlowManifest(flowYamlPath, parseRetainedGraphShape, opts);
+}
+
+async function readFlowManifest(
+  flowYamlPath: string,
+  parseManifest: typeof parseGraphOnlyFlowManifest,
+  opts?: FlowManifestReadOptions,
 ): Promise<FlowYamlV1> {
   let raw: string;
 
@@ -427,7 +448,7 @@ export async function loadFlowManifest(
     );
   }
 
-  const manifest = parseGraphOnlyFlowManifest(data, {
+  const manifest = parseManifest(data, {
     code: opts?.errorCode ?? "CONFIG",
     surface: opts?.surface ?? "filesystem",
     manifestLabel: flowYamlPath,

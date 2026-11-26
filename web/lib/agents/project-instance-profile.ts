@@ -2,11 +2,13 @@ import "server-only";
 
 import type { ParsedAgentDefinition } from "./definition";
 import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { McpConfigOverlay } from "@/lib/db/schema";
 import type { CapabilityCatalogRecord } from "@/lib/capabilities/types";
 
 import { createHash } from "node:crypto";
 
 import { sql } from "drizzle-orm";
+import pino from "pino";
 import { z } from "zod";
 
 import { resolveEffectiveAgentDefinition } from "./effective";
@@ -14,19 +16,30 @@ import { resolveEffectiveAgentDefinition } from "./effective";
 import {
   agentMcpTargets,
   eligibleAgentMcpRecord,
+  matchesAgentMcpTarget,
   mcpTargetSchema,
+  type AgentMcpTarget,
 } from "@/lib/capabilities/mcp-targets";
 import { withBoundPlatformMcpRecords } from "@/lib/capabilities/bound-platform-mcps";
-import { loadSelectableCapabilities } from "@/lib/capabilities/resolver";
+import {
+  loadSelectableCapabilities,
+  type McpBindingInput,
+} from "@/lib/capabilities/resolver";
 import {
   loadProjectMcpBindings,
   loadProjectMcpOverlays,
 } from "@/lib/mcp/binding-service";
-import { capabilityRefIdSchema } from "@/lib/config.schema";
+import {
+  capabilityRefIdSchema,
+  packageManifestMcpSchema,
+} from "@/lib/config.schema";
 import { type Db } from "@/lib/execution-host/db";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { packageMcpMaterial } from "@/lib/packages/mcp-material";
 import { readPackageMcpScopes } from "@/lib/packages/mcp-scope";
 import { postgresTextSchema } from "@/lib/text-schema";
+
+const log = pino({ name: "project-agent-profile" });
 
 export const promptOverrideSchema = postgresTextSchema
   .transform((value) => value.replace(/\r\n?/g, "\n"))
@@ -52,12 +65,6 @@ const linkProfileSchema = z.object({
 });
 
 export type ProjectAgentProfile = z.infer<typeof linkProfileSchema>;
-
-export {
-  agentMcpTargets,
-  matchesAgentMcpTarget,
-  type AgentMcpTarget,
-} from "@/lib/capabilities/mcp-targets";
 
 export const projectAgentProfileSnapshotSchema = z
   .object({
@@ -197,6 +204,128 @@ export async function availableAgentMcpCatalog(
     projectId,
     catalog.filter((row) => row.kind === "mcp" && allowed.has(row.id)),
   );
+}
+
+/** A package adoption can replace the projection ID and material while the original release stays authorized. */
+export async function resolveRetainedAgentMcpCatalog(input: {
+  db: SqlTransaction;
+  projectId: string;
+  refs: readonly string[];
+  targets: readonly AgentMcpTarget[];
+  bindings: readonly McpBindingInput[];
+  overlays: ReadonlyMap<string, McpConfigOverlay>;
+}): Promise<{ catalog: CapabilityCatalogRecord[]; selectedMcpIds: string[] }> {
+  const { db, projectId, refs, targets, bindings, overlays } = input;
+  const catalog = await availableAgentMcpCatalog(db, projectId);
+  const retainedByRef = new Map(
+    targets.map((target) => [target.refId, target]),
+  );
+  const bindingByRef = new Map(
+    bindings.map((binding) => [binding.refId, binding]),
+  );
+  const selected = new Set(
+    agentMcpTargets(refs, catalog, bindings, overlays)
+      .filter((target) =>
+        matchesAgentMcpTarget(
+          retainedByRef.get(target.refId),
+          target,
+          bindingByRef.get(target.refId),
+        ),
+      )
+      .map((target) => target.refId),
+  );
+  const drifted = targets.flatMap((target) => {
+    const { refId, revision } = target;
+
+    if (
+      target.source !== "flow-package" ||
+      !revision ||
+      !refs.includes(refId) ||
+      selected.has(refId)
+    )
+      return [];
+    const binding = bindingByRef.get(refId);
+    const current = eligibleAgentMcpRecord(refId, catalog, binding);
+    const installId = current?.material.packageInstallId;
+
+    if (current?.source !== "flow-package" || typeof installId !== "string")
+      return [];
+    if (current.id === target.recordId && current.revision === revision)
+      return [];
+
+    return [{ target, current, installId, revision, binding }];
+  });
+
+  if (!drifted.length) return { catalog, selectedMcpIds: [...selected] };
+  const { rows } = await db.execute(sql`
+    SELECT a.package_install_id AS "currentId", retained.id, retained.resolved_revision AS revision,
+      retained.manifest->'spec'->'mcps' AS mcps
+    FROM project_package_attachments a
+    JOIN package_installs active ON active.id=a.package_install_id
+    JOIN package_installs retained ON retained.name=a.package_name
+    WHERE a.project_id=${projectId}
+      AND a.package_install_id=ANY(${sql.param(drifted.map(({ installId }) => installId))}::text[])
+      AND retained.resolved_revision=ANY(${sql.param(drifted.map(({ revision }) => revision))}::text[])
+      AND active.package_status='Installed' AND active.trust_status IN ('trusted','trusted_by_policy')
+      AND retained.package_status='Installed' AND retained.trust_status IN ('trusted','trusted_by_policy')
+  `);
+  const restored = new Map<string, CapabilityCatalogRecord>();
+
+  for (const { target, current, installId, revision, binding } of drifted) {
+    for (const row of rows) {
+      if (
+        row.currentId !== installId ||
+        row.revision !== revision ||
+        typeof row.id !== "string" ||
+        !Array.isArray(row.mcps)
+      )
+        continue;
+      const mcp = row.mcps
+        .map((entry) => packageManifestMcpSchema.parse(entry))
+        .find((entry) => entry.id === target.refId);
+
+      if (!mcp?.transport) continue;
+      const candidate = {
+        ...current,
+        revision,
+        material: packageMcpMaterial(mcp, row.id),
+      };
+      const [proof] = agentMcpTargets(
+        [target.refId],
+        [candidate],
+        bindings,
+        overlays,
+      );
+
+      if (
+        !proof ||
+        !matchesAgentMcpTarget(
+          { ...target, recordId: current.id },
+          proof,
+          binding,
+        )
+      )
+        continue;
+      restored.set(current.id, candidate);
+      selected.add(target.refId);
+      log.debug(
+        {
+          projectId,
+          refId: target.refId,
+          retainedInstallId: row.id,
+          activeInstallId: installId,
+          revision,
+        },
+        "Restored retained agent MCP after package projection change",
+      );
+      break;
+    }
+  }
+
+  return {
+    catalog: catalog.map((record) => restored.get(record.id) ?? record),
+    selectedMcpIds: [...selected].sort((a, b) => a.localeCompare(b)),
+  };
 }
 
 /** Connected means a live project/package capability or the active target of this project's binding. */

@@ -226,22 +226,25 @@ stateDiagram-v2
   CheckpointPending --> Pending: matching prompt completes and Run parks
   CheckpointPending --> Cleared: prompt fails or context is reset
   Pending --> Accepted: owner answers
+  Accepted --> Accepted: admission retries before successor prompt dispatch
   Accepted --> Delivered: original turn consumes answer
-  Pending --> Cleared: explicit reset
+  Accepted --> DeliveryUnconfirmed: continuation fails after potential dispatch or exhausts retries
+  Pending --> Cleared: owner stops or resets
   Accepted --> Cleared: reset before delivery
   Delivered --> [*]
+  DeliveryUnconfirmed --> [*]
   Cleared --> [*]
 ```
 
-The `ask_human` tool records a private question under the running librarian credential. The prompt owner releases the assignment and publishes the card in the transcript when the prompt ends successfully. `awaiting_answer` holds the conversation’s queue position. Closing the panel or restarting Web and supervisor preserves it.
+The `ask_human` tool records a private question under the running librarian credential. The prompt owner releases the assignment and publishes the card in the transcript when the prompt ends successfully. Checkpoint-pending state is returned to the tool. The transcript shows the card after it opens. `awaiting_answer` holds the conversation’s queue position. Closing the panel or restarting Web and supervisor preserves it. A new composer message receives `409 CONFLICT` with `question_awaiting_answer` until the card is answered or the owner stops the turn. An exact message replay still returns its existing receipt.
 
-The signed-in owner submits `POST /api/librarian/cards/{cardId}/answer`. The server checks the source grants and stored form, records one answer and queues the same turn. Duplicate submissions return its receipt. A different answer returns 409. Admission records a new context snapshot and assignment. Only completion of its owning prompt marks the answer delivered. A context reset closes any undelivered question and subsequent submission returns 410. Conversation messages drive the existing private SSE refresh. Task clarifications addressed to a teammate continue through their assignment.
+The signed-in owner submits `POST /api/librarian/cards/{cardId}/answer`. The server checks the source grants and stored form, records one answer and queues the same turn. Durable acceptance returns `202` even when immediate admission is unavailable. An exact replay after proved delivery returns `200`. A different answer returns `409`. Unavailability before acceptance can return `503`. Admission records a new context snapshot and assignment. Temporary unavailability before successor prompt dispatch retries the accepted answer within the start budget. Terminal continuation failure retains the answer and shows delivery unconfirmed. Completion of the owning prompt marks the answer delivered. A context reset closes any undelivered question and subsequent submission returns `410`. Conversation messages drive the existing private SSE refresh. Task clarifications addressed to a teammate continue through their assignment.
 
 ## Expectations
 
 - **LCV-01:** Exactly one `librarian_conversations` row MUST exist per user and no route or tool may create a second, enforced by UNIQUE `librarian_conversations_user_uq` behind `getOrCreateConversation` (Implemented).
 - **LCV-02:** An owner message MUST be committed before any turn admission, and a repeated `(conversation_id, client_message_id)` MUST return the stored message, enforced by partial UNIQUE `librarian_messages_client_id_uq` in `appendOwnerMessage` (Implemented).
-- **LCV-03:** At most one turn per conversation MAY be `admitted`, `running` or `awaiting_answer`, later messages MUST queue in `seq` order, and a message MAY be withdrawn only while `queued`, enforced by partial UNIQUE `librarian_turns_one_active_uq` under the `librarian_conversations` row lock (Implemented).
+- **LCV-03:** At most one turn per conversation may be `admitted`, `running` or `awaiting_answer`, enforced by partial UNIQUE `librarian_turns_one_active_uq` under the `librarian_conversations` row lock. While awaiting a structured answer, new composer intake is refused. Other queued messages run in `seq` order and can be withdrawn while `queued`.
 - **LCV-04:** A turn MUST run on the conversation's single `runs` row with `run_kind='librarian'`, `project_id IS NULL`, `task_id IS NULL`, `persistent=true`, `flow_version='librarian'` and `created_by_user_id` = owner, adopted as a `directory` workspace under `<runtimeRoot>/.maister/_librarian/<conversationId>/`, and every prompt MUST carry owner kind `librarian_turn`, enforced by CHECK `runs_librarian_shape_check` and `execution_commands_prompt_owner_required` (Implemented).
 - **LCV-05:** A conversation MUST hold a slot only while its run is `Running`, MUST be parked `NeedsInputIdle` between turns and NEVER TTL-abandoned, and a full `MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS` pool MUST queue rather than refuse, enforced by the `tryStartRun` librarian pool arm and the `persistent=true` keep-alive Pass2 exemption (Implemented).
 - **LCV-06:** ACP `session/resume` MUST be used only when `run_sessions.librarian_context_epoch` equals the conversation's current `context_epoch` and the runner snapshot is unchanged, and otherwise a fresh session MUST start from a composed context, enforced by the composer guard (Implemented).

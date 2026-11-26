@@ -1606,8 +1606,8 @@ export async function registerFlowElementInManifest(
   // ADR-106: the manifest flow id MUST equal the copied flow.yaml `name` — the
   // installer enforces id === flow.yaml.name, so deriving the id from the dir
   // basename (`flows/dev` → `dev`) forks an UNCUTTABLE package when the two
-  // differ (`name: aif-dev`). Parse it with the SAME loader the installer uses;
-  // a malformed copy fails fast rather than registering a wrong id.
+  // differ (`name: aif-dev`). The authoring parser also checks a copied Flow
+  // against the current schema before registering it in the draft.
   const flowManifest = await loadFlowManifest(
     path.join(pkg.workingDir, flowDir, "flow.yaml"),
   );

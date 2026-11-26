@@ -879,6 +879,7 @@ async function runTimeLimitPass(
 
       if (upd.length === 0) return false;
 
+      await closeFlowNodeQuestions(tx, row.id, "node duration exceeded");
       await releaseAssignmentForRun(tx, row.id, "failed");
       await markNodeFailed(attempt.id, { errorCode: "PRECONDITION" }, tx);
       await systemCloseActiveAssignmentsForRun({
@@ -2267,6 +2268,7 @@ async function actBudgetTerminateRun(
 
     if (upd.length === 0) return false;
 
+    await closeFlowNodeQuestions(tx, candidate.id, "run budget exceeded");
     await releaseAssignmentForRun(tx, candidate.id, "failed");
 
     if (attempt) {
@@ -2569,6 +2571,7 @@ async function actBudgetTerminateTree(
 
     if (rows.length === 0) return [];
 
+    await closeFlowNodeQuestions(tx, candidate.id, "tree budget exceeded");
     await releaseAssignmentForRun(tx, candidate.id, "failed");
     // Close the ledger in the SAME tx as the status flip (rules/backend.md: a
     // terminal transition closes every store representing the lifecycle). Without

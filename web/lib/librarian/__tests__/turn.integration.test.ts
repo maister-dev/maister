@@ -44,7 +44,10 @@ import { admitLibrarianOperation } from "@/lib/librarian/operations";
 import * as librarianRuntime from "@/lib/librarian/runtime";
 import { updateLibrarianSettings } from "@/lib/librarian/settings";
 import { queueLibrarianSummary } from "@/lib/librarian/summary";
-import { librarianMessageDtos } from "@/lib/librarian/view";
+import {
+  getLibrarianWorkView,
+  librarianMessageDtos,
+} from "@/lib/librarian/view";
 import {
   runLibrarianTurnSweep,
   stopLibrarianTurn,
@@ -1173,6 +1176,63 @@ describe("Deferred release: a failure after the prompt is issued cancels it firs
 });
 
 describe("IT-ASK-02 private questions survive a suspended turn", () => {
+  it("requires the answer controls while parked and lets the owner stop the turn", async () => {
+    const { openPrivateQuestion, answerPrivateQuestion } =
+      await import("@/lib/librarian/questions");
+    const owner = await seedActiveUser(db);
+    const gate = gatedPrompt();
+    const sent = await send(owner, "Plan checkout");
+    const turnId = sent.turn!.id;
+    let questionId: string;
+
+    await gate.entered;
+    try {
+      const [current] = await db
+        .select({ tokenId: librarianTurns.tokenId })
+        .from(librarianTurns)
+        .where(eq(librarianTurns.id, turnId));
+
+      ({ questionId } = await openPrivateQuestion(
+        current.tokenId!,
+        {
+          requestKey: "variant",
+          question: "Which checkout variant?",
+          schema: {
+            schemaVersion: 1,
+            fields: [{ name: "variant", type: "string", required: true }],
+          },
+        },
+        db as unknown as Db,
+      ));
+    } finally {
+      gate.release();
+    }
+    await settle();
+    expect(
+      await getLibrarianWorkView(owner, db as unknown as Db),
+    ).toMatchObject({
+      activeTurn: { id: turnId, status: "awaiting_answer" },
+      queuedMessages: [],
+    });
+    await expect(send(owner, "Use mobile")).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "question_awaiting_answer" },
+    });
+    expect(await stopLibrarianTurn(owner, db as unknown as Db)).toEqual({
+      turnId,
+    });
+    expect((await turnRow(turnId)).status).toBe("stopped");
+    expect((await conversationState(owner)).run_status).toBe("NeedsInputIdle");
+    await expect(
+      answerPrivateQuestion(
+        owner,
+        questionId,
+        { variant: "mobile" },
+        db as unknown as Db,
+      ),
+    ).rejects.toMatchObject({ details: { reason: "question_closed" } });
+  });
+
   it("a segment reset closes an undelivered question without creating any project work", async () => {
     const { openPrivateQuestion, answerPrivateQuestion } =
       await import("@/lib/librarian/questions");
@@ -1347,6 +1407,31 @@ describe("IT-ASK-02 private questions survive a suspended turn", () => {
     await expect(
       answerPrivateQuestion(owner, id, { page: "other" }, db as unknown as Db),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    await admitNextLibrarianTurn(sent.message.conversationId, {
+      db: db as unknown as Db,
+      start: (turnId) =>
+        librarianRuntime.startLibrarianTurn(turnId, {
+          db: db as unknown as Db,
+          hosts: {
+            ...hosts,
+            executionFor: async () => {
+              throw new MaisterError("EXECUTOR_UNAVAILABLE", "Host offline");
+            },
+          },
+        }),
+    });
+    await settle();
+    expect((await turnRow(turnId)).status).toBe("queued");
+    expect((await conversationState(owner)).run_status).toBe("NeedsInputIdle");
+    expect(
+      await answerPrivateQuestion(
+        owner,
+        id,
+        { page: "custom" },
+        db as unknown as Db,
+      ),
+    ).toEqual(accepted);
     const resumed = gatedPrompt();
 
     await admitNextLibrarianTurn(sent.message.conversationId, {

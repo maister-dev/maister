@@ -731,6 +731,7 @@ export function LocalPackageEditor({
     cancel: tStudio("composition.files.cancel"),
     errorConflict: tStudio("composition.files.errorConflict"),
     errorPrecondition: tStudio("composition.files.errorPrecondition"),
+    errorConfiguration: tStudio("composition.files.errorConfiguration"),
   };
 
   return (
@@ -1027,7 +1028,7 @@ export function LocalPackageEditor({
                   crumbSkills: tStudio("viewer.tabSkills"),
                   root: tStudio("catalog.root"),
                   registerLegacy: tStudio("catalog.registerLegacy"),
-                  migrationError: tStudio("catalog.error"),
+                  migrationError: tStudio("catalog.legacyRegistrationError"),
                   notFound: tStudio("composition.notFound"),
                   rename: renameLabels(tStudio),
                 }}

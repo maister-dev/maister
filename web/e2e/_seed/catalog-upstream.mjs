@@ -62,9 +62,22 @@ function fixtureReply(url) {
   if (url.hostname === registry) {
     const root = "/v0.1/servers";
     const identity = { name: registryName, version };
+    const authRequired = { name: "com.example/needs-config", version };
 
     if (url.pathname === root && url.searchParams.get("search") === "design")
       return undici.Response.json({ servers: [{ server: identity }], metadata: {} });
+    if (url.pathname === root && url.searchParams.get("search") === "needs-config")
+      return undici.Response.json({ servers: [{ server: authRequired }], metadata: {} });
+    if (url.pathname === `${root}/${encodeURIComponent(authRequired.name)}/versions/${version}`)
+      return undici.Response.json({ server: {
+        ...authRequired,
+        remotes: [{
+          type: "streamable-http",
+          url: "https://example.com/{tenant}/mcp",
+          headers: [{ name: "Authorization", value: "hidden-source-token" }],
+          variables: { tenant: { default: "hidden-source-tenant" } },
+        }],
+      } });
     if (url.pathname === `${root}/${encodeURIComponent(registryName)}/versions/${version}`)
       return undici.Response.json({ server: {
         ...identity,

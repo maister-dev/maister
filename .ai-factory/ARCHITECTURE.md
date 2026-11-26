@@ -707,8 +707,10 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
   only. Structured-form HITL goes via artifact, not custom notification.
 - ❌ **Enforcing cost/time/regex guards without contract updates.** Parse-and-persist as
   metrics on disk only today. Enforcement is Phase 2.
-- ❌ **Trusting Flow plugins from arbitrary sources.** Current target trusts internal
-  sources only. Sandboxing + trust UI is Phase 2.
+- ❌ **Trusting Flow plugins from arbitrary sources.** Package installation and
+  execution use the package trust gates. Studio imports reviewed artifacts from
+  approved public catalogs, and an imported npm MCP requires assigned-host
+  approval before execution ([ADR-221](../docs/decisions/adr-221.md)).
 - ❌ **Anemic `MaisterError`.** Constructing `new Error('something failed')`
   for a known domain failure. If the error has a meaningful UI branch,
   it belongs in the `code` taxonomy.

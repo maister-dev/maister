@@ -156,6 +156,7 @@ describe("reviewed Studio import", () => {
     );
 
     expect(preview).toHaveProperty("runnerCompatibility", null);
+    expect(preview.migratesLegacyManifest).toBe(true);
     const request = {
       previewId: preview.previewId,
       expectedDraftBase: preview.expectedDraftBase,
@@ -167,6 +168,12 @@ describe("reviewed Studio import", () => {
     expect(await readCatalogOperation(owner, receipt.operationId)).toEqual(
       receipt,
     );
+    await expect(
+      previewCatalogImport(owner, source, "capability/skills/design"),
+    ).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "already_imported" },
+    });
     expect(
       await readFile(
         path.join(draft, "capability/skills/design/SKILL.md"),
@@ -209,6 +216,7 @@ describe("reviewed Studio import", () => {
     );
 
     expect(update.affectedRefs).toContain("agents/designer.md");
+    expect(update.migratesLegacyManifest).toBe(false);
     expect(update.files).toContainEqual(
       expect.objectContaining({
         path: "capability/skills/design/SKILL.md",
@@ -227,7 +235,10 @@ describe("reviewed Studio import", () => {
       requestKey: "update-once",
     };
 
-    await expect(applyCatalogPreview(owner, change)).rejects.toThrow();
+    await expect(applyCatalogPreview(owner, change)).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "resolutions_required" },
+    });
     await applyCatalogPreview(owner, {
       ...change,
       resolutions: [
@@ -552,7 +563,7 @@ it("names bounded source-declared configuration on refused MCP imports without e
 
     expect(error).toMatchObject({ status: 422 });
 
-    return (error as Error).message;
+    return error;
   };
   const remote = await rejected({
     remotes: [
@@ -572,11 +583,14 @@ it("names bounded source-declared configuration on refused MCP imports without e
     ],
   });
 
-  expect(remote).toContain("Authorization");
-  expect(remote.toLowerCase().match(/authorization/g)).toHaveLength(1);
-  expect(remote).toContain("tenant");
-  expect(remote).toContain("region");
-  expect(remote).not.toMatch(
+  expect(remote).toMatchObject({
+    details: {
+      reason: "remote_requirements_unsupported",
+      headers: { names: ["Authorization"], more: false },
+      urlVariables: { names: ["tenant", "region"], more: false },
+    },
+  });
+  expect(JSON.stringify(remote)).not.toMatch(
     /secret|hidden|example\.com|private-tenant|header-value/,
   );
   const npm = await rejected({
@@ -597,9 +611,19 @@ it("names bounded source-declared configuration on refused MCP imports without e
     ],
   });
 
-  expect(npm).toContain("API_KEY");
-  expect(npm).not.toMatch(/secret-key|private|OPTION_29/);
-  expect(npm.length).toBeLessThan(640);
+  expect(npm).toMatchObject({
+    details: {
+      reason: "distribution_requirements_unsupported",
+      environmentVariables: {
+        names: [
+          "API_KEY",
+          ...Array.from({ length: 7 }, (_, i) => `OPTION_${i}`),
+        ],
+        more: true,
+      },
+    },
+  });
+  expect(JSON.stringify(npm)).not.toMatch(/secret-key|private|OPTION_29/);
 });
 
 it("returns reusable Registry cursors within the public query budget even for multibyte source tokens", async () => {

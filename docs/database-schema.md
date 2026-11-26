@@ -21,7 +21,7 @@ supported.
 
 ## Studio package delivery, project agent profiles and human questions
 
-Apply main-line migrations 0369–0374 before starting the new writers. Historical rows use the previous read path when the new fields are absent.
+Apply main-line migrations 0369–0375 before starting the new writers. Historical rows use the previous read path when the new fields are absent.
 
 | Migration | Durable state and ownership |
 | --- | --- |
@@ -31,6 +31,7 @@ Apply main-line migrations 0369–0374 before starting the new writers. Historic
 | 0372 | A private question card references the exact turn, conversation and segment through a composite foreign key. A unique request key and a partial unique index allow replay and one pending question per turn. The accepted answer and delivery timestamp distinguish submission from continuation. |
 | 0373 | A Flow question references its Run and node attempt together. A partial unique index admits one question per attempt and prompt ordinal. Separate fields record the accepted answer and its responder. The action resume record links to the checkpoint, source command, incarnation and assignment. |
 | 0374 | An undelivered Flow node question can close with `superseded_at` and empty successor fields. The accepted answer, if any, remains immutable. Task questions and permission continuation retain their existing successor checks. |
+| 0375 | `project_package_mcp_scope_overrides.ref_id` gains the same safe segment check used by agent instance MCP additions. |
 
 Adopting an earlier package revision changes the attachment for future executions. Existing Run inventory, retry snapshots and retained questions keep their captured owners and pins. Deployment rollback must retain these columns and stop new writers before running readers that predate the new question and command kinds.
 
@@ -260,6 +261,10 @@ one active row per host and handle, and per addressed Run, respectively.
 Migration `0382` adds `workspace_materialization_generation` and the unique
 materialization-command index keyed by assignment. Migration `0393` adds
 `flow_setup_revision_id` to the sealed input capture for deferred host setup.
+
+Migration `0404` adds `mcp.prepare` to the existing command ledger. The
+command is bound to the assigned supervisor and epoch. The database retains
+preparation evidence and the supervisor owns the verified cache files.
 
 ## `users`
 
@@ -803,7 +808,14 @@ Multi-flow package grouping above the per-revision substrate. Process contract:
   `project_id` (FK cascade), `package_install_id` (FK restrict),
   `package_name` (denormalized), `attached_at`. UNIQUE
   `(project_id, package_name)` — one attached version of a package per
-  project.
+  project. Migration `0369` adds `scope_revision` (integer, NOT NULL,
+  default `1`) for compare-and-swap edits of MCP scope.
+- **`project_package_mcp_scope_overrides`** (`0369`) — sparse override keyed
+  by `(attachment_id, ref_id)`. `attachment_id` cascades from the stable
+  attachment. `scope` is required and checked against `package|project`.
+  `ref_id` is required text and must be a safe segment of 1–128 characters
+  (`0375`). The service checks that the logical ref belongs to the attached
+  release. Deleting the row restores the release default.
 - **FK group links** — `flows.package_install_id` and
   `capability_imports.package_install_id` (both nullable): membership of a row
   in an attached package group. Attach/detach manage the group in one
@@ -1130,6 +1142,8 @@ agent_project_links {
   agentId,                         // FK -> agents.id CASCADE
   projectId,                       // FK -> projects.id CASCADE
   enabled,
+  promptOverride?,                 // (0370) NULL inherits the package persona;
+                                   // nonblank and at most 65,536 characters
   runnerOverrideId?,               // FK -> platform_acp_runners.id SET NULL;
                                    //   tier 2 of the standalone runner chain
   branchBase?,                     // (ADR-106) NULL — instance override of the branch base
@@ -1208,6 +1222,12 @@ authored_capabilities {
                                  //   localPackageLockMinutes(); no new index.
   archivedAt?,
   createdAt, updatedAt
+}
+
+agent_project_mcp_additions {      // (0370)
+  linkId,                          // FK -> agent_project_links.id CASCADE
+  refId                            // required safe path segment, 1–128 chars
+                                   // PRIMARY KEY (linkId, refId)
 }
 
 authored_capability_revisions {
@@ -2192,6 +2212,24 @@ ALTER TABLE domain_events ADD CONSTRAINT domain_events_kind_check CHECK (kind IN
   lacks `run.review_opened` and `run.needs_input`) and is corrected in the same
   change.
 
+### `0372_librarian_private_questions` (Implemented)
+
+- `librarian_turns` admits `awaiting_answer`, which joins `admitted` and
+  `running` in `librarian_turns_one_active_uq` on `conversation_id`. The
+  unique key `(id, conversation_id, segment_id)` anchors private questions.
+- `librarian_cards` admits `kind='question'` and adds nullable
+  `question_turn_id`, `question_key`, `question_checkpoint_at`,
+  `question_answer` (JSONB) and `question_delivered_at`. The composite FK
+  `(question_turn_id, conversation_id, segment_id)` cascades from the exact
+  turn owner. `librarian_cards_question_key_uq` covers `(question_turn_id,
+  question_key)` for question cards. `librarian_cards_pending_question_uq`
+  covers `question_turn_id` for pending question cards.
+- A question card requires an owner and a request key of 1–128 characters.
+  Pending cards have no answer or decision timestamp. Accepted cards require
+  a checkpoint timestamp, an object answer and a decision timestamp.
+  Delivery timestamps are allowed on accepted cards. Every earlier card
+  kind has all five question columns null.
+
 ### `0189_librarian_updates` (Designed — ADR-187)
 
 ```sql
@@ -2356,6 +2394,8 @@ CREATE TABLE librarian_segment_summaries (
                                  //   effective workspace axis at spawn;
                                  //   terminal L3 enforcement gates off this,
                                  //   not the mutable catalog index
+  projectAgentProfile?,          // (0370) nullable jsonb with the admitted
+                                 //   standalone persona and MCP profile
   taskId?,                       // nullable for scratch runs
   projectId?,                    // (migration 0059): NULLABLE — NULL for the
                                  //   project-less local-package assistant run
@@ -4294,7 +4334,8 @@ survive.
 {
   id, runId, stepId,
   kind: 'permission' | 'form' | 'human' | 'infra_recovery' | 'budget_breach'
-            | 'hook_trip',        // 'hook_trip' Designed — ADR-108 (migration 0066)
+            | 'hook_trip'         // 'hook_trip' Designed — ADR-108 (migration 0066)
+            | 'agent_question',   // includes Flow node questions (0373–0374)
   schema (jsonb)?,               // form_schema with required schemaVersion
                                  // OR permission descriptor:
                                  //   { requestId, options, toolCall,
@@ -4315,9 +4356,28 @@ survive.
   dirtyResolution?,              // (Implemented, 0040) 'commit'|'discard'
                                  //   |'proceed' reviewer dirty-worktree choice
                                  //   (nullable; ADR-079)
-  respondedAt?, createdAt
+  respondedAt?, createdAt,
+  flowNodeAttemptId?, flowRequestKey?, flowAnswerAcceptedAt?,
+  flowAnswerUserId?, flowReconciledAt?
 }
 ```
+
+Ordinary Flow node questions (`0373–0374`) use the composite FK
+`(run_id, flow_node_attempt_id) → node_attempts(run_id, id) ON DELETE CASCADE`.
+The responder FK `flow_answer_user_id → users(id)` uses `ON DELETE RESTRICT`.
+The partial unique index `hitl_flow_question_turn_uq` covers
+`(flow_node_attempt_id, schema.flowQuestion.promptOrdinal)` when present.
+`flow_request_key` is bounded to 1–128 characters. The shape check requires
+the original command, attempt, ordinal, assignment, incarnation, supervisor
+session and token ID in `schema.flowQuestion`, plus `schema.requestDigest`.
+Acceptance records the response, actor and `flow_answer_accepted_at` together
+on an active row. `responded_at` records successor-prompt delivery.
+`flow_reconciled_at` timestamps activation, delivery or closure recovery
+attempts for bounded retries. A closed,
+undelivered question can set `superseded_at` with both successor IDs null.
+`node_attempts.action_resume` version 1 accepts `node_question` with a question
+ID, checkpoint command ID and source incarnation alongside the existing
+action owner, prompt ordinal and resume session fields.
 
 **(Designed.)** For a graph `human_review` HITL the runner enriches
 `schema` (jsonb) at creation with the manifest-derived allow-list

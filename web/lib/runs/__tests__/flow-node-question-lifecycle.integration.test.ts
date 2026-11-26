@@ -2,16 +2,21 @@ import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { createHitlAssignmentForRun } from "@/lib/assignments/service";
 import { assignments, hitlRequests, nodeAttempts, runs } from "@/lib/db/schema";
+import { cascadeAbandonRunTree } from "@/lib/orchestrator/cascade";
 import { getActivityFeed } from "@/lib/queries/activity";
 import { closeCrashedNodeAttempts } from "@/lib/runs/crash-recover";
 import { reconcileClosedFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import { runPass2 } from "@/lib/runs/keepalive-sweeper";
-import { crashRunningRun, markAbandoned } from "@/lib/runs/state-transitions";
+import {
+  crashRunningRun,
+  crashWaitingOnChildren,
+  markAbandoned,
+} from "@/lib/runs/state-transitions";
 import { stopWorkbenchRun } from "@/lib/workbench-lifecycle/service";
 import {
   seedProject,
@@ -132,7 +137,14 @@ async function seedParkedQuestion(db: StartedPostgresTestDb["db"]) {
   return { projectId, runId, attemptId, questionId, workId: work.id };
 }
 
-it.each(["crash", "ttl", "abandon", "stop"] as const)(
+it.each([
+  "crash",
+  "waiting-crash",
+  "ttl",
+  "abandon",
+  "cascade",
+  "stop",
+] as const)(
   "IT-EDGE-ASK-03 closes an unanswered node question and its Inbox work through %s",
   async (operation) => {
     const { projectId, runId, attemptId, questionId, workId } =
@@ -150,6 +162,15 @@ it.each(["crash", "ttl", "abandon", "stop"] as const)(
           await closeCrashedNodeAttempts(db, { runId, nodeId: "design" }),
         ).toEqual([attemptId]);
         break;
+      case "waiting-crash":
+        await db
+          .update(runs)
+          .set({ status: "WaitingOnChildren" })
+          .where(eq(runs.id, runId));
+        await expect(
+          crashWaitingOnChildren(runId, "agent-session-gone", { db }),
+        ).resolves.toMatchObject({ ok: true });
+        break;
       case "ttl":
         await db
           .update(runs)
@@ -162,6 +183,22 @@ it.each(["crash", "ttl", "abandon", "stop"] as const)(
           ok: true,
         });
         break;
+      case "cascade": {
+        const parent = await seedRun(testDatabase.db, {
+          projectId,
+          runKind: "flow",
+          status: "WaitingOnChildren",
+        });
+
+        await db
+          .update(runs)
+          .set({ parentRunId: parent, rootRunId: parent })
+          .where(eq(runs.id, runId));
+        await expect(
+          cascadeAbandonRunTree(parent, null, "user_stopped", { db }),
+        ).resolves.toMatchObject({ cascadedRunIds: [runId] });
+        break;
+      }
       case "stop":
         expect(await getActivityFeed(projectId)).toContainEqual(
           expect.objectContaining({ id: `hitl-${questionId}` }),
@@ -196,6 +233,73 @@ it.each(["crash", "ttl", "abandon", "stop"] as const)(
     expect(inbox.status).toBe("cancelled");
   },
 );
+
+it("retries a failed closure without rolling back an independent Run in the same sweep", async () => {
+  const blocked = await seedParkedQuestion(testDatabase.db);
+  const healthy = await seedParkedQuestion(testDatabase.db);
+  const questionIds = [blocked.questionId, healthy.questionId];
+
+  await db
+    .update(runs)
+    .set({ status: "Failed", endedAt: new Date(0) })
+    .where(eq(runs.id, blocked.runId));
+  await db
+    .update(runs)
+    .set({ status: "Failed", endedAt: new Date(1) })
+    .where(eq(runs.id, healthy.runId));
+  await db
+    .update(hitlRequests)
+    .set({ prompt: "Force test closure failure" })
+    .where(eq(hitlRequests.id, blocked.questionId));
+
+  await db.execute(sql`
+    CREATE FUNCTION test_refuse_question_closure() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'test closure failure'; END; $$`);
+  await db.execute(sql`
+    CREATE TRIGGER test_refuse_question_closure BEFORE UPDATE OF superseded_at ON hitl_requests
+    FOR EACH ROW WHEN (OLD.prompt = 'Force test closure failure')
+    EXECUTE FUNCTION test_refuse_question_closure()`);
+
+  try {
+    await reconcileClosedFlowNodeQuestions(db);
+    const rows = await db
+      .select()
+      .from(hitlRequests)
+      .where(inArray(hitlRequests.id, questionIds));
+
+    expect(rows.find((row) => row.id === blocked.questionId)).toMatchObject({
+      supersededAt: null,
+      flowReconciledAt: expect.any(Date),
+    });
+    expect(
+      rows.find((row) => row.id === healthy.questionId)?.supersededAt,
+    ).toBeInstanceOf(Date);
+  } finally {
+    await db.execute(
+      sql`DROP TRIGGER test_refuse_question_closure ON hitl_requests`,
+    );
+    await db.execute(sql`DROP FUNCTION test_refuse_question_closure()`);
+  }
+
+  await reconcileClosedFlowNodeQuestions(db);
+  const [deferred] = await db
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, blocked.questionId));
+
+  expect(deferred.supersededAt).toBeNull();
+  await db
+    .update(hitlRequests)
+    .set({ flowReconciledAt: new Date(0) })
+    .where(eq(hitlRequests.id, blocked.questionId));
+  await reconcileClosedFlowNodeQuestions(db);
+  const [recovered] = await db
+    .select()
+    .from(assignments)
+    .where(eq(assignments.id, blocked.workId));
+
+  expect(recovered.status).toBe("cancelled");
+});
 
 it("IT-EDGE-ASK-05 repairs a pre-upgrade orphan while retaining the task-question invariant", async () => {
   const cutoff = "0406_flow_node_questions";

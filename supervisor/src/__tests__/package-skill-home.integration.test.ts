@@ -19,8 +19,10 @@ import { packageSkillTreeDigest } from "../../../runtime/package-skill-tree";
 import {
   adoptDirectory,
   bootHost,
+  createEnvelope,
   createSession,
   fenceFor,
+  postJson,
 } from "./_fixtures/boot-host";
 
 it("IT-CAP-04 sends distinct ACP IDs, progressive discovery companions and selected MCPs to overlapping session agents", async () => {
@@ -141,6 +143,29 @@ it("IT-CAP-04 sends distinct ACP IDs, progressive discovery companions and selec
     });
 
     expect(resumed.acpSessionId).toBe(sessions[0]!.acpSessionId);
+
+    const privateHome = discoveries.find(
+      (entry) => entry.skills[0]?.slug === "design",
+    )!.home;
+
+    await rm(path.join(privateHome, "skills"), { recursive: true });
+    const rejected = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, fence, {
+        ...inputs[0],
+        resumeSessionId: sessions[0]!.acpSessionId,
+      }),
+    );
+
+    expect(rejected).toMatchObject({
+      body: {
+        code: "PRECONDITION",
+        details: {
+          reason: "package_skill_view_integrity",
+          sessionCreateQuiescence: { version: 1, process: "not_started" },
+        },
+      },
+    });
   } finally {
     await host.stop();
     endpoint.closeAllConnections();

@@ -1,0 +1,78 @@
+openapi: 3.0.3
+info:
+  title: npm public Registry reads used for MCP distributions
+  version: "1"
+  description: |
+    Consumed read-only subset. Studio requests exact version metadata and
+    validates the Registry identity and integrity. The assigned supervisor
+    constructs the canonical tarball URL and verifies the approved digest and
+    package contents before installation.
+externalDocs:
+  description: Upstream npm Registry API
+  url: https://github.com/npm/registry/blob/main/docs/REGISTRY-API.md
+servers:
+  - url: https://registry.npmjs.org
+paths:
+  /{package}/{version}:
+    get:
+      operationId: getCatalogNpmVersion
+      parameters:
+        - $ref: "#/components/parameters/Package"
+        - name: version
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Exact version metadata consumed by Studio
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name, version, mcpName, bin, dist]
+                properties:
+                  name: {type: string}
+                  version: {type: string}
+                  mcpName:
+                    type: string
+                    description: Publisher-supplied package field matching the MCP Registry server name
+                  bin:
+                    oneOf:
+                      - {type: string}
+                      - {type: object, additionalProperties: {type: string}}
+                  dist:
+                    type: object
+                    required: [integrity]
+                    properties:
+                      integrity: {type: string}
+                  license: {type: string}
+                  os: {type: array, items: {type: string}}
+                  cpu: {type: array, items: {type: string}}
+                  dependencies: {type: object}
+                  optionalDependencies: {type: object}
+                  peerDependencies: {type: object}
+                  scripts: {type: object, additionalProperties: {type: string}}
+  /{package}/-/{file}:
+    get:
+      operationId: getMcpNpmArchive
+      parameters:
+        - $ref: "#/components/parameters/Package"
+        - name: file
+          in: path
+          required: true
+          description: Unscoped name, hyphen, exact version and .tgz
+          schema: {type: string}
+      responses:
+        "200":
+          description: npm tarball bytes verified by the assigned supervisor
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+components:
+  parameters:
+    Package:
+      name: package
+      in: path
+      required: true
+      description: Package name, including the scope for scoped packages
+      schema: {type: string}

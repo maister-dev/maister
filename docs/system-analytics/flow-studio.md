@@ -202,10 +202,21 @@ owns apply, replay and recovery.
 | Pinned bundle | `resolveCatalogSource` validates the exact commit and each Git blob hash and length. Before reading blobs it rejects unsafe path segments, Unicode/case collisions and unsupported file types. Limits are the lesser of the configured import budgets and 200 files, 512 KiB per file and 2 MiB total. The preview retains UTF-8 companion files and notices. |
 | Review and execution | `reviewMcp` validates declared transport and npm publisher/version metadata for the supported formats. The preview returns the reviewed pin and, for npm stdio, the SHA-256 `artifactDigest` used for host approval. Search is read-only and preview and apply persist declarative data. The assigned Supervisor independently prepares approved distributions at dispatch. |
 
+The preview exposes the safe identifiers of unsupported HTTP headers, URL
+variables or stdio environment variables when the descriptor declares them.
+It includes at most eight names per group and indicates additional names.
+The failure carries no credential values or unreviewed endpoint data. The
+preview flags changes that add explicit delivery defaults to a legacy
+manifest. Existing MCP declarations that implicitly shared project-wide
+retain that scope. The expanded file review shows a unified diff through the
+shared ADR-066 diff viewer. If a patch exceeds the preview budget the editor
+shows a localized notice. See the [trust decision](../decisions/adr-221.md) and the
+[upstream reads](../api/external/README.md).
+
 ## Expectations
 
-- **CAT-01:** (Implemented) The catalog routes must return a pinned, reviewable import to an eligible editor only after the authorization, source, network and content checks above, with `IT-CAT-01` verifying approved pins and notices, empty or unavailable sources, and rejection of unrepresentable content before draft writes.
-- **CAT-02:** (Implemented) The Studio editor must ignore late search or preview responses after a new selection or clear and must let the editor apply, edit and cut a skill and an MCP so that a second project attaching the same cut receives the exact companion bytes and MCP declaration verified by `E2E-CAT-02`.
+- **CAT-01:** The catalog routes must return a pinned, reviewable import only after the listed authorization, source, network and content checks pass, as verified by `IT-CAT-01`.
+- **CAT-02:** A second project attaching the Studio cut must receive the reviewed and edited companion bytes and MCP declaration, as verified by `E2E-CAT-02`.
 
 The following bullets are copied verbatim from SDD §7.1 (RFC-2119 spirit, each
 testable):

@@ -12,7 +12,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { loadFlowManifest } from "@/lib/config";
+import { loadRetainedFlowManifest } from "@/lib/config";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
@@ -79,7 +79,7 @@ export async function getStudioFlowDetail(
     yamlRead.state === "text" ? (yamlRead.content ?? null) : null;
 
   try {
-    const parsed = await loadFlowManifest(
+    const parsed = await loadRetainedFlowManifest(
       join(installedPath, flow.path, "flow.yaml"),
     );
 

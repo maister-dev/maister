@@ -820,6 +820,7 @@ fields:
 stateDiagram-v2
   [*] --> CheckpointPending
   CheckpointPending --> Open: exact attempt parked
+  CheckpointPending --> Failed: checkpoint definitively rejected
   Open --> AnswerAccepted: current recipient claims answer
   AnswerAccepted --> Delivered: owned resume receipt
   AnswerAccepted --> AnswerAccepted: reconcile uncertain command
@@ -827,6 +828,7 @@ stateDiagram-v2
   Open --> Closed: terminal Run or replaced attempt
   AnswerAccepted --> Closed: terminal Run or replaced attempt
   Delivered --> [*]
+  Failed --> [*]
   Closed --> [*]
 ```
 
@@ -834,14 +836,29 @@ The node’s credential identifies its project, Run, attempt, assignment and pro
 
 The response transaction locks the Run, attempt and question in order and verifies the human’s current project membership. It claims one answer and queues its original visit. An identical submission from the same responder replays. The scheduler reacquires capacity, verifies the prior host and approved checkpoint and restores the same ACP handle. The canonical command ledger commits successor acceptance before the answer delivery projection runs. The projector and the recovery sweep match the immutable Run, attempt, ordinal, assignment and original ACP handle. A failed delivery projection logs a warning and can repair itself even after the attempt advances. The node’s normal result advances the graph.
 
-Stop, crash, manual abandonment and expiry close outstanding Flow questions in the transaction that settles the Run or its terminal disposition. The close stamps `superseded_at` and system-closes the Inbox work. Undelivered questions retain their existing response fields. When an accepted responder loses authority or the original host has been retired, recovery clears the impossible promotion head and tries another eligible visit. With no remaining eligible answer the ordinary idle deadline applies. Recovery refreshes the readiness of pinned checkpoint hosts outside the transaction. A temporarily unavailable host remains retryable within the configured idle window.
+Ordinary stop, terminal watchdog and budget paths, permission rejection,
+HITL abort and child-cascade settlement close outstanding undelivered
+questions in their settlement transaction. A bounded sweep handles terminal
+rows left by other or older writers. It isolates and defers failed Runs
+so they cannot starve later rows. Terminal Run and attempt state removes
+response authority immediately. The close stamps `superseded_at`, preserves
+any captured response and system-closes Inbox work. When a successor prompt
+already proves delivery, its projection can finish after settlement. A
+revoked responder or retired original host clears an impossible promotion
+head so another eligible visit can proceed. The ordinary idle deadline
+applies with no eligible answer. Recovery refreshes pinned host readiness
+outside the transaction and retries temporary unavailability within the idle
+window.
 
-## Expectations
+The canonical Run stream records separate accepted and delivered transitions
+with stable event IDs. Reconnect replays both and refreshes the authorized read
+model. Recovery selects the oldest still-authorized answer for another parked
+visit when the queued answer loses current authority.
+An accepted question awaiting delivery remains visible as `answer_stored`
+in the Run and Inbox read models. It leaves the outstanding-decision list
+and its “Needs you” count.
 
-- **ASK-01:** (Implemented) The current execution credential must determine the owner and allowed question origin on every ask.
-The canonical Run stream records the separate accepted and delivered transitions under stable event IDs. A reconnect replays both in order. The browser refreshes the current authorized read model from these notifications. When a queued answer loses current authority, the recovery sweep selects the oldest still-authorized answer for another parked visit in the Run.
-
-- **ASK-04:** (Implemented) A resumed driver must recheck current responder authority, the original checkpoint and the assignment fence before sending the accepted answer to the same ACP session. Tests cover wrong or revoked owners, lost acknowledgement, unavailable ownership, a failed independent delivery projection, and replay after the resume pointer advances.
+### Request types and gate contracts
 
 - HITL kind is exactly `permission | form | human | infra_recovery |
 budget_breach | hook_trip | node_interrupt` (on `hitl_requests.kind`); the three
@@ -902,6 +919,8 @@ true`, and emits an audit signal — even under permissive runners where L2 is a
 - **(Implemented)** 24 h elapsed in `NeedsInputIdle` without response →
   run `Abandoned`, task → `Backlog`. This sweeper transition does not
   raise `HITL_TIMEOUT`.
+### Response admission
+
 - Every form payload includes `schemaVersion: integer`; mismatch with
   the Flow's declared version raises `CONFIG` with both versions
   named.
@@ -993,6 +1012,8 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   rejection applies only when the stored schema carries both fields: a
   no-rework node stamps `maxLoops` null and legacy pre-ADR-072 rows lack
   the fields entirely, so the rule is vacuous there.
+### Delivery, recovery and Inbox projections
+
 - **(Implemented)** `hitl_requests.response` and `.responded_at`
   use two-phase commit semantics:
   - **(P0-4 — Implemented) Operator read state.** A pending row has
@@ -1114,6 +1135,11 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
   explicit DTO `{ lastAgentMessage, gates[], diff, progress }` carrying no DB rows
   or server-only handles, and degrade any unreadable field to `null` (never 500
   for a missing peek).
+
+## Expectations
+
+- **ASK-01:** Each scoped route exercised by `IT-ASK-01` must derive the `ask_human` owner and allowed origin from the current execution credential.
+- **ASK-04:** `authorizeFlowNodeAnswerResume` must permit an accepted answer only on the original ACP session after rechecking current responder authority, checkpoint and assignment.
 
 ## Edge cases
 

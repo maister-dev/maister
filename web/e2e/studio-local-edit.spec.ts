@@ -984,6 +984,22 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
         .getByRole("option", { name: "old-preview · fixture" })
         .click();
       await requestedPreview;
+    } else {
+      await search.fill("needs-config");
+      const refused = page.waitForResponse((response) =>
+        response.url().endsWith("/catalog/preview"),
+      );
+
+      await results
+        .getByRole("option", { name: "com.example/needs-config · com.example" })
+        .click();
+      const refusedResponse = await refused;
+
+      expect(refusedResponse.status()).toBe(422);
+      expect(await refusedResponse.text()).not.toContain("hidden-source-");
+      await expect(panel.getByRole("alert")).toHaveText(
+        "Choose a public Streamable HTTP server that works without headers or URL variables. Declared header names: Authorization. URL variables: tenant.",
+      );
     }
     await search.fill("design");
     await results
@@ -998,7 +1014,7 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
     const preview = page.getByTestId("catalog-preview");
 
     await expect(preview).toContainText(
-      kind === "skills" ? "companion.md" : "maister-e2e-design-mcp@1.0.0",
+      kind === "skills" ? "companion.md" : "mcps/design.yaml",
     );
     if (kind === "mcps") {
       await expect(
@@ -1028,6 +1044,16 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
       await expect(
         preview.getByTestId("catalog-artifact-digest"),
       ).toContainText(artifactDigest);
+      await preview
+        .locator("summary")
+        .filter({ hasText: "mcps/design.yaml" })
+        .click();
+      const descriptorDiff = preview.getByTestId("catalog-file-diff");
+
+      await expect(descriptorDiff).toContainText(
+        "packageName: maister-e2e-design-mcp",
+      );
+      await expect(descriptorDiff).toContainText("version: 1.0.0");
     } else {
       oldPreview.resolve();
       await oldPreviewFinished.promise;
@@ -1037,6 +1063,13 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
       );
       await expect(preview.getByTestId("catalog-artifact-digest")).toHaveCount(
         0,
+      );
+      await preview
+        .locator("summary")
+        .filter({ hasText: "companion.md" })
+        .click();
+      await expect(preview.getByTestId("catalog-file-diff")).toContainText(
+        "Fixture journey",
       );
     }
     const applied = page.waitForResponse((r) =>

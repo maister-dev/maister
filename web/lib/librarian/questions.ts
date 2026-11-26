@@ -4,7 +4,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type { ScopedHumanAskBody } from "@/lib/services/agent-question-contract";
 import type { LibrarianCardRow } from "@/lib/db/schema";
 
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -47,11 +47,15 @@ function questionState(card: LibrarianCardRow): PrivateQuestionState {
 }
 
 export function privateQuestionView(card: LibrarianCardRow) {
+  const state = questionState(card);
+
+  if (state === "checkpoint_pending") return null;
+
   const request = scopedHumanAskBodySchema.parse(card.payload);
 
   return {
     id: card.id,
-    state: questionState(card),
+    state,
     question: request.question,
     schema: request.schema,
     answer: card.questionAnswer,
@@ -199,7 +203,9 @@ export async function answerPrivateQuestion(
 
       return {
         questionId: card.id,
-        state: questionState(card),
+        state: card.questionDeliveredAt
+          ? ("delivered" as const)
+          : ("accepted" as const),
         conversationId: conversation.id,
       };
     }
@@ -283,6 +289,7 @@ export async function privateAnswerContext(tx: Db, turnId: string) {
       )
       .join("\n"),
     messageIds: records.map(({ message }) => message.id),
+    hasUndeliveredAnswer: records.some(({ card }) => !card.questionDeliveredAt),
     sources: librarianProjectSources(
       records.flatMap(({ message }) => message.sourceProjectIds),
     ),
@@ -324,7 +331,10 @@ export async function closeUndeliveredQuestions(
 ): Promise<null> {
   await tx
     .update(librarianCards)
-    .set({ status: "superseded", decidedAt: new Date() })
+    .set({
+      status: "superseded",
+      decidedAt: sql`coalesce(${librarianCards.decidedAt}, now())`,
+    })
     .where(
       and(
         eq(librarianCards.questionTurnId, turnId),

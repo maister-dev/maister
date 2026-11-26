@@ -173,6 +173,38 @@ describe("PATCH /api/projects/[slug]/agents/[agentId] config (ADR-111)", () => {
   });
 });
 
+describe("PATCH project agent instance profile", () => {
+  it.each([{ promptOverride: null }, { additionalMcpRefs: [] }])(
+    "requires repository read permission even when clearing %j",
+    async (profile) => {
+      mocks.requireProjectAction.mockImplementation(
+        async (_projectId, action) => {
+          if (action === "readRepoFiles")
+            throw new MaisterError("UNAUTHORIZED", "repository access denied");
+
+          return { role: "admin" };
+        },
+      );
+
+      const response = await route.PATCH(
+        jsonRequest("PATCH", {
+          schedulesRevision: 1,
+          expectedInstallId: "install-1",
+          ...profile,
+        }),
+        params(),
+      );
+
+      expect(response.status).toBe(403);
+      expect(mocks.requireProjectAction.mock.calls).toEqual([
+        ["project-1", "editSettings"],
+        ["project-1", "readRepoFiles"],
+      ]);
+      expect(mocks.updateAgentLink).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("scheduled request HTTP input", () => {
   it.each([null, "multiline\n{{literal}}", ""])(
     "preserves explicit request presence through the aggregating boundary",

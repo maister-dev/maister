@@ -340,6 +340,12 @@ test("E2E-ASK-02 owner answers a private question from the transcript with the k
       .filter({ hasText: "Which customer journey?" });
 
     await expect(question).toBeVisible();
+    await page.getByTestId("librarian-composer").fill("Checkout draft");
+    await expect(page.getByTestId("librarian-send")).toBeDisabled();
+    await expect(page.getByTestId("librarian-send-reason")).toHaveText(
+      "Answer the open question above or stop the response.",
+    );
+    await expect(page.getByTestId("librarian-stop-response")).toBeEnabled();
     await question.getByRole("button", { name: "Checkout" }).focus();
     await page.keyboard.press("Enter");
     const input = question.getByRole("textbox", { name: /Journey/ });
@@ -364,9 +370,21 @@ test("E2E-ASK-02 owner answers a private question from the transcript with the k
       "Executor unavailable",
     );
     await expect(input).toHaveValue("Custom mobile checkout");
+    const conversationRefresh = (url: URL): boolean =>
+      url.pathname === "/api/librarian/conversation" &&
+      url.searchParams.get("view") === "work";
+
+    await page.route(conversationRefresh, (route) =>
+      route.fulfill({ status: 503 }),
+    );
     await question.getByRole("button", { name: "Send answer" }).focus();
     await page.keyboard.press("Enter");
     await expect(question).toContainText("Answer queued");
+    await expect(question).toContainText("Custom mobile checkout");
+    await expect(
+      question.getByRole("button", { name: "Send answer" }),
+    ).toHaveCount(0);
+    await page.unroute(conversationRefresh);
     await page.reload();
     await openPanel(page);
     await expect(question).toContainText("Custom mobile checkout");

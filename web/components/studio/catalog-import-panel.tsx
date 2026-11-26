@@ -2,16 +2,20 @@
 
 import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type {
+  CatalogFailureDetails,
   CatalogKind,
   CatalogPreview,
   CatalogReceipt,
+  ReviewFile,
   SearchResponse,
   SearchResult,
 } from "@/lib/local-packages/catalog-contract";
 import type { ReactElement } from "react";
 
+import { DiffModeEnum, DiffView } from "@git-diff-view/react";
 import { Button, Input, ListBox, SearchField, Select } from "@heroui/react";
-import { useEffect, useRef, useState } from "react";
+import { createTwoFilesPatch } from "diff";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 
@@ -24,7 +28,11 @@ import {
   skillScreenHref,
 } from "@/lib/local-packages/composition";
 import { readApiErrorBody } from "@/lib/api-error";
+import { catalogFailureDetails } from "@/lib/local-packages/catalog-contract";
 import { useOptionalFeedback } from "@/components/feedback/feedback-provider";
+import { useTheme } from "@/lib/theme";
+
+import "@git-diff-view/react/styles/diff-view.css";
 
 type Origin = {
   sourceId: string;
@@ -59,6 +67,7 @@ async function response<T>(req: Promise<Response>): Promise<T> {
 
   if (!res.ok) {
     const failure = await readApiErrorBody(res);
+    const details = catalogFailureDetails.safeParse(failure?.details);
 
     if (failure?.code === "UNAUTHENTICATED")
       throw new CatalogRequestError("signIn");
@@ -66,6 +75,11 @@ async function response<T>(req: Promise<Response>): Promise<T> {
       throw new CatalogRequestError("forbidden");
     if (failure?.code === "PASSWORD_CHANGE_REQUIRED")
       throw new CatalogRequestError("passwordChange");
+    if (details.success)
+      throw new CatalogRequestError(
+        catalogFailureLabels[details.data.reason],
+        details.data,
+      );
     switch (res.status) {
       case 404:
         throw new CatalogRequestError("itemUnavailable");
@@ -81,7 +95,7 @@ async function response<T>(req: Promise<Response>): Promise<T> {
         failure.details?.reason === "operation_in_progress" ||
           failure.details?.reason === "operation_busy"
           ? "operationBusy"
-          : "draftChanged",
+          : "operationConflict",
       );
     if (failure?.code === "CONFIG")
       throw new CatalogRequestError("invalidImport");
@@ -90,6 +104,23 @@ async function response<T>(req: Promise<Response>): Promise<T> {
 
   return (await res.json()) as T;
 }
+
+const catalogFailureLabels = {
+  approval_revoked: "approvalRevoked",
+  upstream_access_denied: "upstreamAccessDenied",
+  preview_limit_reached: "previewLimitReached",
+  remote_requirements_unsupported: "remoteRequirementsUnsupported",
+  distribution_requirements_unsupported: "distributionRequirementsUnsupported",
+  origin_changed: "originChanged",
+  already_imported: "alreadyImported",
+  skill_id_exists: "skillIdExists",
+  mcp_ref_exists: "mcpRefExists",
+  mcp_descriptor_diverged: "mcpDescriptorDiverged",
+  destination_occupied: "destinationOccupied",
+  request_key_reused: "requestKeyReused",
+  draft_changed: "draftChanged",
+  resolutions_required: "resolutionsRequired",
+} as const satisfies Record<CatalogFailureDetails["reason"], string>;
 
 type CatalogFailure =
   | "error"
@@ -101,17 +132,90 @@ type CatalogFailure =
   | "unavailable"
   | "invalidImport"
   | "operationBusy"
-  | "draftChanged"
-  | "passwordChange";
+  | "operationConflict"
+  | "passwordChange"
+  | (typeof catalogFailureLabels)[keyof typeof catalogFailureLabels];
 
 class CatalogRequestError extends Error {
-  constructor(readonly failure: CatalogFailure) {
+  constructor(
+    readonly failure: CatalogFailure,
+    readonly details?: CatalogFailureDetails,
+  ) {
     super(failure);
   }
 }
 
+function failureText(
+  error: unknown,
+  t: ReturnType<typeof useTranslations<"studio.catalog">>,
+): string {
+  if (!(error instanceof CatalogRequestError)) return t("error");
+  const { details } = error;
+  const message = t(error.failure);
+
+  if (!details) return message;
+  const groups = ["headers", "urlVariables", "environmentVariables"] as const;
+
+  return [
+    message,
+    ...groups.flatMap((group) => {
+      const requirements = details[group];
+
+      return requirements?.names.length
+        ? [
+            t(group, {
+              names: requirements.names.join(", "),
+              more: requirements.more ? "yes" : "no",
+            }),
+          ]
+        : [];
+    }),
+  ].join(" ");
+}
+
 function resultKey(result: SearchResult): string {
   return `${result.sourceId}/${result.resultId}`;
+}
+
+function CatalogFileDiff({ file }: { file: ReviewFile }): ReactElement {
+  const t = useTranslations("studio.catalog");
+  const { resolvedTheme } = useTheme();
+  const { before, after, path } = file;
+  const data = useMemo(() => {
+    const oldFileName = before === null ? "/dev/null" : `a/${path}`;
+    const newFileName = after === null ? "/dev/null" : `b/${path}`;
+    const patch = createTwoFilesPatch(
+      oldFileName,
+      newFileName,
+      before ?? "",
+      after ?? "",
+      undefined,
+      undefined,
+      {
+        timeout: 100,
+      },
+    );
+
+    return patch
+      ? {
+          oldFile: { fileName: oldFileName, content: before },
+          newFile: { fileName: newFileName, content: after },
+          hunks: [patch],
+        }
+      : null;
+  }, [before, after, path]);
+
+  return data ? (
+    <div className="max-h-96 overflow-auto" data-testid="catalog-file-diff">
+      <DiffView
+        data={data}
+        diffViewMode={DiffModeEnum.Unified}
+        diffViewTheme={resolvedTheme}
+      />
+    </div>
+  ) : (
+    <p role="status">{t("diffUnavailable")}</p>
+  );
 }
 
 function CatalogSelect({
@@ -181,6 +285,7 @@ export function CatalogImportPanel({
   const [data, setData] = useState<SearchResponse | null>(null);
   const [selected, setSelected] = useState<SearchResult | null>(null);
   const [preview, setPreview] = useState<CatalogPreview | null>(null);
+  const [openFiles, setOpenFiles] = useState<Record<string, true>>({});
   const [choices, setChoices] = useState<Record<string, "draft" | "upstream">>(
     {},
   );
@@ -211,6 +316,7 @@ export function CatalogImportPanel({
     previewRequest.current = null;
     setPreviewing(false);
     setPreview(null);
+    setOpenFiles({});
     setChoices({});
   }
 
@@ -240,7 +346,7 @@ export function CatalogImportPanel({
         })
         .catch((e) => {
           if (!controller.signal.aborted && epoch === searchEpoch.current) {
-            setError(t(e instanceof CatalogRequestError ? e.failure : "error"));
+            setError(failureText(e, t));
             setSearching(false);
           }
         });
@@ -309,8 +415,7 @@ export function CatalogImportPanel({
         requestKey.current = crypto.randomUUID();
       }
     } catch (e) {
-      if (!controller.signal.aborted)
-        setError(t(e instanceof CatalogRequestError ? e.failure : "error"));
+      if (!controller.signal.aborted) setError(failureText(e, t));
     } finally {
       if (previewRequest.current === controller) {
         previewRequest.current = null;
@@ -385,10 +490,12 @@ export function CatalogImportPanel({
         if (
           failure === "previewExpired" ||
           failure === "draftChanged" ||
+          failure === "approvalRevoked" ||
+          failure === "requestKeyReused" ||
           failure === "itemUnavailable"
         )
           clearPreview();
-        setError(t(failure));
+        setError(failureText(e, t));
       }
     } finally {
       if (alive.current) setApplying(false);
@@ -509,9 +616,7 @@ export function CatalogImportPanel({
                 });
             } catch (e) {
               if (alive.current && epoch === searchEpoch.current)
-                setError(
-                  t(e instanceof CatalogRequestError ? e.failure : "error"),
-                );
+                setError(failureText(e, t));
             } finally {
               if (alive.current && epoch === searchEpoch.current)
                 setLoadingMore(false);
@@ -622,6 +727,9 @@ export function CatalogImportPanel({
           {preview.configuration.length ? (
             <p>{preview.configuration.join(" · ")}</p>
           ) : null}
+          {preview.migratesLegacyManifest ? (
+            <p>{t("legacyManifestUpdate")}</p>
+          ) : null}
           {preview.runnerCompatibility ? (
             <div>
               <p className="font-medium">{t("compatibleAdapters")}</p>
@@ -639,26 +747,21 @@ export function CatalogImportPanel({
             </p>
           ) : null}
           {preview.files.map((file) => (
-            <details key={file.path}>
+            <details
+              key={`${preview.previewId}/${file.path}`}
+              onToggle={(event) => {
+                if (event.currentTarget.open)
+                  setOpenFiles((opened) =>
+                    opened[file.path]
+                      ? opened
+                      : { ...opened, [file.path]: true },
+                  );
+              }}
+            >
               <summary>
                 {t(file.change)} · {file.path}
               </summary>
-              {file.before !== null ? (
-                <pre
-                  aria-label={t("draft")}
-                  className="max-h-64 overflow-auto whitespace-pre-wrap bg-ivory p-2"
-                >
-                  {file.before}
-                </pre>
-              ) : null}
-              {file.after !== null ? (
-                <pre
-                  aria-label={t("upstream")}
-                  className="max-h-64 overflow-auto whitespace-pre-wrap p-2"
-                >
-                  {file.after}
-                </pre>
-              ) : null}
+              {openFiles[file.path] ? <CatalogFileDiff file={file} /> : null}
               {file.change === "conflict" ? (
                 <CatalogSelect
                   disabled={applying}

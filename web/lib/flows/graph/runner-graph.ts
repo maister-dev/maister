@@ -2917,6 +2917,7 @@ export async function runGraph(
           });
 
         if (rows.length > 0) {
+          await closeFlowNodeQuestions(tx, runId, "stale graph resume pointer");
           await releaseAssignmentForRun(tx, runId, "run_terminal");
           await emitProjectFlowWebhook({
             db: tx,
@@ -3986,6 +3987,8 @@ export async function runGraph(
             settings,
             agent: nodeExecutor.agent,
             permissionPolicy: nodeRunnerSnapshot.permissionPolicy,
+            checkDiagnostics: async () =>
+              (await ensureExecution()).admin.diagnostics(),
           });
         } catch (err) {
           const e = isMaisterError(err)
@@ -6709,6 +6712,11 @@ export async function runGraph(
           });
 
         if (rows.length === 0) return;
+        await closeFlowNodeQuestions(
+          tx,
+          runId,
+          "required public result missing",
+        );
         await releaseAssignmentForRun(tx, runId, "run_terminal");
 
         // The `invalid` row is the ONE durable source for the coordinator's
@@ -6764,6 +6772,7 @@ export async function runGraph(
         });
 
         if (!row) return;
+        await closeFlowNodeQuestions(tx, runId, "result-only flow completed");
         // ADR-166 D7: result-only completion is a terminal flip like every
         // other Done/Failed/Crashed exit — it ends the driver generation.
         await releaseAssignmentForRun(tx, runId, "run_terminal");
@@ -6798,6 +6807,7 @@ export async function runGraph(
           });
 
         if (rows.length > 0) {
+          await closeFlowNodeQuestions(tx, runId, "flow completed for review");
           await releaseAssignmentForRun(tx, runId, "run_terminal");
           await emitProjectFlowWebhook({
             db: tx,

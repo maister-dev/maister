@@ -300,6 +300,10 @@ strong workload isolation, attention routing, and enterprise identity.
    - Flow designer UI *(Implemented — Flow Studio visual editor, M27/M35/M39;
      see `system-analytics/flow-studio.md`)* on top of the graph/runtime
      foundation, without turning MAIster into a generic workflow builder.
+   - Reviewed package skill and MCP imports from approved public sources,
+     per-session delivery for Flow and project agents, and human questions in
+     the project Inbox or private librarian conversation *(Implemented —
+     ADR-218/219/220/221)*.
    - Writable competing-code consensus drafts only after the implemented
      read-only M41 consensus proves demand in qualified core processes.
    - Deeper Gemini/OpenCode/MiMo ACP proof for permissions, MCP, model switching,

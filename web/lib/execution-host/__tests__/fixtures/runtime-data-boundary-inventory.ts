@@ -1738,7 +1738,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "maister.yaml / flow.yaml / package manifests and the system flow cache under ~/.maister and .maister/<slug>/flows",
       [
         ["loadProjectConfig", "node:fs/promises.readFile", "read"],
-        ["loadFlowManifest", "node:fs/promises.readFile", "read"],
+        ["readFlowManifest", "node:fs/promises.readFile", "read"],
         ["readFormSchemaDocWithBytes", "node:fs/promises.realpath", "stat"],
         ["readFormSchemaDocWithBytes", "node:fs/promises.readFile", "read"],
       ],
@@ -1932,7 +1932,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "lib/config.ts#readAndValidateFormSchemaDoc",
           "wrapper",
         ],
-        ["loadManifestOrThrow", "lib/config.ts#loadFlowManifest", "wrapper"],
+        [
+          "loadManifestOrThrow",
+          "lib/config.ts#loadRetainedFlowManifest",
+          "wrapper",
+        ],
         [
           "installAuthoredFlowPackageBridge",
           "lib/flows/package-authoring.ts#readAuthoredFlowPackageDirectory",
@@ -2546,7 +2550,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "lib/project-dependencies/content-digest.ts#localDirectoryContentDigest",
           "wrapper",
         ],
-        ["installPackageRevision", "lib/config.ts#loadFlowManifest", "wrapper"],
+        ["installPackageRevision", "lib/config.ts#loadRetainedFlowManifest", "wrapper"],
       ],
     ),
     ...classified(
@@ -2620,7 +2624,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         ["resolvePackageSource", "lib/flows.ts#gitClone", "wrapper"],
         ["resolvePackageSource", "lib/flows.ts#gitRevParseHead", "wrapper"],
-        ["installPackage", "lib/config.ts#loadFlowManifest", "wrapper"],
+        ["installPackage", "lib/config.ts#loadRetainedFlowManifest", "wrapper"],
       ],
     ),
     ...classified(
@@ -2651,7 +2655,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         [
           "installedPackageSource.loadFlow",
-          "lib/config.ts#loadFlowManifest",
+          "lib/config.ts#loadRetainedFlowManifest",
           "wrapper",
         ],
       ],
@@ -2663,7 +2667,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         [
           "assessPackageCompatibility",
-          "lib/config.ts#loadFlowManifest",
+          "lib/config.ts#loadRetainedFlowManifest",
           "wrapper",
         ],
         [
@@ -2673,7 +2677,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         [
           "getStudioPackageFlowGraphs",
-          "lib/config.ts#loadFlowManifest",
+          "lib/config.ts#loadRetainedFlowManifest",
           "wrapper",
         ],
       ],
@@ -2913,7 +2917,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "lib/flows/package-content.ts#readInstalledPackageFile",
           "wrapper",
         ],
-        ["getStudioFlowDetail", "lib/config.ts#loadFlowManifest", "wrapper"],
+        [
+          "getStudioFlowDetail",
+          "lib/config.ts#loadRetainedFlowManifest",
+          "wrapper",
+        ],
       ],
     ),
     ...classified(
@@ -3678,6 +3686,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/config.ts", "manager-flow-state", [
     ["loadFlowManifest", true],
     ["loadProjectConfig", true],
+    ["loadRetainedFlowManifest", true],
     ["readAndValidateFormSchemaDoc", true],
     ["readFormSchemaDocWithBytes", true],
     ["resolveOutputResultSchema", true],

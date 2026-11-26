@@ -11,6 +11,10 @@ import { dispatchLibrarianTurn } from "./pool";
 import { sweepLibrarianResets } from "./reset";
 import { sweepLibrarianClearReleases } from "./clear-history";
 import { LIBRARIAN_MAX_START_ATTEMPTS, endLibrarianTurn } from "./runtime";
+import {
+  afterLibrarianTurnFinished,
+  finishLibrarianTurnInTransaction,
+} from "./turn-end";
 
 import { getDb } from "@/lib/db/client";
 import { librarianConfig } from "@/lib/librarian/config";
@@ -187,18 +191,42 @@ export async function stopLibrarianTurn(
       .where(
         and(
           eq(librarianTurns.conversationId, conversation.id),
-          inArray(librarianTurns.status, ["admitted", "running"]),
+          inArray(librarianTurns.status, [
+            "admitted",
+            "running",
+            "awaiting_answer",
+          ]),
         ),
       )
       .limit(1);
 
-    return active ?? null;
+    if (!active) return null;
+
+    const finished =
+      active.status === "awaiting_answer"
+        ? await finishLibrarianTurnInTransaction(tx, {
+            turnId: active.id,
+            end: { status: "stopped" },
+            fromStatuses: ["awaiting_answer"],
+          })
+        : null;
+
+    return { ...active, finished };
   });
 
   if (!turn)
     throw new MaisterError("CONFLICT", "No librarian response is running", {
       details: { reason: "no_active_turn" },
     });
+  if (turn.finished) {
+    await afterLibrarianTurnFinished(db, turn.finished);
+    log.info(
+      { ownerId, turnId: turn.id },
+      "parked librarian turn stopped by its owner",
+    );
+
+    return { turnId: turn.id };
+  }
   const command = await promptCommandOf(db, turn.id);
 
   if (command?.targetSessionId && command.assignmentId === turn.assignmentId) {

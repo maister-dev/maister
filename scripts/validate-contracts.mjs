@@ -19,6 +19,9 @@ const OPENAPI_FILES = [
   "docs/api/web.openapi.yaml",
   "docs/api/supervisor.openapi.yaml",
   "docs/api/external/stand-connector.openapi.yaml",
+  "docs/api/external/github-catalog.openapi.yaml",
+  "docs/api/external/mcp-registry.openapi.yaml",
+  "docs/api/external/npm-registry.openapi.yaml",
 ];
 
 const ASYNCAPI_FILES = [

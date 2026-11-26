@@ -107,6 +107,7 @@ import { streamCanonicalSessionEvents } from "./events/session-stream";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { assertReadOnlySessionCreateEvidence } from "@/lib/agents/runner-readonly-evidence";
 import {
   assertNativeRunKnowledgeInputs,
   assertNativeRunKnowledgeInputsInTransaction,
@@ -707,6 +708,9 @@ export function createExecutionHosts(
         );
       },
       async createSession(payload, opts) {
+        await assertReadOnlySessionCreateEvidence(payload, () =>
+          transport.diagnostics(),
+        );
         const sessionName =
           opts?.sessionName ?? payload.sessionName ?? "default";
         const attempt = async (executionWorkspaceId: ExecutionWorkspaceId) => {

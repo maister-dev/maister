@@ -55,6 +55,7 @@ import {
 import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
 import { createExecutionHosts, mintPlacement } from "@/lib/execution-host";
+import { checkAssignedHostDiagnostics } from "@/lib/execution-host/remote-direct";
 import { localHost } from "@/lib/execution-host/resolver";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
@@ -385,7 +386,8 @@ async function insertCompanyFlowRun(
       runners: catalog,
     });
     await assertReadOnlySessionEvidence({
-      hosts,
+      checkDiagnostics: () =>
+        checkAssignedHostDiagnostics(host, hosts.transport),
       adapterId: session.runnerSnapshot.adapter,
       runnerId: session.runnerId,
       workspace: "none",

@@ -3010,6 +3010,7 @@ table project_package_mcp_scope_overrides {
   indexes {
     (attachment_id, ref_id) [pk]
 
+
   }
 }
 

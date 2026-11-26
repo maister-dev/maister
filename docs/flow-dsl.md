@@ -272,11 +272,16 @@ SLA/staleness hints, and return requirements. CLI/check/judge nodes constrain
 commands, environment policy, artifact inputs/outputs, timeout, and failure
 classification.
 
-Package the skills a Flow uses alongside it. Agent prompts can refer to those skills directly.
+Package the skills a Flow uses alongside it. Agent prompts can refer to those
+skills directly. The current authoring and cut validator rejects
+`settings.skills` and `settings.enforcement.skills`. The install and adoption
+readers retain the original bytes and compat behavior of previously
+published versions, including when rolling back. See
+[ADR-218](decisions/adr-218.md).
 
 **Per-class `enforcement` intent.** Each of the six capability classes —
 `mcps`, `tools`, `restrictions`, `permissionMode`, `workspaceAccess`,
-`hooks` (the last Designed — ADR-108) —
+`hooks` (Implemented — ADR-108 and ADR-130) —
 carries an optional `enforcement` intent of `strict | instruct | off`, default
 `instruct`, declared in `settings.enforcement`. At launch, MAIster evaluates each
 declared class against the static `ENFORCEABILITY_BY_AGENT` table for the
@@ -291,13 +296,14 @@ closed union). The full truth table, the frozen `ENFORCEABILITY_BY_AGENT` seed
 [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md);
 rationale is in [ADR-032](decisions.md#adr-032-settings-enforcement-refusal-boundary).
 
-**`hooks` capability class (Designed — ADR-108).** The capability class
+**`hooks` capability class (Implemented — ADR-108 and ADR-130).** The capability class
 `hooks` declares the per-tool-call guardrail rules enforced at the supervisor↔ACP
 seam — `repetition` (consecutive-identical-call cap), `noProgress`
 (completed operations without new evidence), and `pathGuard.allowedPaths` (an opt-in writable set).
 The block is sparse (every key optional); `enforcement.hooks` follows the same
-`strict | instruct (default) | off` intent, and a `strict` declaration is
-**refused** at launch (`hooks` is `instructed` in `ENFORCEABILITY_BY_AGENT`). A
+`strict | instruct (default) | off` intent. The supervisor guardrail interceptor
+enforces `hooks` across supported adapters (`enforced` in
+`ENFORCEABILITY_BY_AGENT`). A
 node/agent declaring `hooks` requires `compat.engine_min >= 1.8.0`
 (`MAISTER_ENGINE_VERSION` bumps `1.7.0 → 1.8.0`); flows without `hooks` stay valid
 at any `engine_min`. Under the `unattended` execution-policy preset the two

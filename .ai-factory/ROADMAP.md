@@ -865,10 +865,11 @@
 | M45. Core-package process qualification — closed as descoped by owner decision; qualification run set NOT performed | 2026-09-10 |
 | M51. See everything: team visibility and personal librarian                  | 2026-09-28 |
 
-Studio catalog imports and per-session package capabilities shipped under
-[ADR-218](../docs/decisions/adr-218.md), without a separate milestone. The
-same delivery adds [pinned shared-workspace transport](../docs/decisions/adr-219.md)
-and [Flow node questions](../docs/decisions/adr-220.md).
+[Reviewed Studio catalog imports](../docs/decisions/adr-221.md) and
+[per-session package capabilities](../docs/decisions/adr-218.md) shipped
+without a separate milestone. The same delivery adds
+[pinned shared-workspace transport](../docs/decisions/adr-219.md) and
+[Flow node questions](../docs/decisions/adr-220.md).
 
 ## Backlog (untriaged deferred work)
 

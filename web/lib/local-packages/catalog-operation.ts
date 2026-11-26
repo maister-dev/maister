@@ -33,7 +33,7 @@ import {
   referencesCatalogItem,
 } from "./catalog-manifest";
 import { isApprovedSource } from "./catalog-sources";
-import { PACKAGE_MANIFEST_FILENAME } from "./manifest";
+import { parsePackageManifest, PACKAGE_MANIFEST_FILENAME } from "./manifest";
 import {
   isLocalPackageInternalEntryName,
   resolveWithinWorkingDir,
@@ -253,7 +253,9 @@ function sourceKey(
 }
 function checkOwnerSource(source: PinnedCatalogSource): void {
   if (!isApprovedSource(source.sourceId, source.sourceUrl, source.kind))
-    throw new CatalogError(403, "Catalog source is no longer approved");
+    throw new CatalogError(403, "Catalog source is no longer approved", {
+      reason: "approval_revoked",
+    });
 }
 
 export async function previewCatalogImport(
@@ -271,11 +273,14 @@ export async function previewCatalogImport(
   const priorBytes = await readDraft(owner, originPath(importId));
 
   if (previousImportId && priorBytes === null)
-    throw new CatalogError(409, "The update no longer matches this origin");
+    throw new CatalogError(409, "The update no longer matches this origin", {
+      reason: "origin_changed",
+    });
   if (priorBytes && !previousImportId)
     throw new CatalogError(
       409,
       "Item already imported. Use Update from source",
+      { reason: "already_imported" },
     );
   const prior = priorBytes ? originSchema.parse(JSON.parse(priorBytes)) : null;
 
@@ -288,6 +293,7 @@ export async function previewCatalogImport(
     throw new CatalogError(
       409,
       "Origin does not match this source and destination",
+      { reason: "origin_changed" },
     );
   let nextManifest: string;
   const blobs: Record<string, string> = Object.create(null);
@@ -314,7 +320,9 @@ export async function previewCatalogImport(
         other !== destination &&
         (await readDraft(owner, other + "/SKILL.md")) !== null
       )
-        throw new CatalogError(409, "Skill ID already exists at " + other);
+        throw new CatalogError(409, "Skill ID already exists at " + other, {
+          reason: "skill_id_exists",
+        });
     }
     nextManifest = registered.yaml;
     allowedPath = (p) => p.startsWith(destination + "/");
@@ -344,7 +352,9 @@ export async function previewCatalogImport(
     const current = existing.find((m) => m.id === match[1]);
 
     if (current && !prior)
-      throw new CatalogError(409, "MCP reference already exists");
+      throw new CatalogError(409, "MCP reference already exists", {
+        reason: "mcp_ref_exists",
+      });
     const mcp = {
       ...declaration,
       id: match[1],
@@ -370,6 +380,7 @@ export async function previewCatalogImport(
         throw new CatalogError(
           409,
           "MCP descriptor and manifest diverged. Reconcile them before updating",
+          { reason: "mcp_descriptor_diverged" },
         );
     }
   }
@@ -404,7 +415,9 @@ export async function previewCatalogImport(
     const base = prior?.files[p] ?? null;
 
     if (!prior && before !== null)
-      throw new CatalogError(409, "Unrelated draft file already exists: " + p);
+      throw new CatalogError(409, "Unrelated draft file already exists: " + p, {
+        reason: "destination_occupied",
+      });
     if (before === after) continue;
     if (prior && after === base) {
       files.push({
@@ -434,6 +447,7 @@ export async function previewCatalogImport(
     });
   }
   const draftIndex = await draftFileDigests(owner.workingDir);
+  const parsedManifest = parsePackageManifest(manifest);
   const result: CatalogPreview = {
     previewId: randomUUID(),
     importId,
@@ -451,6 +465,7 @@ export async function previewCatalogImport(
     files,
     notices: source.notices,
     configuration: source.configuration,
+    migratesLegacyManifest: parsedManifest.ok && !parsedManifest.raw.delivery,
     runnerCompatibility,
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     publisher: source.publisher,
@@ -487,7 +502,9 @@ export async function previewCatalogImport(
     else live++;
   }
   if (live >= 64)
-    throw new CatalogError(429, "Too many active previews for this draft");
+    throw new CatalogError(429, "Too many active previews for this draft", {
+      reason: "preview_limit_reached",
+    });
   const snapshot: SavedPreview = {
     actorId: owner.actorId,
     source,
@@ -717,6 +734,7 @@ async function previousReceipt(
     throw new CatalogError(
       409,
       "Request key already used with a different preview or conflict resolution",
+      { reason: "request_key_reused" },
     );
 
   return saved.receipt;
@@ -758,7 +776,9 @@ export async function applyCatalogPreview(
     request.expectedDraftBase !== preview.result.expectedDraftBase ||
     (await draftDigest(owner.workingDir)) !== request.expectedDraftBase
   )
-    throw new CatalogError(409, "Draft changed since preview");
+    throw new CatalogError(409, "Draft changed since preview", {
+      reason: "draft_changed",
+    });
   const choices = new Map(request.resolutions?.map((r) => [r.path, r.use]));
   const conflicts = preview.result.files.filter((f) => f.change === "conflict");
 
@@ -770,6 +790,7 @@ export async function applyCatalogPreview(
     throw new CatalogError(
       409,
       "Resolve every upstream conflict before applying",
+      { reason: "resolutions_required" },
     );
   const changes: Change[] = preview.result.files
     .filter((f) => f.change !== "local" && choices.get(f.path) !== "draft")

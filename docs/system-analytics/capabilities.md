@@ -374,21 +374,35 @@ At admission the Run captures every attached package revision. Run preparation s
 | Consumer | Discoverable package skills | MCP candidates before current binding, trust and adapter checks |
 | --- | --- | --- |
 | Unbound Flow node | Owning Flow package plus packages with skill sharing enabled | Owning package defaults or the node's explicit required/additional selection, plus project-shared refs |
-| Session-agent node | Agent package selection, different owning Flow package and other shared libraries | Agent declaration, effective project-link additions and project-shared refs. Explicit node selection can narrow optional local refs. Refusing a required agent ref fails preflight. |
-| Standalone project agent | Agent package selection | Agent declaration, project-link additions and project-shared refs |
+| Session-agent node | Agent package selection, different owning Flow package and other shared libraries | Agent declaration, effective project-link additions and project-shared refs. The node's explicit `mcps` can narrow optional local refs. A missing `mcps.required` ref fails dispatch. Other unavailable candidates are withheld with a reason. |
+| Standalone project agent | Agent package selection | Agent-declared refs are required. Project-link additions and project-shared refs are optional. |
 
 Omitted agent skill selection includes the entire agent package. An empty list suppresses that package's entire contribution, even if it shares skills. For equal slugs prefer selected agent content, then the owning Flow, then a shared library. Equally ranked shared libraries with the same sealed companion-tree digest deduplicate to the provider ordered first by package name and install ID. Missing or different digests at equal precedence fail preflight with both source IDs. Native MCP configuration and ACP must receive the same deduplicated server set. A required unavailable binding fails before session creation. An additional unavailable ref carries the existing withheld reason.
 
 A project with `core` (shared), `design` (private, Figma scoped to package) and `development` (private) pins all three. A development node sees development and core skills and no Figma. A design Flow binding a designer from design sees the selected design skills plus core. A child development Flow invoked from design receives development and core. A standalone designer with an empty skill list sees zero package skills. Disabling Figma stops a node requiring Figma and withholds it from a node where it is optional. A release or override change during execution leaves the captured selection intact. Recheck current authorization at dispatch and resume.
 
-For versioned Flow delivery the supervisor checks the selected tree digest and prepares an adapter home. Claude uses CLAUDE_CONFIG_DIR and Codex uses CODEX_HOME. Gemini, OpenCode and MiMo receive their adapter-specific configuration roots. Each adapter must see the exact same selected package inventory as the progressive-disclosure prompt. Preserve ambient user settings according to existing adapter policy and ensure package-installed content cannot re-enter via a sibling home or cwd. Record Run, owner, package pins, profile digest and withheld reasons in structured diagnostics.
+A parked standalone agent can retain the original trusted MCP descriptor
+after the project adopts a different release of the same package. The
+active attachment must still supply the logical ref, and the original
+revision must still be trusted. Current bindings and overlays still apply.
+Disabling the ref or revoking the original revision's trust refuses a required
+standalone MCP.
 
-## Expectations
+For versioned Flow delivery the supervisor checks the selected tree digest
+and prepares a private adapter home. Claude uses `CLAUDE_CONFIG_DIR`, Codex
+uses `CODEX_HOME` and Gemini, OpenCode and MiMo use their own configuration
+roots. The selected package skill discovery inventory matches the
+progressive-disclosure prompt. Private homes link the supported credential
+files. For Claude, this supplies `.credentials.json` and starts without the
+user's settings, memory, plugins or skills. Operators configure execution
+credentials on each eligible supervisor. Authors place required skills in
+packages and supply session policy through the runner and Flow configuration.
+The skill view scopes adapter discovery. Package `agents/` for legacy
+subagents still materialize in the shared worktree, where the session can
+read files allowed by its workspace policy. The Run, owner, package pins,
+profile digest and withheld reasons identify delivery in structured logs.
 
-- **CAP-01:** (Implemented) The Studio package validator must refuse `settings.skills` and `settings.enforcement.skills` for new Flow revisions, with `IT-CAP-01` verifying both refusals and the retained parser for a pinned legacy Run.
-- **CAP-03:** (Implemented) The session delivery resolver must combine the Run's captured pins, author selections and attached scopes according to the inventory table, with `IT-CAP-03` covering standalone, child and bound/unbound routing, empty versus omitted selections, shared deduplication and required MCP refusal.
-- **CAP-04:** (Implemented) The session materializer must give each bound node its own ACP handle and adapter discovery root, with `IT-CAP-04` checking distinct sibling views and same-attempt recovery of that handle.
-- **CAP-06:** (Implemented) In one project, a design Flow and a development Flow must receive their own private capabilities and the shared core, with `E2E-CAP-06` observing the design tool and prototype after Inbox recovery, the coding Run without the design server, and a separate standalone agent Run inventory.
+### Capability import and materialization contracts
 
 These are the steady-state invariants the materialization code MUST satisfy
 (Designed — they hold once that work lands, not before).
@@ -427,9 +441,11 @@ These are the steady-state invariants the materialization code MUST satisfy
   `tools`/`mcps`/`hooks` are `enforced` for **all five** adapters (adapter-agnostic
   `capability_guard` seam); per-adapter admission for a `strict` `tools`/`mcps`
   launch MUST be the async `capabilityEnforcement` evidence gate, never a table cell.
-- Subsequent node attempts in the same run MUST re-materialize from the persisted
-  `materialization_plan.resolvedRevisions` snapshot, NEVER a fresh catalog read,
-  so a mid-run `capability_records` change cannot mutate a running run.
+- Legacy node materialization retains `materialization_plan.resolvedRevisions`.
+  Versioned project sessions resolve selection from the captured Run pins and
+  re-read live attachments, bindings and trust to verify current delivery
+  authority. A mutable catalog change cannot substitute new package bytes or
+  change a captured selection.
 - Cleanup MUST be recoverable: post-terminal seams (abandon route, crash
   reconciler) MUST NEVER throw `CRASH`; a failure MUST record
   `materialization_plan.cleanup.failed` and stay operator-visible until the strict
@@ -444,6 +460,13 @@ These are the steady-state invariants the materialization code MUST satisfy
   same `(kind, refId)` MUST be shadowed (not merged, not emitted as a duplicate).
   This supersedes the current return-all/no-winner behavior and fixes the latent
   duplicate-materialization bug.
+
+## Expectations
+
+- **CAP-01:** New Flow authoring and release validation must refuse both `settings.skills` and `settings.enforcement.skills`; `IT-CAP-01` covers the retained legacy reader.
+- **CAP-03:** Each project session must receive the effective capability inventory specified in the [decision table](#project-run-capability-inventory), as verified by `IT-CAP-03`.
+- **CAP-04:** Each bound node must own a distinct ACP handle and adapter discovery root, as verified by `IT-CAP-04`.
+- **CAP-06:** A design Run and a development Run in the same project must receive the owning Flow's private capabilities and the shared core, as verified by `E2E-CAP-06`.
 
 ## Edge cases
 

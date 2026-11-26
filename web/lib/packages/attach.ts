@@ -46,7 +46,7 @@ import {
   type InstallResult,
   type InstalledRevision,
 } from "@/lib/flows";
-import { loadFlowManifest } from "@/lib/config";
+import { loadRetainedFlowManifest } from "@/lib/config";
 import { isOperationalEvidenceContract } from "@/lib/run-results/contract";
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
@@ -380,7 +380,7 @@ export async function installPackageRevision(opts: {
     await opts.onResolve?.(resolved.resolvedRevision, resolved.layoutDigest);
 
     for (const flow of resolved.manifest.flows) {
-      const manifest = await loadFlowManifest(
+      const manifest = await loadRetainedFlowManifest(
         join(resolved.pkgRoot, flow.path, "flow.yaml"),
         {
           errorCode: "CONFIG",

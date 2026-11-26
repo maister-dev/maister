@@ -46,10 +46,14 @@ it("preserves populated attachment pins and enforces sparse scoped override inte
     (await pool.query("SELECT * FROM project_package_mcp_scope_overrides"))
       .rows,
   ).toEqual([]);
-  const insert = (attachment: string, scope: string | null) =>
+  const insert = (
+    attachment: string,
+    scope: string | null,
+    refId = "design.figma-v1",
+  ) =>
     pool.query(
-      "INSERT INTO project_package_mcp_scope_overrides(attachment_id,ref_id,scope) VALUES($1,'figma',$2)",
-      [attachment, scope],
+      "INSERT INTO project_package_mcp_scope_overrides(attachment_id,ref_id,scope) VALUES($1,$2,$3)",
+      [attachment, refId, scope],
     );
 
   await expect(insert("absent", "package")).rejects.toMatchObject({
@@ -59,6 +63,18 @@ it("preserves populated attachment pins and enforces sparse scoped override inte
     code: "23514",
   });
   await expect(insert("old", null)).rejects.toMatchObject({ code: "23502" });
+  for (const invalidRef of [
+    "",
+    ".",
+    "some..ref",
+    "some/ref",
+    "a".repeat(129),
+  ]) {
+    await expect(insert("old", "package", invalidRef)).rejects.toMatchObject({
+      code: "23514",
+      constraint: "project_package_mcp_scope_ref_check",
+    });
+  }
   await insert("old", "project");
   await expect(insert("old", "package")).rejects.toMatchObject({
     code: "23505",

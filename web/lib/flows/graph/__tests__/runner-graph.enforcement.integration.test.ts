@@ -1,6 +1,9 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
 import type { ExecutionHosts } from "@/lib/execution-host";
-import type { FakeCall } from "@/test-support/fake-execution-host";
+import type {
+  FakeCall,
+  FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -52,6 +55,7 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
 // without a real agent.
 async function makeSupervisorSpy(runId: string): Promise<{
   hosts: ExecutionHosts;
+  fake: FakeExecutionHost;
   createSpy: ReturnType<typeof vi.fn>;
 }> {
   const createSpy = vi.fn();
@@ -61,7 +65,7 @@ async function makeSupervisorSpy(runId: string): Promise<{
     createSpy(call.envelope?.payload);
   });
 
-  return { hosts, createSpy };
+  return { hosts, fake, createSpy };
 }
 
 // ai_coding node declaring strict skills — REFUSED on the ADR-130 table:
@@ -153,6 +157,63 @@ describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
       capability: "instructed",
       verdict: "refused",
     });
+  }, 60_000);
+
+  it("uses the assigned host's evidence before spawning a strict tools node", async () => {
+    const seeded = await seedGraphRun(db, {
+      ...passFlow,
+      nodes: passFlow.nodes.map((node) => ({
+        ...node,
+        settings: {
+          ...node.settings,
+          enforcement: { tools: "strict" },
+        },
+      })),
+    });
+    const api = await makeSupervisorSpy(seeded.runId);
+    const checkedAt = new Date().toISOString();
+    const smoke = {
+      status: "ok" as const,
+      reason: null,
+      checkedAt,
+      protocolVersion: 1,
+    };
+
+    api.fake.setDiagnostics({
+      kind: "ready",
+      diagnostics: {
+        status: "ready",
+        checkedAt,
+        version: "test",
+        envRefs: [],
+        adapters: [
+          {
+            id: "claude",
+            binary: "fake-acp",
+            source: "override",
+            path: null,
+            available: true,
+            version: null,
+            error: null,
+            smoke: {
+              ...smoke,
+              capabilityEnforcement: smoke,
+              readOnlySession: { ...smoke, probeVersion: 1, staleReason: null },
+            },
+          },
+        ],
+      },
+    });
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: api.hosts,
+    });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+    expect(api.fake.callsOf("diagnostics")).toHaveLength(1);
+    expect(api.createSpy).toHaveBeenCalledTimes(1);
   }, 60_000);
 
   it("writes node_attempts.enforcement_snapshot on the PASS path (2.2)", async () => {

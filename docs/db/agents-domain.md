@@ -356,4 +356,11 @@ Positive and missing numbers use bounded integers at the command boundary.
 
 ## Package and agent delivery
 
-Local persona and MCP additions share the link revision precondition. [Migration sequence and constraints](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions)
+Migration `0370` adds nullable `agent_project_links.prompt_override`. Null
+inherits the package persona. A value must contain non-whitespace text and is
+limited to 65,536 characters. `agent_project_mcp_additions` has primary key
+`(link_id, ref_id)`, with `link_id` cascading from `agent_project_links.id`.
+The checked `ref_id` is a safe path segment of 1–128 characters. Persona and
+MCP additions share the link revision precondition. `runs.project_agent_profile`
+is nullable JSONB recording the standalone Run's admitted profile for recovery.
+See the [migration sequence](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions).

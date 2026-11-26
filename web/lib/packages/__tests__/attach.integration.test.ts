@@ -17,10 +17,15 @@ import { setTimeout } from "node:timers/promises";
 import { and, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
 import { parse as parseYaml } from "yaml";
 
 import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
+import { resolveAgentProfileMcpServers } from "@/lib/agents/launch";
+import {
+  availableAgentMcpCatalog,
+  captureProjectAgentProfile,
+} from "@/lib/agents/project-instance-profile";
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { resolveCurrentPackageSessionCatalog } from "@/lib/capabilities/session-package-catalog";
 import { resolveTaskLaunchCapabilities } from "@/lib/tasks/launch-capabilities";
 import { capturePackageDelivery } from "@/lib/capabilities/capture-package-delivery";
@@ -37,6 +42,7 @@ import {
 import { readAndValidateFormSchemaDoc } from "@/lib/config";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { classifyFlowForCut } from "@/lib/flows/manifest-parser";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 import {
   attachPackage,
@@ -178,6 +184,88 @@ describe("package attach lifecycle (integration)", () => {
     } finally {
       await rm(legacyPackage, { recursive: true, force: true });
     }
+  });
+
+  it("accepts published node-skill declarations through install, attach and rollback without rewriting the cut", async () => {
+    const projectId = await seedProject("retired-node-skills");
+    const roots = await Promise.all([
+      mkdtemp(join(workspaceRoot, "retired-node-skills-old-")),
+      mkdtemp(join(workspaceRoot, "retired-node-skills-new-")),
+    ]);
+    const flowId = "retired-node-skills";
+    const memberPath = `flows/${flowId}/flow.yaml`;
+    const legacyYaml = `schemaVersion: 1
+name: ${flowId}
+compat: {engine_min: '3.0.0'}
+nodes:
+  - id: s1
+    type: ai_coding
+    action: {prompt: legacy skill}
+    settings: {skills: [skill-one], enforcement: {skills: strict}}
+    transitions: {success: done}
+`;
+
+    await Promise.all(roots.map((root) => buildPackage(root, [flowId])));
+    await writeFile(join(roots[0], memberPath), legacyYaml);
+    expect(classifyFlowForCut(parseYaml(legacyYaml)).compatible).toBe(false);
+    const [previous, current] = await Promise.all(
+      roots.map((source, index) =>
+        installPackageRevision({
+          source,
+          version: `attpkg/node-skills-v${index + 1}`,
+          trustStatus: "trusted_by_policy",
+          db,
+        }),
+      ),
+    );
+    const args = {
+      db,
+      projectId,
+      projectSlug: "retired-node-skills",
+      workspaceRoot,
+    };
+    const attached = await attachPackage({
+      ...args,
+      packageInstallId: previous.id,
+    });
+
+    if (!attached) throw new Error("Legacy attachment was not created");
+    for (const packageInstallId of [current.id, previous.id]) {
+      expect(
+        await upgradeAttachment({
+          ...args,
+          attachmentId: attached.attachmentId,
+          packageInstallId,
+        }),
+      ).toEqual({ upgraded: true });
+    }
+    const [flow] = await db
+      .select()
+      .from(schema.flows)
+      .where(
+        and(
+          eq(schema.flows.projectId, projectId),
+          eq(schema.flows.flowRefId, flowId),
+        ),
+      );
+
+    expect(flow).toMatchObject({
+      packageInstallId: previous.id,
+      revision: previous.resolvedRevision,
+      manifest: {
+        nodes: [
+          {
+            settings: {
+              skills: ["skill-one"],
+              enforcement: { skills: "strict" },
+            },
+          },
+        ],
+      },
+    });
+    expect(await readFile(join(flow.installedPath, "flow.yaml"), "utf8")).toBe(
+      legacyYaml,
+    );
   });
 
   it("installPackageRevision: two-phase install + idempotent reuse", async () => {
@@ -2494,6 +2582,37 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
   await db
     .delete(schema.platformMcpServers)
     .where(eq(schema.platformMcpServers.id, refId));
+  const agentId = "tool-design:artist";
+
+  await db.insert(schema.agentProjectLinks).values({
+    id: randomUUID(),
+    projectId,
+    agentId,
+    enabled: true,
+  });
+  const effective = await resolveEffectiveAgentDefinition(
+    { projectId, agentId },
+    db,
+  );
+  const profile = await db.transaction((tx) =>
+    captureProjectAgentProfile(tx, {
+      projectId,
+      agentId,
+      packageName: effective.packageName,
+      packageInstallId: effective.packageInstallId,
+      definition: effective.parsed,
+    }),
+  );
+  const standalone = {
+    db,
+    projectId,
+    capabilityProfile: { mcps: profile.packageMcpRefs },
+    frozenTargets: profile.mcpTargets,
+    requiredMcpRefs: profile.packageMcpRefs,
+    capabilityAgent: "claude",
+    execTrust: "trusted" as const,
+    runId: randomUUID(),
+  };
   const designRoot = sources["tool-design"]!;
   const manifestPath = join(designRoot, "maister-package.yaml");
 
@@ -2529,6 +2648,32 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
     afterAdoption.catalog.find((c) => c.capabilityRefId === "tool-design-mcp")
       ?.material.url,
   ).toBe("https://mcp.example.com");
+  expect(await resolveAgentProfileMcpServers(standalone)).toEqual([
+    expect.objectContaining({ name: refId, url: "https://mcp.example.com" }),
+  ]);
+  expect(await availableAgentMcpCatalog(db, projectId)).toContainEqual(
+    expect.objectContaining({
+      capabilityRefId: refId,
+      material: expect.objectContaining({ url: "https://v2.example.com" }),
+    }),
+  );
+  await db
+    .update(schema.packageInstalls)
+    .set({ trustStatus: "untrusted" })
+    .where(eq(schema.packageInstalls.id, effective.packageInstallId));
+  try {
+    await expect(
+      resolveAgentProfileMcpServers(standalone),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "agent_mcp_target_unavailable", refId },
+    });
+  } finally {
+    await db
+      .update(schema.packageInstalls)
+      .set({ trustStatus: "trusted_by_policy" })
+      .where(eq(schema.packageInstalls.id, effective.packageInstallId));
+  }
   expect(
     (
       await capturePackageDelivery(db, {
@@ -2568,6 +2713,12 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
     (await resolveCurrentPackageSessionCatalog(db, { ...action, required: [] }))
       .withheld,
   ).toEqual(["tool-design-mcp"]);
+  await expect(resolveAgentProfileMcpServers(standalone)).rejects.toMatchObject(
+    {
+      code: "PRECONDITION",
+      details: { reason: "agent_mcp_target_unavailable", refId },
+    },
+  );
   await writeFile(
     join(root, "attempt-a", "package-skills", "collide", "companion.md"),
     "changed",

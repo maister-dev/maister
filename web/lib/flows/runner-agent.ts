@@ -93,6 +93,7 @@ import {
   workspacePackageSkillsPrompt,
 } from "@/lib/capabilities/package-skills";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import { readWaitPromptBlocks } from "@/lib/waits/prompt-data";
 import { appendCapped } from "@/lib/flows/capped-text";
 import {
@@ -641,6 +642,12 @@ async function handlePermissionRequest(
           });
 
         if (rows.length > 0) {
+          if (rows[0].runKind === "flow")
+            await closeFlowNodeQuestions(
+              tx,
+              pctx.runId,
+              "permission persistence failed",
+            );
           await emitWebhookEvent({
             db: tx,
             type: "run.crashed",

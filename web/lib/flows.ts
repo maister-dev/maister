@@ -41,7 +41,7 @@ export { localDirectoryContentDigest } from "@/lib/project-dependencies/content-
 import { runMaterialSetup } from "@/lib/project-dependencies/setup";
 import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
 import {
-  loadFlowManifest,
+  loadRetainedFlowManifest,
   readAndValidateFormSchemaDoc,
   type CapabilityRefIdsInput,
 } from "@/lib/config";
@@ -666,7 +666,7 @@ async function loadManifestOrThrow(
   const errorCode = opts.errorCode ?? "FLOW_INSTALL";
 
   try {
-    return await loadFlowManifest(flowYamlPath, {
+    return await loadRetainedFlowManifest(flowYamlPath, {
       roleRefs: opts.roleRefs,
       capabilityRefIds: opts.capabilityRefIds,
       errorCode,

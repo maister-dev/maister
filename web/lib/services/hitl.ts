@@ -105,6 +105,7 @@ import {
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import {
   claimAgentIdleResumeInTransaction,
   markResumed,
@@ -4447,6 +4448,8 @@ async function handleInfraRecoveryResponse(args: {
         });
 
       if (terminal.length > 0) {
+        if (terminal[0].runKind === "flow")
+          await closeFlowNodeQuestions(tx, runId, "infra-recovery abandoned");
         await releaseAssignmentForRun(tx, runId, "failed");
         const errorCode =
           (hitlRow.schema as { code?: string } | null)?.code ??
@@ -4668,6 +4671,8 @@ async function terminalizeBudgetRun(args: {
   const row = terminal[0] ?? null;
 
   if (row) {
+    if (row.runKind === "flow")
+      await closeFlowNodeQuestions(args.tx, args.runId, args.assignmentReason);
     await releaseAssignmentForRun(args.tx, args.runId, "failed");
   }
 
@@ -4755,6 +4760,8 @@ async function markBudgetParkedRun(args: {
       );
     }
 
+    if (row.runKind === "flow")
+      await closeFlowNodeQuestions(tx, args.runId, "budget breach parked");
     await releaseAssignmentForRun(tx, args.runId, "abandoned");
 
     if (row.projectId) {
@@ -5663,6 +5670,8 @@ async function handleHookTripResponse(args: {
         });
 
       if (terminal.length > 0) {
+        if (terminal[0].runKind === "flow")
+          await closeFlowNodeQuestions(tx, runId, "hook trip aborted");
         await releaseAssignmentForRun(tx, runId, "failed");
       }
 

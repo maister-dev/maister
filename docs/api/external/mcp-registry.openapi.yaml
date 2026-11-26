@@ -1,0 +1,116 @@
+openapi: 3.0.3
+info:
+  title: Official MCP Registry reads used by Studio
+  version: "0.1"
+  description: |
+    Consumed subset of the public Registry spec. Only fields read by
+    Studio are shown. The importer validates identity, transport and
+    supported configuration against these records before drafting.
+externalDocs:
+  description: Official MCP Registry OpenAPI document
+  url: https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/openapi.yaml
+servers:
+  - url: https://registry.modelcontextprotocol.io/v0.1
+paths:
+  /servers:
+    get:
+      operationId: searchCatalogRegistry
+      parameters:
+        - name: search
+          in: query
+          schema: {type: string}
+        - name: version
+          in: query
+          schema: {type: string, enum: [latest]}
+        - name: limit
+          in: query
+          schema: {type: integer, enum: [30]}
+        - name: cursor
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Search hits and the opaque cursor for the next page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [servers, metadata]
+                properties:
+                  metadata:
+                    type: object
+                    properties:
+                      nextCursor: {type: string}
+                  servers:
+                    type: array
+                    items:
+                      type: object
+                      required: [server]
+                      properties:
+                        server: {$ref: "#/components/schemas/ServerIdentity"}
+  /servers/{serverName}/versions/{version}:
+    get:
+      operationId: getCatalogRegistryVersion
+      parameters:
+        - name: serverName
+          in: path
+          required: true
+          description: Namespace and server name encoded as one path parameter
+          schema: {type: string}
+        - name: version
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: One descriptor with its concrete version
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [server]
+                properties:
+                  server: {$ref: "#/components/schemas/ServerDescriptor"}
+components:
+  schemas:
+    ServerIdentity:
+      type: object
+      required: [name, version]
+      properties:
+        name: {type: string}
+        version: {type: string}
+    ServerDescriptor:
+      allOf:
+        - $ref: "#/components/schemas/ServerIdentity"
+        - type: object
+          properties:
+            title: {type: string}
+            description: {type: string}
+            remotes:
+              type: array
+              items:
+                type: object
+                required: [type, url]
+                properties:
+                  type: {type: string}
+                  url: {type: string}
+                  headers: {type: array, items: {type: object}}
+                  variables: {type: object, additionalProperties: {type: object}}
+            packages:
+              type: array
+              items:
+                type: object
+                required: [registryType, identifier, transport]
+                properties:
+                  registryType: {type: string}
+                  identifier: {type: string}
+                  version: {type: string}
+                  registryBaseUrl: {type: string}
+                  transport:
+                    type: object
+                    required: [type]
+                    properties:
+                      type: {type: string}
+                  runtimeArguments: {type: array, items: {type: object}}
+                  packageArguments: {type: array, items: {type: object}}
+                  environmentVariables: {type: array, items: {type: object}}

@@ -831,7 +831,7 @@ sequenceDiagram
   S->>D: Acquire package lease, verify editor lock and draft base
   S->>D: Persist pending journal with before and after bytes
   S->>D: Stage files, manifest and provenance
-  S->>D: Publish and verify complete tree digest
+  S->>D: Publish journaled paths and compute the resulting draft digest
   S->>D: Persist applied receipt, remove pending and release lease
   S-->>E: Applied receipt with draft digest
 ```

@@ -338,7 +338,13 @@ paths:
     post:
       operationId: previewDraftCatalog
       summary: Review exact upstream bytes and draft destination
-      description: Requires catalog search permission and the authenticated editor's current draft edit session. Preview resolves only approved sources and binds the exact pin, destination and draft base to the editor and draft. MCP previews list compatible runner adapters for the reviewed transport. Launch also checks runner readiness and host approval.
+      description: |
+        Requires catalog search permission and the authenticated editor's
+        current draft edit session. Preview resolves approved sources and
+        binds the exact pin, destination and draft base to the editor and
+        draft. MCP previews list compatible adapters for the transport. Launch
+        checks runner readiness and host approval. Typed catalog failures
+        expose `StudioCatalogFailureDetails` when available.
       security:
         - sessionCookie: []
       parameters:
@@ -442,6 +448,9 @@ paths:
                       type: string
                       minLength: 1
                       maxLength: 512
+                  migratesLegacyManifest:
+                    type: boolean
+                    description: The reviewed change registers explicit defaults in a legacy package manifest.
                   runnerCompatibility:
                     type: object
                     nullable: true
@@ -488,13 +497,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "422":
-          description: Unsupported source content or configuration. A descriptor with external credential requirements is refused before import.
+          description: Unsupported source content or configuration. Safe names of unsupported requirements are returned when available.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "429":
-          description: Source rate limit
+          description: Source rate limit or draft preview limit
           content:
             application/json:
               schema:
@@ -546,7 +555,12 @@ paths:
     post:
       operationId: applyDraftCatalog
       summary: Apply the reviewed preview under the draft lock
-      description: Requires the current authenticated editor's draft edit session and rechecks source approval. A journalled exact replay returns its prior terminal receipt. An aborted operation requires a new preview and request key.
+      description: |
+        Requires the current authenticated editor's draft edit session and
+        rechecks source approval. An exact replay returns its prior terminal
+        receipt. An aborted operation requires a new preview and request key.
+        Typed catalog failures expose `StudioCatalogFailureDetails` when
+        available. `operation_in_progress` identifies a held package lease.
       security:
         - sessionCookie: []
       parameters:
@@ -855,7 +869,7 @@ paths:
     post:
       operationId: answerLibrarianQuestion
       summary: Submit or replay an answer in the owner’s active conversation
-      description: The authenticated owner answers a question in the current segment. Foreign cards are hidden with 404. A closed or reset question returns 410.
+      description: The authenticated owner answers a question in the current segment. Foreign cards are hidden with 404. A closed or reset question returns 410. Durable acceptance returns 202 even if immediate admission cannot start. An exact replay after confirmed delivery returns 200.
       security:
         - sessionCookie: []
       parameters:
@@ -939,6 +953,12 @@ paths:
           description: The request exceeds 64 KiB of UTF-8 JSON.
         "422":
           description: Invalid UTF-8 JSON or an answer that fails the saved form
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: Librarian data unavailable before durable acceptance
           content:
             application/json:
               schema:
@@ -4432,10 +4452,9 @@ paths:
         the agent `recommended`). Disabling the link cascades `enabled=false` onto
         the agent's `agent_schedules` rows AND revokes live agent tokens.
         Identifiers: `slug` + `agentId` are url-params; `projectId` is server-state
-        (derived from `slug`); body fields are config values, never cross-resource
-        ids — with the single **(Designed)** exception of `contextRepos[].project`,
-        which names sibling project slugs and is therefore authorized at write
-        time (see below).
+        (derived from `slug`). `contextRepos[].project` names sibling projects
+        authorized at write time. `additionalMcpRefs` names connected project
+        MCPs and `expectedInstallId` checks the adopted package revision.
 
         **(Implemented — ADR-156/157)** Two multi-repo axes land on THIS aggregating
         PATCH, in the same server transaction as everything above — never as
@@ -20450,7 +20469,8 @@ paths:
         retargets it; every id in it is visibility-checked against the owner,
         and a foreign or unknown one is refused `404`.
 
-        At most one turn per conversation is `admitted` or `running`; a message
+        At most one turn per conversation is `admitted`, `running` or
+        `awaiting_answer`; a message
         sent while one is active queues in `seq` order (`turn.status: queued`
         with `queuePosition`) and can be withdrawn while queued. A full librarian
         pool (`MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS`) also queues; it never
@@ -20462,7 +20482,9 @@ paths:
         per-user daily turn cap `MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER` is
         spent (`429 BUDGET_EXCEEDED`, `details.reason: librarian_daily_cap`);
         the conversation is `resetting` (`409 CONFLICT`,
-        `details.reason: reset_in_progress`).
+        `details.reason: reset_in_progress`); or the active turn is waiting
+        for the answer to a structured question (`409 CONFLICT`,
+        `details.reason: question_awaiting_answer`).
       operationId: postLibrarianMessage
       requestBody:
         required: true
@@ -20518,12 +20540,13 @@ paths:
   /api/librarian/turns/current/stop:
     post:
       tags: [librarian]
-      summary: (ADR-185 — Designed) Stop the librarian's current response
+      summary: (ADR-185 — Implemented) Stop the librarian's current response
       description: |
-        (Designed — ADR-185, `LCV-08`, `LUI-07`.) "Stop response" — distinct
-        from any run's "Stop run". Cancels the active turn's prompt through the
-        execution host (`BoundClient`), revokes the turn's token, and ends the
-        turn `stopped`; the conversation's run parks. It never cancels a task
+        (Implemented — ADR-185, `LCV-08`, `LUI-07`.) Cancels a running turn's
+        prompt through the execution host (`BoundClient`), revokes the turn's
+        token, and ends the turn `stopped`. An `awaiting_answer` turn stops under
+        the conversation lock and closes its pending card. The conversation's
+        run parks. It never cancels a task
         run and never deletes an operation row: operations the turn already
         admitted settle by reconcile. Queued messages stay queued. No active
         turn → `409 CONFLICT`. Empty body.
@@ -37724,6 +37747,8 @@ components:
         - librarian_disabled
         - librarian_daily_cap
         - message_not_queued
+        - question_awaiting_answer
+        - question_closed
         - idempotency_payload_mismatch
         - duplicate_of_operation
         - target_changed
@@ -37740,6 +37765,40 @@ components:
         - no_active_turn
         - not_found
 
+    StudioCatalogFailureDetails:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum:
+            - approval_revoked
+            - upstream_access_denied
+            - preview_limit_reached
+            - remote_requirements_unsupported
+            - distribution_requirements_unsupported
+            - origin_changed
+            - already_imported
+            - skill_id_exists
+            - mcp_ref_exists
+            - mcp_descriptor_diverged
+            - destination_occupied
+            - request_key_reused
+            - draft_changed
+            - resolutions_required
+        headers: {$ref: "#/components/schemas/StudioCatalogRequirementNames"}
+        urlVariables: {$ref: "#/components/schemas/StudioCatalogRequirementNames"}
+        environmentVariables: {$ref: "#/components/schemas/StudioCatalogRequirementNames"}
+    StudioCatalogRequirementNames:
+      type: object
+      description: Published configuration identifiers without values.
+      required: [names, more]
+      properties:
+        names:
+          type: array
+          maxItems: 8
+          items: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_.-]{0,63}$'}
+        more: {type: boolean}
     MaisterErrorBody:
       type: object
       required: [code, message]
@@ -37805,7 +37864,8 @@ components:
             the discriminator that separates a lock refusal from a stale-CAS
             refusal, since both surface as 409 `CONFLICT`.
             Never a server-only handle. Librarian endpoints use the documented
-            `LibrarianRefusalReason` values where a reason is present.
+            `LibrarianRefusalReason` values where a reason is present. Studio
+            catalog failures can carry `StudioCatalogFailureDetails`.
             (ADR-181 — Implemented) Every run workbench route (the lifecycle routes
             and the git panel's `export-branch`, `sync`, `git-state`,
             `discard-changes`, `pr`, `pr/finalize`, `reattach`) forwards

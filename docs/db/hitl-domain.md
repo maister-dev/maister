@@ -348,7 +348,14 @@ change.
 ## Package and agent delivery
 
 An ordinary Flow question belongs to its exact Run, attempt, turn and epoch.
-`flow_answer_accepted_at` records the authorized answer. `responded_at` records
-delivery proved by the successor prompt. An undelivered question can close
-with `superseded_at` and empty successor fields. The closing transaction also
-system-closes any active assignment. See the [migration sequence and constraints](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions).
+Migration `0373` adds the composite FK `(run_id, flow_node_attempt_id)` to
+`node_attempts(run_id, id)` with `ON DELETE CASCADE`. A partial unique index
+on `(flow_node_attempt_id, schema.flowQuestion.promptOrdinal)` limits the
+attempt to one question per turn. `flow_request_key` and the query's prompt
+owner and token witnesses admit exact replay. `flow_answer_accepted_at` and
+`flow_answer_user_id` record the authorized answer. The user FK uses
+`ON DELETE RESTRICT`. `responded_at` records delivery proved by the successor
+prompt and `flow_reconciled_at` timestamps background recovery attempts. `0374`
+allows an undelivered question to close with `superseded_at` and empty
+successor fields. The closing transaction also system-closes any active
+assignment. See the [detailed row contract](../database-schema.md#hitl_requests).

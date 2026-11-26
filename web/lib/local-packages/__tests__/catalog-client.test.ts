@@ -97,6 +97,20 @@ it("IT-CAT-01 rejects oversized catalog metadata while reading response bytes", 
   expect(pinnedDispatcher).toHaveBeenCalledTimes(1);
 });
 
+it.each([401, 403])(
+  "reports source HTTP %i as public access denial",
+  async (status) => {
+    const wire = response(status, "upstream diagnostic");
+
+    await expect(jsonFromCatalog(catalog)).rejects.toMatchObject({
+      status: 422,
+      code: "CONFIG",
+      details: { reason: "upstream_access_denied" },
+    });
+    wire.assertNoPendingInterceptors();
+  },
+);
+
 it("IT-CAT-01 retries a transient catalog response through a fresh pinned dispatcher", async () => {
   const unavailable = response(503, "unavailable");
   const recovered = response(200, '{"available":true}');

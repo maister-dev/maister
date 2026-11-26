@@ -47,6 +47,8 @@ export type LibrarianTurnFinish = Readonly<{
   parked: boolean;
 }>;
 
+type EndableTurnStatus = "admitted" | "running" | "awaiting_answer";
+
 /** A system line in the conversation: a stable code the panel localizes. */
 export function librarianSystemCode(end: LibrarianTurnEnd): string | null {
   if (end.status === "failed") return `turn_failed:${end.reason}`;
@@ -65,9 +67,8 @@ export async function finishLibrarianTurnInTransaction(
     turnId: string;
     end: LibrarianTurnEnd;
     assignmentId?: string | null;
-    /** A running turn only — the prompt owner's case. A stop also ends an
-     * admitted turn that never started. */
-    fromStatuses?: readonly ("admitted" | "running")[];
+    /** Stop may also end an admitted turn or a turn parked for a private answer. */
+    fromStatuses?: readonly EndableTurnStatus[];
     now?: Date;
   },
 ): Promise<LibrarianTurnFinish | null> {
@@ -93,7 +94,7 @@ export async function finishLibrarianTurnInTransaction(
     .for("update");
   const from = input.fromStatuses ?? ["running"];
 
-  if (!turn || !from.includes(turn.status as "admitted" | "running")) {
+  if (!turn || !from.some((status) => status === turn.status)) {
     log.debug(
       { turnId: input.turnId, status: turn?.status },
       "librarian turn already ended",

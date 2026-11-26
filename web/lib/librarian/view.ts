@@ -669,7 +669,11 @@ async function librarianConversationCommon(
     .where(
       and(
         eq(librarianTurns.conversationId, conversation.id),
-        inArray(librarianTurns.status, ["admitted", "running"]),
+        inArray(librarianTurns.status, [
+          "admitted",
+          "running",
+          "awaiting_answer",
+        ]),
       ),
     )
     .limit(1);

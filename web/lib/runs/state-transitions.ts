@@ -1793,6 +1793,8 @@ export async function crashWaitingOnChildren(
 
     if (rows.length === 0) return false;
 
+    if (rows[0].runKind === "flow")
+      await closeFlowNodeQuestions(tx, runId, "waiting run crashed");
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
     await releaseAssignmentForRun(tx, runId, "crashed");
 

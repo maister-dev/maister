@@ -64,6 +64,7 @@ import {
 import { redactQueryError, queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
 import { createExecutionHosts, mintPlacement } from "@/lib/execution-host";
+import { checkAssignedHostDiagnostics } from "@/lib/execution-host/remote-direct";
 import { localHost } from "@/lib/execution-host/resolver";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
@@ -396,7 +397,7 @@ async function insertCompanyAgentRun(
     throw retryRefusal("retry_runner_changed");
 
   await assertReadOnlySessionEvidence({
-    hosts,
+    checkDiagnostics: () => checkAssignedHostDiagnostics(host, hosts.transport),
     adapterId: resolution.runnerSnapshot.adapter,
     runnerId: resolution.runnerId,
     workspace: definition.workspace,

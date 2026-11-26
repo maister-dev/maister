@@ -33,6 +33,7 @@ import {
   LIBRARIAN_INSTRUCTIONS_VERSION,
   librarianInstructions,
 } from "./instructions";
+import { applyLibrarianPark } from "./park";
 import { privateAnswerContext } from "./questions";
 import { admitLibrarianPrompt, librarianPromptOwners } from "./prompt-owner";
 import {
@@ -96,6 +97,7 @@ type PreparedStart = {
   runId: string;
   assignmentId: string;
   conversationId: string;
+  ownerId: string;
   variant: LibrarianPromptVariant;
   runner: RunnerSnapshot;
   mode: "resume" | "new";
@@ -106,6 +108,7 @@ type PreparedStart = {
   tokenSecret: string | null;
   deadlineAt: Date;
   startAttempt: number;
+  hasUndeliveredAnswer: boolean;
 };
 
 type StartRefusal = { refused: true; reason: string };
@@ -453,6 +456,7 @@ async function prepareStart(
       runId,
       assignmentId: run.assignmentId,
       conversationId: locked.conversation.id,
+      ownerId: ref.userId,
       variant: turn.variant as LibrarianPromptVariant,
       runner,
       mode,
@@ -464,6 +468,7 @@ async function prepareStart(
       tokenSecret: token?.secret ?? null,
       deadlineAt,
       startAttempt: turn.startAttempts + 1,
+      hasUndeliveredAnswer: answeredQuestions.hasUndeliveredAnswer,
     };
   });
 }
@@ -522,10 +527,36 @@ function isResumeRefusal(err: unknown): boolean {
   );
 }
 
+async function deferPrivateAnswerStart(
+  db: Db,
+  prepared: PreparedStart,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const { conversation } = await lockOwnerConversation(tx, prepared.ownerId);
+
+    await assertCurrentStart(
+      tx,
+      prepared.turnId,
+      prepared.startAttempt,
+      prepared.assignmentId,
+    );
+    if (conversation.resetState !== "none") throw new StartSupersededError();
+    const park = await applyLibrarianPark(tx, prepared.runId);
+
+    if (!park.parked || park.assignmentId !== prepared.assignmentId)
+      throw new StartSupersededError();
+    await revokeLibrarianTurnToken(prepared.turnId, tx);
+    await tx
+      .update(librarianTurns)
+      .set({ status: "queued", startLeaseAt: null, deadlineAt: null })
+      .where(eq(librarianTurns.id, prepared.turnId));
+  });
+}
+
 /** ADR-185: runs one admitted turn end to end — context, token, session,
- * prompt — and returns once the turn's owner has applied its outcome. Every
- * failure after `running` ends the turn; a prompt already issued is cancelled
- * first so no agent keeps acting on a turn the conversation gave up on. */
+ * prompt — and returns once the turn's owner has applied its outcome.
+ * A private answer can retry an unavailable host before prompt dispatch.
+ * Other failures end the turn, cancelling a prompt already issued first. */
 export async function startLibrarianTurn(
   turnId: string,
   deps: LibrarianRuntimeDeps = {},
@@ -757,6 +788,30 @@ export async function startLibrarianTurn(
     } catch (cause) {
       if (cause instanceof StartSupersededError) return;
       throw cause;
+    }
+    if (
+      !promptIssued &&
+      prepared.hasUndeliveredAnswer &&
+      prepared.startAttempt < LIBRARIAN_MAX_START_ATTEMPTS &&
+      isMaisterError(err) &&
+      err.code === "EXECUTOR_UNAVAILABLE"
+    ) {
+      try {
+        await deferPrivateAnswerStart(db, prepared);
+        log.warn(
+          {
+            turnId,
+            runId: prepared.runId,
+            startAttempt: prepared.startAttempt,
+            reason: err.details?.reason,
+          },
+          "private answer start deferred until execution host is available",
+        );
+      } catch (cause) {
+        if (!(cause instanceof StartSupersededError)) throw cause;
+      }
+
+      return;
     }
     log.error(
       {

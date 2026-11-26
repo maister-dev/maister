@@ -9383,6 +9383,10 @@ export const projectPackageMcpScopeOverrides = pgTable(
   },
   (t) => ({
     identity: primaryKey({ columns: [t.attachmentId, t.refId] }),
+    refCheck: check(
+      "project_package_mcp_scope_ref_check",
+      sql`length(${t.refId}) BETWEEN 1 AND 128 AND ${t.refId} ~ '^[A-Za-z0-9._-]+$' AND ${t.refId} <> '.' AND position('..' IN ${t.refId}) = 0`,
+    ),
     validScope: check(
       "project_package_mcp_scope_valid",
       sql`${t.scope} IN ('package', 'project')`,

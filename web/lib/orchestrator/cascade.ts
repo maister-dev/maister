@@ -11,6 +11,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { abandonUnlaunchedTasks } from "@/lib/services/tasks";
+import { closeFlowNodeQuestions } from "@/lib/runs/flow-question-lifecycle";
 import { teardownLiveSessionsForRuns } from "@/lib/runs/session-teardown";
 import { revokeOrchestratorRunTokensForRun } from "@/lib/agents/tokens";
 import { supersedeUndispatchedMessageTurns } from "@/lib/agents/turns";
@@ -316,6 +317,7 @@ async function abandonRunSubtree(
               await import("@/lib/waits/close");
 
             await closeConditionWaitsForRun(tx, row.id, "run_abandoned");
+            await closeFlowNodeQuestions(tx, row.id, "parent run stopped");
           }
           await releaseAssignmentForRun(tx, row.id, "abandoned");
           await emitDomainEvent({

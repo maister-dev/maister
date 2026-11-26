@@ -13,6 +13,10 @@ import {
 import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 
 type PrivateQuestion = NonNullable<LibrarianMessageDto["card"]>;
+type AnswerReceipt = {
+  state: "accepted" | "delivered";
+  answer: Record<string, unknown>;
+};
 
 export function LibrarianQuestion({
   card,
@@ -28,11 +32,14 @@ export function LibrarianQuestion({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<AnswerReceipt | null>(null);
+  const state = card.state === "open" ? (receipt?.state ?? "open") : card.state;
+  const shownAnswer = card.state === "open" ? receipt?.answer : card.answer;
   const idPrefix = "private-question-" + card.id;
 
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (busy || card.state !== "open") return;
+    if (busy || state !== "open") return;
     setBusy(true);
     setError(null);
     try {
@@ -88,6 +95,17 @@ export function LibrarianQuestion({
 
         return;
       }
+      const saved = (await response.json()) as {
+        questionId?: unknown;
+        state?: unknown;
+      };
+
+      if (
+        saved.questionId !== card.id ||
+        (saved.state !== "accepted" && saved.state !== "delivered")
+      )
+        throw new Error("Invalid private answer receipt");
+      setReceipt({ state: saved.state, answer });
       await onSubmitted();
     } catch {
       setError(tApiErrors("requestFailed"));
@@ -106,7 +124,7 @@ export function LibrarianQuestion({
       <p className="m-0 font-medium" id={idPrefix}>
         {card.question}
       </p>
-      {card.state === "open" ? (
+      {state === "open" ? (
         <>
           {card.schema.fields.map((field) => (
             <FormFieldControl
@@ -142,9 +160,9 @@ export function LibrarianQuestion({
         </>
       ) : (
         <>
-          {card.answer && (
+          {shownAnswer && (
             <dl>
-              {Object.entries(card.answer).map(([name, value]) => (
+              {Object.entries(shownAnswer).map(([name, value]) => (
                 <div key={name}>
                   <dt>
                     {card.schema.fields.find((field) => field.name === name)
@@ -159,13 +177,13 @@ export function LibrarianQuestion({
           )}
           <span role="status">
             {t(
-              card.state === "accepted"
+              state === "accepted"
                 ? "questionAccepted"
-                : card.state === "delivered"
+                : state === "delivered"
                   ? "questionDelivered"
-                  : card.state === "closed"
-                    ? "questionClosed"
-                    : "questionParking",
+                  : shownAnswer
+                    ? "questionDeliveryUnconfirmed"
+                    : "questionClosed",
             )}
           </span>
         </>

@@ -83,6 +83,8 @@ recovery action and retain diagnostics as described in
 3. After mounting those paths, set `MAISTER_EXECUTION_HOST_SHARED_WORKSPACE=1` and `MAISTER_EXECUTION_HOST_PREFERRED_KEY` on Web to send new default placements to the selected host. Leave the key unset for local placement. Initial private librarian turns use the local supervisor. Preserve the original supervisor state and workspace for interactive checkpoint resume.
 4. On each remote supervisor, set `MAISTER_WORKLOAD_API_BASE_URL` to the Web API origin reachable from the workload. The built-in MAIster MCP uses this route for scoped operations such as asking a human. A locally assigned Run uses the local facade and `MAISTER_API_BASE_URL`.
 
+Runner evidence for strict tools and MCPs and for read-only execution is checked on the selected supervisor when required. Versioned Flow sessions open private adapter configuration directories. For Claude, the supervisor links the operator-managed `.credentials.json`; the user's settings, memory, plugins and skills are outside that directory. Put required skills in packages and configure execution credentials on every eligible host.
+
 ## Prepare the selected MCP servers
 
 HTTP MCP connections originate on the assigned workload. Check its DNS, egress and server-specific environment bindings. For npm/stdio, review the exact distribution in Studio and copy the descriptor SHA-256 from the preview to `MAISTER_MCP_ALLOWED_DIGESTS` on each eligible host. Keep `MAISTER_MCP_CACHE_DIR` on persistent, host-owned storage writable by the supervisor. The host validates the exact tarball and executable on first use and rechecks cached bytes and approval on reuse. A fresh host needs the registry connection for its first install.

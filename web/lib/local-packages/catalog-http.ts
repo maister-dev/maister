@@ -35,12 +35,12 @@ export async function catalogOwner(id: string) {
 export function catalogResponse(error: unknown): NextResponse {
   if (error instanceof CatalogError) {
     log.warn(
-      { status: error.status, code: error.code },
+      { status: error.status, code: error.code, reason: error.details?.reason },
       "Catalog request refused",
     );
 
     return NextResponse.json(
-      { code: error.code, message: error.message },
+      { code: error.code, message: error.message, details: error.details },
       {
         status: error.status,
         headers: error.status === 429 ? { "Retry-After": "60" } : {},

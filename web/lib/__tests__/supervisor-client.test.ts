@@ -29,6 +29,7 @@ import {
   type SupervisorModelCatalogDraft,
 } from "@/lib/supervisor-client";
 import { MaisterError } from "@/lib/errors";
+import * as remoteTls from "@/lib/execution-host/remote-tls";
 
 let fetchSpy: MockInstance<typeof fetch>;
 let undiciFetchSpy: MockInstance<typeof undiciFetch>;
@@ -261,6 +262,30 @@ it("reports an unreadable pinned TLS credential as configuration, before an HTTP
     expect(undiciFetchSpy).not.toHaveBeenCalled();
   } finally {
     vi.unstubAllEnvs();
+  }
+});
+
+it("configures the assigned HTTPS dispatcher with the session create budget", async () => {
+  const endpoint = "https://supervisor.example.invalid";
+  const dispatcher = new Agent();
+  const selected = vi
+    .spyOn(remoteTls, "assignedTlsDispatcher")
+    .mockReturnValue(dispatcher);
+
+  mockLongLivedOnce(
+    new Response(
+      JSON.stringify({ sessionId: "s1", pid: 4242, acpSessionId: "a1" }),
+      { status: 201 },
+    ),
+  );
+
+  try {
+    await callSupervisorAt(endpoint, () =>
+      createSessionEnveloped(validEnvelope, { timeoutMs: 60_000 }),
+    );
+    expect(selected).toHaveBeenCalledWith(endpoint, 60_000);
+  } finally {
+    await dispatcher.close();
   }
 });
 

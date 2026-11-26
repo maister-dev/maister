@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PinnedCatalogSource } from "./catalog-sources";
 import type { CatalogClient } from "./catalog-client";
-import type { SearchResult } from "./catalog-contract";
+import type { CatalogRequirements, SearchResult } from "./catalog-contract";
 
 import { createHash } from "node:crypto";
 
@@ -16,6 +16,10 @@ import {
 } from "../../../runtime/mcp-distribution";
 
 import { CatalogError } from "./catalog-client";
+import {
+  catalogRequirementName,
+  maxCatalogRequirementNames,
+} from "./catalog-contract";
 
 import { isBlockedAddress } from "@/lib/webhooks/destination";
 
@@ -53,9 +57,7 @@ const descriptor = identity.extend({
     .default([]),
 });
 
-const slotName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/);
-const namedSlot = z.object({ name: slotName });
-const maxVisibleSlots = 8;
+const namedSlot = z.object({ name: catalogRequirementName });
 
 function declaredSlotNames(entries: readonly unknown[] = []): string[] {
   return entries.flatMap((entry) => {
@@ -66,22 +68,34 @@ function declaredSlotNames(entries: readonly unknown[] = []): string[] {
 }
 
 /** Only identifiers cross the review boundary. Registry descriptions, defaults and literal endpoints may carry credentials. */
-function requirementSummary(
-  label: string,
+function reviewRequirements(
   names: readonly string[],
   key: (name: string) => string,
-): string {
+): CatalogRequirements | undefined {
   const visible = new Map<string, string>();
 
   for (const name of names) {
-    if (!slotName.safeParse(name).success || visible.has(key(name))) continue;
-    if (visible.size === maxVisibleSlots)
-      return ` ${label} include ${[...visible.values()].join(", ")} and more.`;
+    if (
+      !catalogRequirementName.safeParse(name).success ||
+      visible.has(key(name))
+    )
+      continue;
+    if (visible.size === maxCatalogRequirementNames)
+      return { names: [...visible.values()], more: true };
     visible.set(key(name), name);
   }
 
   return visible.size
-    ? ` ${label} include ${[...visible.values()].join(", ")}.`
+    ? { names: [...visible.values()], more: false }
+    : undefined;
+}
+
+function requirementSummary(
+  label: string,
+  requirements?: CatalogRequirements,
+): string {
+  return requirements
+    ? ` ${label} include ${requirements.names.join(", ")}${requirements.more ? " and more" : ""}.`
     : "";
 }
 
@@ -200,27 +214,30 @@ export async function reviewMcp(
       remote.headers?.length ||
       Object.keys(remote.variables ?? {}).length ||
       /[{}]/.test(remote.url)
-    )
+    ) {
+      const headers = reviewRequirements(
+        declaredSlotNames(remote.headers),
+        (name) => name.toLowerCase(),
+      );
+      const urlVariables = reviewRequirements(
+        [
+          ...Object.keys(remote.variables ?? {}),
+          ...Array.from(
+            remote.url.matchAll(/\{([A-Za-z_][A-Za-z0-9_.-]{0,63})\}/g),
+            (match) => match[1]!,
+          ),
+        ],
+        (name) => name,
+      );
+
       throw new CatalogError(
         422,
         "Only concrete Streamable HTTP endpoints without required credentials are supported." +
-          requirementSummary(
-            "Header names",
-            declaredSlotNames(remote.headers),
-            (name) => name.toLowerCase(),
-          ) +
-          requirementSummary(
-            "URL variables",
-            [
-              ...Object.keys(remote.variables ?? {}),
-              ...Array.from(
-                remote.url.matchAll(/\{([A-Za-z_][A-Za-z0-9_.-]{0,63})\}/g),
-                (match) => match[1]!,
-              ),
-            ],
-            (name) => name,
-          ),
+          requirementSummary("Header names", headers) +
+          requirementSummary("URL variables", urlVariables),
+        { reason: "remote_requirements_unsupported", headers, urlVariables },
       );
+    }
     if (!URL.canParse(remote.url))
       throw new CatalogError(422, "Invalid MCP endpoint");
     const url = new URL(remote.url);
@@ -264,16 +281,19 @@ export async function reviewMcp(
     pkg.runtimeArguments?.length ||
     pkg.packageArguments?.length ||
     pkg.environmentVariables?.length
-  )
+  ) {
+    const environmentVariables = reviewRequirements(
+      declaredSlotNames(pkg.environmentVariables),
+      (name) => name,
+    );
+
     throw new CatalogError(
       422,
       "This distribution requires unsupported installation or configuration." +
-        requirementSummary(
-          "Environment variables",
-          declaredSlotNames(pkg.environmentVariables),
-          (name) => name,
-        ),
+        requirementSummary("Environment variables", environmentVariables),
+      { reason: "distribution_requirements_unsupported", environmentVariables },
     );
+  }
   const metadata = z
     .object({
       name: z.string(),
