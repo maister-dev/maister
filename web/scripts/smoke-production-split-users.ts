@@ -1264,11 +1264,7 @@ ${adapterScript}EOF
     assert(Number.isSafeInteger(processGroup) && processGroup > 1);
     await inContainer(primary.user, ["kill", "-0", String(pid)]);
     await page.goto(`/runs/${stoppedRunId}`);
-    await page
-      .getByRole("main")
-      .getByTestId("workbench-lifecycle-actions")
-      .getByRole("button", { name: "Stop", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Stop run", exact: true }).click();
     const stopResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === `/api/runs/${stoppedRunId}/stop` &&
