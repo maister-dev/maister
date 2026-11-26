@@ -1,11 +1,10 @@
-// Task 5 (TDD): contract tests for `web/lib/review-comments/anchor.ts` — pure
-// anchor extraction (POST-time) + placement matching (GET-time) over the
-// server-prepared diff (ADR-072, docs/system-analytics/review-comments.md).
+// Contract tests for `web/lib/review-comments/anchor.ts` — pure anchor
+// extraction (POST-time) + placement matching (GET-time) over `DiffLineIndex`
+// (`parseDiffLineIndex`, zero Shiki WASM) (ADR-072,
+// docs/system-analytics/review-comments.md).
 //
 // Fixtures are realistic raw unified diffs pushed through the REAL production
-// parse path (`prepareDiff` -> @git-diff-view/core), never hand-mocked parsed
-// structures — the anchor source must be exactly what the diff view renders
-// (`components/workbench/diff-view.tsx` hydrates the same bundles).
+// parse path (`parseDiffLineIndex`), never hand-mocked parsed structures.
 //
 // Semantics pinned here:
 //   - `side`: "old" = base half, "new" = branch half; `line` is the 1-based
@@ -20,7 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { prepareDiff } from "@/lib/diff/prepare";
+import { parseDiffLineIndex } from "@/lib/diff/line-index";
 import {
   computePlacement,
   extractAnchorContent,
@@ -152,11 +151,11 @@ const LF_DIFF = withFinalNewline([
 ]);
 
 describe("extractAnchorContent — POST-time extraction", () => {
-  it("extracts an added line on the new side", async () => {
-    const prepared = await prepareDiff(BASE_DIFF);
+  it("extracts an added line on the new side", () => {
+    const indexed = parseDiffLineIndex(BASE_DIFF);
 
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 11,
@@ -164,11 +163,11 @@ describe("extractAnchorContent — POST-time extraction", () => {
     ).toEqual({ ok: true, lineContent: "const added = 2;" });
   });
 
-  it("extracts a deleted line on the old side", async () => {
-    const prepared = await prepareDiff(BASE_DIFF);
+  it("extracts a deleted line on the old side", () => {
+    const indexed = parseDiffLineIndex(BASE_DIFF);
 
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "old",
         line: 11,
@@ -176,18 +175,18 @@ describe("extractAnchorContent — POST-time extraction", () => {
     ).toEqual({ ok: true, lineContent: "const removed = 2;" });
   });
 
-  it("extracts a context line from EITHER side, with per-side line numbers", async () => {
-    const prepared = await prepareDiff(BASE_DIFF);
+  it("extracts a context line from EITHER side, with per-side line numbers", () => {
+    const indexed = parseDiffLineIndex(BASE_DIFF);
 
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "old",
         line: 10,
       }),
     ).toEqual({ ok: true, lineContent: "const keep = 1;" });
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 10,
@@ -196,14 +195,14 @@ describe("extractAnchorContent — POST-time extraction", () => {
 
     // The trailing context line shifted: old 12 ≡ new 13.
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "old",
         line: 12,
       }),
     ).toEqual({ ok: true, lineContent: "const tail = 3;" });
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 13,
@@ -211,11 +210,11 @@ describe("extractAnchorContent — POST-time extraction", () => {
     ).toEqual({ ok: true, lineContent: "const tail = 3;" });
   });
 
-  it("extracts the empty string for an added blank line (legit content)", async () => {
-    const prepared = await prepareDiff(BASE_DIFF);
+  it("extracts the empty string for an added blank line (legit content)", () => {
+    const indexed = parseDiffLineIndex(BASE_DIFF);
 
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 12,
@@ -223,18 +222,18 @@ describe("extractAnchorContent — POST-time extraction", () => {
     ).toEqual({ ok: true, lineContent: "" });
   });
 
-  it("preserves trailing whitespace byte-exactly", async () => {
-    const prepared = await prepareDiff(PAD_DIFF);
+  it("preserves trailing whitespace byte-exactly", () => {
+    const indexed = parseDiffLineIndex(PAD_DIFF);
 
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "pad.ts",
         side: "new",
         line: 1,
       }),
     ).toEqual({ ok: true, lineContent: "const p = 1;  " });
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "pad.ts",
         side: "old",
         line: 1,
@@ -242,18 +241,18 @@ describe("extractAnchorContent — POST-time extraction", () => {
     ).toEqual({ ok: true, lineContent: "const p = 1;" });
   });
 
-  it("preserves the CR of a CRLF file (strips only the trailing LF)", async () => {
-    const prepared = await prepareDiff(CRLF_DIFF);
+  it("preserves the CR of a CRLF file (strips only the trailing LF)", () => {
+    const indexed = parseDiffLineIndex(CRLF_DIFF);
 
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "win.txt",
         side: "old",
         line: 1,
       }),
     ).toEqual({ ok: true, lineContent: "old win\r" });
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "win.txt",
         side: "new",
         line: 1,
@@ -261,12 +260,12 @@ describe("extractAnchorContent — POST-time extraction", () => {
     ).toEqual({ ok: true, lineContent: "new win\r" });
   });
 
-  it("reports line_absent when the line is not on that side of the diff", async () => {
-    const prepared = await prepareDiff(BASE_DIFF);
+  it("reports line_absent when the line is not on that side of the diff", () => {
+    const indexed = parseDiffLineIndex(BASE_DIFF);
 
     // Beyond the hunk.
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 999,
@@ -275,7 +274,7 @@ describe("extractAnchorContent — POST-time extraction", () => {
 
     // new 13 exists (context), but old 13 does not.
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "old",
         line: 13,
@@ -284,7 +283,7 @@ describe("extractAnchorContent — POST-time extraction", () => {
 
     // An added file has no old side at all.
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "notes/readme.md",
         side: "old",
         line: 1,
@@ -292,11 +291,11 @@ describe("extractAnchorContent — POST-time extraction", () => {
     ).toEqual({ ok: false, reason: "line_absent" });
   });
 
-  it("reports file_absent when the path is not in the parsed diff", async () => {
-    const prepared = await prepareDiff(BASE_DIFF);
+  it("reports file_absent when the path is not in the parsed diff", () => {
+    const indexed = parseDiffLineIndex(BASE_DIFF);
 
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/missing.ts",
         side: "new",
         line: 1,
@@ -304,11 +303,11 @@ describe("extractAnchorContent — POST-time extraction", () => {
     ).toEqual({ ok: false, reason: "file_absent" });
   });
 
-  it("refuses a truncated diff even when the position is in the surviving prefix", async () => {
-    const prepared = await prepareDiff(BASE_DIFF, true);
+  it("refuses a truncated diff even when the position is in the surviving prefix", () => {
+    const indexed = parseDiffLineIndex(BASE_DIFF, true);
 
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 11,
@@ -318,11 +317,11 @@ describe("extractAnchorContent — POST-time extraction", () => {
 });
 
 describe("computePlacement — GET-time placement", () => {
-  it("is inline when the current diff is identical (new, old, and context anchors)", async () => {
-    const prepared = await prepareDiff(BASE_DIFF);
+  it("is inline when the current diff is identical (new, old, and context anchors)", () => {
+    const indexed = parseDiffLineIndex(BASE_DIFF);
 
     expect(
-      computePlacement(prepared, {
+      computePlacement(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 11,
@@ -330,7 +329,7 @@ describe("computePlacement — GET-time placement", () => {
       }),
     ).toBe("inline");
     expect(
-      computePlacement(prepared, {
+      computePlacement(indexed, {
         filePath: "src/calc.ts",
         side: "old",
         line: 11,
@@ -338,7 +337,7 @@ describe("computePlacement — GET-time placement", () => {
       }),
     ).toBe("inline");
     expect(
-      computePlacement(prepared, {
+      computePlacement(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 13,
@@ -347,11 +346,11 @@ describe("computePlacement — GET-time placement", () => {
     ).toBe("inline");
   });
 
-  it("is outdated when the content at the position was edited", async () => {
-    const prepared = await prepareDiff(EDITED_DIFF);
+  it("is outdated when the content at the position was edited", () => {
+    const indexed = parseDiffLineIndex(EDITED_DIFF);
 
     expect(
-      computePlacement(prepared, {
+      computePlacement(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 11,
@@ -361,7 +360,7 @@ describe("computePlacement — GET-time placement", () => {
 
     // The old half did not change — its anchor stays inline.
     expect(
-      computePlacement(prepared, {
+      computePlacement(indexed, {
         filePath: "src/calc.ts",
         side: "old",
         line: 11,
@@ -370,12 +369,12 @@ describe("computePlacement — GET-time placement", () => {
     ).toBe("inline");
   });
 
-  it("is outdated when the content moved down a line (no fuzzy re-anchoring)", async () => {
-    const prepared = await prepareDiff(SHIFTED_DIFF);
+  it("is outdated when the content moved down a line (no fuzzy re-anchoring)", () => {
+    const indexed = parseDiffLineIndex(SHIFTED_DIFF);
 
     // Sanity: the stored content DOES exist one line below in the current diff…
     expect(
-      extractAnchorContent(prepared, {
+      extractAnchorContent(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 12,
@@ -384,7 +383,7 @@ describe("computePlacement — GET-time placement", () => {
 
     // …yet the anchor matches positionally only: new 11 now holds other text.
     expect(
-      computePlacement(prepared, {
+      computePlacement(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 11,
@@ -393,11 +392,11 @@ describe("computePlacement — GET-time placement", () => {
     ).toBe("outdated");
   });
 
-  it("is outdated when the anchored line left the diff (hunk moved away)", async () => {
-    const prepared = await prepareDiff(LINE_GONE_DIFF);
+  it("is outdated when the anchored line left the diff (hunk moved away)", () => {
+    const indexed = parseDiffLineIndex(LINE_GONE_DIFF);
 
     expect(
-      computePlacement(prepared, {
+      computePlacement(indexed, {
         filePath: "src/calc.ts",
         side: "new",
         line: 11,
@@ -406,7 +405,7 @@ describe("computePlacement — GET-time placement", () => {
     ).toBe("outdated");
   });
 
-  it("is outdated when the file disappears from the diff (incl. empty diff)", async () => {
+  it("is outdated when the file disappears from the diff (incl. empty diff)", () => {
     const anchor = {
       filePath: "src/calc.ts",
       side: "new",
@@ -414,15 +413,15 @@ describe("computePlacement — GET-time placement", () => {
       lineContent: "const added = 2;",
     } as const;
 
-    expect(computePlacement(await prepareDiff(FILE_GONE_DIFF), anchor)).toBe(
+    expect(computePlacement(parseDiffLineIndex(FILE_GONE_DIFF), anchor)).toBe(
       "outdated",
     );
-    expect(computePlacement(await prepareDiff(""), anchor)).toBe("outdated");
+    expect(computePlacement(parseDiffLineIndex(""), anchor)).toBe("outdated");
   });
 
-  it("matches empty-string content exactly (not treated as absent)", async () => {
+  it("matches empty-string content exactly (not treated as absent)", () => {
     expect(
-      computePlacement(await prepareDiff(BASE_DIFF), {
+      computePlacement(parseDiffLineIndex(BASE_DIFF), {
         filePath: "src/calc.ts",
         side: "new",
         line: 12,
@@ -432,7 +431,7 @@ describe("computePlacement — GET-time placement", () => {
 
     // In SHIFTED_DIFF, new 12 now carries real content — the "" anchor is stale.
     expect(
-      computePlacement(await prepareDiff(SHIFTED_DIFF), {
+      computePlacement(parseDiffLineIndex(SHIFTED_DIFF), {
         filePath: "src/calc.ts",
         side: "new",
         line: 12,
@@ -441,11 +440,11 @@ describe("computePlacement — GET-time placement", () => {
     ).toBe("outdated");
   });
 
-  it("treats trailing whitespace as significant (byte-exact match)", async () => {
-    const prepared = await prepareDiff(PAD_DIFF);
+  it("treats trailing whitespace as significant (byte-exact match)", () => {
+    const indexed = parseDiffLineIndex(PAD_DIFF);
 
     expect(
-      computePlacement(prepared, {
+      computePlacement(indexed, {
         filePath: "pad.ts",
         side: "new",
         line: 1,
@@ -453,7 +452,7 @@ describe("computePlacement — GET-time placement", () => {
       }),
     ).toBe("outdated");
     expect(
-      computePlacement(prepared, {
+      computePlacement(indexed, {
         filePath: "pad.ts",
         side: "new",
         line: 1,
@@ -462,7 +461,7 @@ describe("computePlacement — GET-time placement", () => {
     ).toBe("inline");
   });
 
-  it("treats a CR as significant (CRLF vs LF never cross-match)", async () => {
+  it("treats a CR as significant (CRLF vs LF never cross-match)", () => {
     const crlfAnchor = {
       filePath: "win.txt",
       side: "new",
@@ -470,18 +469,18 @@ describe("computePlacement — GET-time placement", () => {
       lineContent: "new win\r",
     } as const;
 
-    expect(computePlacement(await prepareDiff(CRLF_DIFF), crlfAnchor)).toBe(
+    expect(computePlacement(parseDiffLineIndex(CRLF_DIFF), crlfAnchor)).toBe(
       "inline",
     );
-    expect(computePlacement(await prepareDiff(LF_DIFF), crlfAnchor)).toBe(
+    expect(computePlacement(parseDiffLineIndex(LF_DIFF), crlfAnchor)).toBe(
       "outdated",
     );
   });
 
-  it("matches against the surviving prefix of a truncated diff (GET still works)", async () => {
+  it("matches against the surviving prefix of a truncated diff (GET still works)", () => {
     // File still inside the prefix + content matches -> inline.
     expect(
-      computePlacement(await prepareDiff(BASE_DIFF, true), {
+      computePlacement(parseDiffLineIndex(BASE_DIFF, true), {
         filePath: "src/calc.ts",
         side: "new",
         line: 11,
@@ -491,7 +490,7 @@ describe("computePlacement — GET-time placement", () => {
 
     // File fell past the bound -> outdated.
     expect(
-      computePlacement(await prepareDiff(FILE_GONE_DIFF, true), {
+      computePlacement(parseDiffLineIndex(FILE_GONE_DIFF, true), {
         filePath: "src/calc.ts",
         side: "new",
         line: 11,

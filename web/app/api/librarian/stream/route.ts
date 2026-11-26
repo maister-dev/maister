@@ -27,14 +27,13 @@ export async function GET(request: NextRequest): Promise<Response> {
       request.nextUrl.searchParams.get("lastEventId"),
   );
   const abort = new AbortController();
-
-  request.signal.addEventListener("abort", () => abort.abort(), { once: true });
+  const signal = AbortSignal.any([request.signal, abort.signal]);
   const encoder = new TextEncoder();
   const frames = librarianStreamFrames({
     db: getDb() as unknown as Db,
     ownerId,
     cursor,
-    signal: abort.signal,
+    signal,
   });
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {

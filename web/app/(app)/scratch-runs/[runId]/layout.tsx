@@ -11,6 +11,7 @@ import {
 } from "@/components/runs/run-inspector";
 import { RunOutcome } from "@/components/runs/run-outcome";
 import { RunShell, type RunShellLabels } from "@/components/runs/run-shell";
+import { RunStreamProvider } from "@/components/runs/run-stream-provider";
 import { ScratchConversation } from "@/components/scratch/scratch-conversation";
 import { ScratchInspectorActions } from "@/components/scratch/scratch-inspector-actions";
 import FileTree, {
@@ -26,6 +27,7 @@ import { formatRunWorktreePath } from "@/lib/project-path-display";
 import { getRunCostSummary, getRunDetail } from "@/lib/queries/run";
 import { getRunChangeSummary } from "@/lib/runs/change-summary";
 import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
+import { formatRunDuration } from "@/lib/runs/live-inspector";
 import {
   buildScratchSessionFlowSummary,
   getScratchSessionSummary,
@@ -45,18 +47,6 @@ function unavailableChangeSummary(reason: string): RunInspectorChangeSummary {
     unavailableReason: reason,
     files: [],
   };
-}
-
-function formatDuration(durationMs: number | null): string {
-  if (durationMs === null) return "-";
-  const seconds = Math.round(durationMs / 1000);
-
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-
-  if (minutes < 60) return `${minutes}m`;
-
-  return `${Math.round(minutes / 60)}h`;
 }
 
 // The persistent scratch-run detail boundary (M35 T3.1) — mirrors the
@@ -178,8 +168,7 @@ export default async function ScratchRunDetailLayout({
   );
   const wallDurationMs = detail.endedAt
     ? Math.max(0, detail.endedAt.getTime() - detail.startedAt.getTime())
-    : // eslint-disable-next-line react-hooks/purity -- async Server Component: one render per request reads the request clock.
-      Math.max(0, Date.now() - detail.startedAt.getTime());
+    : Math.max(0, Date.now() - detail.startedAt.getTime());
   const costLabels = {
     tokenTotal: t("tokenTotal"),
     inputTokens: t("inputTokens"),
@@ -206,7 +195,7 @@ export default async function ScratchRunDetailLayout({
     { label: t("baseBranch"), value: baseBranch },
     { label: t("targetBranch"), value: targetBranch },
     ...costFacts,
-    { label: wallClockLabel, value: formatDuration(wallDurationMs) },
+    { label: wallClockLabel, value: formatRunDuration(wallDurationMs) },
     {
       label: t("inspectorWorktree"),
       value: detail.pruned
@@ -227,79 +216,83 @@ export default async function ScratchRunDetailLayout({
   const shellSubtitle = `${t("eyebrow")} / ${detail.projectSlug}`;
 
   return (
-    <RunShell
-      branch={detail.branch}
-      changeScope="run"
-      changeSummary={changeSummary}
-      inspector={
-        <div className="flex flex-col gap-3">
-          <LiveRunInspector
-            actions={inspectorActions}
-            changeScope="run"
-            changeSummary={changeSummary}
-            facts={inspectorFacts}
-            flowSummary={sessionSummary}
-            labels={inspectorLabels}
-            liveCost={{ initial: costSummary, labels: costLabels, locale }}
-            liveWallClock={{
-              startedAtMs: detail.startedAt.getTime(),
-              endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,
-              label: wallClockLabel,
+    <RunStreamProvider runId={detail.runId} runStatus={detail.status}>
+      <RunShell
+        branch={detail.branch}
+        changeScope="run"
+        changeSummary={changeSummary}
+        inspector={
+          <div className="flex flex-col gap-3">
+            <LiveRunInspector
+              actions={inspectorActions}
+              changeScope="run"
+              changeSummary={changeSummary}
+              facts={inspectorFacts}
+              flowSummary={sessionSummary}
+              labels={inspectorLabels}
+              liveCost={{ initial: costSummary, labels: costLabels, locale }}
+              liveWallClock={{
+                startedAtMs: detail.startedAt.getTime(),
+                endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,
+                label: wallClockLabel,
+              }}
+              pathname={`/scratch-runs/${detail.runId}`}
+              runId={detail.runId}
+              runStatus={detail.status}
+            />
+            <ScratchInspectorActions
+              lifecycleActions={detail.lifecycleActions}
+              promoteTargetBranch={promoteTargetBranch}
+              runId={detail.runId}
+            />
+          </div>
+        }
+        labels={shellLabels}
+        outcome={
+          <RunOutcome
+            heading={t("outcomeHeading")}
+            next={{
+              label: t("scratchOpenConversation"),
+              href: "#scratch-conversation",
             }}
-            pathname={`/scratch-runs/${detail.runId}`}
-            runId={detail.runId}
-            runStatus={detail.status}
+            noAction={t("outcomeNoAction")}
+            summary={t("scratchOutcome")}
           />
-          <ScratchInspectorActions
-            lifecycleActions={detail.lifecycleActions}
-            promoteTargetBranch={promoteTargetBranch}
-            runId={detail.runId}
-          />
-        </div>
-      }
-      labels={shellLabels}
-      outcome={
-        <RunOutcome
-          heading={t("outcomeHeading")}
-          next={{
-            label: t("scratchOpenConversation"),
-            href: "#scratch-conversation",
-          }}
-          noAction={t("outcomeNoAction")}
-          summary={t("scratchOutcome")}
-        />
-      }
-      projectHref={`/projects/${detail.projectSlug}`}
-      projectLabel={t("backToBoard")}
-      status={detail.status}
-      subtitle={shellSubtitle}
-      targetBranch={targetBranch}
-      title={session?.name ?? detail.branch}
-    >
-      <div className="grid min-w-0 max-w-full gap-5">
-        <div id="scratch-conversation" tabIndex={-1}>
-          <ScratchConversation
-            canAct={role === "owner" || role === "admin" || role === "member"}
-            runId={detail.runId}
-          />
-        </div>
+        }
+        projectHref={`/projects/${detail.projectSlug}`}
+        projectLabel={t("backToBoard")}
+        status={detail.status}
+        subtitle={shellSubtitle}
+        targetBranch={targetBranch}
+        title={session?.name ?? detail.branch}
+      >
+        <div className="grid min-w-0 max-w-full gap-5">
+          <div id="scratch-conversation" tabIndex={-1}>
+            <ScratchConversation
+              canAct={role === "owner" || role === "admin" || role === "member"}
+              runId={detail.runId}
+            />
+          </div>
 
-        <section className="min-w-0 max-w-full" data-testid="run-workbench">
-          <WorkbenchPanel
-            diff={<RunDiff labels={workbenchDiffLabels} runId={detail.runId} />}
-            filesPane={children}
-            filesTree={
-              <FileTree
-                filesApiBase={`/api/runs/${detail.runId}/files`}
-                labels={workbenchFilesLabels}
-              />
-            }
-            runId={detail.runId}
-            tabLabels={workbenchTabLabels}
-            tabs={["files", "diff"]}
-          />
-        </section>
-      </div>
-    </RunShell>
+          <section className="min-w-0 max-w-full" data-testid="run-workbench">
+            <WorkbenchPanel
+              diff={
+                <RunDiff labels={workbenchDiffLabels} runId={detail.runId} />
+              }
+              filesPane={children}
+              filesTree={
+                <FileTree
+                  filesApiBase={`/api/runs/${detail.runId}/files`}
+                  labels={workbenchFilesLabels}
+                />
+              }
+              runId={detail.runId}
+              tabLabels={workbenchTabLabels}
+              tabs={["files", "diff"]}
+            />
+          </section>
+        </div>
+      </RunShell>
+    </RunStreamProvider>
   );
 }

@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import type { UseRunStreamResult } from "@/lib/use-run-stream";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useMemo } from "react";
 
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import { useRunStream } from "@/lib/use-run-stream";
@@ -44,8 +44,10 @@ export function RunStreamValueProvider({
   stream: UseRunStreamResult;
   children: ReactNode;
 }): ReactNode {
+  const value = useMemo(() => ({ runId, stream }), [runId, stream]);
+
   return (
-    <RunStreamContext.Provider value={{ runId, stream }}>
+    <RunStreamContext.Provider value={value}>
       {children}
     </RunStreamContext.Provider>
   );

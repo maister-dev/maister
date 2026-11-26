@@ -4,7 +4,7 @@ import type { DiffFileEntry } from "@/lib/worktree";
 
 import { createHash } from "node:crypto";
 
-import { filterDiffByPath } from "@/lib/diff/prepare";
+import { filterDiffByPath } from "@/lib/diff/sections";
 import {
   filterReviewableChangeEntries,
   isReviewableChangeEntry,

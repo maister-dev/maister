@@ -1,17 +1,19 @@
 "use client";
 
 import type { RunStreamLivenessLabels } from "@/components/feedback/run-stream-liveness";
+import type { AttentionStreamSince } from "@/lib/use-attention-stream";
 import type { ReactElement } from "react";
 
-import { useEffect, useRef, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import { useAttentionReviewWatch } from "@/components/attention/attention-review-watch";
+import { useSharedAttentionStream } from "@/components/attention/attention-stream-provider";
+import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import {
-  useAttentionStream,
-  type AttentionStreamSince,
-} from "@/lib/use-attention-stream";
+  isDocumentHidden,
+  subscribeDocumentVisibility,
+} from "@/lib/sse-visibility";
 
 /**
  * Keeps the app shell and current page fresh from the attention stream.
@@ -33,28 +35,47 @@ export function AttentionLiveRefresh({
   const router = useRouter();
   const watch = useAttentionReviewWatch();
   const invalidateReview = watch?.invalidate;
-  const { shellTick, liveness, reconnect, reviewResync } = useAttentionStream(
-    since,
-    watch?.selection,
-  );
+  const { shellTick, liveness, reconnect, reviewResync } =
+    useSharedAttentionStream(since, watch?.selection);
   const seenRef = useRef(0);
   const [refreshing, startRefresh] = useTransition();
+  const [visibilityRev, setVisibilityRev] = useState(0);
   const seenReviewResync = useRef(0);
 
-  useEffect(() => {
-    if (seenReviewResync.current === reviewResync) return;
-    seenReviewResync.current = reviewResync;
-    invalidateReview?.();
-  }, [invalidateReview, reviewResync]);
+  useEffect(
+    () =>
+      subscribeDocumentVisibility({
+        onHide: () => {},
+        onShow: () => {
+          setVisibilityRev((rev) => rev + 1);
+        },
+      }),
+    [],
+  );
 
   useEffect(() => {
-    if (refreshing || shellTick === 0 || shellTick === seenRef.current) return;
+    if (isDocumentHidden() || seenReviewResync.current === reviewResync) {
+      return;
+    }
+    seenReviewResync.current = reviewResync;
+    invalidateReview?.();
+  }, [invalidateReview, reviewResync, visibilityRev]);
+
+  useEffect(() => {
+    if (
+      isDocumentHidden() ||
+      refreshing ||
+      shellTick === 0 ||
+      shellTick === seenRef.current
+    ) {
+      return;
+    }
     seenRef.current = shellTick;
     // Every tick means something the page shows moved since the render (D7)
     // or since the last tick — including while disconnected.
     // Keep the latest tick pending until React commits the current server render.
     startRefresh(() => router.refresh());
-  }, [refreshing, router, shellTick]);
+  }, [refreshing, router, shellTick, visibilityRev]);
 
   return (
     <RunStreamLiveness

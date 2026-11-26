@@ -5,8 +5,70 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+type RecordedGitCall = {
+  api: "execFile" | "spawn";
+  args: string[];
+};
+
+const { recordedGitCalls } = vi.hoisted(() => ({
+  recordedGitCalls: [] as RecordedGitCall[],
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  const { promisify: nodePromisify } = await import("node:util");
+
+  const record = (
+    api: "execFile" | "spawn",
+    file: unknown,
+    args: unknown,
+  ): void => {
+    if (file === "git" && Array.isArray(args)) {
+      recordedGitCalls.push({ api, args: args.map(String) });
+    }
+  };
+
+  const wrappedExecFile = ((
+    ...callArgs: Parameters<typeof actual.execFile>
+  ) => {
+    record("execFile", callArgs[0], callArgs[1]);
+
+    return actual.execFile(...callArgs);
+  }) as typeof actual.execFile;
+
+  const customPromisify = (
+    actual.execFile as unknown as Record<
+      symbol,
+      (...args: unknown[]) => unknown
+    >
+  )[nodePromisify.custom];
+
+  if (customPromisify) {
+    Object.defineProperty(wrappedExecFile, nodePromisify.custom, {
+      value: (...callArgs: unknown[]) => {
+        record("execFile", callArgs[0], callArgs[1]);
+
+        return customPromisify(...callArgs);
+      },
+    });
+  }
+
+  const wrappedSpawn = ((...callArgs: Parameters<typeof actual.spawn>) => {
+    record("spawn", callArgs[0], callArgs[1]);
+
+    return actual.spawn(...callArgs);
+  }) as typeof actual.spawn;
+
+  return {
+    ...actual,
+    execFile: wrappedExecFile,
+    spawn: wrappedSpawn,
+  };
+});
+
+import { MaisterError } from "@/lib/errors";
 import {
   clearWorktreeProvenanceNode,
   readWorktreeProvenanceMetadata,
@@ -19,7 +81,13 @@ import {
   branchExists,
   deliveryCommitStats,
   deliveryHistoryStats,
+  diffChangeStats,
+  diffNameStatus,
+  diffRange,
+  diffRangeBounded,
   diffRunWorkspace,
+  diffWorkingTree,
+  diffWorkingTreeChangeStats,
   findTargetMergeByRunId,
   listBranches,
   promoteLocalMerge,
@@ -618,5 +686,393 @@ describe("worktree git helpers", () => {
       worktreePath: wt,
       force: true,
     });
+  });
+});
+
+const FOUR_MIB = 4 * 1024 * 1024;
+
+function fullPatchDiffCalls(): RecordedGitCall[] {
+  return recordedGitCalls.filter(
+    (call) =>
+      call.args.includes("diff") && !call.args.includes("--name-status"),
+  );
+}
+
+describe("single-spawn bounded git diff", () => {
+  it("invokes git diff exactly once per reader and returns truncated: true past 4 MiB", async () => {
+    const baseCommit = await resolveBaseCommit({
+      projectRepoPath: repo,
+      baseRef: "main",
+    });
+    const oversizedPayload = `${"x".repeat(63)}\n`.repeat(70_000); // ~4.48 MiB
+
+    await git(repo, ["checkout", "-b", "huge-diff"]);
+    await writeFile(join(repo, "huge.txt"), oversizedPayload);
+    await git(repo, ["add", "huge.txt"]);
+    await git(repo, ["commit", "-m", "add oversized file"]);
+
+    recordedGitCalls.length = 0;
+    const workspaceDiff = await diffRunWorkspace({
+      projectRepoPath: repo,
+      baseCommit,
+      branch: "huge-diff",
+    });
+    const workspaceDiffCalls = fullPatchDiffCalls();
+
+    expect(workspaceDiff.truncated).toBe(true);
+    expect(Buffer.byteLength(workspaceDiff.text, "utf8")).toBe(FOUR_MIB);
+    expect(workspaceDiff.text).toContain("diff --git");
+    expect(workspaceDiffCalls).toHaveLength(1);
+    expect(workspaceDiffCalls[0]?.api).toBe("spawn");
+
+    recordedGitCalls.length = 0;
+    const rangeDiff = await diffRange({
+      worktreePath: repo,
+      baseRef: baseCommit,
+      branch: "huge-diff",
+    });
+    const rangeDiffCalls = fullPatchDiffCalls();
+
+    expect(rangeDiff.truncated).toBe(true);
+    expect(Buffer.byteLength(rangeDiff.text, "utf8")).toBe(FOUR_MIB);
+    expect(rangeDiff.text).toContain("diff --git");
+    expect(rangeDiffCalls).toHaveLength(1);
+    expect(rangeDiffCalls[0]?.api).toBe("spawn");
+
+    await writeFile(join(repo, "dirty-huge.txt"), oversizedPayload);
+
+    recordedGitCalls.length = 0;
+    const workingTreeDiff = await diffWorkingTree(repo, "HEAD");
+    const workingTreeDiffCalls = fullPatchDiffCalls();
+
+    expect(workingTreeDiff.truncated).toBe(true);
+    expect(Buffer.byteLength(workingTreeDiff.text, "utf8")).toBe(FOUR_MIB);
+    expect(workingTreeDiff.text).toContain("diff --git");
+    expect(workingTreeDiff.nameStatus).toContainEqual({
+      path: "dirty-huge.txt",
+      status: "A",
+    });
+    expect(workingTreeDiffCalls).toHaveLength(1);
+    expect(workingTreeDiffCalls[0]?.api).toBe("spawn");
+  });
+
+  it("returns truncated: false at the exact 4 MiB boundary in a single spawn", async () => {
+    const baseCommit = await resolveBaseCommit({
+      projectRepoPath: repo,
+      baseRef: "main",
+    });
+
+    await git(repo, ["checkout", "-b", "exact-bound"]);
+    await writeFile(join(repo, "exact.txt"), `${"a".repeat(100)}\n`);
+    await git(repo, ["add", "exact.txt"]);
+    await git(repo, ["commit", "-m", "measure header overhead"]);
+
+    const { stdout: sampleDiff } = await git(repo, [
+      "diff",
+      "--no-color",
+      "--end-of-options",
+      `${baseCommit}..exact-bound`,
+    ]);
+    const overhead = Buffer.byteLength(sampleDiff, "utf8") - 100;
+    const exactPayloadLen = FOUR_MIB - overhead;
+
+    await writeFile(
+      join(repo, "exact.txt"),
+      `${"a".repeat(exactPayloadLen)}\n`,
+    );
+    await git(repo, ["commit", "--amend", "-am", "exact 4 MiB diff"]);
+
+    recordedGitCalls.length = 0;
+    const workspaceDiff = await diffRunWorkspace({
+      projectRepoPath: repo,
+      baseCommit,
+      branch: "exact-bound",
+    });
+    const workspaceDiffCalls = fullPatchDiffCalls();
+
+    expect(workspaceDiff.truncated).toBe(false);
+    expect(Buffer.byteLength(workspaceDiff.text, "utf8")).toBe(FOUR_MIB);
+    expect(workspaceDiffCalls).toHaveLength(1);
+    expect(workspaceDiffCalls[0]?.api).toBe("spawn");
+
+    recordedGitCalls.length = 0;
+    const rangeDiff = await diffRange({
+      worktreePath: repo,
+      baseRef: baseCommit,
+      branch: "exact-bound",
+    });
+    const rangeDiffCalls = fullPatchDiffCalls();
+
+    expect(rangeDiff.truncated).toBe(false);
+    expect(Buffer.byteLength(rangeDiff.text, "utf8")).toBe(FOUR_MIB);
+    expect(rangeDiffCalls).toHaveLength(1);
+    expect(rangeDiffCalls[0]?.api).toBe("spawn");
+  });
+
+  it("throws MaisterError(CONFLICT) with stderr context on genuine non-zero git failures", async () => {
+    const missingCommit = "f".repeat(40);
+
+    recordedGitCalls.length = 0;
+    const wsError = await diffRunWorkspace({
+      projectRepoPath: repo,
+      baseCommit: missingCommit,
+      branch: "main",
+    }).catch((err: unknown) => err);
+
+    expect(wsError).toBeInstanceOf(MaisterError);
+    expect(wsError).toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(/fatal:|bad revision|Invalid revision/i),
+    });
+    expect(fullPatchDiffCalls()).toHaveLength(1);
+
+    recordedGitCalls.length = 0;
+    const rangeError = await diffRange({
+      worktreePath: repo,
+      baseRef: "main",
+      branch: "nonexistent-branch",
+    }).catch((err: unknown) => err);
+
+    expect(rangeError).toBeInstanceOf(MaisterError);
+    expect(rangeError).toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(
+        /fatal:|ambiguous argument|unknown revision/i,
+      ),
+    });
+    expect(fullPatchDiffCalls()).toHaveLength(1);
+
+    recordedGitCalls.length = 0;
+    const wtError = await diffWorkingTree(repo, "nonexistent-ref").catch(
+      (err: unknown) => err,
+    );
+
+    expect(wtError).toBeInstanceOf(MaisterError);
+    expect(wtError).toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(
+        /fatal:|ambiguous argument|unknown revision/i,
+      ),
+    });
+    expect(fullPatchDiffCalls()).toHaveLength(1);
+  });
+
+  it("standardizes --no-color --no-ext-diff --end-of-options across diff readers even with color.diff=always and diff.external", async () => {
+    const baseCommit = await resolveBaseCommit({
+      projectRepoPath: repo,
+      baseRef: "main",
+    });
+
+    await git(repo, ["checkout", "-b", "std-flags"]);
+    await writeFile(join(repo, "flags.txt"), "hello world\n");
+    await git(repo, ["add", "flags.txt"]);
+    await git(repo, ["commit", "-m", "add flags.txt"]);
+    await writeFile(join(repo, "flags.txt"), "hello world updated\n");
+
+    await git(repo, ["config", "color.diff", "always"]);
+    await git(repo, ["config", "diff.external", "false"]);
+
+    recordedGitCalls.length = 0;
+    const wsDiff = await diffRunWorkspace({
+      projectRepoPath: repo,
+      baseCommit,
+      branch: "std-flags",
+    });
+    const rangeDiff = await diffRange({
+      worktreePath: repo,
+      baseRef: baseCommit,
+      branch: "std-flags",
+    });
+    const wtDiff = await diffWorkingTree(repo, "HEAD");
+
+    const calls = fullPatchDiffCalls();
+
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      const diffIdx = call.args.indexOf("diff");
+
+      expect(call.args.slice(diffIdx, diffIdx + 5)).toEqual([
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--end-of-options",
+      ]);
+    }
+
+    // No ANSI escape codes despite color.diff=always, and identical patch between
+    // diffRunWorkspace and diffRange (shared sha: cache coherence).
+    expect(wsDiff.text).not.toMatch(/\u001b\[/);
+    expect(rangeDiff.text).not.toMatch(/\u001b\[/);
+    expect(wtDiff.text).not.toMatch(/\u001b\[/);
+    expect(wsDiff.text).toBe(rangeDiff.text);
+    expect(wtDiff.text).toContain("+hello world updated");
+  });
+
+  it("handles spaced paths, Cyrillic filenames, and directory-move renames via -z across diffNameStatus, diffChangeStats, diffWorkingTree, and diffWorkingTreeChangeStats", async () => {
+    await mkdir(join(repo, "dir"), { recursive: true });
+    await mkdir(join(repo, "src"), { recursive: true });
+    await writeFile(
+      join(repo, "foo.ts"),
+      "export const a = 1;\nexport const b = 2;\nexport const c = 3;\n",
+    );
+    await writeFile(
+      join(repo, "src", "bar.ts"),
+      "export const x = 1;\nexport const y = 2;\nexport const z = 3;\n",
+    );
+    await writeFile(join(repo, "dir", "my file.ts"), "export const s = 1;\n");
+    await writeFile(join(repo, "привет мир.ts"), "export const ru = 1;\n");
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-m", "seed special paths and rename sources"]);
+    const baseCommit = await resolveBaseCommit({
+      projectRepoPath: repo,
+      baseRef: "main",
+    });
+
+    await git(repo, ["checkout", "-b", "unicode-and-renames"]);
+    // Move root -> subdir (`foo.ts` -> `src/foo.ts`) and subdir -> root (`src/bar.ts` -> `bar.ts`)
+    // with small edits so additions/deletions are non-zero.
+    await git(repo, ["mv", "foo.ts", "src/foo.ts"]);
+    await writeFile(
+      join(repo, "src", "foo.ts"),
+      "export const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const d = 4;\n",
+    );
+    await git(repo, ["mv", "src/bar.ts", "bar.ts"]);
+    await writeFile(
+      join(repo, "bar.ts"),
+      "export const x = 1;\nexport const y = 2;\n",
+    );
+    await writeFile(
+      join(repo, "dir", "my file.ts"),
+      "export const s = 2;\nexport const s2 = 3;\n",
+    );
+    await writeFile(
+      join(repo, "привет мир.ts"),
+      "export const ru = 2;\nexport const ru2 = 3;\n",
+    );
+    await git(repo, ["add", "."]);
+    await git(repo, [
+      "commit",
+      "-m",
+      "rename across dirs and edit unicode/spaced",
+    ]);
+
+    const nameStatus = await diffNameStatus({
+      worktreePath: repo,
+      baseRef: baseCommit,
+      branch: "unicode-and-renames",
+    });
+    const stats = await diffChangeStats({
+      worktreePath: repo,
+      baseRef: baseCommit,
+      branch: "unicode-and-renames",
+    });
+
+    expect(nameStatus).toEqual(
+      expect.arrayContaining([
+        { path: "src/foo.ts", oldPath: "foo.ts", status: "R" },
+        { path: "bar.ts", oldPath: "src/bar.ts", status: "R" },
+        { path: "dir/my file.ts", status: "M" },
+        { path: "привет мир.ts", status: "M" },
+      ]),
+    );
+    expect(stats).toEqual(
+      expect.arrayContaining([
+        {
+          path: "src/foo.ts",
+          oldPath: "foo.ts",
+          status: "R",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+        {
+          path: "bar.ts",
+          oldPath: "src/bar.ts",
+          status: "R",
+          additions: 0,
+          deletions: 1,
+          binary: false,
+        },
+        {
+          path: "dir/my file.ts",
+          status: "M",
+          additions: 2,
+          deletions: 1,
+          binary: false,
+        },
+        {
+          path: "привет мир.ts",
+          status: "M",
+          additions: 2,
+          deletions: 1,
+          binary: false,
+        },
+      ]),
+    );
+
+    // Working-tree paths (including untracked Cyrillic file) via diffWorkingTree
+    // and diffWorkingTreeChangeStats against baseCommit.
+    await writeFile(join(repo, "новый файл.ts"), "export const fresh = 1;\n");
+    const wtDiff = await diffWorkingTree(repo, baseCommit);
+    const wtStats = await diffWorkingTreeChangeStats(repo, baseCommit);
+
+    expect(wtDiff.nameStatus).toEqual(
+      expect.arrayContaining([
+        { path: "src/foo.ts", oldPath: "foo.ts", status: "R" },
+        { path: "bar.ts", oldPath: "src/bar.ts", status: "R" },
+        { path: "dir/my file.ts", status: "M" },
+        { path: "привет мир.ts", status: "M" },
+        { path: "новый файл.ts", status: "A" },
+      ]),
+    );
+    expect(wtStats).toEqual(
+      expect.arrayContaining([
+        {
+          path: "src/foo.ts",
+          oldPath: "foo.ts",
+          status: "R",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+        {
+          path: "bar.ts",
+          oldPath: "src/bar.ts",
+          status: "R",
+          additions: 0,
+          deletions: 1,
+          binary: false,
+        },
+        {
+          path: "новый файл.ts",
+          status: "A",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ]),
+    );
+  });
+
+  it("rejects negative or non-finite maxBytes with MaisterError(CONFIG)", async () => {
+    const baseCommit = await resolveBaseCommit({
+      projectRepoPath: repo,
+      baseRef: "main",
+    });
+
+    for (const badMax of [
+      -1,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      await expect(
+        diffRangeBounded(
+          { worktreePath: repo, baseRef: baseCommit, branch: "main" },
+          badMax,
+        ),
+      ).rejects.toMatchObject({ code: "CONFIG" });
+    }
   });
 });

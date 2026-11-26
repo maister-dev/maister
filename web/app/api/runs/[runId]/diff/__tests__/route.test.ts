@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireProjectAction } from "@/lib/authz";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import {
   hitlRequests as hitlRequestsTable,
   nodeAttempts as nodeAttemptsTable,
@@ -10,12 +11,19 @@ import {
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
+import {
+  buildPreparedDiffCacheEntry,
+  clearPreparedDiffCache,
+  setCachedPreparedDiff,
+} from "@/lib/diff/cache";
+import { prepareDiff } from "@/lib/diff/prepare";
 import { MaisterError } from "@/lib/errors";
 import {
   diffNameStatus,
   diffRunWorkspace,
   diffWorkingTree,
   resolveBaseRef,
+  resolveRefSha,
 } from "@/lib/worktree";
 
 // M22 Phase 5 (T5.2, RED): the diff route now dispatches on `run.runKind`.
@@ -114,6 +122,15 @@ vi.mock("@/lib/authz", () => ({
   })),
 }));
 
+vi.mock("@/lib/diff/prepare", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/diff/prepare")>();
+
+  return {
+    ...actual,
+    prepareDiff: vi.fn(actual.prepareDiff),
+  };
+});
+
 vi.mock("@/lib/worktree", () => ({
   diffRunWorkspace: vi.fn(async () => ({
     text: "diff --git a/file.txt b/file.txt\n",
@@ -210,10 +227,10 @@ function seedFlowRun(
   return runId;
 }
 
-async function invokeGet(runId: string) {
+async function invokeGet(runId: string, query = "") {
   const { GET } = await import("../route");
   const req = new NextRequest(
-    new Request(`http://localhost/api/runs/${runId}/diff`, {
+    new Request(`http://localhost/api/runs/${runId}/diff${query}`, {
       method: "GET",
     }),
   );
@@ -222,6 +239,7 @@ async function invokeGet(runId: string) {
 }
 
 beforeEach(() => {
+  clearPreparedDiffCache();
   dbState.tables = {
     runs: [],
     scratch_runs: [],
@@ -230,6 +248,7 @@ beforeEach(() => {
     hitl_requests: [],
     node_attempts: [],
   };
+  vi.mocked(prepareDiff).mockClear();
   vi.mocked(diffRunWorkspace).mockClear();
   vi.mocked(diffRunWorkspace).mockResolvedValue({
     text: "diff --git a/file.txt b/file.txt\n",
@@ -249,6 +268,12 @@ beforeEach(() => {
   vi.mocked(resolveBaseRef).mockResolvedValue(
     "resolvedbase0000000000000000000000000000",
   );
+  vi.mocked(resolveRefSha).mockClear();
+  vi.mocked(resolveRefSha).mockResolvedValue(
+    "refsha00000000000000000000000000000000000",
+  );
+  vi.mocked(assertRunKnowledgeDisclosure).mockClear();
+  vi.mocked(assertRunKnowledgeDisclosure).mockResolvedValue(undefined);
   vi.mocked(requireProjectAction).mockClear();
   vi.mocked(requireProjectAction).mockResolvedValue({
     user: {
@@ -265,7 +290,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
   it("returns the server-derived scratch branch diff", async () => {
     const runId = seedScratchRun({ targetBranch: "release" });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as {
       diff?: string;
       sourceBranch?: string;
@@ -298,7 +323,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
   it("includes a prepared files/perFile summary in scratch diff responses", async () => {
     const runId = seedScratchRun();
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as {
       files?: {
         path: string;
@@ -319,7 +344,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
     ]);
     expect(Array.isArray(body.perFile)).toBe(true);
     expect(body.scope).toBe("run");
-    // The raw diff string is preserved for backward compatibility.
+    // Opt-in ?raw=1 returns the raw diff string alongside prepared files/perFile.
     expect(body.diff).toContain("diff --git");
   });
 
@@ -332,7 +357,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
       nameStatus: [],
     });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as {
       files?: unknown[];
       perFile?: unknown[];
@@ -354,7 +379,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
       nameStatus: [{ path: "file.txt", status: "M" }],
     });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as { truncated?: boolean; diff?: string };
 
     expect(res.status).toBe(200);
@@ -371,7 +396,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
       nameStatus: [],
     });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as { diff?: string };
 
     expect(res.status).toBe(200);
@@ -407,7 +432,7 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
   it("returns 200 with diff + files + sourceBranch + baseCommit for a flow run", async () => {
     const runId = seedFlowRun();
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as {
       runId?: string;
       baseCommit?: string;
@@ -460,7 +485,7 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
       truncated: true,
     });
 
-    const res = await invokeGet(runId);
+    const res = await invokeGet(runId, "?raw=1");
     const body = (await res.json()) as { truncated?: boolean; diff?: string };
 
     expect(res.status).toBe(200);
@@ -470,7 +495,7 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
     expect(body.diff).toContain("diff --git");
   });
 
-  it("computes the flow diff over workspace.worktreePath, not parentRepoPath", async () => {
+  it("computes the flow diff over workspace.worktreePath using the resolved headSha, not parentRepoPath", async () => {
     const runId = seedFlowRun();
 
     await invokeGet(runId);
@@ -478,12 +503,12 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
     expect(diffRunWorkspace).toHaveBeenCalledWith({
       projectRepoPath: "/repos/demo/.maister/wt-1",
       baseCommit: "feedbeef",
-      branch: "maister/feature-x",
+      branch: "refsha00000000000000000000000000000000000",
     });
     expect(diffNameStatus).toHaveBeenCalledWith({
       worktreePath: "/repos/demo/.maister/wt-1",
       baseRef: "feedbeef",
-      branch: "maister/feature-x",
+      branch: "refsha00000000000000000000000000000000000",
     });
   });
 
@@ -515,7 +540,7 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
     expect(diffRunWorkspace).toHaveBeenCalledWith({
       projectRepoPath: "/repos/demo/.maister/wt-1",
       baseCommit: "resolvedbase0000000000000000000000000000",
-      branch: "maister/feature-x",
+      branch: "refsha00000000000000000000000000000000000",
     });
   });
 
@@ -549,5 +574,349 @@ describe("GET /api/runs/[runId]/diff — missing run (M22)", () => {
     expect(res.status).toBe(404);
     expect(requireProjectAction).not.toHaveBeenCalled();
     expect(diffRunWorkspace).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/runs/[runId]/diff — opt-in ?raw=1 & prepared LRU cache", () => {
+  it("omits raw diff by default while returning prepared files and perFile", async () => {
+    const runId = seedFlowRun();
+
+    const res = await invokeGet(runId);
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect("diff" in body).toBe(false);
+    expect(body.files).toEqual([
+      { path: "file.txt", status: "M", additions: 0, deletions: 0 },
+    ]);
+    expect(Array.isArray(body.perFile)).toBe(true);
+  });
+
+  it("hits the SHA LRU cache on a second default request without re-reading git or re-running prepareDiff", async () => {
+    const runId = seedFlowRun();
+
+    const firstRes = await invokeGet(runId);
+    const firstBody = (await firstRes.json()) as Record<string, unknown>;
+    const secondRes = await invokeGet(runId);
+    const secondBody = (await secondRes.json()) as Record<string, unknown>;
+
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect("diff" in firstBody).toBe(false);
+    expect("diff" in secondBody).toBe(false);
+    expect(secondBody.files).toEqual(firstBody.files);
+    expect(secondBody.perFile).toEqual(firstBody.perFile);
+    expect(diffRunWorkspace).toHaveBeenCalledTimes(1);
+    expect(diffNameStatus).toHaveBeenCalledTimes(1);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns raw diff on follow-up ?raw=1 while reusing the cached prepared bundle", async () => {
+    const runId = seedFlowRun();
+
+    const defaultRes = await invokeGet(runId);
+    const defaultBody = (await defaultRes.json()) as Record<string, unknown>;
+
+    expect(defaultRes.status).toBe(200);
+    expect("diff" in defaultBody).toBe(false);
+
+    const rawRes = await invokeGet(runId, "?raw=1");
+    const rawBody = (await rawRes.json()) as {
+      diff?: string;
+      files?: unknown[];
+      perFile?: unknown[];
+    };
+
+    expect(rawRes.status).toBe(200);
+    expect(rawBody.diff).toContain("diff --git");
+    expect(rawBody.files).toEqual(defaultBody.files);
+    expect(rawBody.perFile).toEqual(defaultBody.perFile);
+    expect(diffNameStatus).toHaveBeenCalledTimes(1);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles prepare-failed by omitting diff by default, including diff on ?raw=1, and never caching the failed prep", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(prepareDiff).mockRejectedValueOnce(new Error("shiki exploded"));
+
+    const failedDefaultRes = await invokeGet(runId);
+    const failedDefaultBody = (await failedDefaultRes.json()) as Record<
+      string,
+      unknown
+    >;
+
+    expect(failedDefaultRes.status).toBe(200);
+    expect(failedDefaultBody.renderUnavailableReason).toBe("prepare-failed");
+    expect("diff" in failedDefaultBody).toBe(false);
+    expect(failedDefaultBody.perFile).toEqual([]);
+
+    vi.mocked(prepareDiff).mockRejectedValueOnce(new Error("shiki exploded"));
+
+    const failedRawRes = await invokeGet(runId, "?raw=1");
+    const failedRawBody = (await failedRawRes.json()) as Record<
+      string,
+      unknown
+    >;
+
+    expect(failedRawRes.status).toBe(200);
+    expect(failedRawBody.renderUnavailableReason).toBe("prepare-failed");
+    expect(failedRawBody.diff).toContain("diff --git");
+    expect(failedRawBody.perFile).toEqual([]);
+
+    // Neither failed response was cached: next request runs prepareDiff and succeeds.
+    const recoveredRes = await invokeGet(runId);
+    const recoveredBody = (await recoveredRes.json()) as Record<
+      string,
+      unknown
+    >;
+
+    expect(recoveredRes.status).toBe(200);
+    expect(recoveredBody.renderUnavailableReason).toBeNull();
+    expect(prepareDiff).toHaveBeenCalledTimes(3);
+  });
+
+  it("enforces project authz and knowledge disclosure denial even on a warm cache hit", async () => {
+    const runId = seedFlowRun();
+
+    // Warm the cache.
+    const warmRes = await invokeGet(runId);
+
+    expect(warmRes.status).toBe(200);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    // Project authz denial on warm cache hit -> 403.
+    vi.mocked(requireProjectAction).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "revoked access"),
+    );
+    const deniedAuthRes = await invokeGet(runId);
+
+    expect(deniedAuthRes.status).toBe(403);
+
+    // Knowledge disclosure denial on warm cache hit -> 403.
+    vi.mocked(assertRunKnowledgeDisclosure).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "knowledge disclosure denied"),
+    );
+    const deniedDisclosureRes = await invokeGet(runId);
+
+    expect(deniedDisclosureRes.status).toBe(403);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces readScratchRun before loading scratch workspace rows so unauthorized callers get 403 instead of 409", async () => {
+    const runId = seedScratchRun({ removedAt: new Date() });
+
+    vi.mocked(requireProjectAction).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "not a project member"),
+    );
+
+    const res = await invokeGet(runId);
+
+    expect(res.status).toBe(403);
+    expect(diffWorkingTree).not.toHaveBeenCalled();
+  });
+
+  it("invalidates the SHA cache when headSha advances", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(resolveRefSha).mockResolvedValueOnce(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    const firstRes = await invokeGet(runId);
+
+    expect(firstRes.status).toBe(200);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    vi.mocked(resolveRefSha).mockResolvedValueOnce(
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    );
+    const secondRes = await invokeGet(runId);
+
+    expect(secondRes.status).toBe(200);
+    expect(diffRunWorkspace).toHaveBeenCalledTimes(2);
+    expect(diffNameStatus).toHaveBeenCalledTimes(2);
+    expect(prepareDiff).toHaveBeenCalledTimes(2);
+    expect(diffRunWorkspace).toHaveBeenLastCalledWith({
+      projectRepoPath: "/repos/demo/.maister/wt-1",
+      baseCommit: "feedbeef",
+      branch: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    });
+    expect(diffNameStatus).toHaveBeenLastCalledWith({
+      worktreePath: "/repos/demo/.maister/wt-1",
+      baseRef: "feedbeef",
+      branch: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    });
+  });
+
+  it("reuses review: and content: cache entries without re-running prepareDiff", async () => {
+    const runId = seedFlowRun();
+
+    const firstReview = await invokeGet(runId, "?scope=review");
+    const secondReview = await invokeGet(runId, "?scope=review");
+
+    expect(firstReview.status).toBe(200);
+    expect(secondReview.status).toBe(200);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    const firstUncommitted = await invokeGet(runId, "?scope=uncommitted");
+    const secondUncommitted = await invokeGet(runId, "?scope=uncommitted");
+
+    expect(firstUncommitted.status).toBe(200);
+    expect(secondUncommitted.status).toBe(200);
+    // Uncommitted scope uses content:<sha256>:<truncated> — hits once prepared.
+    expect(prepareDiff).toHaveBeenCalledTimes(2);
+  });
+
+  it("serves a sha: cache entry produced via buildPreparedDiffCacheEntry verbatim with zero prepareDiff calls", async () => {
+    const runId = seedFlowRun();
+    const rawDiff = [
+      "diff --git a/src/app.ts b/src/app.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/app.ts",
+      "+++ b/src/app.ts",
+      "@@ -1,2 +1,3 @@",
+      "-export const a = 1;",
+      "+export const a = 2;",
+      "+export const b = 3;",
+      " export const keep = true;",
+      "diff --git a/src/new.ts b/src/new.ts",
+      "new file mode 100644",
+      "index 0000000..3333333",
+      "--- /dev/null",
+      "+++ b/src/new.ts",
+      "@@ -0,0 +1,1 @@",
+      "+export const created = true;",
+    ].join("\n");
+    const nameStatus = [
+      { path: "src/app.ts", status: "M" },
+      { path: "src/new.ts", status: "A" },
+    ];
+    const prepared = await prepareDiff(rawDiff, false);
+    const entry = buildPreparedDiffCacheEntry({ nameStatus, prepared });
+    const shaKey =
+      "sha:/repos/demo/.maister/wt-1:feedbeef:refsha00000000000000000000000000000000000";
+
+    setCachedPreparedDiff(shaKey, entry);
+    vi.mocked(prepareDiff).mockClear();
+
+    const res = await invokeGet(runId);
+    const body = (await res.json()) as {
+      files?: unknown[];
+      perFile?: unknown[];
+      truncated?: boolean;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.files).toEqual([
+      { path: "src/app.ts", status: "M", additions: 2, deletions: 1 },
+      { path: "src/new.ts", status: "A", additions: 1, deletions: 0 },
+    ]);
+    expect(body.perFile).toEqual(prepared.perFile);
+    expect(body.truncated).toBe(false);
+    expect(prepareDiff).not.toHaveBeenCalled();
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+    expect(diffNameStatus).not.toHaveBeenCalled();
+  });
+
+  it("misses contentCacheKey when nameStatus changes beyond a truncated diff prefix and isolates distinct runs", async () => {
+    const truncatedPrefix = "diff --git a/big.txt b/big.txt\n@@ -1 +1 @@\n+x\n";
+
+    // Part (a): same run, same truncated diff prefix, changed nameStatus -> MISS.
+    const runA = seedFlowRun();
+
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
+      text: truncatedPrefix,
+      truncated: true,
+      nameStatus: [
+        { path: "big.txt", status: "M" },
+        { path: "tail-a.ts", status: "A" },
+      ],
+    });
+    const firstRes = await invokeGet(runA, "?scope=uncommitted");
+    const firstBody = (await firstRes.json()) as {
+      files?: Array<{ path: string; status: string }>;
+    };
+
+    expect(firstRes.status).toBe(200);
+    expect(firstBody.files?.map((f) => f.path)).toEqual([
+      "big.txt",
+      "tail-a.ts",
+    ]);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
+      text: truncatedPrefix,
+      truncated: true,
+      nameStatus: [
+        { path: "big.txt", status: "M" },
+        { path: "tail-b.ts", status: "A" },
+      ],
+    });
+    const secondRes = await invokeGet(runA, "?scope=uncommitted");
+    const secondBody = (await secondRes.json()) as {
+      files?: Array<{ path: string; status: string }>;
+    };
+
+    expect(secondRes.status).toBe(200);
+    expect(secondBody.files?.map((f) => f.path)).toEqual([
+      "big.txt",
+      "tail-b.ts",
+    ]);
+    expect(prepareDiff).toHaveBeenCalledTimes(2);
+
+    // Part (b): two different runs with identical truncated diff prefix AND
+    // identical nameStatus must NOT share a content: cache entry.
+    dbState.tables.runs = [
+      {
+        id: "run-other",
+        runKind: "flow",
+        projectId: "project-2",
+        status: "Running",
+      },
+    ];
+    dbState.tables.projects = [
+      { id: "project-2", mainBranch: "main", repoPath: "/repos/other" },
+    ];
+    dbState.tables.workspaces = [
+      {
+        id: "workspace-2",
+        runId: "run-other",
+        projectId: "project-2",
+        branch: "maister/other",
+        worktreePath: "/repos/other/.maister/wt-2",
+        parentRepoPath: "/repos/other",
+        baseCommit: "feedbeef",
+        baseBranch: "main",
+        targetBranch: "main",
+        removedAt: null,
+      },
+    ];
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
+      text: truncatedPrefix,
+      truncated: true,
+      nameStatus: [
+        { path: "big.txt", status: "M" },
+        { path: "tail-b.ts", status: "A" },
+      ],
+    });
+
+    const otherRunRes = await invokeGet("run-other", "?scope=uncommitted");
+
+    expect(otherRunRes.status).toBe(200);
+    expect(prepareDiff).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns 404 when a run has no projectId", async () => {
+    dbState.tables.runs.push({
+      id: "run-no-project",
+      runKind: "agent",
+      projectId: null,
+      status: "Running",
+    });
+
+    const res = await invokeGet("run-no-project");
+
+    expect(res.status).toBe(404);
+    expect(requireProjectAction).not.toHaveBeenCalled();
   });
 });

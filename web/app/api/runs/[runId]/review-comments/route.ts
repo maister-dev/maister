@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import type { DiffPrepResult } from "@/lib/diff/prepare";
+import type { DiffLineIndex } from "@/lib/diff/line-index";
 
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
@@ -115,11 +115,11 @@ export async function GET(
   const { runId } = await params;
 
   try {
+    const user = await requireActiveSession();
+
     const scope = reviewCommentScopeOrDefault(
       req.nextUrl.searchParams.get("scope"),
     );
-
-    const user = await requireActiveSession();
 
     const dbh = db();
     const run = await loadRun(dbh, runId);
@@ -143,10 +143,10 @@ export async function GET(
     // like the diff. When the diff source is gone (GC'd worktree, terminal
     // run) the snapshot still renders — every placement degrades to
     // "outdated" instead of failing the read.
-    let prepared: DiffPrepResult | null = null;
+    let diffIndex: DiffLineIndex | null = null;
 
     try {
-      prepared = await computeReviewDiff(dbh, run, scope);
+      diffIndex = await computeReviewDiff(dbh, run, scope);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
 
@@ -161,7 +161,7 @@ export async function GET(
     return NextResponse.json({
       threads: threads.map((thread) => ({
         root: toCommentDto(thread.root),
-        placement: placementOf(prepared, thread.root),
+        placement: placementOf(diffIndex, thread.root),
         replies: thread.replies.map(toCommentDto),
       })),
     });
@@ -176,29 +176,26 @@ export async function POST(
 ): Promise<NextResponse> {
   const { runId } = await params;
 
-  let body: z.infer<typeof postBodySchema>;
-
   try {
-    body = postBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
+    // Auth-first: authenticate before parsing input or touching resources so
+    // unauthenticated callers receive 401 rather than 400/404; project
+    // membership is enforced once projectId is derived from the run row.
+    const sessionUser = await requireActiveSession();
+
+    let body: z.infer<typeof postBodySchema>;
+
+    try {
+      body = postBodySchema.parse(await req.json());
+    } catch (err) {
+      throw new MaisterError(
         "CONFIG",
         `invalid review-comment body: ${(err as Error).message}`,
-      ),
-      { runId, method: "POST" },
-    );
-  }
+      );
+    }
 
-  try {
     const scope = reviewCommentScopeOrDefault(
       req.nextUrl.searchParams.get("scope"),
     );
-
-    // Auth-first: authenticate before any resource lookup so unauthenticated
-    // callers cannot probe run existence; project membership is enforced once
-    // projectId is derived from the run row.
-    const sessionUser = await requireActiveSession();
 
     const dbh = db();
     const run = await loadRun(dbh, runId);
@@ -238,8 +235,8 @@ export async function POST(
       );
     }
 
-    const prepared = await computeReviewDiff(dbh, run, scope);
-    const extraction = extractAnchorContent(prepared, {
+    const diffIndex = await computeReviewDiff(dbh, run, scope);
+    const extraction = extractAnchorContent(diffIndex, {
       filePath: body.filePath,
       side: body.side,
       line: body.line,

@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AnyColumn } from "drizzle-orm";
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type { KnowledgeAccessRestriction } from "@/lib/company/types";
 import type { KnowledgePrincipal } from "./knowledge-types";
@@ -34,11 +35,26 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-function privateMemorySource(
-  run: ReturnType<typeof sql>,
-): ReturnType<typeof sql> {
-  return sql`EXISTS (SELECT 1 FROM agent_memory_injections memory
-    WHERE memory.run_id=${run} AND memory.application_state <> 'retired')`;
+export function runHasPrivateMemorySql(
+  runIdRef: AnyColumn | ReturnType<typeof sql>,
+): ReturnType<typeof sql<boolean>> {
+  return sql<boolean>`EXISTS (SELECT 1 FROM agent_memory_injections memory
+    WHERE memory.run_id=${runIdRef} AND memory.application_state <> 'retired')`;
+}
+
+export function runKnowledgeEnrolledSql(
+  knowledgeAccessRef: AnyColumn | ReturnType<typeof sql>,
+  resultContractRef: AnyColumn | ReturnType<typeof sql>,
+): ReturnType<typeof sql<boolean>> {
+  return sql<boolean>`COALESCE(${knowledgeAccessRef} IS NOT NULL OR ${resultContractRef}->>'nativeContract'=${FINDINGS_CONTRACT}, false)`;
+}
+
+export function runDisclosureGovernedSql(refs: {
+  id: AnyColumn | ReturnType<typeof sql>;
+  knowledgeAccess: AnyColumn | ReturnType<typeof sql>;
+  resultContract: AnyColumn | ReturnType<typeof sql>;
+}): ReturnType<typeof sql<boolean>> {
+  return sql<boolean>`COALESCE(${runKnowledgeEnrolledSql(refs.knowledgeAccess, refs.resultContract)} OR ${runHasPrivateMemorySql(refs.id)}, false)`;
 }
 
 async function vaultRunRestrictions(
@@ -84,8 +100,8 @@ export async function authorizeRunsKnowledgeDisclosure(
   const classifications = (
     await tx.execute(
       sql`SELECT id,project_id,
-        coalesce(knowledge_access IS NOT NULL OR result_contract->>'nativeContract'=${FINDINGS_CONTRACT},false) AS enrolled,
-        ${privateMemorySource(sql`runs.id`)} AS has_vault
+        ${runKnowledgeEnrolledSql(sql`knowledge_access`, sql`result_contract`)} AS enrolled,
+        ${runHasPrivateMemorySql(sql`runs.id`)} AS has_vault
         FROM runs WHERE ${predicate}`,
     )
   ).rows;
@@ -327,7 +343,7 @@ export async function protectRunKnowledgeStream(
       (await usesNativeKnowledgeTransport(db, runId)) ||
       (
         await db.execute(
-          sql`SELECT 1 WHERE ${privateMemorySource(sql`${runId}`)}`,
+          sql`SELECT 1 WHERE ${runHasPrivateMemorySql(sql`${runId}`)}`,
         )
       ).rows.length > 0;
     if (enrolled) await assertRunKnowledgeDisclosure(db, recipient, runId);

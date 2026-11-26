@@ -3,7 +3,7 @@ info:
   title: MAIster Web — personal librarian stream
   version: "1.0.0"
   description: |
-    (Designed — ADR-185, ADR-190, ADR-191) Browser-safe change notifications
+    (Implemented — ADR-185, ADR-190, ADR-191) Browser-safe change notifications
     for the session user's personal librarian conversation, delivered by
     `GET /api/librarian/stream`.
 

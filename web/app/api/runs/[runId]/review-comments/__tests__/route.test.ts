@@ -315,6 +315,20 @@ describe("GET /api/runs/[runId]/review-comments — authz + existence", () => {
     expect(listThreads).not.toHaveBeenCalled();
   });
 
+  it("returns 401 UNAUTHENTICATED before validating scope on unauthenticated GET", async () => {
+    seedRun();
+    vi.mocked(requireActiveSession).mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "Sign in required"),
+    );
+
+    const res = await invokeGet(RUN_ID, "scope=not-a-valid-scope");
+    const parsed = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(401);
+    expect(parsed.code).toBe("UNAUTHENTICATED");
+    expect(listThreads).not.toHaveBeenCalled();
+  });
+
   it("returns bare 404 for an unknown run, before project authz", async () => {
     const res = await invokeGet("does-not-exist");
 
@@ -683,6 +697,33 @@ describe("POST /api/runs/[runId]/review-comments — root comments", () => {
 
     expect(res.status).toBe(401);
     expect(createRoot).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 UNAUTHENTICATED before parsing malformed JSON or invalid scope on unauthenticated POST", async () => {
+    seedRun();
+    vi.mocked(requireActiveSession).mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "Sign in required"),
+    );
+
+    const { POST } = await import("../route");
+    const req = new NextRequest(
+      new Request(
+        `http://localhost/api/runs/${RUN_ID}/review-comments?scope=bogus`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{not valid json",
+        },
+      ),
+    );
+
+    const res = await POST(req, { params: Promise.resolve({ runId: RUN_ID }) });
+    const parsed = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(401);
+    expect(parsed.code).toBe("UNAUTHENTICATED");
+    expect(createRoot).not.toHaveBeenCalled();
+    expect(createReply).not.toHaveBeenCalled();
   });
 
   it("returns bare 404 for an unknown run", async () => {

@@ -19,10 +19,24 @@ const TestIntlProvider = NextIntlClientProvider as ComponentType<{
   children?: ReactNode;
 }>;
 
-const { stream } = vi.hoisted(() => ({ stream: { eventCount: 0 } }));
+const { stream } = vi.hoisted(() => ({
+  stream: {
+    eventCount: 0,
+    liveness: "live" as
+      "connecting" | "live" | "reconnecting" | "disconnected" | "closed",
+    reconnect: vi.fn(),
+  },
+}));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 vi.mock("@/lib/use-run-stream", () => ({
-  useRunStream: () => ({ eventCount: stream.eventCount }),
+  useRunStream: () => ({
+    eventCount: stream.eventCount,
+    liveness: stream.liveness,
+    reconnect: stream.reconnect,
+  }),
 }));
 vi.mock("@/components/scratch/scratch-composer", () => ({
   ScratchComposer: () => null,
@@ -91,6 +105,8 @@ async function click(label: string): Promise<void> {
 
 beforeEach(() => {
   stream.eventCount = 0;
+  stream.liveness = "live";
+  stream.reconnect.mockReset();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.append(container);

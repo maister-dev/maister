@@ -75,7 +75,7 @@ CREATE TRIGGER execution_commands_immutable_terminal_evidence BEFORE UPDATE OF r
 CREATE TRIGGER specialist_cancellation_command_guard BEFORE INSERT ON public.execution_commands FOR EACH ROW WHEN ((new.kind = ANY (ARRAY['session.create'::text, 'session.prompt'::text, 'session.input'::text, 'session.steer'::text, 'stand.dispatch'::text]))) EXECUTE FUNCTION check_specialist_cancellation_run_write();
 CREATE TRIGGER execution_data_plane_imports_complete_is_final BEFORE UPDATE OF state, source_fingerprint, last_source_position, imported_count ON public.execution_data_plane_imports FOR EACH ROW EXECUTE FUNCTION maister_execution_data_plane_imports_complete_is_final();
 CREATE TRIGGER execution_data_plane_imports_writer_gate BEFORE INSERT OR UPDATE ON public.execution_data_plane_imports FOR EACH ROW EXECUTE FUNCTION maister_execution_data_plane_imports_writer_gate();
-CREATE TRIGGER execution_events_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.execution_events FOR EACH ROW EXECUTE FUNCTION maister_run_peek_hint('execution', 'run_id,run_sequence,ingest_disposition');
+CREATE TRIGGER execution_events_peek_hint AFTER INSERT OR UPDATE ON public.execution_events FOR EACH ROW WHEN (((new.ingest_disposition = 'accepted'::text) AND (new.run_sequence IS NOT NULL))) EXECUTE FUNCTION maister_execution_events_peek_hint();
 CREATE TRIGGER flow_revisions_referenced_manifest_immutable BEFORE UPDATE OF manifest, manifest_digest ON public.flow_revisions FOR EACH ROW EXECUTE FUNCTION guard_referenced_flow_revision_manifest();
 CREATE TRIGGER hitl_requests_agent_pause_permission_source BEFORE INSERT OR UPDATE ON public.hitl_requests FOR EACH ROW EXECUTE FUNCTION maister_agent_pause_permission_source();
 CREATE TRIGGER hitl_specialist_question_guard BEFORE INSERT OR DELETE OR UPDATE ON public.hitl_requests FOR EACH ROW EXECUTE FUNCTION guard_specialist_question_subject();
@@ -101,7 +101,7 @@ CREATE TRIGGER project_config_revision_before_update BEFORE UPDATE ON public.pro
 CREATE TRIGGER project_config_runtime_guard_before_update BEFORE UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION project_config_guard_runtime_mutation();
 CREATE TRIGGER project_qualification_policy_guard BEFORE UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION project_qualification_policy_guard();
 CREATE TRIGGER projects_qualification_target AFTER UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION invalidate_project_qualification_target();
-CREATE TRIGGER run_messages_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.run_messages FOR EACH ROW EXECUTE FUNCTION maister_run_peek_hint('transcript', 'run_id,node_attempt_id,sequence,role,content,supervisor_event_id,prompt_dispatch_key,created_at');
+CREATE TRIGGER run_messages_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.run_messages FOR EACH ROW EXECUTE FUNCTION maister_run_messages_peek_hint();
 CREATE CONSTRAINT TRIGGER run_results_operational_receipt AFTER INSERT OR DELETE OR UPDATE ON public.run_results DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_operational_terminal_result();
 CREATE TRIGGER run_results_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.run_results FOR EACH ROW EXECUTE FUNCTION maister_run_peek_hint('summary', 'run_id,revision,validity,schema_ref,schema_version,value,value_bytes,invalid_reason,first_collected_at');
 CREATE TRIGGER run_sessions_consensus_binding BEFORE INSERT OR UPDATE OF runner_id, session_name ON public.run_sessions FOR EACH ROW EXECUTE FUNCTION guard_consensus_child_runner_binding();

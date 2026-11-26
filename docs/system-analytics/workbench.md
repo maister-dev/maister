@@ -68,8 +68,10 @@ or export the visible workbench live in
 - **Tracked blob** — a `git cat-file` read result:
   `{kind:"text", content} | {kind:"too-large", size} | {kind:"binary"}`, capped
   at `MAISTER_WORKBENCH_MAX_FILE_BYTES`.
-- **Workbench diff** — the `base..branch` raw diff + a changed-files summary
-  (`git diff --name-status`), for any run state (extends the review surface).
+- **Workbench diff** — the server-prepared `files`/`perFile` diff DTO
+  (`git diff --name-status` + Shiki-highlighted or zero-Shiki plaintext bundles)
+  for any run state, with raw `diff` text included only when `?raw=1` is
+  supplied (extends the review surface).
 
 ## State machine — node color (view axis, derived)
 
@@ -128,7 +130,7 @@ sequenceDiagram
     alt runStatus is live (not terminal)
         C->>S: subscribe useRunStream(runId)
         S-->>C: session event (line/update/permission_request)
-        C->>C: debounce ~1s
+        C->>C: coalesced ~1s
         C->>ST: refetch node status + gate rollup + currentStepId
         ST-->>C: status snapshot
         C->>C: recolor in place (no dagre re-run, no router.refresh)
@@ -187,13 +189,13 @@ cards, collapsible Outdated list — Implemented, ADR-072); see
 ```mermaid
 flowchart LR
     OpenD["open Diff tab"] --> Diff["GET /api/runs/{runId}/diff"]
-    Diff --> Kind{"run_kind?"}
-    Kind -- scratch --> SB["scratch base, readScratchRun"]
-    Kind -- flow --> FB["base = workspaces.base_commit ?? resolveBaseRef, readBoard"]
-    SB --> SRange["diffRunWorkspace base..branch + prepared files/perFile DTO"]
-    FB --> FRange["diffRunWorkspace base..branch + diffNameStatus (per-file +/- server-side)"]
-    SRange --> SDV["shared git-diff-view renderer (run-detail rework)"]
-    FRange --> DV["git-diff-view split/inline via ?diffview=; collapsible hunks; server-built Shiki bundle (Implemented, ADR-066)"]
+    Diff --> Kind{"run_kind & scope?"}
+    Kind -- "scratch / review / uncommitted" --> WTC["working-tree diff + LRU cache (review:fingerprint or content+nameStatus digest)"]
+    Kind -- "flow commit range (run / since-last-review / last-node)" --> FCache{"shared SHA LRU cache hit?"}
+    FCache -- yes --> DV["git-diff-view split/inline via ?diffview=; collapsible hunks; server-built Shiki or plaintext bundle (Implemented, ADR-066)"]
+    FCache -- no --> FRange["diffRunWorkspace / diffRange + diffNameStatus (per-file +/- server-side)"]
+    FRange --> DV
+    WTC --> DV
 ```
 
 ### Evidence viewport (Implemented)
@@ -256,57 +258,102 @@ preserving unrelated query parameters, URL hash and `history.state`; restoration
 does not write history. Unloaded IDs remain in the URL. Shared links and
 back/forward restore each entry's choices without creating messages or fetching.
 
+## Diff preparation, caching, and bounded git reads (Implemented)
+
+- **Syntax budgets, event-loop yielding, and bundle sanitization (`web/lib/diff/prepare.ts`):**
+  Any single file exceeding `maxLineToIgnoreSyntax` (`2,000` changed/syntax
+  lines) downgrades individually to a zero-Shiki monochrome plaintext bundle
+  (`fileLang: "plaintext"`) without charging the shared cumulative budget or
+  starving subsequent smaller files. Remaining files share
+  `MAX_TOTAL_SYNTAX_LINES = 8_000`; trailing files beyond that budget also
+  downgrade to zero-Shiki monochrome plaintext bundles (`fileLang: "plaintext"`)
+  that hydrate in `@git-diff-view/react` with zero client lowlight fallback
+  (ADR-066 FINDING G preserved). Preparation processes files in batches of
+  `DIFF_YIELD_BATCH_SIZE = 5` (or a `DIFF_YIELD_BUDGET_MS = 16` ms slice) with
+  `setEnableBuildTemplate(false)` scoped strictly inside each synchronous batch
+  and `setImmediate` yields between batches, and sanitizes bundles in a single
+  pass without `JSON.parse(JSON.stringify(...))`.
+- **Shared LRU prepared-diff cache (`web/lib/diff/cache.ts`):**
+  Shared across `GET /api/runs/{runId}/diff` and `RunDetailLayout` SSR across
+  all diff scopes, bounded by `DIFF_CACHE_MAX_BYTES = 32 MiB` total, a `16 MiB`
+  single-entry cap on cached `preparedJson` UTF-8 byte length (retaining parsed
+  `prepared` objects alongside for SSR hits), and `DIFF_CACHE_MAX_ENTRIES = 256`.
+  Commit-range scopes key by `sha:<worktreePath>:<baseSha>:<headSha>`, `review`
+  keys by `review:<fingerprint>`, and working-tree scopes (`uncommitted`,
+  `scratch`) key by `contentCacheKey` hashing
+  `(scopeKey, diff, truncated, nameStatus)` to avoid cross-tenant collisions or
+  stale `files[]` on truncated diffs. `requireProjectAction` and
+  `assertRunKnowledgeDisclosure` always execute before returning any cached
+  entry; `perFile` is serialized at most once per cache miss, and raw `diff` is
+  omitted unless `?raw=1` is supplied.
+- **Single-spawn bounded `git diff`, `-z` path safety, and `--numstat` inbox summary (`web/lib/worktree.ts`, `web/lib/queries/inbox-context.ts`):**
+  `diffRange`, `diffRunWorkspace`, and `diffWorkingTree` invoke `git diff` at
+  most once through `streamGitTruncatedTo(..., EXEC_MAX_BUFFER)` (4 MiB),
+  returning `{ text, truncated: true }` cleanly on overflow instead of
+  re-spawning or throwing on size. `diffNameStatus` and `diffChangeStats` use
+  NUL-delimited `-z` output (paired with C-quoted path decoding in
+  `web/lib/diff/sections.ts`) so non-ASCII UTF-8 and spaced paths parse
+  losslessly. `getInboxCardContext` computes `{ files, additions, deletions }`
+  via `diffChangeStats` (`git diff --numstat`) rather than reading the full
+  patch.
+- **Structured logs:**
+  `LOG_LEVEL`-gated `pino` loggers (`worktree`, `diff-prepare`, `diff-cache`,
+  `inbox-context`, and `api-run-diff`) emit structured diagnostics with zero
+  payload or secret leakage: `DEBUG` on cache hit/miss/evict/oversize, highlight
+  counts, yields, and durations; `INFO` on diff truncation or syntax-budget
+  plaintext fallback; and `WARN` on `prepare-failed` or graceful fallback.
+
 ## Expectations
 
-- Node color is the **highest-`attempt` `node_attempts.status`** for each `node_id`
-  (gate rollup over `gate_results.status`); a node with no attempt renders
-  `Pending`/default.
-- Static graph display metadata is additive and derived from the pinned manifest:
-  `displayLabel`, `nodeTypeLabel`, `nodeRole`, and `declaredGateSummary` on
-  nodes; `displayLabel` and `edgeRole` on edges. The compatibility fields
-  (`id`, `nodeType`, `label`, `source`, `target`, `outcome`) stay stable.
-- Runtime gate display metadata stays in `…/graph-status`, not topology:
-  `gateSummary` counts total/blocking/advisory gates and exposes the worst
-  blocking status used by the existing rollup. No per-node API calls are allowed.
-- The graph topology is logic-only (`compileManifest`) and carries **no x/y**;
-  authored positions live in the `flow.yaml` `presentation` section (ADR-064),
-  additive and engine-ignored (no `compat`/engine bump, DSL stays logic-only).
-- `presentationLayout(manifest)` positions only nodes whose `presentation` entry
-  declares both `x` and `y`; every other node is dagre-seeded at render.
-- A `presentation` entry whose `id` is absent from the compiled topology is
-  ignored at render (no phantom node) — never an error.
-- The flow-graph view is **read-only**: it wires no drag handlers and exposes no
-  layout write route; editing authored layout is a flow-editor concern (§E1, Wave 3).
-- Live recolor refetches `…/graph-status` ONLY on an SSE event tick (debounced),
-  NEVER on a timer, and MUST NOT refetch once `runs.status` is terminal.
-- File reads require the `readRepoFiles` action (min role `member`) — strictly
-  above `readBoard` — on every git-tracked-file read: the `…/files` tree route
-  and the `?file=` RSC blob read (Implemented, ADR-066; replaced `…/files/content`);
-  a `viewer` is refused.
-- File reads return ONLY git-tracked content via `git ls-tree` / `git cat-file`
-  under a server-resolved `ref`; `.git/`, gitignored, `node_modules`, and
-  untracked paths are unreachable and surface as `404`. Text blobs render as
-  server-rendered Shiki dual-theme HTML (0 KB client), switched by the
-  `.light`/`.dark` class (Implemented, ADR-066).
-- An untrusted `?path=` MUST pass `repoRelPathSchema` (no `..`, not absolute, no
-  leading `/` or `-`, no NUL); a violation is `400` (`CONFIG`), never a disclosed path.
-- A blob over `MAISTER_WORKBENCH_MAX_FILE_BYTES` renders the `file-too-large`
-  page state and a binary blob the `file-binary` page state on the `?file=` RSC
-  path — never the raw bytes, and never an HTTP `413`/`415` (that `…/files/content`
-  route was retired, ADR-066).
-- The workbench diff is run-scoped (`base..branch` only) and gated `readBoard`
-  (`viewer`) for flow runs / `readScratchRun` for scratch runs; it adds NO new
-  `runs.status` value and reuses the review diff response shape plus a `files` summary.
-  Flow runs render split/inline via `@git-diff-view/react` (`?diffview=`) with
-  per-file `additions`/`deletions` computed server-side (Implemented, ADR-066).
-  The run-detail scratch rework preserves the raw `diff` string for migration but adds
-  the same prepared `files`/`perFile` shape so scratch uses the shared Diff tab.
-- An oversized diff (over the `EXEC_MAX_BUFFER` 4 MiB bound) degrades to a bounded
-  prefix carrying `truncated: true` on the `…/diff` response and the review-panel
-  diff DTO — the diff readers (`diffRange`, `diffRunWorkspace`) NEVER throw on
-  size. The review panel MUST block promotion behind an explicit acknowledgement
-  when `truncated`, and both the workbench and review diff MUST render a
-  truncation banner (Implemented, ADR-066).
+- Node color MUST reflect the highest-`attempt` `node_attempts.status` plus
+  `gate_results.status` rollup for each `node_id`, defaulting to `Pending` when
+  no attempt exists.
+- Static graph display metadata (`displayLabel`, `nodeTypeLabel`, `nodeRole`,
+  `declaredGateSummary`, `edgeRole`) is additive from the pinned manifest while
+  compatibility fields (`id`, `nodeType`, `label`, `source`, `target`,
+  `outcome`) remain stable; runtime `gateSummary` stays in `…/graph-status`
+  with no per-node API calls.
+- Graph topology (`compileManifest`) is logic-only with no x/y;
+  `presentationLayout(manifest)` overrides only nodes declaring both `x` and
+  `y` in `flow.yaml` `presentation` (ADR-064), dagre seeds the rest, and
+  unknown `presentation` IDs are ignored without error.
+- The flow-graph view is read-only (no drag handlers or layout write route),
+  refetches `…/graph-status` ONLY on coalesced SSE event ticks (NEVER on a
+  timer), and MUST NOT refetch once `runs.status` is terminal.
+- Every git-tracked file read (`…/files` tree route and `?file=` RSC blob read,
+  ADR-066) MUST require `readRepoFiles` (min role `member`, refusing `viewer`)
+  and validate `?path=` against `repoRelPathSchema` (`400` `CONFIG` on `..`,
+  absolute, leading `/` or `-`, or NUL).
+- File reads MUST return ONLY git-tracked content via `git ls-tree` / `git
+  cat-file` under a server-resolved `ref` (`.git/`, gitignored, `node_modules`,
+  and untracked paths surface as `404`), rendering text as server-side Shiki
+  dual-theme HTML (0 KB client), blobs over `MAISTER_WORKBENCH_MAX_FILE_BYTES`
+  as `file-too-large`, and binary blobs as `file-binary` (never raw bytes or
+  HTTP `413`/`415`).
+- The workbench diff serves flow (`run` `base..branch`, `since-last-review`,
+  `last-node`, `review`, `uncommitted`) and scratch scopes under `readBoard`
+  (`viewer`) / `readScratchRun`, adds NO new `runs.status` value, renders via
+  `@git-diff-view/react` (`?diffview=`) with server-computed per-file
+  `additions`/`deletions`, and MUST omit raw `diff` unless `?raw=1` is supplied.
+- `GET /api/runs/{runId}/diff` MUST serialize `perFile` at most once per cache
+  miss and share the bounded LRU cache (`lib/diff/cache.ts`: `32 MiB` /
+  `16 MiB` / `DIFF_CACHE_MAX_ENTRIES = 256`) while ALWAYS enforcing
+  `requireProjectAction` and `assertRunKnowledgeDisclosure` before returning
+  cached entries.
+- `prepareDiff` MUST downgrade any single file over `maxLineToIgnoreSyntax`
+  (`2,000` lines) individually without charging `MAX_TOTAL_SYNTAX_LINES = 8_000`,
+  downgrade trailing files past the cumulative budget to zero-Shiki monochrome
+  plaintext bundles (`fileLang: "plaintext"`, ADR-066 FINDING G preserved),
+  yield via `setImmediate` every 5 files (or `16 ms` slice) with
+  `setEnableBuildTemplate(false)` scoped inside each batch, and sanitize
+  bundles in a single pass without `JSON.parse(JSON.stringify(...))`.
+- Oversized diffs (over `EXEC_MAX_BUFFER` 4 MiB) MUST degrade via a single
+  `git diff` spawn (`streamGitTruncatedTo`) to a bounded prefix with
+  `truncated: true` (never re-spawning or throwing on size), `getInboxCardContext`
+  MUST compute `{ files, additions, deletions }` via `diffChangeStats`
+  (`git diff --numstat`), and both workbench and review surfaces MUST show a
+  truncation banner with promotion blocked behind explicit acknowledgement when
+  `truncated`.
 
 ## Edge cases
 
@@ -327,9 +374,27 @@ back/forward restore each entry's choices without creating messages or fetching.
 - **Legacy run with null `workspaces.base_commit`** → diff base falls back to
   `resolveBaseRef(...)`; a run with no derivable base → `PRECONDITION` (409, the
   existing diff guard). No new `MaisterError` code.
-- **Oversized diff** (over `EXEC_MAX_BUFFER`, 4 MiB) → bounded prefix +
-  `truncated: true` on `…/diff`; the review panel blocks promotion until the
-  reviewer acknowledges (ADR-066). NOT a `409`/throw, NOT a silent partial render.
+- **Oversized diff** (over `EXEC_MAX_BUFFER`, 4 MiB) → single-spawn `streamGitTruncatedTo`
+  kills git cleanly and returns a bounded prefix + `truncated: true` on `…/diff`
+  (exact 4 MiB returns `truncated: false`; genuine non-zero git exit throws
+  `MaisterError("CONFLICT")`); the review panel blocks promotion until the
+  reviewer acknowledges (ADR-066). NOT a `409`/throw on size, NOT a silent partial render.
+- **Per-file cap or cumulative syntax budget exceeded** → any single file
+  exceeding `maxLineToIgnoreSyntax` (`2,000` changed/syntax lines) downgrades
+  individually to a zero-Shiki monochrome plaintext bundle
+  (`fileLang: "plaintext"`) without charging the shared budget or starving
+  subsequent smaller files; remaining files share `MAX_TOTAL_SYNTAX_LINES = 8_000`
+  and trailing files beyond that cumulative budget downgrade to zero-Shiki
+  monochrome plaintext bundles (`fileLang: "plaintext"`) that hydrate in
+  `@git-diff-view/react` with zero client lowlight fallback; overlapping
+  `prepareDiff` calls never corrupt `getEnableBuildTemplate()` across
+  `setImmediate` yields (Implemented).
+- **Oversize cache entry or `?raw=1` after cached read** → a single diff whose
+  `preparedJson` UTF-8 byte length exceeds `16 MiB` bypasses the `32 MiB`
+  `preparedJson`-byte-bounded LRU (which retains the corresponding parsed
+  `prepared` objects alongside for SSR hits) without evicting healthy entries;
+  `?raw=1` reads raw diff text from git while reusing cached `files` and
+  `preparedJson` without re-running Shiki (Implemented).
 
 ## Review Workspace (Implemented — ADR-138)
 
@@ -413,7 +478,8 @@ flowchart LR
   `web/lib/flows/graph/presentation-layout.ts`,
   `web/lib/board/flow-graph-view-layout.ts`,
   `web/components/board/flow-graph-view.tsx`,
-  `web/components/workbench/*`, `web/lib/worktree.ts` (`listTree`/`readBlob`/`diffNameStatus`).
+  `web/components/workbench/*`, `web/lib/worktree.ts` (`listTree`/`readBlob`/`diffNameStatus`),
+  `web/lib/diff/cache.ts`, `web/lib/diff/sections.ts`, `web/lib/diff/line-index.ts`.
 
 ## Child Run peek (Implemented)
 

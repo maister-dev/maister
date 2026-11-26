@@ -73,6 +73,7 @@ const log = pino({
 });
 
 const GIT_TIMEOUT_MS = 60_000;
+const GIT_KILL_GRACE_MS = 2_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 const repoPromotionLocks = new Map<string, Promise<unknown>>();
 
@@ -629,16 +630,17 @@ function parseNumstat(
   for (let index = 0; index < parts.length; index += 1) {
     const record = parts[index];
     const fields = record.split("\t");
+    const pathTail = fields.length >= 3 ? fields.slice(2).join("\t") : "";
 
-    if (fields.length >= 3) {
-      result.set(fields[2], {
+    if (pathTail.length > 0) {
+      result.set(pathTail, {
         additions: parseDiffMetadataCount(fields[0]),
         deletions: parseDiffMetadataCount(fields[1]),
       });
       continue;
     }
 
-    if (fields.length === 2 && parts[index + 1] && parts[index + 2]) {
+    if (fields.length >= 2 && parts[index + 1] && parts[index + 2]) {
       result.set(parts[index + 2], {
         additions: parseDiffMetadataCount(fields[0]),
         deletions: parseDiffMetadataCount(fields[1]),
@@ -727,42 +729,41 @@ export async function diffRunWorkspace(
   );
   const baseCommit = validate(gitCommitSchema, args.baseCommit, "baseCommit");
   const branch = validate(branchNameSchema, args.branch, "branch");
-  const diffArgs = ["diff", "--no-ext-diff", `${baseCommit}..${branch}`];
+  const diffArgs = [
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--end-of-options",
+    `${baseCommit}..${branch}`,
+  ];
+  const label = "git diff";
 
-  try {
-    // 2-dot: the literal stored-base -> branch tree delta. A 3-dot range diffs
-    // from merge-base(base, branch), which under-reports the branch when its
-    // history is rewritten off its stored base (rebase/reset). Matches the
-    // documented contract (workbench.md) and the M18 review-panel `diffRange`.
-    const { stdout } = await runGit(repo, diffArgs);
+  log.debug(
+    { worktreePath: repo, baseRef: baseCommit, branch },
+    "diffRunWorkspace",
+  );
 
-    return { text: stdout, truncated: false };
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
+  // 2-dot: the literal stored-base -> branch tree delta. A 3-dot range diffs
+  // from merge-base(base, branch), which under-reports the branch when its
+  // history is rewritten off its stored base (rebase/reset). Matches the
+  // documented contract (workbench.md) and the M18 review-panel `diffRange`.
+  const result = await streamGitTruncatedTo(
+    repo,
+    diffArgs,
+    EXEC_MAX_BUFFER,
+    label,
+    cLocaleGitEnv(),
+  );
 
-    // An oversized diff degrades to a bounded prefix with a structured
-    // `truncated` flag instead of throwing, so the workbench/review surface can
-    // block on it rather than 500 (parity with `diffRange`).
-    if (
-      e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
-      /maxBuffer length exceeded/i.test(e.message ?? "")
-    ) {
-      log.info(
-        { projectRepoPath: repo, maxBuffer: EXEC_MAX_BUFFER },
-        "diffRunWorkspace truncated — diff exceeded EXEC_MAX_BUFFER",
-      );
-
-      const text = await streamGitDiffTruncated(repo, diffArgs);
-
-      return { text, truncated: true };
-    }
-
-    throw new MaisterError(
-      "CONFLICT",
-      `git diff failed: ${errorText(err) || asError(err).message}`,
-      { cause: asError(err) },
+  if (result.truncated) {
+    log.info(
+      { worktreePath: repo, maxBuffer: EXEC_MAX_BUFFER, label },
+      "diffRunWorkspace truncated — diff exceeded EXEC_MAX_BUFFER",
     );
   }
+
+  return result;
 }
 
 export type PromoteLocalMergeArgs = {
@@ -2386,46 +2387,40 @@ function prepareDiffRange(args: DiffRangeArgs) {
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
   const base = validate(gitRefSchema, args.baseRef, "baseRef");
   const br = validate(branchNameSchema, args.branch, "branch");
-  const diffArgs = ["diff", "--no-color", "--end-of-options", `${base}..${br}`];
+  const diffArgs = [
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--end-of-options",
+    `${base}..${br}`,
+  ];
 
   return { wt, base, br, diffArgs };
 }
 
 export async function diffRange(args: DiffRangeArgs): Promise<DiffResult> {
   const { wt, base, br, diffArgs } = prepareDiffRange(args);
+  const label = `git diff ${base}..${br}`;
 
   log.debug({ worktreePath: wt, baseRef: base, branch: br }, "diffRange");
 
-  try {
-    const { stdout } = await execFileAsync("git", ["-C", wt, ...diffArgs], {
-      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-      maxBuffer: EXEC_MAX_BUFFER,
-    });
+  const result = await streamGitTruncatedTo(
+    wt,
+    diffArgs,
+    EXEC_MAX_BUFFER,
+    label,
+    cLocaleGitEnv(),
+  );
 
-    return { text: stdout, truncated: false };
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException & { stderr?: string };
-
-    if (
-      e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
-      /maxBuffer length exceeded/i.test(e.message ?? "")
-    ) {
-      log.info(
-        { worktreePath: wt, maxBuffer: EXEC_MAX_BUFFER },
-        "diffRange truncated — diff exceeded EXEC_MAX_BUFFER",
-      );
-
-      const text = await streamGitDiffTruncated(wt, diffArgs);
-
-      return { text, truncated: true };
-    }
-
-    throw new MaisterError(
-      "CONFLICT",
-      `git diff ${base}..${br} failed: ${(e.stderr ?? e.message).toString().trim()}`,
-      { cause: asError(err) },
+  if (result.truncated) {
+    log.info(
+      { worktreePath: wt, maxBuffer: EXEC_MAX_BUFFER, label },
+      "diffRange truncated — diff exceeded EXEC_MAX_BUFFER",
     );
   }
+
+  return result;
 }
 
 export async function diffRangeBounded(
@@ -2439,18 +2434,16 @@ export async function diffRangeBounded(
     diffArgs,
     maxBytes,
     `git diff ${base}..${br}`,
+    cLocaleGitEnv(),
   );
 }
 
-// Stream `git -C <repo> <diffArgs>` and stop at EXEC_MAX_BUFFER bytes, returning
-// the partial diff WITHOUT a marker (the caller's `truncated` flag carries that
-// signal). The diff readers' maxBuffer fallback, so an oversized diff degrades
-// to a bounded prefix instead of throwing.
-// Streams a git command's stdout, stopping (SIGKILL) once `maxBytes` is reached
-// so an oversized output never buffers unbounded. UTF-8-safe via a streaming
-// TextDecoder. Returns `{ text, truncated }`. Shared by the diff-overflow path
-// (bound = EXEC_MAX_BUFFER) and the bounded git-log injection read (bound = the
-// inline cap — ADR-120 Codex #2).
+// Streams a git command's stdout, stopping (SIGKILL) once `maxBytes` is
+// exceeded so an oversized output never buffers unbounded or re-spawns git.
+// UTF-8-safe via a streaming TextDecoder. Returns `{ text, truncated }` without
+// an in-band marker (the caller's `truncated` flag carries that signal). Shared
+// by the diff readers (bound = EXEC_MAX_BUFFER) and bounded prompt-injection
+// reads (ADR-120 Codex #2).
 async function streamGitTruncatedTo(
   repo: string,
   args: readonly string[],
@@ -2458,11 +2451,18 @@ async function streamGitTruncatedTo(
   label: string,
   env?: NodeJS.ProcessEnv,
 ): Promise<{ text: string; truncated: boolean }> {
+  if (!Number.isFinite(maxBytes) || maxBytes < 0) {
+    throw new MaisterError(
+      "CONFIG",
+      `${label}: maxBytes must be a non-negative finite number`,
+    );
+  }
+
   return await new Promise<{ text: string; truncated: boolean }>(
     (resolve, reject) => {
       const child = spawn("git", ["-C", repo, ...args], {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
         env: env ?? process.env,
+        stdio: ["ignore", "pipe", "pipe"],
       });
 
       let bytes = 0;
@@ -2472,10 +2472,38 @@ async function streamGitTruncatedTo(
       // We hit the byte bound and SIGKILLed the child ON PURPOSE — the resulting
       // non-zero/`SIGKILL` close is a truncation SUCCESS, not a git failure.
       let truncated = false;
+      let timedOut = false;
+      let exited = false;
       let settled = false;
+      let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+      let killGraceTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const clearTimers = () => {
+        if (timeoutTimer !== null) {
+          clearTimeout(timeoutTimer);
+          timeoutTimer = null;
+        }
+        if (killGraceTimer !== null) {
+          clearTimeout(killGraceTimer);
+          killGraceTimer = null;
+        }
+      };
+
+      // Escalate SIGTERM → grace → SIGKILL and wait for `close` before
+      // rejecting so temp-index cleanup never races a still-exiting git child.
+      timeoutTimer = setTimeout(() => {
+        if (exited || truncated) return;
+        timedOut = true;
+        child.kill("SIGTERM");
+        killGraceTimer = setTimeout(() => {
+          if (!exited) {
+            child.kill("SIGKILL");
+          }
+        }, GIT_KILL_GRACE_MS);
+      }, GIT_TIMEOUT_MS);
 
       child.stdout.on("data", (chunk: Buffer) => {
-        if (truncated) return;
+        if (truncated || timedOut) return;
         const remaining = maxBytes - bytes;
 
         if (chunk.length > remaining) {
@@ -2483,6 +2511,7 @@ async function streamGitTruncatedTo(
             stream: true,
           });
           truncated = true;
+          clearTimers();
           child.kill("SIGKILL");
 
           return;
@@ -2496,7 +2525,14 @@ async function streamGitTruncatedTo(
         if (stderr.length < 8192) stderr += chunk.toString();
       });
 
+      child.on("exit", () => {
+        exited = true;
+        clearTimers();
+      });
+
       child.on("error", (err) => {
+        exited = true;
+        clearTimers();
         if (settled) return;
         settled = true;
         reject(
@@ -2511,9 +2547,21 @@ async function streamGitTruncatedTo(
       // and exits non-zero WITHOUT us killing it, and MUST surface as CONFLICT
       // rather than a silent empty result (Codex finding).
       child.on("close", (code, signal) => {
+        exited = true;
+        clearTimers();
         if (settled) return;
         settled = true;
 
+        if (timedOut) {
+          reject(
+            new MaisterError(
+              "CONFLICT",
+              `${label} timed out after ${GIT_TIMEOUT_MS}ms`,
+            ),
+          );
+
+          return;
+        }
         if (truncated) {
           resolve({ text, truncated: true });
 
@@ -2535,22 +2583,6 @@ async function streamGitTruncatedTo(
       });
     },
   );
-}
-
-async function streamGitDiffTruncated(
-  repo: string,
-  diffArgs: readonly string[],
-  env?: NodeJS.ProcessEnv,
-): Promise<string> {
-  const { text } = await streamGitTruncatedTo(
-    repo,
-    diffArgs,
-    EXEC_MAX_BUFFER,
-    "git diff",
-    env,
-  );
-
-  return text;
 }
 
 // ADR-120 (Codex #2): a git-log read bounded to `maxBytes` for prompt injection —
@@ -2575,6 +2607,7 @@ export async function logRangeBounded(
     ["log", "--oneline", "--no-color", "--end-of-options", `${base}..${br}`],
     maxBytes,
     `git log ${base}..${br}`,
+    cLocaleGitEnv(),
   );
 }
 
@@ -2641,13 +2674,23 @@ async function withIntentToAddTempIndex<T>(
   fn: (env: NodeJS.ProcessEnv) => Promise<T>,
 ): Promise<T> {
   return withTempIndexCopy(worktreePath, async (env) => {
-    await execFileAsync("git", ["-C", worktreePath, "add", "-N", "."], {
-      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-      maxBuffer: EXEC_MAX_BUFFER,
-      env,
-    });
+    const gitEnv = { ...env, LC_ALL: "C" };
 
-    return await fn(env);
+    try {
+      await execFileAsync("git", ["-C", worktreePath, "add", "-N", "."], {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+        env: gitEnv,
+      });
+    } catch (err) {
+      throw new MaisterError(
+        "CONFLICT",
+        `git add -N . failed: ${errorText(err) || asError(err).message}`,
+        { cause: asError(err) },
+      );
+    }
+
+    return await fn(gitEnv);
   });
 }
 
@@ -2659,59 +2702,65 @@ export async function diffWorkingTree(
   const base =
     baseRef === "HEAD" ? "HEAD" : validate(gitRefSchema, baseRef, "baseRef");
 
+  log.debug({ worktreePath: wt, baseRef: base }, "diffWorkingTree");
+
   return await withIntentToAddTempIndex(wt, async (env) => {
-    const diffArgs = ["diff", "--no-color", "--end-of-options", base];
-    let text: string;
-    let truncated = false;
+    const gitEnv = { ...env, LC_ALL: "C" };
+    const diffArgs = [
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--end-of-options",
+      base,
+    ];
+    const label = `git diff ${base}`;
+    const { text, truncated } = await streamGitTruncatedTo(
+      wt,
+      diffArgs,
+      EXEC_MAX_BUFFER,
+      label,
+      gitEnv,
+    );
 
-    try {
-      const { stdout } = await execFileAsync("git", ["-C", wt, ...diffArgs], {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-        env,
-      });
-
-      text = stdout;
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException;
-
-      if (
-        e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
-        /maxBuffer length exceeded/i.test(e.message ?? "")
-      ) {
-        log.info(
-          { worktreePath: wt, maxBuffer: EXEC_MAX_BUFFER },
-          "diffWorkingTree truncated — diff exceeded EXEC_MAX_BUFFER",
-        );
-        text = await streamGitDiffTruncated(wt, diffArgs, env);
-        truncated = true;
-      } else {
-        throw new MaisterError(
-          "CONFLICT",
-          `git diff HEAD failed: ${asError(err).message}`,
-          { cause: asError(err) },
-        );
-      }
+    if (truncated) {
+      log.info(
+        { worktreePath: wt, maxBuffer: EXEC_MAX_BUFFER, label },
+        "diffWorkingTree truncated — diff exceeded EXEC_MAX_BUFFER",
+      );
     }
 
-    const { stdout: nameStatusRaw } = await execFileAsync(
-      "git",
-      [
-        "-C",
-        wt,
-        "diff",
-        "--name-status",
-        "--no-color",
-        "--end-of-options",
-        base,
-      ],
-      {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-        env,
-      },
-    );
-    const nameStatus = parseNameStatusOutput(nameStatusRaw);
+    let nameStatusRaw: string;
+
+    try {
+      ({ stdout: nameStatusRaw } = await execFileAsync(
+        "git",
+        [
+          "-C",
+          wt,
+          "diff",
+          "--name-status",
+          "-z",
+          "--find-renames",
+          "--no-color",
+          "--end-of-options",
+          base,
+        ],
+        {
+          signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+          maxBuffer: EXEC_MAX_BUFFER,
+          env: gitEnv,
+        },
+      ));
+    } catch (err) {
+      if (err instanceof MaisterError) throw err;
+      throw new MaisterError(
+        "CONFLICT",
+        `git diff --name-status ${base} failed: ${errorText(err) || asError(err).message}`,
+        { cause: asError(err) },
+      );
+    }
+    const nameStatus = parseNameStatusZOutput(nameStatusRaw);
 
     return { text, truncated, nameStatus };
   });
@@ -2735,29 +2784,62 @@ export type DiffNameStatusArgs = {
   branch: string;
 };
 
-function parseNameStatusLine(line: string): DiffFileEntry {
-  const parts = line.split("\t");
-  const status = (parts[0] ?? "").charAt(0);
-  const filePath = parts.length >= 3 ? parts[parts.length - 1] : parts[1];
-  const oldPath = parts.length >= 3 ? parts[1] : undefined;
+function splitNulTerminated(stdout: string): string[] {
+  if (stdout.length === 0) return [];
 
-  if (!filePath) {
-    throw new MaisterError(
-      "CONFLICT",
-      `git diff --name-status returned an invalid row: ${JSON.stringify(line)}`,
-    );
+  const parts = stdout.split("\0");
+
+  if (parts.length > 0 && parts[parts.length - 1] === "") {
+    parts.pop();
   }
 
-  return oldPath
-    ? { path: filePath, status, oldPath }
-    : { path: filePath, status };
+  return parts;
 }
 
-function parseNameStatusOutput(stdout: string): DiffFileEntry[] {
-  return stdout
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map(parseNameStatusLine);
+function parseNameStatusZOutput(stdout: string): DiffFileEntry[] {
+  const parts = splitNulTerminated(stdout);
+  const entries: DiffFileEntry[] = [];
+
+  for (let index = 0; index < parts.length;) {
+    const statusRaw = parts[index];
+
+    if (statusRaw.length === 0) {
+      index += 1;
+      continue;
+    }
+
+    const status = statusRaw.charAt(0);
+
+    if (status === "R" || status === "C") {
+      const oldPath = parts[index + 1];
+      const filePath = parts[index + 2];
+
+      if (!oldPath || !filePath) {
+        throw new MaisterError(
+          "CONFLICT",
+          `git diff --name-status -z returned an invalid rename row: ${JSON.stringify(statusRaw)}`,
+        );
+      }
+
+      entries.push({ path: filePath, status, oldPath });
+      index += 3;
+      continue;
+    }
+
+    const filePath = parts[index + 1];
+
+    if (!filePath) {
+      throw new MaisterError(
+        "CONFLICT",
+        `git diff --name-status -z returned an invalid row: ${JSON.stringify(statusRaw)}`,
+      );
+    }
+
+    entries.push({ path: filePath, status });
+    index += 2;
+  }
+
+  return entries;
 }
 
 type ParsedNumstatEntry = {
@@ -2783,63 +2865,64 @@ function parseNumstatCount(raw: string, line: string): number {
   return parsed;
 }
 
-function parseNumstatPath(
-  raw: string,
-): Pick<ParsedNumstatEntry, "path" | "oldPath"> {
-  const braceRename = raw.match(/^(.*)\{(.+) => (.+)\}(.*)$/);
-
-  if (braceRename) {
-    const [, prefix, oldName, newName, suffix] = braceRename;
-    const oldPath = `${prefix}${oldName}${suffix}`;
-    const filePath = `${prefix}${newName}${suffix}`;
-
-    return { path: filePath, oldPath };
-  }
-
-  const arrow = " => ";
-
-  if (raw.includes(arrow)) {
-    const [oldPath, ...rest] = raw.split(arrow);
-    const filePath = rest.join(arrow);
-
-    return { path: filePath, oldPath };
-  }
-
-  return { path: raw };
-}
-
-function parseNumstatLine(line: string): ParsedNumstatEntry {
-  const parts = line.split("\t");
-  const additionsRaw = parts[0];
-  const deletionsRaw = parts[1];
-  const pathRaw = parts.slice(2).join("\t");
-
-  if (!additionsRaw || !deletionsRaw || !pathRaw) {
-    throw new MaisterError(
-      "CONFLICT",
-      `git diff --numstat returned an invalid row: ${JSON.stringify(line)}`,
-    );
-  }
-
-  const binary = additionsRaw === "-" || deletionsRaw === "-";
-  const pathInfo = parseNumstatPath(pathRaw);
-
-  return {
-    ...pathInfo,
-    additions: parseNumstatCount(additionsRaw, line),
-    deletions: parseNumstatCount(deletionsRaw, line),
-    binary,
-  };
-}
-
-function parseNumstatOutput(stdout: string): Map<string, ParsedNumstatEntry> {
+function parseNumstatZOutput(stdout: string): Map<string, ParsedNumstatEntry> {
+  const parts = splitNulTerminated(stdout);
   const entries = new Map<string, ParsedNumstatEntry>();
 
-  for (const line of stdout.split("\n").filter((row) => row.length > 0)) {
-    const entry = parseNumstatLine(line);
+  for (let index = 0; index < parts.length; index += 1) {
+    const record = parts[index];
+
+    if (record.length === 0) continue;
+
+    const fields = record.split("\t");
+    const additionsRaw = fields[0];
+    const deletionsRaw = fields[1];
+
+    if (!additionsRaw || !deletionsRaw || fields.length < 3) {
+      throw new MaisterError(
+        "CONFLICT",
+        `git diff --numstat -z returned an invalid row: ${JSON.stringify(record)}`,
+      );
+    }
+
+    const binary = additionsRaw === "-" || deletionsRaw === "-";
+    const additions = parseNumstatCount(additionsRaw, record);
+    const deletions = parseNumstatCount(deletionsRaw, record);
+    const pathTail = fields.slice(2).join("\t");
+
+    if (pathTail.length > 0) {
+      const entry: ParsedNumstatEntry = {
+        path: pathTail,
+        additions,
+        deletions,
+        binary,
+      };
+
+      entries.set(entry.path, entry);
+      continue;
+    }
+
+    const oldPath = parts[index + 1];
+    const filePath = parts[index + 2];
+
+    if (!oldPath || !filePath) {
+      throw new MaisterError(
+        "CONFLICT",
+        `git diff --numstat -z returned an invalid rename row: ${JSON.stringify(record)}`,
+      );
+    }
+
+    const entry: ParsedNumstatEntry = {
+      path: filePath,
+      oldPath,
+      additions,
+      deletions,
+      binary,
+    };
 
     entries.set(entry.path, entry);
-    if (entry.oldPath) entries.set(entry.oldPath, entry);
+    entries.set(oldPath, entry);
+    index += 2;
   }
 
   return entries;
@@ -2866,9 +2949,8 @@ function combineNameStatusWithNumstat(
 // M22 Phase 5 (T5.1): the changed-files summary for the workbench diff. 2-dot
 // (`base..branch`) to match diffRunWorkspace's literal stored-base -> branch tree
 // delta so the file list lines up with the rendered diff (and with the M18
-// review-panel `diffRange`). Parses git's `--name-status` output: each line is
-// `<STATUS>\t<path>` (or `R100\told\tnew` for renames/copies — take the NEW path,
-// the last tab-field).
+// review-panel `diffRange`). Uses `-z --find-renames` so git emits literal
+// NUL-delimited UTF-8 paths without C-quoting or brace abbreviation.
 export async function diffNameStatus(
   args: DiffNameStatusArgs,
 ): Promise<DiffFileEntry[]> {
@@ -2882,13 +2964,16 @@ export async function diffNameStatus(
     const { stdout } = await runGit(wt, [
       "diff",
       "--name-status",
+      "-z",
+      "--find-renames",
       "--no-color",
       "--end-of-options",
       `${base}..${br}`,
     ]);
 
-    return parseNameStatusOutput(stdout);
+    return parseNameStatusZOutput(stdout);
   } catch (err) {
+    if (err instanceof MaisterError) throw err;
     const e = err as NodeJS.ErrnoException & { stderr?: string };
 
     throw new MaisterError(
@@ -2914,8 +2999,9 @@ export async function diffChangeStats(
       runGit(wt, [
         "diff",
         "--numstat",
-        "--no-color",
+        "-z",
         "--find-renames",
+        "--no-color",
         "--end-of-options",
         `${base}..${br}`,
       ]),
@@ -2923,7 +3009,7 @@ export async function diffChangeStats(
 
     return combineNameStatusWithNumstat(
       nameStatus,
-      parseNumstatOutput(numstatRaw),
+      parseNumstatZOutput(numstatRaw),
     );
   } catch (err) {
     if (err instanceof MaisterError) throw err;
@@ -3205,6 +3291,8 @@ export async function diffWorkingTreeChangeStats(
   log.debug({ worktreePath: wt, baseRef: base }, "diffWorkingTreeChangeStats");
 
   return await withIntentToAddTempIndex(wt, async (env) => {
+    const gitEnv = { ...env, LC_ALL: "C" };
+
     try {
       const [nameStatusResult, numstatResult] = await Promise.all([
         execFileAsync(
@@ -3214,6 +3302,8 @@ export async function diffWorkingTreeChangeStats(
             wt,
             "diff",
             "--name-status",
+            "-z",
+            "--find-renames",
             "--no-color",
             "--end-of-options",
             base,
@@ -3221,7 +3311,7 @@ export async function diffWorkingTreeChangeStats(
           {
             signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
             maxBuffer: EXEC_MAX_BUFFER,
-            env,
+            env: gitEnv,
           },
         ),
         execFileAsync(
@@ -3231,22 +3321,23 @@ export async function diffWorkingTreeChangeStats(
             wt,
             "diff",
             "--numstat",
-            "--no-color",
+            "-z",
             "--find-renames",
+            "--no-color",
             "--end-of-options",
             base,
           ],
           {
             signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
             maxBuffer: EXEC_MAX_BUFFER,
-            env,
+            env: gitEnv,
           },
         ),
       ]);
 
       return combineNameStatusWithNumstat(
-        parseNameStatusOutput(nameStatusResult.stdout),
-        parseNumstatOutput(numstatResult.stdout),
+        parseNameStatusZOutput(nameStatusResult.stdout),
+        parseNumstatZOutput(numstatResult.stdout),
       );
     } catch (err) {
       if (err instanceof MaisterError) throw err;

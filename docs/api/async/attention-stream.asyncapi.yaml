@@ -221,6 +221,7 @@ components:
           type: string
           enum:
             - quiet_cap
+            - access_revoked
       example:
         type: attention.stream_timeout
         reason: quiet_cap

@@ -9,6 +9,7 @@ import { getActiveAgentExecutions } from "@/lib/agents/activity-queries";
 import { ActiveAgentExecutions } from "@/components/agents/active-agent-executions";
 import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
 import { AttentionReviewProvider } from "@/components/attention/attention-review-watch";
+import { AttentionStreamProvider } from "@/components/attention/attention-stream-provider";
 import { LibrarianPanel } from "@/components/librarian/librarian-panel";
 import { LibrarianProvider } from "@/components/librarian/librarian-provider";
 import { LibrarianTrigger } from "@/components/librarian/librarian-trigger";
@@ -49,7 +50,6 @@ export default async function AppLayout({
   // ADR-171 D7: the render's cursor, taken before any read. Everything this
   // render shows was read at or after it, so the attention stream's scan from
   // here misses nothing the page could be stale about.
-  // eslint-disable-next-line react-hooks/purity -- async Server Component: one render per request reads the request clock.
   const renderedAt = Date.now();
   const sessionUser = await getSessionUser();
 
@@ -140,6 +140,13 @@ export default async function AppLayout({
     },
   };
 
+  const attentionSince = {
+    cursor: String(renderedAt),
+    decisions,
+    updates,
+    ...reviewCounter,
+  };
+
   const shell = (
     <div className="flex min-h-screen flex-col bg-paper-warm pb-9">
       <TopNav
@@ -187,12 +194,6 @@ export default async function AppLayout({
                 reconnect: tRun("streamReconnect"),
                 reconnecting: tRun("streamReconnecting"),
               }}
-              since={{
-                cursor: String(renderedAt),
-                decisions,
-                updates,
-                ...reviewCounter,
-              }}
             />
           ) : null
         }
@@ -211,7 +212,11 @@ export default async function AppLayout({
       initialIndicator={librarianIndicator}
       ownerId={sessionUser.id}
     >
-      <AttentionReviewProvider>{shell}</AttentionReviewProvider>
+      <AttentionReviewProvider>
+        <AttentionStreamProvider since={attentionSince}>
+          {shell}
+        </AttentionStreamProvider>
+      </AttentionReviewProvider>
     </LibrarianProvider>
   ) : (
     shell

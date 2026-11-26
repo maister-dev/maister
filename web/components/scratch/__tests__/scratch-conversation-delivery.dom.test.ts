@@ -26,10 +26,25 @@ const TestIntlProvider = NextIntlClientProvider as ComponentType<{
   children?: ReactNode;
 }>;
 
-const { stream } = vi.hoisted(() => ({ stream: { eventCount: 0 } }));
+const { router, stream } = vi.hoisted(() => ({
+  router: { refresh: vi.fn() },
+  stream: {
+    eventCount: 0,
+    liveness: "live" as
+      "connecting" | "live" | "reconnecting" | "disconnected" | "closed",
+    reconnect: vi.fn(),
+  },
+}));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
 vi.mock("@/lib/use-run-stream", () => ({
-  useRunStream: () => ({ eventCount: stream.eventCount }),
+  useRunStream: () => ({
+    eventCount: stream.eventCount,
+    liveness: stream.liveness,
+    reconnect: stream.reconnect,
+  }),
 }));
 vi.mock("@/components/scratch/scratch-composer", () => ({
   ScratchComposer: (props: {
@@ -152,7 +167,10 @@ function notice(): string {
 }
 
 beforeEach(() => {
+  router.refresh.mockReset();
   stream.eventCount = 0;
+  stream.liveness = "live";
+  stream.reconnect.mockReset();
   dialogStatus = "Running";
   runStatus = "Running";
   recoverRefusal = null;
@@ -174,20 +192,22 @@ beforeEach(() => {
             { status: 202 },
           )
         : init?.method === "POST" && url.endsWith("/recover")
-          ? new Response(
-              JSON.stringify({
-                code: "CONFLICT",
-                message: "scratch run is not recoverable",
-                details: {
-                  reason: "scratch_not_recoverable",
-                  status: recoverRefusal,
-                  ...(recoverRefusal === "NeedsInputIdle"
-                    ? { next: "respond" }
-                    : {}),
-                },
-              }),
-              { status: 409 },
-            )
+          ? recoverRefusal !== null
+            ? new Response(
+                JSON.stringify({
+                  code: "CONFLICT",
+                  message: "scratch run is not recoverable",
+                  details: {
+                    reason: "scratch_not_recoverable",
+                    status: recoverRefusal,
+                    ...(recoverRefusal === "NeedsInputIdle"
+                      ? { next: "respond" }
+                      : {}),
+                  },
+                }),
+                { status: 409 },
+              )
+            : new Response(JSON.stringify({ ok: true }), { status: 200 })
           : new Response(JSON.stringify(detail()), { status: 200 }),
     ),
   );
@@ -365,5 +385,149 @@ describe("scratch delivery feedback (ADR-182)", () => {
     // described.
     await refresh("Running");
     expect(notice()).toBe("");
+  });
+});
+
+describe("scratch live refresh and recovery", () => {
+  it("refreshes periodically under continuous 20 Hz eventCount ticks instead of starving", async () => {
+    await render();
+    await act(async () => {});
+
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock.mockClear();
+
+    for (let tick = 0; tick < 20; tick += 1) {
+      stream.eventCount += 1;
+      await render();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    }
+
+    const detailRefreshes = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url === "/api/scratch-runs/run-1" &&
+        (init?.method === undefined || init.method === "GET"),
+    );
+
+    expect(detailRefreshes.length).toBeGreaterThanOrEqual(3);
+    expect(detailRefreshes.length).toBeLessThanOrEqual(5);
+  });
+
+  it("keeps a user-visible error alert intact across incoming 20 Hz SSE ticks", async () => {
+    recoverRefusal = "Failed";
+    dialogStatus = "Crashed";
+    runStatus = "Crashed";
+    await render();
+    await act(async () => {});
+
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent === "recover")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {});
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      en.scratch.recoverRefused.Failed,
+    );
+
+    for (let tick = 0; tick < 10; tick += 1) {
+      stream.eventCount += 1;
+      await render();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    }
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      en.scratch.recoverRefused.Failed,
+    );
+  });
+
+  it("fetches project capability-catalog at most once during a 20 Hz SSE burst", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    await render();
+    await act(async () => {});
+
+    for (let tick = 0; tick < 20; tick += 1) {
+      stream.eventCount += 1;
+      await render();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    }
+
+    const detailRefreshes = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url === "/api/scratch-runs/run-1" &&
+        (init?.method === undefined || init.method === "GET"),
+    );
+    const catalogFetches = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/capability-catalog"),
+    );
+    const commandFetches = fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith("/commands"),
+    );
+
+    expect(detailRefreshes.length).toBeGreaterThanOrEqual(4);
+    expect(catalogFetches.length).toBeLessThanOrEqual(1);
+    expect(commandFetches.length).toBeLessThanOrEqual(1);
+  });
+
+  it("calls router.refresh() after a successful recover() on a Crashed run", async () => {
+    dialogStatus = "Crashed";
+    runStatus = "Crashed";
+    recoverRefusal = null;
+    await render();
+    await act(async () => {});
+
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent === "recover")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {});
+
+    expect(router.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders stream liveness and wires Reconnect on disconnected live runs, hiding when terminal", async () => {
+    await render();
+    await act(async () => {});
+
+    expect(
+      container.querySelector('[data-testid="run-stream-liveness"]')
+        ?.textContent,
+    ).toBe(en.run.streamLive);
+
+    stream.liveness = "disconnected";
+    await render();
+    expect(
+      container.querySelector('[data-testid="run-stream-liveness"]')
+        ?.textContent,
+    ).toBe(en.run.streamDisconnected);
+
+    const reconnectButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === en.run.streamReconnect,
+    );
+
+    expect(reconnectButton).toBeDefined();
+    act(() => {
+      reconnectButton?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    expect(stream.reconnect).toHaveBeenCalledOnce();
+
+    stream.liveness = "closed";
+    await refresh("Done", "Done");
+    expect(
+      container.querySelector('[data-testid="run-stream-liveness"]'),
+    ).toBeNull();
   });
 });

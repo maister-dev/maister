@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
+  CHANGE_SUMMARY_REFRESH_COALESCE_MS,
   changeSummaryRefreshUrl,
   isLiveRunStatus,
 } from "@/lib/runs/live-inspector";
@@ -37,7 +37,7 @@ describe("changeSummaryRefreshUrl", () => {
     );
   });
 
-  it("exposes a positive debounce window", () => {
-    expect(CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS).toBeGreaterThan(0);
+  it("exposes a positive coalesce interval", () => {
+    expect(CHANGE_SUMMARY_REFRESH_COALESCE_MS).toBeGreaterThan(0);
   });
 });

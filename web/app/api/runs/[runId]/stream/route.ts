@@ -4,37 +4,33 @@ import type { ExecutionEvent } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
 import type { ContextSnapshot } from "@/lib/runs/context-snapshot";
 
-import { and, asc, desc, eq, gt, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
-
-import { acpContextUpdateType } from "../../../../../../runtime/acp-context";
 
 import {
   httpStatusForAuthz,
   requireActiveSession,
-  requireProjectRole,
+  requireActiveUserById,
+  requireProjectRoleForUser,
 } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
 import {
   assertRunKnowledgeDisclosure,
   isRunKnowledgeUnavailable,
+  runDisclosureGovernedSql,
 } from "@/lib/brain/knowledge-run-disclosure";
 import {
   contextProjectionThrough,
   readContextSnapshot,
   readCurrentAttemptId,
 } from "@/lib/runs/context-reader";
-import {
-  executionEvents,
-  localPackages,
-  projects,
-  runs,
-} from "@/lib/db/schema";
+import { executionEvents, runs } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { keepaliveMs } from "@/lib/runs/keepalive-config";
 import {
+  contextUsageOnlySql,
   shouldReplayRunStream,
   streamReadyEvent,
 } from "@/lib/runs/stream-options";
@@ -50,6 +46,8 @@ const TERMINAL_RUN_STATUS = new Set(["Done", "Abandoned", "Failed", "Crashed"]);
 
 const STATUS_REFRESH_MS = 500;
 const CANONICAL_WAKE_TIMEOUT_MS = 1_000;
+const AUTH_RECHECK_INTERVAL_MS = 2_500;
+const CONTEXT_SNAPSHOT_COALESCE_MS = 500;
 
 type RouteParams = { params: Promise<{ runId: string }> };
 
@@ -62,7 +60,24 @@ type RunLite = {
   companyId: string | null;
   createdByUserId: string | null;
   localPackageId: string | null;
+  isGoverned: boolean;
 };
+
+async function isRunGoverned(runId: string): Promise<boolean> {
+  const db = getDb() as unknown as Db;
+  const rows = await db
+    .select({
+      isGoverned: runDisclosureGovernedSql({
+        id: runs.id,
+        knowledgeAccess: runs.knowledgeAccess,
+        resultContract: runs.resultContract,
+      }),
+    })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  return rows[0]?.isGoverned === true;
+}
 
 async function loadRunLite(runId: string): Promise<RunLite | null> {
   const db = getDb() as unknown as Db;
@@ -76,10 +91,13 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
       companyId: runs.companyId,
       createdByUserId: runs.createdByUserId,
       localPackageId: runs.localPackageId,
+      isGoverned: runDisclosureGovernedSql({
+        id: runs.id,
+        knowledgeAccess: runs.knowledgeAccess,
+        resultContract: runs.resultContract,
+      }),
     })
     .from(runs)
-    .leftJoin(projects, eq(projects.id, runs.projectId))
-    .leftJoin(localPackages, eq(localPackages.id, runs.localPackageId))
     .where(eq(runs.id, runId));
 
   const row: RunLite | undefined = rows[0];
@@ -95,22 +113,49 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
     companyId: row.companyId,
     createdByUserId: row.createdByUserId,
     localPackageId: row.localPackageId,
+    isGoverned: row.isGoverned === true,
   };
 }
 
 async function refreshRunStatus(
   runId: string,
-): Promise<{ status: string; currentStepId: string | null } | null> {
+  includeGoverned: boolean,
+): Promise<{
+  status: string;
+  currentStepId: string | null;
+  isGoverned?: boolean;
+} | null> {
   const db = getDb() as unknown as Db;
+  const baseColumns = {
+    status: runs.status,
+    currentStepId: runs.currentStepId,
+  };
   const rows = await db
-    .select({ status: runs.status, currentStepId: runs.currentStepId })
+    .select(
+      includeGoverned
+        ? {
+            ...baseColumns,
+            isGoverned: runDisclosureGovernedSql({
+              id: runs.id,
+              knowledgeAccess: runs.knowledgeAccess,
+              resultContract: runs.resultContract,
+            }),
+          }
+        : baseColumns,
+    )
     .from(runs)
     .where(eq(runs.id, runId));
   const row = rows[0];
 
   if (!row) return null;
 
-  return { status: row.status, currentStepId: row.currentStepId };
+  return includeGoverned
+    ? {
+        status: row.status,
+        currentStepId: row.currentStepId,
+        isGoverned: "isGoverned" in row && row.isGoverned === true,
+      }
+    : { status: row.status, currentStepId: row.currentStepId };
 }
 
 // Durable events that DO advance Last-Event-ID. We deliberately do NOT
@@ -160,29 +205,38 @@ async function latestCanonicalRunSequence(runId: string): Promise<bigint> {
 
 type CanonicalRunEvent = Pick<
   ExecutionEvent,
-  | "id"
-  | "runSequence"
-  | "eventType"
-  | "payload"
-  | "occurredAt"
-  | "hostSessionId"
->;
+  "id" | "runSequence" | "eventType" | "occurredAt" | "hostSessionId"
+> & {
+  payloadIsNull: boolean;
+  contextUsageOnly?: boolean;
+};
 
 async function readCanonicalRunEvents(
   runId: string,
   afterSequence: bigint,
+  context: boolean,
 ): Promise<CanonicalRunEvent[]> {
   const db = getDb() as unknown as Db;
+  const baseColumns = {
+    id: executionEvents.id,
+    runSequence: executionEvents.runSequence,
+    eventType: executionEvents.eventType,
+    occurredAt: executionEvents.occurredAt,
+    hostSessionId: executionEvents.hostSessionId,
+    payloadIsNull: sql<boolean>`${executionEvents.payload} IS NULL`,
+  };
+  const columns = context
+    ? {
+        ...baseColumns,
+        contextUsageOnly: contextUsageOnlySql({
+          eventType: executionEvents.eventType,
+          payload: executionEvents.payload,
+        }),
+      }
+    : baseColumns;
 
   return db
-    .select({
-      id: executionEvents.id,
-      runSequence: executionEvents.runSequence,
-      eventType: executionEvents.eventType,
-      payload: executionEvents.payload,
-      occurredAt: executionEvents.occurredAt,
-      hostSessionId: executionEvents.hostSessionId,
-    })
+    .select(columns)
     .from(executionEvents)
     .where(
       and(
@@ -195,18 +249,11 @@ async function readCanonicalRunEvents(
     .limit(500);
 }
 
-function canonicalBrowserEvent(
+function buildCanonicalBrowserEvent(
   event: CanonicalRunEvent,
   context: boolean,
 ): Record<string, unknown> {
-  const { payload } = event;
-  const contextUsageOnly =
-    context &&
-    ((event.eventType === "session.update" &&
-      (payload?.contextType === "usage_update" ||
-        acpContextUpdateType(payload?.update) === "usage_update")) ||
-      (event.eventType === "session.line" &&
-        payload?.contextUsageOnly === true));
+  const contextUsageOnly = context && event.contextUsageOnly === true;
 
   return {
     type: event.eventType,
@@ -217,8 +264,20 @@ function canonicalBrowserEvent(
         ? event.occurredAt.toISOString()
         : String(event.occurredAt),
     hostSessionId: event.hostSessionId ?? null,
-    ...(contextUsageOnly ? { contextUsageOnly } : {}),
+    ...(contextUsageOnly ? { contextUsageOnly: true } : {}),
   };
+}
+
+function serializeContextState(
+  snapshot: ContextSnapshot | null,
+): string | null {
+  if (!snapshot) return null;
+
+  // A newer observation is useful for selection, but alone changes no state.
+  return JSON.stringify({
+    ...snapshot,
+    bindingObservedAt: undefined,
+  });
 }
 
 function canonicalRunEventStream(input: {
@@ -235,11 +294,18 @@ function canonicalRunEventStream(input: {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
-      let cursor = input.replayEvents
-        ? (input.replayCursor ?? -1n)
-        : await latestCanonicalRunSequence(input.run.id);
+      let cursor = input.replayEvents ? (input.replayCursor ?? -1n) : -1n;
+      let governed = input.run.companyId !== null || input.run.isGoverned;
+      const trackContext = input.context && input.run.runKind !== "librarian";
+      const isFlow = input.run.runKind === "flow";
       let eventsSent = 0;
+      let authChecks = 0;
+      let contextReads = 0;
       let lastStatusCheck = Date.now();
+      let lastAuthCheck = input.startedAt;
+      let lastContextReadAt: number | null = null;
+      let pendingContextSettle = false;
+      let forceFinalContextRead = false;
       const maxQuietMs = keepaliveMs();
       let lastEventAt = Date.now();
       let lastContext = "";
@@ -253,71 +319,185 @@ function canonicalRunEventStream(input: {
           // The client may have aborted while a database read completed.
         }
       };
-      const enqueueContext = (
-        snapshot: ContextSnapshot | null,
-        previousState: string,
-      ): string => {
-        if (!snapshot) return previousState;
-        // A newer observation is useful for selection, but alone changes no state.
-        const state = JSON.stringify({
-          ...snapshot,
-          bindingObservedAt: undefined,
-        });
+      const verifyStreamAuth = async (): Promise<void> => {
+        const now = Date.now();
+        const elapsedMs = now - lastAuthCheck;
 
-        if (state !== previousState) {
-          controller.enqueue(
-            encoder.encode(formatSyntheticSseEvent(JSON.stringify(snapshot))),
-          );
-          lastEventAt = Date.now();
-        }
-
-        return state;
-      };
-
-      if (!input.replayEvents) {
-        controller.enqueue(
-          encoder.encode(
-            formatSyntheticSseEvent(JSON.stringify(streamReadyEvent())),
-          ),
-        );
-      }
-
-      try {
-        while (!signal.aborted) {
-          const events = await readCanonicalRunEvents(input.run.id, cursor);
-          const context =
-            input.context && input.run.runKind !== "librarian"
-              ? await readContextSnapshot(getDb(), input.run.id)
-              : null;
-          const attemptId =
-            context && input.run.runKind === "flow"
-              ? await readCurrentAttemptId(getDb(), input.run.id)
-              : null;
-          const attemptContext = attemptId
-            ? await readContextSnapshot(getDb(), input.run.id, attemptId)
-            : null;
-
-          if (input.run.companyId) {
-            await assertCompanyRunReadAccess(
-              getDb(),
+        if (input.run.companyId) {
+          await assertCompanyRunReadAccess(getDb(), input.userId, input.run.id);
+        } else {
+          if (input.run.projectId) {
+            await requireProjectRoleForUser(
               input.userId,
-              input.run.id,
+              input.run.projectId,
+              "viewer",
             );
           } else {
-            if (context && input.run.projectId)
-              await requireProjectRole(input.run.projectId, "viewer");
-            await assertRunKnowledgeDisclosure(
-              getDb(),
-              { kind: "user", userId: input.userId },
-              input.run.id,
+            await requireActiveUserById(input.userId);
+          }
+          await assertRunKnowledgeDisclosure(
+            getDb(),
+            { kind: "user", userId: input.userId },
+            input.run.id,
+          );
+        }
+        lastAuthCheck = now;
+        authChecks += 1;
+        log.debug(
+          { runId: input.run.id, governed, elapsedMs },
+          "stream auth recheck",
+        );
+      };
+
+      try {
+        if (!input.replayEvents) {
+          cursor = await latestCanonicalRunSequence(input.run.id);
+          if (signal.aborted) return;
+          controller.enqueue(
+            encoder.encode(
+              formatSyntheticSseEvent(JSON.stringify(streamReadyEvent())),
+            ),
+          );
+        }
+
+        while (!signal.aborted) {
+          const events = await readCanonicalRunEvents(
+            input.run.id,
+            cursor,
+            input.context,
+          );
+          let context: ContextSnapshot | null = null;
+          let attemptContext: ContextSnapshot | null = null;
+
+          if (trackContext) {
+            const nowBeforeContext = Date.now();
+            const shouldReadContext =
+              forceFinalContextRead ||
+              lastContextReadAt === null ||
+              nowBeforeContext - lastContextReadAt >=
+                CONTEXT_SNAPSHOT_COALESCE_MS ||
+              (events.length === 0 && pendingContextSettle);
+
+            if (shouldReadContext) {
+              const db = getDb();
+              const [nextContext, attemptId] = await Promise.all([
+                readContextSnapshot(db, input.run.id),
+                isFlow
+                  ? readCurrentAttemptId(db, input.run.id)
+                  : Promise.resolve(null),
+              ]);
+
+              context = nextContext;
+              attemptContext = attemptId
+                ? await readContextSnapshot(db, input.run.id, attemptId)
+                : null;
+              lastContextReadAt = Date.now();
+              contextReads += 1;
+              forceFinalContextRead = false;
+              pendingContextSettle = events.length > 0;
+            } else {
+              if (events.length > 0) pendingContextSettle = true;
+              log.debug(
+                { runId: input.run.id, coalesced: true, changed: false },
+                "context snapshot coalesced",
+              );
+            }
+          }
+
+          const nextContextState = serializeContextState(context);
+          const nextAttemptContextState = serializeContextState(attemptContext);
+          const contextChanged =
+            (nextContextState !== null && nextContextState !== lastContext) ||
+            (nextAttemptContextState !== null &&
+              nextAttemptContextState !== lastAttemptContext);
+
+          if (trackContext && context !== null) {
+            log.debug(
+              {
+                runId: input.run.id,
+                coalesced: false,
+                changed: contextChanged,
+              },
+              "context snapshot read",
             );
           }
+
+          let checkedStatus = false;
+          let runStatus: {
+            status: string;
+            currentStepId: string | null;
+            isGoverned?: boolean;
+          } | null = null;
+
+          if (
+            terminalProjectionCursor !== null ||
+            Date.now() - lastStatusCheck >= STATUS_REFRESH_MS
+          ) {
+            lastStatusCheck = Date.now();
+            runStatus = await refreshRunStatus(input.run.id, !governed);
+            checkedStatus = true;
+            if (!runStatus) break;
+            if (!governed && runStatus.isGoverned) {
+              governed = true;
+              log.debug(
+                { runId: input.run.id },
+                "run promoted to governed mid-stream",
+              );
+            }
+          }
+
+          const isTerminal =
+            runStatus !== null && TERMINAL_RUN_STATUS.has(runStatus.status);
+          const hasOutgoing = events.length > 0 || contextChanged;
+          let verifiedThisIteration = false;
+
+          if (
+            !governed &&
+            !checkedStatus &&
+            hasOutgoing &&
+            (await isRunGoverned(input.run.id))
+          ) {
+            governed = true;
+            log.debug(
+              { runId: input.run.id },
+              "run promoted to governed mid-stream",
+            );
+          }
+
+          if (
+            (governed && hasOutgoing) ||
+            (isTerminal && hasOutgoing) ||
+            Date.now() - lastAuthCheck >= AUTH_RECHECK_INTERVAL_MS
+          ) {
+            await verifyStreamAuth();
+            verifiedThisIteration = true;
+          }
           if (signal.aborted) break;
-          lastContext = enqueueContext(context, lastContext);
-          lastAttemptContext = enqueueContext(
-            attemptContext,
-            lastAttemptContext,
-          );
+
+          if (
+            context &&
+            nextContextState !== null &&
+            nextContextState !== lastContext
+          ) {
+            controller.enqueue(
+              encoder.encode(formatSyntheticSseEvent(JSON.stringify(context))),
+            );
+            lastContext = nextContextState;
+            lastEventAt = Date.now();
+          }
+          if (
+            attemptContext &&
+            nextAttemptContextState !== null &&
+            nextAttemptContextState !== lastAttemptContext
+          ) {
+            controller.enqueue(
+              encoder.encode(
+                formatSyntheticSseEvent(JSON.stringify(attemptContext)),
+              ),
+            );
+            lastAttemptContext = nextAttemptContextState;
+            lastEventAt = Date.now();
+          }
 
           for (const event of events) {
             const sequence = event.runSequence;
@@ -328,13 +508,15 @@ function canonicalRunEventStream(input: {
               );
             }
             cursor = sequence;
-            if (input.run.runKind === "librarian" && event.payload === null)
+            if (input.run.runKind === "librarian" && event.payloadIsNull)
               continue;
             controller.enqueue(
               encoder.encode(
                 formatSseEvent(
                   sequence.toString(),
-                  JSON.stringify(canonicalBrowserEvent(event, input.context)),
+                  JSON.stringify(
+                    buildCanonicalBrowserEvent(event, input.context),
+                  ),
                 ),
               ),
             );
@@ -342,30 +524,32 @@ function canonicalRunEventStream(input: {
             lastEventAt = Date.now();
           }
 
-          if (Date.now() - lastStatusCheck >= STATUS_REFRESH_MS) {
-            lastStatusCheck = Date.now();
-            const status = await refreshRunStatus(input.run.id);
-
-            if (!status) break;
-            if (TERMINAL_RUN_STATUS.has(status.status)) {
-              if (!context) break;
-              terminalDeadline ??= Date.now() + 3_000;
-              if (
-                events.length < 500 &&
-                (await contextProjectionThrough(getDb(), input.run.id, cursor))
-              ) {
-                if (terminalProjectionCursor === cursor) break;
-                // Read once after observing the committed projection watermark.
-                terminalProjectionCursor = cursor;
-                continue;
-              }
-              if (Date.now() >= terminalDeadline) {
-                log.warn(
-                  { runId: input.run.id },
-                  "context stream closed with pending projection",
-                );
+          if (checkedStatus && isTerminal) {
+            if (!trackContext) {
+              if (!verifiedThisIteration) await verifyStreamAuth();
+              break;
+            }
+            terminalDeadline ??= Date.now() + 3_000;
+            if (
+              events.length < 500 &&
+              (await contextProjectionThrough(getDb(), input.run.id, cursor))
+            ) {
+              if (terminalProjectionCursor === cursor) {
+                if (!verifiedThisIteration) await verifyStreamAuth();
                 break;
               }
+              // Read once after observing the committed projection watermark.
+              terminalProjectionCursor = cursor;
+              forceFinalContextRead = true;
+              continue;
+            }
+            if (Date.now() >= terminalDeadline) {
+              log.warn(
+                { runId: input.run.id },
+                "context stream closed with pending projection",
+              );
+              if (!verifiedThisIteration) await verifyStreamAuth();
+              break;
             }
           }
           if (Date.now() - lastEventAt > maxQuietMs) {
@@ -385,11 +569,16 @@ function canonicalRunEventStream(input: {
           // A local wake only reduces latency. The next iteration always
           // replays from the durable sequence, including after a missed wake
           // from another web process or a manager restart.
-          await runEventWakeBus.wait(
-            input.run.id,
-            CANONICAL_WAKE_TIMEOUT_MS,
-            signal,
+          const remainingAuthMs = Math.max(
+            1,
+            AUTH_RECHECK_INTERVAL_MS - (Date.now() - lastAuthCheck),
           );
+          const wakeTimeoutMs = Math.min(
+            CANONICAL_WAKE_TIMEOUT_MS,
+            remainingAuthMs,
+          );
+
+          await runEventWakeBus.wait(input.run.id, wakeTimeoutMs, signal);
         }
       } catch (error) {
         log.warn(
@@ -408,6 +597,8 @@ function canonicalRunEventStream(input: {
           {
             runId: input.run.id,
             eventsSent,
+            authChecks,
+            contextReads,
             durationMs: Date.now() - input.startedAt,
             source: "canonical_events",
           },
@@ -434,13 +625,10 @@ export async function GET(
   req: NextRequest,
   { params }: RouteParams,
 ): Promise<Response> {
-  const { runId } = await params;
-  const replayEvents = shouldReplayRunStream(req.url);
-
   // Auth-first: authenticate AND clear the forced-password-change gate BEFORE
-  // the run lookup, so unauthenticated / must-change callers cannot probe run
-  // existence (404-vs-403 shape). Project membership is enforced below once
-  // projectId is derived from the run row.
+  // reading params or looking up the run, so unauthenticated / must-change
+  // callers cannot probe run existence (404-vs-403 shape). Project membership
+  // is enforced below once projectId is derived from the run row.
   let sessionUser: { id: string };
 
   try {
@@ -457,6 +645,9 @@ export async function GET(
     throw err;
   }
 
+  const { runId } = await params;
+  const replayEvents = shouldReplayRunStream(req.url);
+
   const run = await loadRunLite(runId);
 
   if (!run) {
@@ -471,7 +662,7 @@ export async function GET(
     if (run.companyId) {
       await assertCompanyRunReadAccess(getDb(), sessionUser.id, runId);
     } else if (run.projectId) {
-      await requireProjectRole(run.projectId, "viewer");
+      await requireProjectRoleForUser(sessionUser.id, run.projectId, "viewer");
     } else {
       await assertLocalPackageAssistantActor(run, sessionUser.id, {
         requireLock: false,

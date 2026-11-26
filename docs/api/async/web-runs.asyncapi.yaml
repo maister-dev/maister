@@ -47,24 +47,39 @@ channels:
       description: |
         Authentication is principal-derived. Project runs require the viewer
         role on the project derived from the run row. Projectless local-package
-        assistant runs are restricted to their server-derived creator.
+        assistant and librarian runs are restricted to their server-derived
+        creator, with active-user rechecks on the stream loop cadence.
 
-        Enrolled native evidence runs additionally require current access to
-        their complete server-recorded source union. Unavailable sources or an
-        incomplete capture return HTTP 409 before streaming. Each asynchronous
-        event-batch read is followed by a current source check before enqueue;
-        revocation closes the stream. Consumer cancellation releases wake
-        waiters. No database locks span a network wait.
+        Enrolled native evidence runs and company runs additionally require
+        current access to their complete server-recorded source union.
+        Unavailable sources or an incomplete capture return HTTP 409 before
+        streaming. On enrolled/company/vault runs (including runs dynamically
+        enrolled in a vault mid-stream), each asynchronous non-empty
+        event-batch read is followed by a current source check before enqueue
+        plus a bounded 2,500 ms idle recheck; revocation closes the stream.
+        Ordinary non-enrolled project runs re-verify `requireProjectRoleForUser`
+        and disclosure at least once every 2,500 ms (re-verifying no later than
+        2,500 ms after the previous check) and before terminal batch
+        emission/close without re-invoking NextAuth `auth()` inside the stream
+        loop (Implemented).
+        Event reads project only scalar metadata booleans (`payloadIsNull` and,
+        when `?context=1`, safe JSONB `contextUsageOnly`) without selecting or
+        transferring `execution_events.payload` JSONB to Node (Implemented).
+        Consumer cancellation releases wake waiters. No database locks span a
+        network wait.
 
         Replay is exclusive of `Last-Event-ID` or the `lastEventId` query
         fallback. Invalid, negative, leading-zero, or overlong cursors return
         HTTP 400 before streaming. A default connection replays from sequence
-        zero. `?replay=false` begins at the current durable tail and first emits
-        `session.stream_ready`. Terminal database run states close the stream
-        after already-readable canonical rows are emitted.
+        zero. Setting `?replay=` to `"false"`, `"0"`, or `"live"`
+        (case-insensitive; any other value replays from sequence zero) begins at
+        the current durable tail and first emits `session.stream_ready`. Terminal
+        database run states close the stream after already-readable canonical
+        rows are emitted.
         Clients request context snapshots with `?context=1`. The manager sends
         the active run snapshot and, for a Flow, may send the current attempt
-        snapshot on the same connection. Snapshots do not advance replay.
+        snapshot on the same connection (coalesced at 500 ms during bursts, plus
+        idle settle and terminal watermark reads). Snapshots do not advance replay.
         Usage-only canonical frames on that connection retain their SSE ids
         and may skip unrelated invalidations. Committed compaction marker
         mutations have their own transcript revision in the snapshot.
@@ -82,13 +97,20 @@ channels:
           type: string
     subscribe:
       operationId: subscribeRunPeekChanges
-      summary: Designed — content-free workbench change notifications
+      summary: Implemented — content-free workbench change notifications
       description: Active browser session. At most the anchor and admitted selected descendant receive
         run.changed ticks. No SSE id/replay cursor; ready/resync causes canonical projection reads.
         Designed (ADR-216/217) — wait or autonomy writes use the same content-free
         invalidation after commit, including waits with no execution host event.
-        New metadata and final projection changes remain observable after execution settles. HTTP
-        heartbeats perform no data polling.
+        New metadata and final projection changes remain observable after execution settles.
+        Unrelated `transcript`, `execution_events`, foreign-`rootRunId`, and unrelated top-level
+        root `runs` hints are discarded in memory before enqueueing into the 128-entry `pending`
+        backpressure map and before any database authorization or ancestry query, while reparenting
+        transitions pass through; `governedScope` covers the full `anchor → ... → selected` path
+        including mid-stream vault enrollment. Relevant `summary` hints and governed/company scopes
+        re-verify immediately before emitting, while ordinary non-governed `transcript`/`execution`
+        bursts coalesce auth rechecks to 2,500 ms (Implemented).
+        HTTP heartbeats are transport-only and perform no data polling.
       message:
         oneOf:
           - $ref: "#/components/messages/RunPeekReady"

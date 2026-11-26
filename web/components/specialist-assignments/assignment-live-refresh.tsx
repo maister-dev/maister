@@ -2,12 +2,16 @@
 
 import type { ReactElement } from "react";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 import { useRunStream } from "@/lib/use-run-stream";
+
+const ASSIGNMENT_REFRESH_COALESCE_MS = 750;
 
 export function AssignmentLiveRefresh({
   assignmentId,
@@ -19,20 +23,34 @@ export function AssignmentLiveRefresh({
   runId: string | null;
 }): ReactElement {
   const t = useTranslations("specialistAssignments");
+  const tRun = useTranslations("run");
   const router = useRouter();
-  const { eventCount, liveness } = useRunStream(runId, { retain: false });
+  const { eventCount, liveness, reconnect } = useRunStream(runId, {
+    retain: false,
+  });
   const [unavailable, setUnavailable] = useState(false);
+  const scope = `${assignmentId}:${runId ?? ""}`;
+  const [trackedScope, setTrackedScope] = useState(scope);
+
+  if (trackedScope !== scope) {
+    setTrackedScope(scope);
+    setUnavailable(false);
+  }
+  const revisionRef = useRef(revision);
 
   useEffect(() => {
-    if (!runId || liveness !== "live") return;
-    const controller = new AbortController();
-    const timer = setTimeout(async () => {
+    revisionRef.current = revision;
+  }, [revision]);
+
+  const triggerRefresh = useCoalescedRefresh(
+    async (signal) => {
       try {
         const response = await fetch(
           `/api/specialist-assignments/${encodeURIComponent(assignmentId)}`,
-          { signal: controller.signal },
+          { signal },
         );
 
+        if (signal.aborted) return;
         if (!response.ok) {
           setUnavailable(true);
 
@@ -40,29 +58,44 @@ export function AssignmentLiveRefresh({
         }
         const value: unknown = await response.json();
 
-        if (controller.signal.aborted) return;
+        if (signal.aborted) return;
         setUnavailable(false);
         if (
           value &&
           typeof value === "object" &&
           "revision" in value &&
-          value.revision !== revision
+          value.revision !== revisionRef.current
         )
           router.refresh();
       } catch {
-        if (controller.signal.aborted) return;
+        if (signal.aborted) return;
         setUnavailable(true);
       }
-    }, 750);
+    },
+    ASSIGNMENT_REFRESH_COALESCE_MS,
+    runId ? `${assignmentId}:${runId}` : null,
+  );
 
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [assignmentId, revision, runId, router, eventCount, liveness]);
+  useEffect(() => {
+    if (!runId || liveness !== "live") return;
+
+    triggerRefresh();
+  }, [assignmentId, eventCount, liveness, runId, triggerRefresh]);
 
   return (
     <div className="flex items-center gap-2">
+      {runId !== null && liveness !== "closed" ? (
+        <RunStreamLiveness
+          labels={{
+            disconnected: tRun("streamDisconnected"),
+            live: tRun("streamLive"),
+            reconnect: tRun("streamReconnect"),
+            reconnecting: tRun("streamReconnecting"),
+          }}
+          liveness={liveness}
+          onReconnect={reconnect}
+        />
+      ) : null}
       {unavailable ? (
         <p className="text-xs text-mute" role="status">
           {t("progressUnavailable")}

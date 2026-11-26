@@ -8,6 +8,7 @@ import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+import pino from "pino";
 
 import { loadTaskLaunchIntegrityLimit } from "@/lib/tasks/launch-events";
 import { RunFindingsPanel } from "@/components/runs/run-findings-panel";
@@ -130,7 +131,12 @@ import {
   isRunKnowledgeUnavailable,
 } from "@/lib/brain/knowledge-run-disclosure";
 import { RunSourceUnavailable } from "@/components/runs/run-source-unavailable";
-import { prepareDiff } from "@/lib/diff/prepare";
+import {
+  buildPreparedDiffCacheEntry,
+  getCachedPreparedDiff,
+  setCachedPreparedDiff,
+} from "@/lib/diff/cache";
+import { prepareDiff, prepareDiffSummary } from "@/lib/diff/prepare";
 import { reposRoot, worktreesRoot } from "@/lib/instance-config";
 import {
   formatProjectRepoPath,
@@ -164,9 +170,11 @@ import {
 import { getRunPackageProvenance } from "@/lib/local-packages/versions";
 import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
+  diffNameStatus,
   diffRange,
   resolveBaseCommit,
   resolveBaseRef,
+  resolveRefSha,
   statusPorcelain,
 } from "@/lib/worktree";
 import { RunSyncAttempt } from "@/components/runs/run-sync-attempt";
@@ -201,6 +209,11 @@ import { DeliveryPolicyCancelButton } from "@/components/runs/delivery-policy-ca
 import { GateChatPanel } from "@/components/runs/gate-chat-panel";
 import { AutoPromotionPanel } from "@/components/runs/auto-promotion-panel";
 import { CutoverFailureBanner } from "@/components/runs/cutover-failure-banner";
+
+const log = pino({
+  name: "run-detail-layout",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 type LayoutProps = {
   children: ReactNode;
@@ -270,12 +283,69 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
     }
   }
 
-  const { text: rawDiff, truncated } = await diffRange({
-    worktreePath: detail.worktreePath,
-    baseRef: diffBaseRef,
-    branch: detail.branch,
-  });
-  const diff = await prepareDiff(rawDiff, truncated);
+  const [baseSha, headSha] = await Promise.all([
+    detail.baseCommit
+      ? Promise.resolve(detail.baseCommit)
+      : resolveRefSha(detail.worktreePath, diffBaseRef).catch(() => null),
+    resolveRefSha(detail.worktreePath, detail.branch).catch(() => null),
+  ]);
+  const cacheKey =
+    baseSha && headSha
+      ? `sha:${detail.worktreePath}:${baseSha}:${headSha}`
+      : null;
+  const cached = cacheKey ? getCachedPreparedDiff(cacheKey) : undefined;
+  let diff: ReviewPanelDiff;
+
+  if (cached) {
+    diff = cached.prepared;
+  } else {
+    const effectiveBase = baseSha ?? diffBaseRef;
+    const effectiveHead = headSha ?? detail.branch;
+    const [{ text: rawDiff, truncated }, nameStatus] = await Promise.all([
+      diffRange({
+        worktreePath: detail.worktreePath,
+        baseRef: effectiveBase,
+        branch: effectiveHead,
+      }),
+      baseSha && headSha
+        ? diffNameStatus({
+            worktreePath: detail.worktreePath,
+            baseRef: baseSha,
+            branch: headSha,
+          }).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
+    try {
+      const prepared = await prepareDiff(rawDiff, truncated);
+
+      diff = prepared;
+      if (cacheKey && nameStatus) {
+        setCachedPreparedDiff(
+          cacheKey,
+          buildPreparedDiffCacheEntry({ nameStatus, prepared }),
+        );
+      }
+    } catch (err) {
+      if (isMaisterError(err)) throw err;
+
+      const summary = prepareDiffSummary(rawDiff, truncated);
+
+      log.warn(
+        {
+          runId: detail.runId,
+          err: err instanceof Error ? err.message : String(err),
+          fileCount: summary.files.length,
+        },
+        "review panel diff preparation failed — degrading to summary without rich bundles",
+      );
+      diff = {
+        files: summary.files,
+        perFile: [],
+        truncated: summary.truncated,
+      };
+    }
+  }
 
   // The live target HEAD this surface is reviewed against — carried into the
   // promote payload as the optimistic-concurrency drift token (§3.7). Drift is
@@ -1105,7 +1175,6 @@ export default async function RunDetailLayout({
     capabilityNodes,
     resolvedCapabilitySet: resolvedSet,
     degradations: flowResultDegradations,
-    // eslint-disable-next-line react-hooks/purity -- async Server Component: one render per request reads the request clock.
     nowMs: Date.now(),
   });
   const showAgentCenter =
@@ -1113,8 +1182,7 @@ export default async function RunDetailLayout({
 
   const wallDurationMs = detail.endedAt
     ? Math.max(0, detail.endedAt.getTime() - detail.startedAt.getTime())
-    : // eslint-disable-next-line react-hooks/purity -- async Server Component: one render per request reads the request clock.
-      Math.max(0, Date.now() - detail.startedAt.getTime());
+    : Math.max(0, Date.now() - detail.startedAt.getTime());
   const policy = detail.deliveryPolicySnapshot;
   const displayWorktreePath = formatRunWorktreePath(
     detail.worktreePath,

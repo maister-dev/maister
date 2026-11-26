@@ -13,6 +13,7 @@ import { useWorkbenchStream } from "@/components/runs/run-workbench-stream-provi
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import { runViewKey, shouldRefreshRunView } from "@/lib/runs/live-refresh";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 
 // Coalesce chunks without waiting for an active stream to become quiet.
 const REFRESH_COALESCE_MS = 800;
@@ -38,6 +39,7 @@ export function RunLiveRefresh({
 }): ReactElement | null {
   const router = useRouter();
   const workbench = useWorkbenchStream();
+  const hasWorkbench = Boolean(workbench);
   const live = isLiveRunStatus(runStatus);
   const { eventCount, liveness, reconnect } = useRunPageStream(runId, live);
   const seenRef = useRef<string | null>(
@@ -52,7 +54,6 @@ export function RunLiveRefresh({
   useEffect(() => {
     metadataRef.current = metadataVersion;
   }, [metadataVersion]);
-  const scheduleRef = useRef<(() => void) | null>(null);
 
   // A completed server re-render delivers fresh props — adopt them as the new
   // baseline so the next transition (not this one) triggers the following
@@ -61,26 +62,8 @@ export function RunLiveRefresh({
     seenRef.current = runViewKey({ runStatus, currentStepId });
   }, [runId, runStatus, currentStepId]);
 
-  useEffect(() => {
-    if (!live && !workbench) return;
-
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let inFlight = false;
-    let pending = false;
-
-    function schedule(): void {
-      if (controller.signal.aborted) return;
-      pending = true;
-      if (timer !== null || inFlight) return;
-
-      timer = setTimeout(() => void checkStatus(), REFRESH_COALESCE_MS);
-    }
-
-    async function checkStatus(): Promise<void> {
-      timer = null;
-      pending = false;
-      inFlight = true;
+  const triggerRefresh = useCoalescedRefresh(
+    async (signal) => {
       try {
         if (
           metadataRef.current !== "legacy" &&
@@ -92,7 +75,7 @@ export function RunLiveRefresh({
           return;
         }
         const res = await fetch(`/api/runs/${runId}/graph-status`, {
-          signal: controller.signal,
+          signal,
         });
 
         if (!res.ok) return;
@@ -101,7 +84,7 @@ export function RunLiveRefresh({
           currentStepId?: string | null;
         };
 
-        if (controller.signal.aborted) return;
+        if (signal.aborted) return;
         if (
           metadataRef.current !== seenMetadataRef.current ||
           seenRef.current === null ||
@@ -113,32 +96,59 @@ export function RunLiveRefresh({
         }
       } catch {
         /* a transient status refetch failure retries on the next tick */
-      } finally {
-        inFlight = false;
-        if (pending) schedule();
       }
-    }
+    },
+    REFRESH_COALESCE_MS,
+    live || hasWorkbench
+      ? `${runId}:${live ? 1 : 0}:${hasWorkbench ? 1 : 0}`
+      : null,
+  );
 
-    scheduleRef.current = schedule;
+  useEffect(() => {
+    if (liveness === "live" && !hasWorkbench) seenRef.current = null;
+  }, [liveness, runId, hasWorkbench]);
 
-    return () => {
-      controller.abort();
-      if (timer !== null) clearTimeout(timer);
-      scheduleRef.current = null;
+  const prevTriggerRef = useRef<{
+    runId: string;
+    live: boolean;
+    hasWorkbench: boolean;
+    eventCount: number;
+    liveness: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const prev = prevTriggerRef.current;
+
+    prevTriggerRef.current = {
+      runId,
+      live,
+      hasWorkbench,
+      eventCount,
+      liveness,
     };
-  }, [live, runId, router, !!workbench]);
 
-  useEffect(() => {
-    if (liveness === "live" && !workbench) seenRef.current = null;
-  }, [liveness, runId, !!workbench]);
+    const settledInWorkbench =
+      prev !== null &&
+      hasWorkbench &&
+      prev.hasWorkbench &&
+      prev.runId === runId &&
+      prev.live &&
+      !live &&
+      prev.eventCount === eventCount &&
+      prev.liveness === liveness;
 
-  useEffect(() => {
-    if ((live || workbench) && (eventCount > 0 || liveness === "live")) {
-      scheduleRef.current?.();
+    if (settledInWorkbench) {
+      seenMetadataRef.current = metadataRef.current;
+
+      return;
     }
-  }, [eventCount, live, liveness, runId, !!workbench]);
 
-  if (!live && !workbench) return null;
+    if ((live || hasWorkbench) && (eventCount > 0 || liveness === "live")) {
+      triggerRefresh();
+    }
+  }, [eventCount, live, liveness, runId, hasWorkbench, triggerRefresh]);
+
+  if (!live && !hasWorkbench) return null;
 
   return (
     <RunStreamLiveness

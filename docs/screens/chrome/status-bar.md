@@ -76,8 +76,7 @@ that opts into the host's stream block; readiness probes deliberately do not,
 so a telemetry fault can never refuse a launch. The lag decoration uses only that health response; it does not invoke the
 Postgres lag collector. No client polling.
 
-`AttentionLiveRefresh` owns one `GET /api/attention/stream` connection in this
-persistent footer. Its ticks refresh the shared sidebar counters and the current
+`AttentionStreamProvider` in `AppLayout` owns the single shared `GET /api/attention/stream` connection consumed by `AttentionLiveRefresh` in this persistent footer and by `TaskLaunchIntentStatus` in `<main>`. Its ticks refresh the shared sidebar counters and the current
 page, including Inbox; see [attention behavior](../../system-analytics/attention.md).
 The first connect carries the layout render's cursor and counters (ADR-171 D7),
 so a page that is already current gets no tick and is not refreshed.

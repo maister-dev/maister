@@ -9,19 +9,24 @@ import type { RunCostSummary } from "@/lib/queries/run";
 import type { CostSummaryFactLabels } from "@/lib/runs/cost-summary-facts";
 import type { ReactElement } from "react";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { RunInspector } from "@/components/runs/run-inspector";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
 import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
-  CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
+  CHANGE_SUMMARY_REFRESH_COALESCE_MS,
   changeSummaryRefreshUrl,
   costSummaryRefreshUrl,
   formatRunDuration,
   isLiveRunStatus,
 } from "@/lib/runs/live-inspector";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
+import {
+  isDocumentHidden,
+  subscribeDocumentVisibility,
+} from "@/lib/sse-visibility";
 
 // Live token-cost poll config: the cost facts (token totals) carried in `facts`
 // are replaced by label as canonical usage events arrive during the run.
@@ -64,85 +69,138 @@ export function LiveRunInspector({
   ...rest
 }: LiveRunInspectorProps): ReactElement {
   const live = isLiveRunStatus(runStatus);
-  const [changeSummary, setChangeSummary] =
-    useState<RunInspectorChangeSummary | null>(initialChangeSummary);
-  const [stale, setStale] = useState(false);
-  const [cost, setCost] = useState<RunCostSummary | null>(
-    liveCost?.initial ?? null,
-  );
+  const summaryKey = `${rest.runId}:${changeScope}`;
+  const [liveSummaryOverride, setLiveSummaryOverride] = useState<{
+    key: string;
+    value: RunInspectorChangeSummary;
+  } | null>(null);
+  const [staleKey, setStaleKey] = useState<string | null>(null);
+  const [liveCostOverride, setLiveCostOverride] = useState<{
+    runId: string;
+    value: RunCostSummary;
+  } | null>(null);
   const [nowMs, setNowMs] = useState<number | null>(null);
   const { eventCount, context } = useRunPageStream(rest.runId, live);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const changeSummary =
+    live && liveSummaryOverride?.key === summaryKey
+      ? liveSummaryOverride.value
+      : initialChangeSummary;
+  const stale = live && staleKey === summaryKey;
+  const cost =
+    live && liveCostOverride?.runId === rest.runId
+      ? liveCostOverride.value
+      : (liveCost?.initial ?? null);
+
+  const triggerChangeSummaryRefresh = useCoalescedRefresh(
+    async (signal) => {
+      try {
+        const res = await fetch(
+          changeSummaryRefreshUrl(rest.runId, changeScope),
+          { signal },
+        );
+
+        if (signal.aborted) return;
+        if (!res.ok) {
+          setStaleKey(summaryKey);
+
+          return;
+        }
+        const nextSummary = (await res.json()) as RunInspectorChangeSummary;
+
+        if (signal.aborted) return;
+        setLiveSummaryOverride({ key: summaryKey, value: nextSummary });
+        setStaleKey(null);
+      } catch {
+        if (signal.aborted) return;
+        setStaleKey(summaryKey);
+      }
+    },
+    CHANGE_SUMMARY_REFRESH_COALESCE_MS,
+    live ? summaryKey : null,
+  );
 
   useEffect(() => {
     if (!live || eventCount === 0) return;
 
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch(
-            changeSummaryRefreshUrl(rest.runId, changeScope),
-          );
+    triggerChangeSummaryRefresh();
+  }, [eventCount, live, triggerChangeSummaryRefresh]);
 
-          if (!res.ok) {
-            setStale(true);
+  // Re-poll cost on the same SSE tick (separate coalesced refresher): canonical
+  // usage is appended per event during the turn. A failed poll keeps the last
+  // good snapshot (no stale badge — cost is advisory).
+  const hasLiveCost = Boolean(liveCost);
+  const triggerCostRefresh = useCoalescedRefresh(
+    async (signal) => {
+      try {
+        const res = await fetch(costSummaryRefreshUrl(rest.runId), {
+          signal,
+        });
 
-            return;
-          }
-          setChangeSummary((await res.json()) as RunInspectorChangeSummary);
-          setStale(false);
-        } catch {
-          setStale(true);
-        }
-      })();
-    }, CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS);
+        if (signal.aborted || !res.ok) return;
+        const nextCost = (await res.json()) as RunCostSummary;
 
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [eventCount, live, changeScope, rest.runId]);
-
-  // Re-poll cost on the same SSE tick (separate debounce timer): canonical usage
-  // is appended per event during the turn. A failed poll keeps the last good
-  // snapshot (no stale badge — cost is advisory).
-  const costTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+        if (signal.aborted) return;
+        setLiveCostOverride({ runId: rest.runId, value: nextCost });
+      } catch {
+        // keep last good cost
+      }
+    },
+    CHANGE_SUMMARY_REFRESH_COALESCE_MS,
+    live && hasLiveCost ? rest.runId : null,
+  );
 
   useEffect(() => {
-    if (!live || !liveCost || eventCount === 0) return;
+    if (!live || !hasLiveCost || eventCount === 0) return;
 
-    if (costTimerRef.current) clearTimeout(costTimerRef.current);
-    costTimerRef.current = setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch(costSummaryRefreshUrl(rest.runId));
+    triggerCostRefresh();
+  }, [eventCount, live, hasLiveCost, triggerCostRefresh]);
 
-          if (!res.ok) return;
-          setCost((await res.json()) as RunCostSummary);
-        } catch {
-          // keep last good cost
-        }
-      })();
-    }, CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS);
+  const wallClockStartedAtMs = liveWallClock?.startedAtMs;
+  const wallClockEndedAtMs = liveWallClock?.endedAtMs;
 
-    return () => {
-      if (costTimerRef.current) clearTimeout(costTimerRef.current);
-    };
-  }, [eventCount, live, liveCost, rest.runId]);
-
-  // Tick elapsed wall-clock once a second while the run is live and unfinished.
+  // Tick elapsed wall-clock once a second while the run is live, unfinished,
+  // and the tab is visible.
   useEffect(() => {
-    if (!live || !liveWallClock || liveWallClock.endedAtMs !== null) return;
+    if (
+      !live ||
+      wallClockStartedAtMs === undefined ||
+      wallClockEndedAtMs !== null
+    )
+      return;
+
+    let first: ReturnType<typeof setTimeout> | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
 
     const tick = (): void => setNowMs(Date.now());
-    const first = setTimeout(tick, 0);
-    const id = setInterval(tick, 1000);
+    const stop = (): void => {
+      if (first !== null) {
+        clearTimeout(first);
+        first = null;
+      }
+      if (interval !== null) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+    const start = (immediate: boolean): void => {
+      if (interval !== null || isDocumentHidden()) return;
+      if (immediate) tick();
+      else first = setTimeout(tick, 0);
+      interval = setInterval(tick, 1000);
+    };
+
+    start(false);
+    const unsubscribeVisibility = subscribeDocumentVisibility({
+      onHide: stop,
+      onShow: () => start(true),
+    });
 
     return () => {
-      clearTimeout(first);
-      clearInterval(id);
+      unsubscribeVisibility();
+      stop();
     };
-  }, [live, liveWallClock]);
+  }, [live, wallClockStartedAtMs, wallClockEndedAtMs]);
 
   const liveFacts = useMemo<RunInspectorFact[]>(() => {
     const overrides = new Map<string, string>();

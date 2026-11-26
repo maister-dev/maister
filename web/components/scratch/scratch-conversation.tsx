@@ -12,11 +12,13 @@ import type { ReactElement } from "react";
 import type { HitlErrorMessage } from "@/lib/ui-error-message";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import { isAcpContextFailureReason } from "../../../runtime/acp-context-failure";
 
+import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import {
   ScratchTranscript,
   type TranscriptLabels,
@@ -50,12 +52,16 @@ import {
   latestContextSnapshot,
   type ContextSnapshot,
 } from "@/lib/runs/context-snapshot";
+import { isLiveRunStatus } from "@/lib/runs/live-inspector";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 import { isStaleViewErrorCode } from "@/lib/ui-error-message";
 import {
   canReplayHitlAnswer,
   isPendingHitlDeliveryState,
   isStoredAnswerDeliveryReason,
 } from "@/lib/hitl-response-contract";
+
+const DETAIL_REFRESH_COALESCE_MS = 250;
 
 const shell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
@@ -128,6 +134,7 @@ export function ScratchConversation({
 }): ReactElement {
   const t = useTranslations("scratch");
   const tRun = useTranslations("run");
+  const router = useRouter();
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
@@ -182,14 +189,20 @@ export function ScratchConversation({
     requestKey: string;
     payload: NonNullable<ScratchDetail["pendingHitl"]>["storedResponse"];
   } | null>(null);
-  const [detailRevision, setDetailRevision] = useState(0);
-  const [commandCatalog, setCommandCatalog] = useState<
-    ProjectCapabilityCatalogEntry[]
-  >([]);
-  const { eventCount, context: streamedContext } = useRunPageStream(
-    runId,
-    true,
-  );
+  const [projectCatalogState, setProjectCatalogState] = useState<{
+    key: string;
+    capabilities: ProjectCapabilityCatalogEntry[];
+  }>({ key: "", capabilities: [] });
+  const [liveCommandsState, setLiveCommandsState] = useState<{
+    runId: string;
+    commands: RunningLiveCommand[];
+  }>({ runId: "", commands: [] });
+  const {
+    eventCount,
+    context: streamedContext,
+    liveness,
+    reconnect,
+  } = useRunPageStream(runId, true);
   const transcriptRevision = contextTranscriptRevision(streamedContext);
   const resolvedMessageEndpoint =
     messageEndpoint ?? `/api/scratch-runs/${runId}/messages`;
@@ -201,10 +214,10 @@ export function ScratchConversation({
     interruptEndpoint ?? `/api/scratch-runs/${runId}/interrupt`;
 
   const fetchDetail = useCallback(
-    (): Promise<void> =>
-      fetch(`/api/scratch-runs/${runId}`)
+    (signal?: AbortSignal): Promise<void> =>
+      fetch(`/api/scratch-runs/${runId}`, signal ? { signal } : undefined)
         .then(async (response) => {
-          if (activeRunId.current !== runId) return;
+          if (signal?.aborted || activeRunId.current !== runId) return;
 
           if (!response.ok) {
             setError(t(errorText(await response.json().catch(() => null))));
@@ -214,25 +227,29 @@ export function ScratchConversation({
 
           const nextDetail = (await response.json()) as ScratchDetail;
 
-          if (activeRunId.current !== runId) return;
+          if (signal?.aborted || activeRunId.current !== runId) return;
           setDetail(nextDetail);
-          setDetailRevision((current) => current + 1);
         })
         .catch(() => {
+          if (signal?.aborted) return;
           if (activeRunId.current === runId) setError(t("errorGeneric"));
         })
         .finally(() => {
-          if (activeRunId.current === runId) setLoading(false);
+          if (!signal?.aborted && activeRunId.current === runId)
+            setLoading(false);
         }),
     [runId],
   );
 
-  const loadDetail = useCallback((): Promise<void> => {
-    setLoading(true);
-    setError(null);
+  const loadDetail = useCallback(
+    (signal?: AbortSignal): Promise<void> => {
+      setLoading(true);
+      setError(null);
 
-    return fetchDetail();
-  }, [fetchDetail]);
+      return fetchDetail(signal);
+    },
+    [fetchDetail],
+  );
 
   // The mount, and every switch to another run, starts a fresh load.
   const [loadingRunId, setLoadingRunId] = useState(runId);
@@ -244,7 +261,11 @@ export function ScratchConversation({
   }
 
   useEffect(() => {
-    void fetchDetail();
+    const controller = new AbortController();
+
+    void fetchDetail(controller.signal);
+
+    return () => controller.abort();
   }, [fetchDetail]);
 
   const composerAgent: AdapterId = useMemo(() => {
@@ -258,68 +279,114 @@ export function ScratchConversation({
     detail?.run.capabilityAgent,
     detail?.run.runnerSnapshot?.capabilityAgent,
   ]);
-
-  // A run without a project offers no commands.
-  if (!detail?.run.projectSlug && commandCatalog.length > 0) {
-    setCommandCatalog([]);
-  }
+  const projectSlug = detail?.run.projectSlug ?? null;
+  const detailDialogStatus = detail?.scratch.dialogStatus ?? null;
+  const catalogKey = projectSlug ? `${projectSlug}:${composerAgent}` : "";
 
   useEffect(() => {
-    const projectSlug = detail?.run.projectSlug;
-
     if (!projectSlug) return;
 
     const encodedProjectSlug = encodeURIComponent(projectSlug);
     const controller = new AbortController();
 
-    async function loadCommandCatalog(): Promise<void> {
-      const [catalogResponse, commandsResponse] = await Promise.all([
-        fetch(
-          `/api/projects/${encodedProjectSlug}/capability-catalog?agent=${encodeURIComponent(composerAgent)}`,
-          { signal: controller.signal },
-        ),
-        fetch(`/api/scratch-runs/${runId}/commands`, {
-          signal: controller.signal,
-        }),
-      ]);
+    async function loadProjectCapabilities(): Promise<void> {
+      const catalogResponse = await fetch(
+        `/api/projects/${encodedProjectSlug}/capability-catalog?agent=${encodeURIComponent(composerAgent)}`,
+        { signal: controller.signal },
+      );
+
+      if (controller.signal.aborted) return;
       const catalogPayload = catalogResponse.ok
         ? ((await catalogResponse.json()) as {
             capabilities?: ProjectCapabilityCatalogEntry[];
           })
         : { capabilities: [] };
+
+      if (controller.signal.aborted) return;
+      setProjectCatalogState({
+        key: `${projectSlug}:${composerAgent}`,
+        capabilities: catalogPayload.capabilities ?? [],
+      });
+    }
+
+    void loadProjectCapabilities().catch(() => {
+      if (controller.signal.aborted) return;
+      setProjectCatalogState({
+        key: `${projectSlug}:${composerAgent}`,
+        capabilities: [],
+      });
+      setError(t("errorGeneric"));
+    });
+
+    return () => controller.abort();
+  }, [projectSlug, composerAgent]);
+
+  useEffect(() => {
+    if (!projectSlug) return;
+
+    const controller = new AbortController();
+
+    async function loadLiveCommands(): Promise<void> {
+      const commandsResponse = await fetch(
+        `/api/scratch-runs/${runId}/commands`,
+        {
+          signal: controller.signal,
+        },
+      );
+
+      if (controller.signal.aborted) return;
       const commandsPayload = commandsResponse.ok
         ? ((await commandsResponse.json()) as {
             commands?: RunningLiveCommand[];
           })
         : { commands: [] };
 
-      setCommandCatalog(
-        buildRunningCommandCatalog(
-          commandsPayload.commands ?? [],
-          catalogPayload.capabilities ?? [],
-          composerAgent,
-        ),
-      );
+      if (controller.signal.aborted) return;
+      setLiveCommandsState({
+        runId,
+        commands: commandsPayload.commands ?? [],
+      });
     }
 
-    void loadCommandCatalog().catch(() => {
+    void loadLiveCommands().catch(() => {
       if (controller.signal.aborted) return;
-      setCommandCatalog([]);
+      setLiveCommandsState({ runId, commands: [] });
       setError(t("errorGeneric"));
     });
 
     return () => controller.abort();
-  }, [composerAgent, detail?.run.projectSlug, detailRevision, runId]);
+  }, [projectSlug, runId, detailDialogStatus]);
+
+  const commandCatalog = useMemo(() => {
+    if (!projectSlug) return [];
+    const capabilities =
+      projectCatalogState.key === catalogKey
+        ? projectCatalogState.capabilities
+        : [];
+    const commands =
+      liveCommandsState.runId === runId ? liveCommandsState.commands : [];
+
+    return buildRunningCommandCatalog(commands, capabilities, composerAgent);
+  }, [
+    catalogKey,
+    composerAgent,
+    liveCommandsState,
+    projectCatalogState,
+    projectSlug,
+    runId,
+  ]);
+
+  const triggerDetailRefresh = useCoalescedRefresh(
+    (signal) => fetchDetail(signal),
+    DETAIL_REFRESH_COALESCE_MS,
+    runId,
+  );
 
   useEffect(() => {
     if (eventCount === 0 && transcriptRevision === null) return;
 
-    const refreshTimer = setTimeout(() => {
-      void loadDetail();
-    }, 250);
-
-    return () => clearTimeout(refreshTimer);
-  }, [eventCount, transcriptRevision, loadDetail]);
+    triggerDetailRefresh();
+  }, [eventCount, transcriptRevision, triggerDetailRefresh]);
 
   const attachmentsByMessage = useMemo(() => {
     const result = new Map<string, ScratchDetail["attachments"]>();
@@ -506,6 +573,7 @@ export function ScratchConversation({
         }
 
         await loadDetail();
+        router.refresh();
         onMessageSettled?.();
 
         return true;
@@ -517,7 +585,7 @@ export function ScratchConversation({
         setPendingAction(null);
       }
     },
-    [loadDetail, onMessageSettled, resolvedRecoverEndpoint],
+    [loadDetail, onMessageSettled, resolvedRecoverEndpoint, router],
   );
 
   const interrupt = useCallback(async (): Promise<boolean> => {
@@ -698,6 +766,11 @@ export function ScratchConversation({
     );
   }
 
+  const showStreamLiveness =
+    (detail.run.status === undefined || isLiveRunStatus(detail.run.status)) &&
+    liveness !== undefined &&
+    liveness !== "closed";
+
   return (
     <section
       className={clsx(
@@ -718,6 +791,18 @@ export function ScratchConversation({
           >
             {t(`status.${status}`)}
           </span>
+          {showStreamLiveness ? (
+            <RunStreamLiveness
+              labels={{
+                disconnected: tRun("streamDisconnected"),
+                live: tRun("streamLive"),
+                reconnect: tRun("streamReconnect"),
+                reconnecting: tRun("streamReconnecting"),
+              }}
+              liveness={liveness}
+              onReconnect={reconnect}
+            />
+          ) : null}
         </header>
       ) : null}
 

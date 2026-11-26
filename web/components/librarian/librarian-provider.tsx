@@ -12,6 +12,12 @@ import {
   useState,
 } from "react";
 
+import { reconnectDelayMs } from "@/lib/run-stream-controller";
+import {
+  isDocumentHidden,
+  subscribeDocumentVisibility,
+} from "@/lib/sse-visibility";
+
 export type LibrarianIndicatorState =
   "none" | "running" | "unread" | "action_required";
 
@@ -115,8 +121,13 @@ export function LibrarianProvider({
   }, []);
   const openerRef = useRef<HTMLElement | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
+  const ownerIdRef = useRef(ownerId);
 
   useEffect(() => {
+    if (ownerIdRef.current !== ownerId) {
+      ownerIdRef.current = ownerId;
+      lastEventIdRef.current = null;
+    }
     if (
       peekSuspensions > 0 ||
       typeof window === "undefined" ||
@@ -124,15 +135,41 @@ export function LibrarianProvider({
     )
       return undefined;
     let source: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryAttempt = 0;
+    let disposed = false;
+
+    function clearReconnectTimer(): void {
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    }
+
+    function disconnect(): void {
+      clearReconnectTimer();
+      const current = source;
+
+      source = null;
+      current?.close();
+    }
 
     function connect(): void {
-      if (source) return;
+      if (disposed || source || isDocumentHidden()) return;
+      clearReconnectTimer();
       const url = new URL("/api/librarian/stream", window.location.origin);
 
       if (lastEventIdRef.current)
         url.searchParams.set("lastEventId", lastEventIdRef.current);
-      source = new EventSource(url.toString());
-      source.onmessage = (message) => {
+      const next = new EventSource(url.toString());
+
+      source = next;
+      next.onopen = () => {
+        if (disposed || source !== next) return;
+        retryAttempt = 0;
+      };
+      next.onmessage = (message) => {
+        if (disposed || source !== next) return;
         let frame: { type?: unknown; state?: unknown; reason?: unknown };
 
         try {
@@ -155,26 +192,48 @@ export function LibrarianProvider({
         if (typeof frame.type === "string" && CHANGE_FRAMES.has(frame.type))
           setChangeTick((tick) => tick + 1);
       };
+      next.onerror = () => {
+        if (disposed || source !== next) return;
+        if (isDocumentHidden()) {
+          disconnect();
+          retryAttempt = 0;
+
+          return;
+        }
+        const closedState =
+          typeof EventSource.CLOSED === "number" ? EventSource.CLOSED : 2;
+
+        if (next.readyState !== closedState) return;
+        disconnect();
+        const delay = reconnectDelayMs(retryAttempt++);
+
+        if (delay === null) return;
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (!disposed && !isDocumentHidden()) connect();
+        }, delay);
+      };
     }
 
-    function disconnect(): void {
-      source?.close();
-      source = null;
-    }
-
-    function onVisibility(): void {
-      if (document.visibilityState === "visible") connect();
-      else disconnect();
-    }
-
-    if (document.visibilityState !== "hidden") connect();
-    document.addEventListener("visibilitychange", onVisibility);
+    if (!isDocumentHidden()) connect();
+    const unsubscribeVisibility = subscribeDocumentVisibility({
+      onHide: () => {
+        disconnect();
+        retryAttempt = 0;
+      },
+      onShow: () => {
+        if (disposed || source) return;
+        retryAttempt = 0;
+        connect();
+      },
+    });
 
     return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
+      disposed = true;
+      unsubscribeVisibility();
       disconnect();
     };
-  }, [peekSuspensions]);
+  }, [ownerId, peekSuspensions]);
 
   const openPanel = useCallback((opener: HTMLElement | null) => {
     if (peekSwitchRef.current) {

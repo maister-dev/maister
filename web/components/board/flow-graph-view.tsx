@@ -15,7 +15,7 @@ import type {
 } from "@xyflow/react";
 import type { ReactElement } from "react";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Background,
   BaseEdge,
@@ -40,6 +40,7 @@ import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { WaitCountdown } from "@/components/runs/wait-countdown";
 import { nodeVisual } from "@/lib/flows/node-visuals";
 import { buildFlowNodeTooltipsFromTopology } from "@/lib/flows/graph/node-tooltips";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 
 import "@xyflow/react/dist/style.css";
 
@@ -868,6 +869,8 @@ function FlowGraphCanvas({
   );
 }
 
+const GRAPH_STATUS_REFRESH_COALESCE_MS = 1000;
+
 // Run-coupled layer: lives ONLY when `runContext` is present, so the SSE
 // subscription + /graph-status fetch + status state never exist in static mode.
 function RunStatusLayer({
@@ -896,47 +899,46 @@ function RunStatusLayer({
   const [liveRunStatus, setLiveRunStatus] = useState(runStatus);
 
   // Live coloring (ADR-052): refetch the lightweight graph-status snapshot ONLY
-  // on an SSE event tick (debounced), never on a timer. A terminal run has no
+  // on an SSE event tick (coalesced), never on a timer. A terminal run has no
   // live session, so useRunStream(null) yields no events and nothing refetches.
   const live = !isTerminalRunStatus(liveRunStatus);
   const { eventCount } = useRunPageStream(runId, live);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerGraphRefresh = useCoalescedRefresh(
+    async (signal) => {
+      try {
+        const res = await fetch(`/api/runs/${runId}/graph-status`, {
+          signal,
+        });
+
+        if (signal.aborted || !res.ok) return;
+        const snap = (await res.json()) as RunNodeStatuses;
+
+        if (signal.aborted) return;
+        const next = applyFlowGraphStatusSnapshot(
+          {
+            statuses: {},
+            currentStep: null,
+            runStatus: "",
+          },
+          snap,
+        );
+
+        setStatuses(next.statuses);
+        setCurrentStep(next.currentStep);
+        setLiveRunStatus(next.runStatus);
+      } catch {
+        /* a transient status refetch failure leaves the last snapshot */
+      }
+    },
+    GRAPH_STATUS_REFRESH_COALESCE_MS,
+    live ? runId : null,
+  );
 
   useEffect(() => {
-    if (!live) return;
-    if (eventCount === 0) return;
+    if (!live || eventCount === 0) return;
 
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch(`/api/runs/${runId}/graph-status`);
-
-          if (!res.ok) return;
-          const snap = (await res.json()) as RunNodeStatuses;
-
-          const next = applyFlowGraphStatusSnapshot(
-            {
-              statuses: {},
-              currentStep: null,
-              runStatus: "",
-            },
-            snap,
-          );
-
-          setStatuses(next.statuses);
-          setCurrentStep(next.currentStep);
-          setLiveRunStatus(next.runStatus);
-        } catch {
-          /* a transient status refetch failure leaves the last snapshot */
-        }
-      })();
-    }, 1000);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [eventCount, live, runId]);
+    triggerGraphRefresh();
+  }, [eventCount, live, triggerGraphRefresh]);
 
   return (
     <FlowGraphCanvas

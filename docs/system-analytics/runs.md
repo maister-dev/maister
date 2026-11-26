@@ -1257,6 +1257,19 @@ Every Run exposes two metrics computed by the pure projection
   web or supervisor restarts, and consecutive sessions of the same run. The
   execution host resumes delivery from its durable acknowledgement watermark;
   neither the browser nor the web tier reads host runtime files.
+  **(Implemented)** Event queries project only scalar metadata booleans
+  (`payloadIsNull` and, only when `?context=1`, safe JSONB `contextUsageOnly`)
+  without transferring `execution_events.payload` JSONB to Node. In-loop
+  authorization uses `requireProjectRoleForUser` (never re-invoking NextAuth
+  `auth()`), enforces per-non-empty-batch disclosure/company checks + 2,500 ms
+  idle recheck on enrolled/company/vault runs (including runs dynamically
+  enrolled in a vault mid-stream), rechecks ordinary non-enrolled project runs
+  and projectless active-user account status at least once every 2,500 ms
+  (re-verifying no later than 2,500 ms after the previous check) and before
+  terminal batch emission/close, and coalesces context snapshot reads (`500 ms`
+  + settle + terminal watermark) with parallel attempt-id lookups
+  (`api-runs-stream` emits `DEBUG` recheck/context timings and includes
+  `{ authChecks, contextReads }` in `INFO` disconnect logs).
 - **(Designed, FR-A1…A3)** The supervisor MUST persist the **latest**
   `available_commands_update` snapshot per session (last-write-wins) and
   forward command names **verbatim** (no `$`/`/`/`mcp:` rewriting); the
@@ -1353,6 +1366,17 @@ Every Run exposes two metrics computed by the pure projection
 - **Abandon a `Running` run** — supervisor `DELETE /sessions/<id>` (sends
   SIGTERM → grace → SIGKILL), then transitions run to `Abandoned`,
   removes worktree on GC.
+- **`EDGE-PERF-01` (Malformed JSONB `contextUsageOnly` / non-object `update`)** —
+  non-boolean `contextUsageOnly` values (`"yes"`, `123`, `[]`, `null`) or
+  non-object `update` payloads in `execution_events.payload` evaluate to
+  `contextUsageOnly = false` in SQL without raising PostgreSQL `22P02`, and
+  `contextUsageOnly` is omitted from emitted canonical SSE frames (Implemented).
+- **`EDGE-PERF-02` (Mid-stream vault enrollment, user deactivation, and governed revocation)** —
+  a run dynamically enrolled in a vault mid-stream promotes to per-batch
+  disclosure verification; revoking a company/knowledge/vault grant or
+  deactivating a projectless run's owner closes an open `/api/runs/[runId]/stream`
+  before emitting the next batch (or within `2,500 ms` while idle) without
+  retaining DB locks (Implemented).
 
 ## Keep-alive + checkpoint + resume
 
@@ -1505,9 +1529,21 @@ promotion policy.
 - The browser stream client may show `connecting`, `live`, `reconnecting`, or
   `disconnected`. An unexpected close retries with a bounded delay and the
   existing `lastEventId`; terminal runs and unmounted/replaced screens cancel
-  timers and close their EventSource. The run shell owns the shared Flow-run
-  subscription used by refresh, inspector, transcript, and graph. Scratch and
-  Studio own their independent subscriptions.
+  timers and close their EventSource. **(Implemented)** Only tick-only
+  `useRunStream` (`retain: false`) streams pause when
+  `document.visibilityState === "hidden"` — closing their `EventSource` and
+  cancelling reconnect timers without incrementing error backoff, and
+  reconnecting on `"visible"` with one catch-up tick; retained transcript
+  streams (`retain: true`) keep their socket open so in-memory event arrays do
+  not drop frames across background tab switches. Streaming UI consumers
+  (`LiveRunInspector`, `ScratchConversation`, `AssignmentLiveRefresh`,
+  `RunLiveRefresh`, `FlowGraphView`, `WorkbenchGitPanel`, `StudyLab`) use
+  leading-coalescing refresh throttling (`web/lib/runs/coalesced-refresh.ts`
+  via `web/lib/runs/use-coalesced-refresh.ts`) instead of trailing
+  `clearTimeout` debounces. The run shell owns the shared
+  Flow-run subscription used by refresh, inspector, transcript, and graph, and
+  `ScratchRunDetailLayout` owns the shared `<RunStreamProvider>` for scratch
+  runs; Studio owns its independent subscription.
 - Liveness is operator-facing only: it uses an accessible status pill and a
   manual reconnect action, but never writes or infers `runs.status`.
 - The run header may expose Review or Promote only through the existing

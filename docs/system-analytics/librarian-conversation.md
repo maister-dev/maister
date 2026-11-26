@@ -207,6 +207,11 @@ flowchart LR
     H --> I["show current turn status and settled reply"]
 ```
 
+Server-side `librarianStreamFrames` uses abort-aware `node:timers/promises`
+sleeps so poll iterations never accumulate `AbortSignal` listeners (≤ 1 active
+listener while running, 0 after abort/close) and emits a `DEBUG` log on
+abort-triggered stream exit (Implemented).
+
 ## Generation and refresh (Implemented)
 
 - Read the current segment, history generation and projected rows from a consistent snapshot. The panel discards an older-generation response and replaces local history after a clear. A same-generation context reset retains transcript messages.

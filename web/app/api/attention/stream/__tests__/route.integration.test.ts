@@ -15,6 +15,7 @@
 // completely broken.
 
 import { randomUUID } from "node:crypto";
+import { getEventListeners } from "node:events";
 
 import { eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -590,7 +591,8 @@ describe("IT-ATN-17 a render that is current gets no tick", () => {
 describe("IT-ATN-11 the stream is a read path", () => {
   it("closes when the request is aborted", async () => {
     const controller = new AbortController();
-    const response = await GET(streamRequest(controller));
+    const request = streamRequest(controller);
+    const response = await GET(request);
     const reader = response.body!.getReader();
 
     await reader.read();
@@ -603,6 +605,33 @@ describe("IT-ATN-11 the stream is a read path", () => {
       done = (await reader.read()).done;
     }
     expect(done).toBe(true);
+    expect(getEventListeners(request.signal, "abort")).toHaveLength(0);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  }, 30_000);
+
+  it("removes abort listeners when the response stream is cancelled while the request signal stays live", async () => {
+    const controller = new AbortController();
+    const request = streamRequest(controller);
+    // `new NextRequest(..., { signal })` attaches Fetch's own `abortSignalFollowers`
+    // forwarding listener onto `controller.signal`; `GET` receives `request.signal`.
+    const baselineControllerListeners = getEventListeners(
+      controller.signal,
+      "abort",
+    );
+    const response = await GET(request);
+    const reader = response.body!.getReader();
+
+    await reader.read();
+    await reader.cancel();
+
+    expect(controller.signal.aborted).toBe(false);
+    expect(request.signal.aborted).toBe(false);
+    await vi.waitFor(() => {
+      expect(getEventListeners(request.signal, "abort")).toHaveLength(0);
+      expect(getEventListeners(controller.signal, "abort")).toEqual(
+        baselineControllerListeners,
+      );
+    });
   }, 30_000);
 
   it("writes no run state and advances no cursor", async () => {

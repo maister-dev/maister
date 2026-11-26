@@ -12,10 +12,17 @@ import {
   AttentionReviewProvider,
   useWatchedReview,
 } from "@/components/attention/attention-review-watch";
+import { AttentionStreamProvider } from "@/components/attention/attention-stream-provider";
+import { TaskLaunchIntentStatus } from "@/components/board/task-launch-intent-status";
 
 const { router } = vi.hoisted(() => ({ router: { refresh: vi.fn() } }));
 
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
+vi.mock("next-intl", () => ({
+  useLocale: () => "en",
+  useTranslations: (namespace: string) => (key: string) =>
+    `${namespace}.${key}`,
+}));
 
 class AttentionEventSource extends EventTarget {
   static sources: AttentionEventSource[] = [];
@@ -30,7 +37,12 @@ class AttentionEventSource extends EventTarget {
 
   tick(
     changed: AttentionTickFrame["changed"],
-    review?: Pick<AttentionTickFrame, "reviews" | "reviewVersion">,
+    overrides?: Partial<
+      Pick<
+        AttentionTickFrame,
+        "id" | "decisions" | "updates" | "reviews" | "reviewVersion"
+      >
+    >,
   ): void {
     const frame: AttentionTickFrame = {
       type: "attention.tick",
@@ -40,7 +52,7 @@ class AttentionEventSource extends EventTarget {
       updates: 0,
       changed,
       projectIds: ["project-1"],
-      ...review,
+      ...overrides,
     };
 
     this.dispatchEvent(
@@ -50,6 +62,18 @@ class AttentionEventSource extends EventTarget {
       }),
     );
   }
+}
+
+function setVisibilityState(state: DocumentVisibilityState): void {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    value: state,
+  });
+}
+
+function transitionVisibility(state: DocumentVisibilityState): void {
+  setVisibilityState(state);
+  document.dispatchEvent(new Event("visibilitychange"));
 }
 
 const labels = {
@@ -86,6 +110,8 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  delete (document as { visibilityState?: DocumentVisibilityState })
+    .visibilityState;
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -251,6 +277,381 @@ describe("app attention refresh", () => {
     act(() => source.onopen?.());
     act(() => vi.advanceTimersByTime(60_000));
     expect(router.refresh).toHaveBeenCalledOnce();
+    expect(AttentionEventSource.sources).toHaveLength(1);
+  });
+
+  it("opens zero EventSource connections while mounted hidden and connects with D7 cursor/counters on visible", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    setVisibilityState("hidden");
+    root = createRoot(container);
+
+    act(() =>
+      root.render(
+        createElement(AttentionLiveRefresh, {
+          labels,
+          since: {
+            cursor: "1789387100000",
+            decisions: 2,
+            updates: 5,
+            reviews: 1,
+            reviewVersion: "queue-v1",
+          },
+        }),
+      ),
+    );
+
+    expect(AttentionEventSource.sources).toHaveLength(0);
+
+    act(() => transitionVisibility("visible"));
+    expect(AttentionEventSource.sources).toHaveLength(1);
+    const params = new URL(AttentionEventSource.sources[0].url).searchParams;
+
+    expect(params.get("lastEventId")).toBe("1789387100000");
+    expect(params.get("decisions")).toBe("2");
+    expect(params.get("updates")).toBe("5");
+    expect(params.get("reviews")).toBe("1");
+    expect(params.get("reviewVersion")).toBe("queue-v1");
+  });
+
+  it("pauses on hidden without backoff, suppresses refresh while hidden, and resumes with last cursor, K13 reviewResync, and deferred refresh", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    setVisibilityState("visible");
+    root = createRoot(container);
+
+    act(() =>
+      root.render(
+        createElement(
+          AttentionReviewProvider,
+          null,
+          createElement(AttentionLiveRefresh, {
+            labels,
+            since: {
+              cursor: "1789387100000",
+              decisions: 2,
+              updates: 5,
+              reviews: 1,
+              reviewVersion: "queue-v1",
+            },
+          }),
+          createElement(ActiveReview),
+        ),
+      ),
+    );
+
+    const first = AttentionEventSource.sources.at(-1)!;
+    const countAfterMount = AttentionEventSource.sources.length;
+
+    act(() => first.onopen?.());
+    expect(container.querySelector("output")?.textContent).toBe("1");
+    expect(router.refresh).not.toHaveBeenCalled();
+
+    // A frame buffered right as the tab turns hidden updates the cursor/counters
+    // while router.refresh() and review invalidation are suppressed until visible.
+    setVisibilityState("hidden");
+    act(() =>
+      first.tick(["decisions", "reviews"], {
+        id: "1789387250000",
+        decisions: 3,
+        updates: 7,
+        reviews: 2,
+        reviewVersion: "queue-v2",
+      }),
+    );
+    expect(router.refresh).not.toHaveBeenCalled();
+    expect(container.querySelector("output")?.textContent).toBe("1");
+
+    // Dispatching visibilitychange closes the active EventSource cleanly.
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(first.close).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(AttentionEventSource.sources).toHaveLength(countAfterMount);
+
+    // Returning to visible reconnects with the last cursor/counters, flushes the
+    // deferred router.refresh() and review invalidation, and triggers K13 reviewResync on open.
+    act(() => transitionVisibility("visible"));
+    expect(router.refresh).toHaveBeenCalledOnce();
+    expect(container.querySelector("output")?.textContent).toBe("2");
+    expect(AttentionEventSource.sources).toHaveLength(countAfterMount + 1);
+
+    const resumed = AttentionEventSource.sources.at(-1)!;
+    const resumedParams = new URL(resumed.url).searchParams;
+
+    expect(resumedParams.get("lastEventId")).toBe("1789387250000");
+    expect(resumedParams.get("decisions")).toBe("3");
+    expect(resumedParams.get("updates")).toBe("7");
+    expect(resumedParams.get("reviews")).toBe("2");
+    expect(resumedParams.get("reviewVersion")).toBe("queue-v2");
+    expect(resumedParams.get("reviewKind")).toBe("vault");
+    expect(resumedParams.get("reviewId")).toBe("settled-proposal");
+
+    const invalidationBeforeOpen = Number(
+      container.querySelector("output")?.textContent,
+    );
+
+    act(() => resumed.onopen?.());
+    expect(Number(container.querySelector("output")?.textContent)).toBe(
+      invalidationBeforeOpen + 1,
+    );
+
+    // Pending reconnect timers are cancelled on hidden without incrementing backoff.
+    act(() => resumed.onerror?.());
+    act(() => vi.advanceTimersByTime(250));
+    act(() => transitionVisibility("hidden"));
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(AttentionEventSource.sources).toHaveLength(countAfterMount + 1);
+
+    act(() => transitionVisibility("visible"));
+    expect(AttentionEventSource.sources).toHaveLength(countAfterMount + 2);
+    const third = AttentionEventSource.sources.at(-1)!;
+
+    act(() => third.onerror?.());
+    // Backoff starts fresh at 500ms rather than 1000ms.
+    act(() => vi.advanceTimersByTime(499));
+    expect(AttentionEventSource.sources).toHaveLength(countAfterMount + 2);
+    act(() => vi.advanceTimersByTime(1));
+    expect(AttentionEventSource.sources).toHaveLength(countAfterMount + 3);
+  });
+
+  it("shares one /api/attention/stream EventSource across AttentionLiveRefresh and TaskLaunchIntentStatus under AttentionStreamProvider", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    setVisibilityState("visible");
+    root = createRoot(container);
+
+    const onRefresh = vi.fn(async () => {});
+
+    act(() =>
+      root.render(
+        createElement(
+          AttentionReviewProvider,
+          null,
+          createElement(
+            AttentionStreamProvider,
+            {
+              since: {
+                cursor: "1789387100000",
+                decisions: 1,
+                updates: 2,
+              },
+            },
+            createElement(AttentionLiveRefresh, { labels }),
+            createElement(TaskLaunchIntentStatus, {
+              receipt: null,
+              busy: false,
+              uncertain: false,
+              errorReason: null,
+              onRefresh,
+              onRetryRequest: async () => {},
+              onCancel: async () => {},
+              onReplace: () => {},
+              onNewLaunch: () => {},
+            }),
+          ),
+        ),
+      ),
+    );
+
+    expect(AttentionEventSource.sources).toHaveLength(1);
+    const shared = AttentionEventSource.sources[0];
+
+    expect(new URL(shared.url).pathname).toBe("/api/attention/stream");
+
+    // While transiently connecting under AttentionStreamProvider, TaskLaunchIntentStatus
+    // does not duplicate StatusBar's indicator.
+    const statusRegion = container.querySelector(
+      '[data-testid="task-launch-intent-status"]',
+    );
+
+    expect(
+      container.querySelectorAll('[data-testid="run-stream-liveness"]'),
+    ).toHaveLength(1);
+    expect(
+      statusRegion?.querySelector('[data-testid="run-stream-liveness"]'),
+    ).toBeNull();
+
+    act(() => shared.onopen?.());
+    act(() => shared.tick(["work"]));
+    expect(router.refresh).toHaveBeenCalledOnce();
+    expect(onRefresh).toHaveBeenCalled();
+
+    // While live under AttentionStreamProvider, TaskLaunchIntentStatus does not
+    // duplicate StatusBar's "Live" pill.
+    expect(
+      container.querySelectorAll('[data-testid="run-stream-liveness"]'),
+    ).toHaveLength(1);
+    expect(
+      statusRegion?.querySelector('[data-testid="run-stream-liveness"]'),
+    ).toBeNull();
+
+    // When the shared stream degrades to disconnected, TaskLaunchIntentStatus
+    // surfaces inline disconnected status and a direct Reconnect action.
+    act(() => AttentionEventSource.sources.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(500));
+    act(() => AttentionEventSource.sources.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => AttentionEventSource.sources.at(-1)?.onerror?.());
+    act(() => vi.advanceTimersByTime(2000));
+    act(() => AttentionEventSource.sources.at(-1)?.onerror?.());
+
+    const inlineLiveness = statusRegion?.querySelector(
+      '[data-testid="run-stream-liveness"]',
+    );
+
+    expect(inlineLiveness?.textContent).toBe("launch.admission.disconnected");
+    const reconnectButton = [
+      ...(statusRegion?.querySelectorAll("button") ?? []),
+    ].find((button) => button.textContent === "launch.admission.reconnect");
+
+    expect(reconnectButton).toBeDefined();
+  });
+
+  it("issues 0 mount refreshes for TaskLaunchIntentStatus under an already-live AttentionStreamProvider with tick > 0, refreshes once on a new tick, and stops once complete", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    setVisibilityState("visible");
+    root = createRoot(container);
+
+    const onRefresh = vi.fn(async () => {});
+    const queuedReceipt = {
+      schemaVersion: 1 as const,
+      intentId: "intent-1",
+      taskId: "task-1",
+      state: "queued" as const,
+      stateVersion: 1,
+      basis: "manual" as const,
+      acceptedAt: "2026-11-03T09:00:00.000Z",
+      taskRevision: 1,
+      inputRevision: 1,
+      settingsDigest: "a".repeat(64),
+      runId: null,
+      reason: null,
+      queueReason: "capacity" as const,
+      snapshot: {
+        kind: "flow" as const,
+        workspace: "worktree" as const,
+        flowId: "flow-1",
+        flowRevisionId: "rev-1",
+        agentId: null,
+        runnerIds: ["claude"],
+        baseCommit: "b".repeat(40),
+        targetBranch: "main",
+        promotionMode: "local_merge" as const,
+        autoPromote: false,
+      },
+    };
+    const since = {
+      cursor: "1789387100000",
+      decisions: 1,
+      updates: 2,
+    };
+
+    const renderWithStatus = (
+      showStatus: boolean,
+      receipt:
+        | typeof queuedReceipt
+        | (Omit<typeof queuedReceipt, "state"> & {
+            state: "settled";
+          }) = queuedReceipt,
+    ): void => {
+      act(() =>
+        root.render(
+          createElement(
+            AttentionReviewProvider,
+            null,
+            createElement(
+              AttentionStreamProvider,
+              { since },
+              createElement(AttentionLiveRefresh, { labels }),
+              showStatus
+                ? createElement(TaskLaunchIntentStatus, {
+                    receipt,
+                    busy: false,
+                    uncertain: false,
+                    errorReason: null,
+                    onRefresh,
+                    onRetryRequest: async () => {},
+                    onCancel: async () => {},
+                    onReplace: () => {},
+                    onNewLaunch: () => {},
+                  })
+                : null,
+            ),
+          ),
+        ),
+      );
+    };
+
+    renderWithStatus(false);
+    const shared = AttentionEventSource.sources[0];
+
+    act(() => shared.onopen?.());
+    act(() => shared.tick(["work"], { id: "1789387200001" }));
+
+    // Mount TaskLaunchIntentStatus after the shared stream is already live with tick > 0.
+    renderWithStatus(true);
+    expect(onRefresh).toHaveBeenCalledTimes(0);
+
+    // A new tick arriving after mount triggers exactly 1 refresh.
+    act(() => shared.tick(["work"], { id: "1789387200002" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // Once the receipt is complete, further ticks do not trigger automatic refreshes.
+    renderWithStatus(true, { ...queuedReceipt, state: "settled" });
+    act(() => shared.tick(["work"], { id: "1789387200003" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a single EventSource when AttentionStreamProvider re-renders with a fresh since object", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    setVisibilityState("visible");
+    root = createRoot(container);
+
+    act(() =>
+      root.render(
+        createElement(
+          AttentionReviewProvider,
+          null,
+          createElement(
+            AttentionStreamProvider,
+            {
+              since: {
+                cursor: "1789387100000",
+                decisions: 1,
+                updates: 2,
+              },
+            },
+            createElement(AttentionLiveRefresh, { labels }),
+          ),
+        ),
+      ),
+    );
+
+    expect(AttentionEventSource.sources).toHaveLength(1);
+
+    // Simulate AppLayout re-rendering after router.refresh() with a fresh `since` object.
+    act(() =>
+      root.render(
+        createElement(
+          AttentionReviewProvider,
+          null,
+          createElement(
+            AttentionStreamProvider,
+            {
+              since: {
+                cursor: "1789387199999",
+                decisions: 2,
+                updates: 3,
+              },
+            },
+            createElement(AttentionLiveRefresh, { labels }),
+          ),
+        ),
+      ),
+    );
+
     expect(AttentionEventSource.sources).toHaveLength(1);
   });
 });

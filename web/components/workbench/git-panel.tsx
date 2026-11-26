@@ -39,6 +39,7 @@ import {
   type WorkbenchGitSyncDefaults,
 } from "@/components/workbench/git-panel-update";
 import { githubPrErrorText } from "@/lib/runs/promotion-operation";
+import { useCoalescedRefresh } from "@/lib/runs/use-coalesced-refresh";
 
 export type { WorkbenchGitSyncDefaults };
 
@@ -60,8 +61,8 @@ export interface WorkbenchGitPanelProps {
   syncDefaults?: WorkbenchGitSyncDefaults | null;
 }
 
-// The debounce for the refresh tick — a burst of stream events is one read.
-const REFRESH_DEBOUNCE_MS = 400;
+// Coalescing interval for the refresh tick — a burst of stream events is one read.
+const REFRESH_COALESCE_MS = 400;
 
 // The `details.reason` tokens the panel has copy for (T0.1's final set plus
 // the C19 policy tokens). Anything else falls back to the error code.
@@ -166,6 +167,7 @@ export function WorkbenchGitPanel({
   const tl = useTranslations("workbenchLifecycle");
   const router = useRouter();
   const feedback = useFeedback();
+  const [trackedRunId, setTrackedRunId] = useState(runId);
   const [state, setState] = useState<GitState | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   // `git-state` is member-level (`recoverRun`): a viewer's 403 is a role, not
@@ -174,53 +176,77 @@ export function WorkbenchGitPanel({
   const [busy, setBusy] = useState<WorkbenchGitActionId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [beginLoad] = useState(latestWins);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTickRef = useRef(refreshTick);
 
-  const load = useCallback((): Promise<void> => {
-    const isCurrent = beginLoad();
+  if (trackedRunId !== runId) {
+    setTrackedRunId(runId);
+    setState(null);
+    setLoadFailed(false);
+    setMembersOnly(false);
+    setError(null);
+  }
 
-    return fetch(`/api/runs/${runId}/git-state`)
-      .then(async (res) => {
-        if (!isCurrent()) return;
-        if (res.status === 403) {
-          setMembersOnly(true);
+  const load = useCallback(
+    (signal?: AbortSignal): Promise<void> => {
+      const isCurrent = beginLoad();
 
-          return;
-        }
-        if (!res.ok) {
-          setLoadFailed(true);
+      return fetch(
+        `/api/runs/${runId}/git-state`,
+        signal ? { signal } : undefined,
+      )
+        .then(async (res) => {
+          if (signal?.aborted || !isCurrent()) return;
+          if (res.status === 403) {
+            setMembersOnly(true);
 
-          return;
-        }
+            return;
+          }
+          if (!res.ok) {
+            setLoadFailed(true);
 
-        const body = await readJson<GitState>(res);
+            return;
+          }
 
-        // Latest-wins: a response superseded by a newer read is dropped.
-        if (!body || !isCurrent()) return;
-        setLoadFailed(false);
-        setState(body);
-      })
-      .catch(() => {
-        if (isCurrent()) setLoadFailed(true);
-      });
-  }, [runId, beginLoad]);
+          const body = await readJson<GitState>(res);
+
+          // Latest-wins: a response superseded by a newer read is dropped.
+          if (signal?.aborted || !body || !isCurrent()) return;
+          setLoadFailed(false);
+          setState(body);
+        })
+        .catch(() => {
+          if (signal?.aborted) return;
+          if (isCurrent()) setLoadFailed(true);
+        });
+    },
+    [runId, beginLoad],
+  );
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+
+    void load(controller.signal);
+
+    return () => controller.abort();
   }, [load]);
 
-  // Re-read on the run's stream tick, debounced; the mount itself is not a tick.
+  const triggerLoad = useCoalescedRefresh(
+    (signal) => {
+      if (membersOnly) return;
+
+      return load(signal);
+    },
+    REFRESH_COALESCE_MS,
+    membersOnly ? null : runId,
+  );
+
+  // Re-read on the run's stream tick, coalesced; the mount itself is not a tick.
   useEffect(() => {
     if (refreshTick === lastTickRef.current) return;
     lastTickRef.current = refreshTick;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void load(), REFRESH_DEBOUNCE_MS);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [refreshTick, load]);
+    if (membersOnly) return;
+    triggerLoad();
+  }, [membersOnly, refreshTick, triggerLoad]);
 
   useEffect(() => {
     if (!state || !initialSection) return;
