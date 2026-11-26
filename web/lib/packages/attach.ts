@@ -3,6 +3,8 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { MaisterPackageManifest } from "@/lib/config.schema";
 
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
 import { createHash, randomUUID } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import os from "node:os";
@@ -409,7 +411,7 @@ export async function installPackageRevision(opts: {
     const witness = await hashMaterial(resolved.pkgRoot);
     const layoutDigest = resolved.layoutDigest;
     const cachePath = packageCachePath(name, resolved.resolvedRevision);
-    const installed = await database.transaction(async (db: any) => {
+    const installed = await database.transaction(async (db: Db) => {
       const beforePublish = () => opts.authorizePublication?.(db);
 
       await beforePublish();
@@ -1531,7 +1533,7 @@ export async function workerAttachPackage(
   // Host READS, before the transaction (ADR-179 D18).
   const readinessByRef = await packageReadinessByRef(install);
 
-  const attached: AttachResult = await db.transaction(async (tx: any) => {
+  const attached: AttachResult = await db.transaction(async (tx: Tx) => {
     const repoPath = await lockDependencyProject(tx, opts.projectId);
     // Name pre-guard (ADR-132 §c): a fork's cut shares its upstream's
     // package name, so (projectId, packageName) would collide — and a whole-
@@ -1748,7 +1750,7 @@ export async function detachPackage(opts: {
     .from(packageInstalls)
     .where(eq(packageInstalls.id, att.packageInstallId));
 
-  await db.transaction(async (tx: any) => {
+  await db.transaction(async (tx: Tx) => {
     const repoPath = await lockDependencyProject(tx, opts.projectId);
 
     if (opts.actorUserId)
@@ -1982,7 +1984,7 @@ export async function workerUpgradeAttachment(
       ),
     );
 
-  await db.transaction(async (tx: any) => {
+  await db.transaction(async (tx: Tx) => {
     const repoPath = await lockDependencyProject(tx, opts.projectId);
 
     await lockAttachment(tx, att.id, att.packageInstallId);
@@ -2124,16 +2126,16 @@ export async function trustPackageRevision(opts: {
     (await verifyCachedPackage(install))
       ? await collectInventory(install.installedPath, manifest.spec)
       : null;
-  const queued = await db.transaction(async (tx: any) => {
-    const current = await tx.execute(sql`SELECT a.project_id AS id
+  const queued = await db.transaction(async (tx: Tx) => {
+    const current = await tx.execute<{
+      id: string;
+    }>(sql`SELECT a.project_id AS id
       FROM project_package_attachments a
       JOIN project_dependency_declarations d ON d.effective_attachment_id=a.id AND d.project_id=a.project_id
         AND d.effective_generation=d.generation
       JOIN projects p ON p.id=a.project_id AND p.archived_at IS NULL
       WHERE a.package_install_id=${install.id} ORDER BY a.project_id FOR UPDATE OF p`);
-    const projectIds = current.rows.map(
-      (row: { id: string }) => row.id,
-    ) as string[];
+    const projectIds = current.rows.map((row) => row.id);
 
     if (opts.actorUserId) await requireDependencyAdmin(tx, opts.actorUserId);
     if (historicalInventory)

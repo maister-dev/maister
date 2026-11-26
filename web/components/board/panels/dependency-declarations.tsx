@@ -7,11 +7,18 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
+import {
+  ArrowPathIcon,
+  CheckCircleIcon,
+  PencilSquareIcon,
+  WrenchScrewdriverIcon,
+} from "@heroicons/react/24/outline";
 
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { readApiErrorBody } from "@/lib/api-error";
 
 const buttonClass =
-  "rounded-lg border border-line px-3 py-1 font-semibold disabled:opacity-50";
+  "inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1 font-semibold disabled:opacity-50";
 const fieldClass = "block w-full rounded-lg border border-line p-2 font-mono";
 
 type DialogKind = "edit" | "recover-setup";
@@ -81,7 +88,10 @@ function DeclarationRow({
     snapshot: ProjectDependencyView;
   } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{
+    text: string;
+    kind: "status" | "alert";
+  } | null>(null);
   const [invalidField, setInvalidField] = useState<CoordinateField | null>(
     null,
   );
@@ -91,7 +101,10 @@ function DeclarationRow({
     const outcome = await reconcileEdit(slug, row.id, pin);
 
     if (outcome !== "requestFailed") setDialog(null);
-    setNotice(t(outcome));
+    setNotice({
+      text: t(outcome),
+      kind: outcome === "editConfirmed" ? "status" : "alert",
+    });
     router.refresh();
   }
 
@@ -109,41 +122,53 @@ function DeclarationRow({
         },
       );
 
-      if (response.ok) setDialog(null);
-      else if (response.status === 409) {
-        const failure = await response.json();
+      if (response.ok) {
+        setDialog(null);
+        setNotice({
+          text: t(
+            action === "edit"
+              ? "editSaved"
+              : action === "retry"
+                ? "retryQueued"
+                : "recoveryQueued",
+          ),
+          kind: "status",
+        });
+      } else if (response.status === 409) {
+        const failure = await readApiErrorBody(response);
 
         if (
           action === "edit" &&
-          failure.details?.reason === "stale_generation"
+          failure?.details?.reason === "stale_generation"
         ) {
           await verifyEdit(body);
 
           return;
         }
         setDialog(null);
-        setNotice(
-          t(
-            failure.details?.reason === "operation_busy"
+        setNotice({
+          text: t(
+            failure?.details?.reason === "operation_busy"
               ? "publicationBusy"
-              : failure.details?.reason === "setup_owner_live"
+              : failure?.details?.reason === "setup_owner_live"
                 ? "setupLive"
                 : "conflict",
           ),
-        );
+          kind: "alert",
+        });
       } else if (response.status === 422 && action === "edit") {
-        const failure = await response.json();
+        const failure = await readApiErrorBody(response);
         const field = coordinateFields.find(
-          (key) => key === failure.details?.field,
+          (key) => key === failure?.details?.field,
         );
 
         if (field) setInvalidField(field);
-        else setNotice(t("refused"));
-      } else setNotice(t("refused"));
+        else setNotice({ text: t("refused"), kind: "alert" });
+      } else setNotice({ text: t("refused"), kind: "alert" });
       router.refresh();
     } catch {
       if (action === "edit") await verifyEdit(body);
-      else setNotice(t("requestFailed"));
+      else setNotice({ text: t("requestFailed"), kind: "alert" });
     } finally {
       setBusy(false);
     }
@@ -193,12 +218,20 @@ function DeclarationRow({
         {t(`readiness.${row.readiness}`)}
       </p>
       {row.state ? (
-        <p>
-          {t(`states.${row.state}`)}
-          {stageKey ? ` · ${t.has(stageKey) ? t(stageKey) : row.stage}` : ""}
-          {reasonKey
-            ? ` · ${t.has(reasonKey) ? t(reasonKey) : t("reasons.installation_failed")}`
-            : ""}
+        <p className="flex flex-wrap items-center gap-1">
+          {row.state === "succeeded" ? (
+            <CheckCircleIcon
+              aria-hidden="true"
+              className="h-4 w-4 shrink-0 text-emerald-600"
+            />
+          ) : null}
+          <span>
+            {t(`states.${row.state}`)}
+            {stageKey && t.has(stageKey) ? ` · ${t(stageKey)}` : ""}
+            {reasonKey
+              ? ` · ${t.has(reasonKey) ? t(reasonKey) : t("reasons.installation_failed")}`
+              : ""}
+          </span>
         </p>
       ) : null}
       {row.memberRef && row.state !== "succeeded" ? (
@@ -222,6 +255,7 @@ function DeclarationRow({
               setDialog({ kind: "edit", snapshot: row });
             }}
           >
+            <PencilSquareIcon aria-hidden="true" className="h-3.5 w-3.5" />
             {t("edit")}
           </button>
         )}
@@ -241,6 +275,7 @@ function DeclarationRow({
               })
             }
           >
+            <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
             {t("retry")}
           </button>
         )}
@@ -251,11 +286,12 @@ function DeclarationRow({
             type="button"
             onClick={() => setDialog({ kind: "recover-setup", snapshot: row })}
           >
+            <WrenchScrewdriverIcon aria-hidden="true" className="h-3.5 w-3.5" />
             {t("recover")}
           </button>
         )}
       </div>
-      {notice && !dialog ? <p role="alert">{notice}</p> : null}
+      {notice && !dialog ? <p role={notice.kind}>{notice.text}</p> : null}
       {dialog ? (
         <ConfirmDialog
           body={
@@ -273,7 +309,7 @@ function DeclarationRow({
           titleId={`dependency-dialog-${row.id}`}
           onClose={() => setDialog(null)}
         >
-          {notice ? <p role="alert">{notice}</p> : null}
+          {notice ? <p role={notice.kind}>{notice.text}</p> : null}
           {dialog.kind === "edit" ? (
             <form
               className="space-y-2"
@@ -354,6 +390,7 @@ export function DependencyDeclarations({
           type="button"
           onClick={() => router.refresh()}
         >
+          <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
           {t("refresh")}
         </button>
       </header>
@@ -364,7 +401,7 @@ export function DependencyDeclarations({
       </ul>
       <Link
         className="underline"
-        href={`/projects/${slug}?tab=settings#project-git`}
+        href={`/projects/${encodeURIComponent(slug)}?tab=settings#project-git`}
       >
         {t("reviewGit")}
       </Link>

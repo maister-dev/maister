@@ -393,12 +393,8 @@ describe("project dependency declaration commands (AC06)", () => {
     vi.mocked(requireGlobalRole).mockRejectedValueOnce(
       new MaisterError("UNAUTHORIZED", "Requires global role"),
     );
-    expect((await submit()).status).toBe(403);
-    vi.mocked(requireProjectAction).mockRejectedValueOnce(
-      new MaisterError("UNAUTHORIZED", "Requires managePackages"),
-    );
-    expect((await submit({})).status).toBe(403);
-    vi.mocked(requireActiveSession).mockRejectedValueOnce(
+    expect((await submit({}, "unknown-project")).status).toBe(403);
+    vi.mocked(requireGlobalRole).mockRejectedValueOnce(
       new MaisterError("UNAUTHENTICATED", "Sign in"),
     );
     expect((await submit({})).status).toBe(401);

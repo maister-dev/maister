@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("next-intl", () => ({
   useTranslations: (namespace: string) =>
     Object.assign((key: string): string => `${namespace}.${key}`, {
-      has: () => true,
+      has: (key: string) => !key.includes("unknown_"),
     }),
 }));
 vi.mock("next/navigation", () => ({
@@ -486,4 +486,29 @@ it("submits the reviewed setup witness when server refreshes the row during conf
     resolvedRevision: "abc123",
     action: "rerun_setup",
   });
+  expect(host.querySelector('[role="status"]')?.textContent).toBe(
+    "dependencies.recoveryQueued",
+  );
+});
+
+it("shows localized status on retry, omits raw unknown stage names, and tolerates non-JSON 409 bodies", async () => {
+  vi.stubGlobal("fetch", fetchMock);
+  fetchMock
+    .mockClear()
+    .mockResolvedValueOnce(new Response("{}", { status: 202 }))
+    .mockResolvedValueOnce(new Response("gateway conflict", { status: 409 }));
+  const host = render(attachment, [
+    { ...failedPin, stage: "unknown_internal_stage" },
+  ]);
+  const row = host.querySelector("#dependency-decl-1")!;
+
+  expect(row.textContent).not.toContain("unknown_internal_stage");
+  await click(row.querySelector('[data-action="retry"]')!);
+  expect(row.querySelector('[role="status"]')?.textContent).toBe(
+    "dependencies.retryQueued",
+  );
+  await click(row.querySelector('[data-action="retry"]')!);
+  expect(row.querySelector('[role="alert"]')?.textContent).toBe(
+    "dependencies.conflict",
+  );
 });

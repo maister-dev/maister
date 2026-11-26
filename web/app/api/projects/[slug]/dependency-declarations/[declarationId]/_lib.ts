@@ -7,11 +7,10 @@ import type { getDb } from "@/lib/db/client";
 import { NextResponse } from "next/server";
 
 import {
-  authorizeManagePackages,
+  authorizePackageTrust,
   parseAuthorizedJson,
 } from "../../flow-packages/_lib";
 
-import { requireGlobalRole } from "@/lib/authz";
 import { notFound, packageErrorResponse } from "@/lib/packages/http";
 
 export function dependencyRoute<Input, Result>(
@@ -30,8 +29,7 @@ export function dependencyRoute<Input, Result>(
     const { slug, declarationId } = await ctx.params;
 
     try {
-      const { project, db } = await authorizeManagePackages(slug);
-      const actor = await requireGlobalRole("admin");
+      const { project, db, user: actor } = await authorizePackageTrust(slug);
       const input = await parseAuthorizedJson({
         req,
         schema,

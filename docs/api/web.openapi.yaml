@@ -2712,6 +2712,16 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            Registration commit acknowledgement was lost or could not be
+            confirmed (`EXECUTOR_UNAVAILABLE` with
+            `details.reason: "registration_commit_unknown"`). The project may
+            already have been committed; inspect the project list before
+            retrying.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/persist-config:
     get:
       tags:

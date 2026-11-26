@@ -9,7 +9,8 @@ import { readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import pino from "pino";
 
 import { physicalSetupKey, identifyHistoricalSetups } from "./setup-identity";
 import { localDirectoryContentDigest } from "./content-digest";
@@ -18,8 +19,11 @@ import {
   projectDependencyAttempts as attempts,
   projectDependencyDeclarations as declarations,
   projectDependencySetupReceipts as receipts,
+  projects,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+
+const log = pino({ name: "project-dependency-setup" });
 
 type SetupContext = {
   db: Db;
@@ -65,7 +69,11 @@ function groupExists(pid: number): boolean {
 
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    const code = (error as NodeJS.ErrnoException).code;
+
+    if (code === "ESRCH") return false;
+    // EPERM means the process group exists but is owned by another UID.
+    if (code === "EPERM") return true;
     throw error;
   }
 }
@@ -88,7 +96,29 @@ async function hasReservedOwner(db: Db, receipt: Receipt): Promise<boolean> {
         eq(declarations.generation, attempts.generation),
       ),
     )
-    .where(eq(attempts.id, original));
+    .innerJoin(
+      projects,
+      and(eq(projects.id, declarations.projectId), isNull(projects.archivedAt)),
+    )
+    .where(
+      and(
+        eq(attempts.id, original),
+        // Once the reserved recovery attempt reaches a terminal state without
+        // dispatching setup, the reservation no longer blocks another project.
+        sql`NOT EXISTS (
+          SELECT 1 FROM project_dependency_attempts child
+          WHERE child.retry_of_attempt_id = ${attempts.id}
+            AND child.status NOT IN ('pending', 'running')
+        )`,
+      ),
+    );
+
+  if (!current) {
+    log.debug(
+      { materialKey: receipt.materialKey, originalAttemptId: original },
+      "setup recovery reservation no longer has a live owner",
+    );
+  }
 
   return Boolean(current);
 }
@@ -242,10 +272,12 @@ export async function runMaterialSetup(input: {
     ["-c", "IFS= read -r start && exec bash ./setup.sh"],
     { cwd: target, detached: true, stdio: ["pipe", "ignore", "ignore"] },
   );
-  const exited = new Promise<number | null>((resolve, reject) => {
-    child.once("exit", resolve);
-    child.once("error", reject);
-  });
+  const exited = new Promise<{ code: number | null; error?: Error }>(
+    (resolve) => {
+      child.once("exit", (code) => resolve({ code }));
+      child.once("error", (error) => resolve({ code: null, error }));
+    },
+  );
 
   child.stdin.on("error", () => {
     /* The child's exit supplies the result. */
@@ -266,7 +298,12 @@ export async function runMaterialSetup(input: {
   signal.addEventListener("abort", killGroup, { once: true });
   try {
     if (!child.pid) {
-      await exited;
+      const outcome = await exited;
+
+      log.warn(
+        { target, err: outcome.error?.message },
+        "setup process failed to start",
+      );
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
         "Setup process could not be started",
@@ -359,7 +396,7 @@ export async function runMaterialSetup(input: {
       signal.throwIfAborted();
     }
     child.stdin.end("\n");
-    const code = await exited;
+    const { code } = await exited;
 
     if (code === null || signal.aborted || groupExists(child.pid))
       conflict("setup_uncertain");

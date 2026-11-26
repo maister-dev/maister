@@ -6,6 +6,7 @@ import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 
 const mocks = vi.hoisted(() => ({
   authorizeManagePackages: vi.fn(),
+  authorizePackageTrust: vi.fn(),
   enableRevision: vi.fn(),
   errorResponse: vi.fn(),
   installFlowPlugin: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/app/api/projects/[slug]/flow-packages/_lib", () => ({
   authorizeManagePackages: mocks.authorizeManagePackages,
+  authorizePackageTrust: mocks.authorizePackageTrust,
   errorResponse: mocks.errorResponse,
   parseAuthorizedJson: mocks.parseAuthorizedJson,
 }));
@@ -51,6 +53,9 @@ beforeEach(() => {
   mocks.authorizeManagePackages.mockRejectedValue(
     new MaisterError("UNAUTHENTICATED", "sign in"),
   );
+  mocks.authorizePackageTrust.mockRejectedValue(
+    new MaisterError("UNAUTHENTICATED", "sign in"),
+  );
   mocks.errorResponse.mockImplementation((err: MaisterError) =>
     Response.json(
       { code: err.code, message: err.message },
@@ -74,32 +79,37 @@ describe("flow-package auth-first request boundary", () => {
       "install",
       () => import("../install/route").then((module) => module.POST),
       "/api/projects/demo/flow-packages/install",
+      "authorizePackageTrust" as const,
     ],
     [
       "enable",
       () => import("../[flowRefId]/enable/route").then((module) => module.POST),
       "/api/projects/demo/flow-packages/aif/enable",
+      "authorizeManagePackages" as const,
     ],
     [
       "rollback",
       () =>
         import("../[flowRefId]/rollback/route").then((module) => module.POST),
       "/api/projects/demo/flow-packages/aif/rollback",
+      "authorizeManagePackages" as const,
     ],
     [
       "upgrade",
       () =>
         import("../[flowRefId]/upgrade/route").then((module) => module.POST),
       "/api/projects/demo/flow-packages/aif/upgrade",
+      "authorizePackageTrust" as const,
     ],
     [
       "trust",
       () => import("../[flowRefId]/trust/route").then((module) => module.POST),
       "/api/projects/demo/flow-packages/aif/trust",
+      "authorizeManagePackages" as const,
     ],
   ])(
     "authenticates before parsing malformed %s bodies",
-    async (_name, load, url) => {
+    async (_name, load, url, authFn) => {
       const handler = (await load()) as Handler;
       const res = await handler(malformedRequest(url), params());
 
@@ -107,7 +117,7 @@ describe("flow-package auth-first request boundary", () => {
       await expect(res.json()).resolves.toMatchObject({
         code: "UNAUTHENTICATED",
       });
-      expect(mocks.authorizeManagePackages).toHaveBeenCalledWith("demo");
+      expect(mocks[authFn]).toHaveBeenCalledWith("demo");
     },
   );
 
@@ -127,9 +137,10 @@ describe("flow-package auth-first request boundary", () => {
   });
 
   it("returns the locked CONFIG refusal for a legacy upgrade without an enable call", async () => {
-    mocks.authorizeManagePackages.mockResolvedValue({
+    mocks.authorizePackageTrust.mockResolvedValue({
       db: {},
       project: { id: "project-1", slug: "demo" },
+      user: { id: "admin-1", role: "admin" },
     });
     mocks.upgradeFlow.mockRejectedValue(
       new MaisterError("CONFIG", LEGACY_STEPS_REFUSAL_MESSAGE),
@@ -153,5 +164,47 @@ describe("flow-package auth-first request boundary", () => {
       message: LEGACY_STEPS_REFUSAL_MESSAGE,
     });
     expect(mocks.enableRevision).not.toHaveBeenCalled();
+  });
+
+  it("enforces global-admin authorization before slug resolution on dependency-declaration mutations", async () => {
+    mocks.authorizePackageTrust.mockRejectedValue(
+      new MaisterError("UNAUTHORIZED", "admin required"),
+    );
+    const [editRoute, retryRoute, recoverRoute] = await Promise.all([
+      import("../../dependency-declarations/[declarationId]/route"),
+      import("../../dependency-declarations/[declarationId]/retry/route"),
+      import("../../dependency-declarations/[declarationId]/recover-setup/route"),
+    ]);
+    const declParams = {
+      params: Promise.resolve({ slug: "nonexistent", declarationId: "decl-1" }),
+    };
+
+    for (const [handler, method, path] of [
+      [
+        editRoute.PATCH,
+        "PATCH",
+        "/api/projects/nonexistent/dependency-declarations/decl-1",
+      ],
+      [
+        retryRoute.POST,
+        "POST",
+        "/api/projects/nonexistent/dependency-declarations/decl-1/retry",
+      ],
+      [
+        recoverRoute.POST,
+        "POST",
+        "/api/projects/nonexistent/dependency-declarations/decl-1/recover-setup",
+      ],
+    ] as const) {
+      const req = new NextRequest(
+        new Request(`http://localhost${path}`, { body: "{", method }),
+      );
+      const res = await handler(req, declParams);
+
+      expect(res.status).toBe(403);
+      await expect(res.json()).resolves.toMatchObject({ code: "UNAUTHORIZED" });
+    }
+    expect(mocks.authorizePackageTrust).toHaveBeenCalledTimes(3);
+    expect(mocks.authorizeManagePackages).not.toHaveBeenCalled();
   });
 });

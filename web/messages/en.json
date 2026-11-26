@@ -4550,6 +4550,9 @@
     "path": "Package subdirectory (optional)",
     "publicationBusy": "A Git publication is in progress. Finish it and retry.",
     "editConfirmed": "The saved package coordinates match your edit.",
+    "editSaved": "Package pin saved. Installation has been queued.",
+    "retryQueued": "Installation retry has been queued.",
+    "recoveryQueued": "Setup recovery has been queued.",
     "setupLive": "The previous setup process is still running.",
     "conflict": "The declaration changed. Review its refreshed state before trying again.",
     "refused": "The server refused this change. Check permissions and coordinates.",
@@ -4623,7 +4626,12 @@
       "conflict": "Dependency conflicts with existing project material",
       "precondition": "Installation requirements are unmet",
       "executor_unavailable": "Required service is unavailable",
-      "package_name_taken": "Package name is already in use"
+      "package_name_taken": "Package name is already in use",
+      "application_settlement_pending": "The dependency change is saved. MAIster will finish updating the project links.",
+      "material_path_excluded": "The package path is excluded from verified material.",
+      "capability_trust_changed": "Capability trust changed before setup could run. Review trust and retry.",
+      "package_trust_required": "The parent package must be trusted before setup can run.",
+      "stale_generation": "The declaration changed before this request ran."
     }
   },
   "packages": {

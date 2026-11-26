@@ -26,6 +26,7 @@ export type ApiErrorBody = {
   message?: string;
   details?: {
     reason?: string;
+    field?: string;
     mutationAccepted?: boolean;
     memberRef?: string;
     linkReason?: string | null;

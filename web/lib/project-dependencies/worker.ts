@@ -178,7 +178,7 @@ export async function serviceDependency(
       : null;
     const memberRef =
       typeof diagnosticMember === "string" &&
-      /^[a-zA-Z0-9:_-]{1,200}$/.test(diagnosticMember)
+      /^(?!.*\.\.)[a-zA-Z0-9.:_-]{1,200}$/.test(diagnosticMember)
         ? diagnosticMember
         : undefined;
     const retryCount = Number(claim.checkpoint?.retryCount ?? 0);

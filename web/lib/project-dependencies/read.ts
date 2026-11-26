@@ -41,10 +41,11 @@ export async function readProjectDeclarations(
           OR (fr.setup_status = 'pending' AND fr.exec_trust = 'untrusted') THEN 'awaiting_trust'
         WHEN fr.setup_status = 'pending' OR c.setup_status = 'pending' OR
           (pi.id IS NOT NULL AND (
-            EXISTS (SELECT 1 FROM flows mf JOIN flow_revisions mr ON mr.id=mf.enabled_revision_id
-              WHERE mf.project_id=d.project_id AND mf.package_install_id=pi.id AND mr.setup_status='pending')
-            OR EXISTS (SELECT 1 FROM capability_imports mc WHERE mc.project_id=d.project_id
-              AND mc.package_install_id=pi.id AND mc.setup_status='pending')
+            EXISTS (SELECT 1 FROM flows mf JOIN flow_revisions mr
+              ON mr.flow_ref_id = mf.flow_ref_id AND mr.resolved_revision = mf.revision
+              WHERE mf.project_id = d.project_id AND mf.package_install_id = pi.id AND mr.setup_status = 'pending')
+            OR EXISTS (SELECT 1 FROM capability_imports mc WHERE mc.project_id = d.project_id
+              AND mc.package_install_id = pi.id AND mc.setup_status = 'pending')
           )) THEN 'setup_pending'
         ELSE 'installed' END AS readiness
     FROM project_dependency_declarations d
@@ -55,9 +56,9 @@ export async function readProjectDeclarations(
     ) a ON true
     LEFT JOIN project_package_attachments p ON p.id = d.effective_attachment_id AND p.project_id = d.project_id
     LEFT JOIN package_installs pi ON pi.id = p.package_install_id AND pi.resolved_revision = d.effective_revision
-    LEFT JOIN flows f ON d.kind = 'flow' AND f.project_id = d.project_id AND f.flow_ref_id = d.logical_id AND f.revision = d.effective_revision
+    LEFT JOIN flows f ON d.kind = 'flow' AND f.project_id = d.project_id AND f.package_install_id IS NULL AND f.flow_ref_id = d.logical_id AND f.revision = d.effective_revision
     LEFT JOIN flow_revisions fr ON fr.flow_ref_id = f.flow_ref_id AND fr.resolved_revision = f.revision
-    LEFT JOIN capability_imports c ON d.kind = 'capability_import' AND c.project_id = d.project_id AND c.capability_ref_id = d.logical_id AND c.resolved_revision = d.effective_revision
+    LEFT JOIN capability_imports c ON d.kind = 'capability_import' AND c.project_id = d.project_id AND c.package_install_id IS NULL AND c.capability_ref_id = d.logical_id AND c.resolved_revision = d.effective_revision
     WHERE d.project_id = ${projectId} ${declarationId === undefined ? sql`` : sql`AND d.id = ${declarationId}`}
     ORDER BY CASE d.kind WHEN 'flow' THEN 1 WHEN 'package' THEN 2 ELSE 3 END, d.ordinal, d.logical_id
   `);

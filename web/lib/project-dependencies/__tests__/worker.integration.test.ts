@@ -54,7 +54,11 @@ afterAll(async () => {
   await database?.stop();
 });
 
-async function seedRequest(archivedAt: Date | null, capability?: string) {
+async function seedRequest(
+  archivedAt: Date | null,
+  capability?: string,
+  logicalId = "unreachable",
+) {
   const db = drizzle(database.pool, { schema });
   const actor = randomUUID();
 
@@ -84,7 +88,7 @@ async function seedRequest(archivedAt: Date | null, capability?: string) {
   await db.insert(declarations).values({
     id: declarationId,
     projectId,
-    logicalId: "unreachable",
+    logicalId,
     kind: capability ? "capability_import" : "package",
     ordinal: 0,
     desired,
@@ -362,7 +366,7 @@ it("binds an unchanged legacy receipt and refuses an unidentifiable historical d
   }
 });
 
-it.each(["edit", "remove"] as const)(
+it.each(["edit", "remove", "failed_recovery", "archive"] as const)(
   "allows another exact recovery after %s abandons an undispatched reservation",
   async (action) => {
     const db = database.db;
@@ -426,10 +430,24 @@ it.each(["edit", "remove"] as const)(
           source: "/fixed-package",
           version: "local",
         });
-      } else {
+      } else if (action === "remove") {
         await db
           .delete(declarations)
           .where(eq(declarations.id, first.declarationId));
+      } else if (action === "failed_recovery") {
+        await db
+          .update(attempts)
+          .set({
+            status: "failed",
+            stage: "resolve",
+            reason: "authority_revoked",
+          })
+          .where(eq(attempts.retryOfAttemptId, first.id));
+      } else {
+        await db
+          .update(projects)
+          .set({ archivedAt: new Date() })
+          .where(eq(projects.id, first.projectId));
       }
       await expect(setup()).rejects.toMatchObject({
         details: { reason: "setup_uncertain" },
@@ -444,6 +462,42 @@ it.each(["edit", "remove"] as const)(
     }
   },
 );
+
+it("preserves dotted memberRef diagnostics on setup failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "worker-dotted-ref-"));
+  const dir = join(root, "org.bundle");
+  const priorHome = process.env.HOME;
+  const db = drizzle(database.pool, { schema });
+  let projectId: string | undefined;
+
+  try {
+    process.env.HOME = join(root, "home");
+    await mkdir(dir);
+    await writeFile(join(dir, "setup.sh"), "exit 1\n");
+    const request = await seedRequest(null, dir, "org.bundle");
+
+    projectId = request.projectId;
+    expect(
+      await serviceDependency(db, new AbortController().signal, request.id),
+    ).toBe(true);
+    const [failed] = await db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, request.id));
+
+    expect(failed).toMatchObject({
+      status: "failed",
+      stage: "setup",
+      reason: "setup_failed",
+      memberRef: "org.bundle",
+    });
+  } finally {
+    if (projectId) await db.delete(projects).where(eq(projects.id, projectId));
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it("preserves a dispatched standalone setup on shutdown and permits only the exact recovery, even at a stable local path revision", async () => {
   const root = await mkdtemp(join(tmpdir(), "worker-interrupted-"));

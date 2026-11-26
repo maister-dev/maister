@@ -459,7 +459,7 @@ export async function prepareCapabilityRevision(
     const layoutDigest = await materialLayoutDigest(sourcePath);
     await opts.onResolve?.(resolvedRevision, witness, layoutDigest);
 
-    return await database.transaction(async (db: any) => {
+    return await database.transaction(async (db: Db) => {
       await opts.authorizePublication?.(db);
       await db.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${target},0))`,
@@ -487,8 +487,7 @@ export async function prepareCapabilityRevision(
         hash,
         hasHistoricalOwner: async () =>
           owners.some(
-            (row: { source: string; packageStatus: string }) =>
-              row.source === source && row.packageStatus === "Installed",
+            (row) => row.source === source && row.packageStatus === "Installed",
           ),
       });
 

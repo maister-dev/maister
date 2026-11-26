@@ -21,6 +21,8 @@ A worker persists intent before external effects. Lease renewal, publication and
 stateDiagram-v2
     [*] --> Pending
     Pending --> Running: claim exact generation
+    Pending --> Failed: superseded
+    Running --> Pending: transient requeue, archive or pending link
     Running --> Succeeded: observe effect
     Running --> Failed: known failure
     Running --> RecoveryRequired: uncertain setup

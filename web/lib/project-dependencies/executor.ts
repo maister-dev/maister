@@ -379,7 +379,6 @@ async function executePackage(job: Execution): Promise<void> {
             "Resolved install disappeared",
           );
       }
-      await progress("projection");
       await reconcileDependencyCatalog(tx, project.id);
       await recordCommittedApplication(tx, claim);
     }),
@@ -613,7 +612,6 @@ export async function executeDependency(job: Execution): Promise<void> {
             details: { reason: "setup_failed" },
           });
       }
-      await progress("projection");
       await recordEffective(tx, job, installed.resolvedRevision);
       await reconcileDependencyCatalog(tx, project.id);
       await recordCommittedApplication(tx, claim);
