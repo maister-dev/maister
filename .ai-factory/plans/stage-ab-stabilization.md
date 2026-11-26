@@ -1077,6 +1077,13 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   and the production image job including the new browser check. Historical
   or locally passing reports cannot discharge these release conditions.
 
+  Stage C local regression at `d4e8a6c0c` passed Web A/B 727/727 and Darwin
+  production isolation 56/56 with zero leaks. Supervisor A/B passed 148/148
+  at the same product source `83aeeab69`. The
+  [Stage C acceptance plan](feature-stage-c-selected-supervisor.md#acceptance-and-verification)
+  records the runtime and report identities. S5.4/C11 requires hosted
+  receipts on the independent A/B release candidate.
+
 S5 rollback: qualification-only changes can revert independently, but evidence cannot be treated as passing after reverting a tested fix. Runtime state retains S1–S4 recovery/retention guarantees. Release only a commit whose concrete scenario matrix and specification gates correspond to that exact revision.
 
 ## Commit sequence and dependency order

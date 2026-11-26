@@ -1,6 +1,6 @@
 # Run board tasks on a selected supervisor
 
-Branch `feature/stage-c-selected-supervisor` · Base `22df665aa` on local `master` · 2026-11-23 · Full-mode implementation plan. C0 is specified. Local implementation and A/B release qualification can proceed independently.
+Branch `feature/stage-c-selected-supervisor` · Initial base `22df665aa` · Current integrated master `cb6cc7d2e` · Local G1 and G2 qualified. Hosted A/B release and qualification on two physical hosts are tracked under [release and physical-host evidence](#release-and-physical-host-evidence).
 
 ## Settings
 
@@ -16,7 +16,7 @@ Web currently resolves one global supervisor URL. The registrar can retire its p
 
 Normal Flow launch creates a worktree in `web/lib/services/runs.ts` before placement. Scratch creation in `web/lib/scratch-runs/service.ts` and agent launch in `web/lib/agents/launch.ts` have distinct paths. Operational agents already have fenced preparation, generation and canonical resource identity. Supervisor adoption validates the manager-supplied real Git paths. Web runs bash for CLI/gates, resolves the MCP executable against its own installation, and still reads Git for review. The isolation branch reviewed at `4554e33ae` has scoped workload dispatch and local Git hardening. Its diagnostic/requirement-probe support and Linux isolation receipts qualify those paths only. Recheck divergence and port the relevant contracts with their tests.
 
-Recorded A/B progress is **44/45**. S5.2/CI-R9d has a historical hosted receipt. S5.3 has local Linux distinct-user browser and binary transport evidence. The corrected 53-case Darwin isolation inventory passes locally. S5.4/C11 requires same-revision hosted release evidence. This gates Stage C rollout to a deployed instance. Local implementation, migrations on disposable or restored test stores, and G1/G2 browser qualification can proceed now. Retain the A/B release candidate and its evidence independently of Stage C branch work. [Stabilization status](stage-ab-stabilization.md#s5--isolated-lifecycle-qualification-and-final-consistency) · [Isolation qualification](s53a-linux-isolation.md) · [Original findings](../reviews/stage-ab-execution-host-audit-2026-09-05.md)
+Recorded A/B progress is **44/45**. S5.2/CI-R9d has a historical hosted receipt. S5.3 has local Linux distinct-user browser and binary transport evidence. The current 56-case Darwin isolation inventory passes locally. S5.4/C11 requires same-revision hosted release evidence before rollout to a deployed instance. Retain the A/B release candidate and its evidence independently of Stage C branch work. [Stabilization status](stage-ab-stabilization.md#s5--isolated-lifecycle-qualification-and-final-consistency) · [Isolation qualification](s53a-linux-isolation.md) · [Original findings](../reviews/stage-ab-execution-host-audit-2026-09-05.md)
 
 The local A/B Web durability lane on archived `2777ff1ea` passed all 727
 tests in 46 suites on Darwin arm64 and Node 24.15.0. Its exit sweep reported
@@ -1029,7 +1029,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   independently of current configuration. The expanded real-supervisor,
   registrar and populated migration suites passed 25 integrations.
 
-- [ ] **T14 · Pilot / G2 (after T12–13).** Qualify the two-host matrix below and reconcile actual wire/schema versions, admin guide, metrics, test topology, deployment and error taxonomy. Validate migration/journal against latest master and reject rollback to a singleton writer while a second host owns work. Document shutdown/drain and coordinated restore. Release the pilot only for configurations matching its evidence. **Checkpoint 4:** two-host placement and recovery.
+- [x] **T14 · Pilot / G2 (after T12–13).** Qualify the two-host matrix below and reconcile actual wire/schema versions, admin guide, metrics, test topology, deployment and error taxonomy. Validate migration/journal against latest master and reject rollback to a singleton writer while a second host owns work. Document shutdown/drain and coordinated restore. Release the pilot only for configurations matching its evidence. **Checkpoint 4:** two-host placement and recovery.
 
   **Final G2 browser receipt.** `83aeeab69` passed
   `--chrome --addressed-two-host` on the same Linux build as G1. Web, A and
@@ -1048,7 +1048,17 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   Node 24.15.0, with successful fixture cleanup. Its fresh production Web
   build ID was `lGBWWhRUkcbjzhISrw_Br` and the invocation was
   `68ea6b7c-363d-425c-b47a-39d28093682d`. See
-  `/private/tmp/maister-ab-isolation-NUY2eD/vitest.json`.
+  `/private/tmp/maister-ab-isolation-NUY2eD/vitest.json`. The full Web A/B
+  lane from the same candidate also passed 727/727 across 46 suites on
+  Darwin arm64 and Node 24.15.0. The exit sweep reported zero leaks in both
+  lanes. Web invocation `fa37a95a-ce03-40e3-bb53-9fe58b1cbf41` passed the
+  previously failing Agent terminal recovery, Flow permission ACK and real
+  O-reaper cases in the same run. See `/private/tmp/maister-ab-web-O4hFTn/vitest.json`.
+  The candidate preserved all 372 journal entries and SQL bodies from
+  `cb6cc7d2e`, with 22 additions through 0397. Both typechecks, contract and
+  example validation, docs/ERD, public EN/RU docs and Compose validation
+  passed. The populated PostgreSQL exercise rejects singleton writers when
+  a peer owns retained work.
 
   The C-15 Chrome fixture passed against the capacity-phase production build
   `sha256:431a4e1ff1055b8688be48f31c752059e22445a76909ff595d2bdc6b4c5aefb6`
