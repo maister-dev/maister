@@ -19,7 +19,7 @@ import {
   SessionContentReferenceSchema,
   sessionContentSource,
 } from "../runtime-events";
-import { defaultTransport } from "../default-transport";
+import { transportForExecutionHost } from "../default-transport";
 import { getRuntimeObjectForRun } from "../runtime-objects";
 import { openRuntimeObjectContent } from "../runtime-object-content";
 
@@ -156,7 +156,7 @@ export async function prepareSessionContent(
     );
   }
   const response = await openRuntimeObjectContent({
-    transport: defaultTransport(),
+    transport: transportForExecutionHost(loaded.executionHost),
     objectId: reference.objectId,
     context: { eventId: event.id },
     signal,

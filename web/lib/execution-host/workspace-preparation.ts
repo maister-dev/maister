@@ -21,9 +21,9 @@ import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 
 import { COMMAND_POLICY } from "./deliverer";
-import { defaultTransport } from "./default-transport";
+import { defaultTransport, transportForExecutionHost } from "./default-transport";
 import { issueCommand } from "./ledger";
-import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
+import { configuredExecutionEndpointForHost, configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { encodeWorkspaceInputCapture } from "./workspace-input-capture";
 import { hostForAssignment } from "./resolver";
 
@@ -62,7 +62,7 @@ export function usesHostWorkspacePreparation(host: ExecutionHost): boolean {
   const protocol = host.capabilities.workspaceProtocol;
 
   return (
-    configuredSelectedExecutionEndpoint()?.hostKey === host.hostKey &&
+    configuredExecutionEndpointForHost(host.hostKey) !== null &&
     Array.isArray(protocol) &&
     protocol.length === 1 &&
     protocol[0] === 1
@@ -132,7 +132,7 @@ async function resolveAddressedWorkspaceRead(
   db: Db,
   workspace: RetainedWorkspaceRead,
   transport: ExecutionHostTransport,
-): Promise<{ handle: string; generation: number }> {
+): Promise<{ handle: string; generation: number; transport: ExecutionHostTransport }> {
   if (
     workspace.ownershipKind !== "host_owned" ||
     workspace.removedAt ||
@@ -168,6 +168,7 @@ async function resolveAddressedWorkspaceRead(
   return {
     handle: workspace.executionWorkspaceId,
     generation: workspace.workspaceGeneration,
+    transport: transportForExecutionHost(host, transport),
   };
 }
 
@@ -175,19 +176,19 @@ async function resolveAddressedWorkspaceRead(
 export async function readAddressedWorkspaceStatus(
   db: Db,
   workspace: RetainedWorkspaceRead,
-  transport = defaultTransport(),
+  defaultHostTransport = defaultTransport(),
 ): Promise<WorkspaceStatus> {
+  const { handle, generation, transport } = await resolveAddressedWorkspaceRead(
+    db,
+    workspace,
+    defaultHostTransport,
+  );
   if (!transport.getWorkspaceStatus)
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
       "Transport cannot inspect workspaces",
       { details: { reason: "workspace_protocol_unsupported" } },
     );
-  const { handle, generation } = await resolveAddressedWorkspaceRead(
-    db,
-    workspace,
-    transport,
-  );
 
   return transport.getWorkspaceStatus(handle, generation);
 }
@@ -197,19 +198,19 @@ export async function readAddressedWorkspaceDiff(
   db: Db,
   workspace: RetainedWorkspaceRead,
   range: Omit<WorkspaceDiffQuery, "generation">,
-  transport = defaultTransport(),
+  defaultHostTransport = defaultTransport(),
 ): Promise<WorkspaceEvidenceObject> {
+  const { handle, generation, transport } = await resolveAddressedWorkspaceRead(
+    db,
+    workspace,
+    defaultHostTransport,
+  );
   if (!transport.getWorkspaceDiff)
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
       "Transport cannot capture workspace diffs",
       { details: { reason: "workspace_protocol_unsupported" } },
     );
-  const { handle, generation } = await resolveAddressedWorkspaceRead(
-    db,
-    workspace,
-    transport,
-  );
 
   return transport.getWorkspaceDiff(handle, { ...range, generation });
 }
@@ -218,13 +219,13 @@ export async function readAddressedWorkspaceReviewFingerprint(
   db: Db,
   workspace: RetainedWorkspaceRead,
   base: string,
-  transport = defaultTransport(),
+  defaultHostTransport = defaultTransport(),
 ) {
+  const { handle, generation, transport } = await resolveAddressedWorkspaceRead(db, workspace, defaultHostTransport);
   if (!transport.getWorkspaceReviewFingerprint)
     throw new MaisterError("EXECUTOR_UNAVAILABLE", "Transport cannot verify a workspace review fingerprint", {
       details: { reason: "workspace_protocol_unsupported" },
     });
-  const { handle, generation } = await resolveAddressedWorkspaceRead(db, workspace, transport);
 
   return transport.getWorkspaceReviewFingerprint(handle, { generation, base });
 }
@@ -233,13 +234,13 @@ export async function readAddressedWorkspacePublicationTarget(
   db: Db,
   workspace: RetainedWorkspaceRead,
   input: { remoteId: string; targetRef: string },
-  transport = defaultTransport(),
+  defaultHostTransport = defaultTransport(),
 ) {
+  const { handle, generation, transport } = await resolveAddressedWorkspaceRead(db, workspace, defaultHostTransport);
   if (!transport.getWorkspacePublicationTarget)
     throw new MaisterError("EXECUTOR_UNAVAILABLE", "Transport cannot observe a workspace publication target", {
       details: { reason: "workspace_protocol_unsupported" },
     });
-  const { handle, generation } = await resolveAddressedWorkspaceRead(db, workspace, transport);
 
   return transport.getWorkspacePublicationTarget(handle, { ...input, generation });
 }
@@ -248,13 +249,13 @@ export async function readAddressedWorkspacePullRequest(
   db: Db,
   workspace: RetainedWorkspaceRead,
   input: Omit<WorkspacePullRequestQuery, "generation">,
-  transport = defaultTransport(),
+  defaultHostTransport = defaultTransport(),
 ): Promise<WorkspacePullRequestStatus> {
+  const { handle, generation, transport } = await resolveAddressedWorkspaceRead(db, workspace, defaultHostTransport);
   if (!transport.getWorkspacePullRequest)
     throw new MaisterError("EXECUTOR_UNAVAILABLE", "Transport cannot observe the workspace's PR", {
       details: { reason: "workspace_protocol_unsupported" },
     });
-  const { handle, generation } = await resolveAddressedWorkspaceRead(db, workspace, transport);
 
   return transport.getWorkspacePullRequest(handle, { ...input, generation });
 }
@@ -264,13 +265,13 @@ export async function readAddressedWorkspaceLog(
   db: Db,
   workspace: RetainedWorkspaceRead,
   page: Omit<WorkspaceLogQuery, "generation">,
-  transport = defaultTransport(),
+  defaultHostTransport = defaultTransport(),
 ): Promise<WorkspaceEvidenceObject> {
+  const { handle, generation, transport } = await resolveAddressedWorkspaceRead(db, workspace, defaultHostTransport);
   if (!transport.getWorkspaceLog)
     throw new MaisterError("EXECUTOR_UNAVAILABLE", "Transport cannot capture workspace history", {
       details: { reason: "workspace_protocol_unsupported" },
     });
-  const { handle, generation } = await resolveAddressedWorkspaceRead(db, workspace, transport);
 
   return transport.getWorkspaceLog(handle, { ...page, generation });
 }

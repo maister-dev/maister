@@ -16,6 +16,7 @@ import type {
   ExecutionHost,
 } from "@/lib/db/schema";
 import type { Db } from "./db";
+import { transportForExecutionHost } from "./default-transport";
 import type { ExecutionHostTransport } from "./contracts";
 
 import { and, eq, isNull, lte, or } from "drizzle-orm";
@@ -175,7 +176,7 @@ export async function resolveWorkspacePreparationPeer(
   db: Db,
   command: ExecutionCommand,
   transport: ExecutionHostTransport,
-): Promise<{ host: ExecutionHost; assignment: ExecutionAssignment }> {
+): Promise<{ host: ExecutionHost; assignment: ExecutionAssignment; transport: ExecutionHostTransport }> {
   const assignment = await getAssignmentById(db, command.executionAssignmentId);
   if (
     !assignment ||
@@ -201,7 +202,7 @@ export async function resolveWorkspacePreparationPeer(
       },
     );
 
-  return { host, assignment };
+  return { host, assignment, transport: transportForExecutionHost(host, transport) };
 }
 
 export function retainedWorkspaceWorkloadRequest(
@@ -260,9 +261,14 @@ export function retainedWorkspaceCancellation(
 export async function recoverWorkspacePreparation(
   db: Db,
   command: ExecutionCommand,
-  transport: ExecutionHostTransport,
+  defaultHostTransport: ExecutionHostTransport,
   at: Date,
 ): Promise<boolean> {
+  const { host, assignment, transport } = await resolveWorkspacePreparationPeer(
+    db,
+    command,
+    defaultHostTransport,
+  );
   if (
     !transport.sendWorkspacePreparation ||
     !transport.getWorkspaceCommandReceipt
@@ -274,11 +280,6 @@ export async function recoverWorkspacePreparation(
         details: { reason: "workspace_protocol_unsupported" },
       },
     );
-  const { host, assignment } = await resolveWorkspacePreparationPeer(
-    db,
-    command,
-    transport,
-  );
   const deliver = (): Promise<void> => {
     if (command.kind === "workspace.prepare")
       return transport.sendWorkspacePreparation!(

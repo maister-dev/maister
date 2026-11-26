@@ -909,9 +909,9 @@ Preserve `MaisterError`/`SupervisorError` conventions. Add a strict reason union
 
 [ADR-218](../decisions/adr-218.md) defines the ownership split. Web commits
 the Run, addressed assignment, preparation claim and command together.
-The supervisor accepts the command before any physical effect. Web applies
-the terminal outcome under the original owner and then acknowledges the
-event. The [Stage C plan](../../.ai-factory/plans/feature-stage-c-selected-supervisor.md#requirement-to-test-matrix)
+The supervisor accepts the command before any physical effect. Web commits
+and acknowledges ingestion on that supervisor's stream. Projection applies
+the terminal outcome under the original owner. The [Stage C plan](../../.ai-factory/plans/feature-stage-c-selected-supervisor.md#requirement-to-test-matrix)
 maps C-01 through C-15 to their executable witnesses and release gates.
 
 ### Host identity and protocol
@@ -933,6 +933,22 @@ receipt and object reads. A wrong peer refuses before
 opening a receipt or accepting a command. A reboot with the same key retains
 the descriptor and recovers commands against the same store. A different
 key marks the descriptor unavailable and requires operator review.
+
+Migration 0387 preserves the existing default host row and its retained
+assignments. Web can register one additional trusted descriptor with
+`MAISTER_ADDITIONAL_EXECUTION_HOSTS`. The persisted role marks that row as a
+secondary, while the HTTP origin stays in operator configuration. Upgrade
+and drain incompatible writers before enabling the descriptor. PostgreSQL
+refuses singleton registry changes and new placements while a secondary
+row is live or retains work. Removing a descriptor keeps its row and
+workspace ownership visible and prevents routing to its former address.
+
+Each registered supervisor has its own event consumers, cursor and ACK.
+The registry and intake retain the primary as the default. Explicit and
+saved selections resolve to the exact stored host ID, with its own project
+eligibility and readiness. A secondary query or command uses the registered
+origin and stable key throughout receipt and artifact follow-up. An
+unavailable primary leaves an explicitly selected secondary eligible.
 
 Selecting workspace protocol 1 implies support for host envelope version 2
 on the same stream. A supervisor-first upgrade stays on the existing event

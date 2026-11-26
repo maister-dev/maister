@@ -2,12 +2,14 @@ import "server-only";
 
 import type { ExecutionHost } from "@/lib/db/schema";
 import type { EnsureLocalHostOptions, RegistrationResult } from "./registrar";
+import type { AdditionalExecutionEndpoint } from "./selected-endpoint";
 
 import pino from "pino";
 
-import { defaultTransport } from "./default-transport";
+import { defaultTransport, pinnedExecutionHostTransport } from "./default-transport";
 import { startRuntimeEventConsumer } from "./events/consumer";
-import { ensureLocalExecutionHost } from "./registrar";
+import { ensureAdditionalExecutionHost, ensureLocalExecutionHost } from "./registrar";
+import { configuredAdditionalExecutionEndpoints } from "./selected-endpoint";
 
 import { getDb } from "@/lib/db/client";
 
@@ -31,6 +33,19 @@ function supportsRuntimeEventStream(
   );
 }
 
+export async function ensureAdditionalExecutionDataPlane(
+  peer: AdditionalExecutionEndpoint,
+  opts: EnsureLocalHostOptions,
+): Promise<RegistrationResult> {
+  const db = opts.db ?? getDb();
+  const logger = opts.logger ?? defaultLog;
+  const transport = pinnedExecutionHostTransport(peer);
+  const result = await ensureAdditionalExecutionHost(peer, { ...opts, db, logger, transport });
+  if (result.status === "registered" && supportsRuntimeEventStream(result.host))
+    startRuntimeEventConsumer({ db, executionHostId: result.host.id, transport, logger });
+  return result;
+}
+
 // Registration and canonical event ingestion form one local data-plane
 // activation. Keeping the operation idempotent lets boot, lazy resolution,
 // and the periodic recovery sweep all close the web-first upgrade window.
@@ -40,24 +55,25 @@ export async function ensureLocalExecutionDataPlane(
   const db = opts.db ?? getDb();
   const transport = opts.transport ?? defaultTransport();
   const logger = opts.logger ?? defaultLog;
-  const result = await ensureLocalExecutionHost({
+  const activate = (result: RegistrationResult, plane: ReturnType<typeof defaultTransport>): void => {
+    if (result.status === "registered" && supportsRuntimeEventStream(result.host))
+      startRuntimeEventConsumer({
+        db, executionHostId: result.host.id, transport: plane, logger,
+      });
+  };
+  const peers = configuredAdditionalExecutionEndpoints();
+  const primary = ensureLocalExecutionHost({
     ...opts,
     db,
     transport,
     logger,
+  }).then((result) => {
+    activate(result, transport);
+    return result;
   });
-
-  if (
-    result.status === "registered" &&
-    supportsRuntimeEventStream(result.host)
-  ) {
-    startRuntimeEventConsumer({
-      db,
-      executionHostId: result.host.id,
-      transport,
-      logger,
-    });
-  }
-
+  const [result] = await Promise.all([
+    primary,
+    ...peers.map((peer) => ensureAdditionalExecutionDataPlane(peer, { ...opts, db, logger })),
+  ]);
   return result;
 }

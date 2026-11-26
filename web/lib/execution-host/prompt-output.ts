@@ -19,7 +19,7 @@ import {
 } from "../../../runtime/command-evidence";
 
 import { getCommand } from "./commands";
-import { defaultTransport } from "./default-transport";
+import { transportForExecutionHost } from "./default-transport";
 import { readPromptRequest } from "./command-request";
 import { openRuntimeObjectContent } from "./runtime-object-content";
 import {
@@ -238,7 +238,7 @@ async function openPromptOutput(input: {
 
   if (!host || host.kind !== "local_direct") throw incomplete("host_route");
   readPromptRequest(command, host.hostKey);
-  const transport = defaultTransport();
+  const transport = transportForExecutionHost(host);
   const health = await transport.health();
 
   if (health.kind !== "ready")

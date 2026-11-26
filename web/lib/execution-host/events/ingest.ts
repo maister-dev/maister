@@ -20,6 +20,7 @@ import {
 import { ZodError } from "zod";
 import { isWorkspaceTerminalPayload, type WorkspaceOperationOwner, type WorkspaceTerminalPayload } from "../../../../runtime/workspace-prepare";
 
+import { markHostReadiness } from "../hosts";
 import { hasNativeOutputCommand } from "../runtime-object-intent";
 import { carriesWorkspaceGitEvidence, hasRetainedWorkspaceGitOwner, workspaceGitEvidence } from "../workspace-git-evidence";
 
@@ -1878,10 +1879,7 @@ async function markHostUnavailable(
   now: Date,
   reason: string,
 ): Promise<void> {
-  await db
-    .update(executionHosts)
-    .set({ readiness: "unavailable", readinessReason: reason, updatedAt: now })
-    .where(eq(executionHosts.id, executionHostId));
+  await markHostReadiness(db, executionHostId, "unavailable", reason, now);
 }
 
 async function recordIngestFailure(

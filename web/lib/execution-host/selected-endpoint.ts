@@ -9,16 +9,27 @@ export type SelectedExecutionEndpoint = Readonly<{
   hostKey: string;
 }>;
 
+export type AdditionalExecutionEndpoint = SelectedExecutionEndpoint & Readonly<{
+  displayName: string;
+  projectIds?: readonly string[];
+}>;
+
 const projectIdsSchema = z
   .array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/))
   .max(10_000);
+const additionalEndpointsSchema = z.array(z.strictObject({
+  url: z.string().max(2048),
+  hostKey: z.string().regex(EXECUTION_HOST_KEY_PATTERN),
+  displayName: z.string().trim().min(1).max(128),
+  projectIds: projectIdsSchema.optional(),
+})).max(1);
 
 /** Without a project list the existing single-endpoint configuration applies instance-wide. */
-export function selectedEndpointAllowsProject(projectId: string): boolean {
+export function selectedEndpointAllowsProject(projectId: string, hostKey?: string): boolean {
   const raw = process.env.MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS;
-  if (raw === undefined) return true;
   try {
-    return projectIdsSchema.parse(JSON.parse(raw)).includes(projectId);
+    if (raw !== undefined && !projectIdsSchema.parse(JSON.parse(raw)).includes(projectId))
+      return false;
   } catch (cause) {
     throw new MaisterError(
       "CONFIG",
@@ -26,6 +37,9 @@ export function selectedEndpointAllowsProject(projectId: string): boolean {
       { cause },
     );
   }
+  if (!hostKey) return true;
+  const peer = configuredAdditionalExecutionEndpoints().find((candidate) => candidate.hostKey === hostKey);
+  return peer?.projectIds === undefined || peer.projectIds.includes(projectId);
 }
 
 /** Deferred Flow setup follows the project's addressed execution boundary. */
@@ -46,7 +60,18 @@ export function configuredSelectedExecutionEndpoint(): SelectedExecutionEndpoint
     );
   }
 
-  const address = process.env.MAISTER_SUPERVISOR_URL;
+  const url = supervisorOrigin(process.env.MAISTER_SUPERVISOR_URL);
+  if (!url) {
+    throw new MaisterError(
+      "CONFIG",
+      "MAISTER_SUPERVISOR_URL must name the selected supervisor's HTTP(S) origin",
+    );
+  }
+
+  return { url, hostKey };
+}
+
+function supervisorOrigin(address: string | undefined): string | null {
   const url = address ? URL.parse(address) : null;
   if (
     !url ||
@@ -57,11 +82,35 @@ export function configuredSelectedExecutionEndpoint(): SelectedExecutionEndpoint
     url.search ||
     url.hash
   ) {
-    throw new MaisterError(
-      "CONFIG",
-      "MAISTER_SUPERVISOR_URL must name the selected supervisor's HTTP(S) origin",
-    );
+    return null;
   }
 
-  return { url: url.origin, hostKey };
+  return url.origin;
+}
+
+export function configuredAdditionalExecutionEndpoints(): readonly AdditionalExecutionEndpoint[] {
+  const raw = process.env.MAISTER_ADDITIONAL_EXECUTION_HOSTS;
+  if (!raw) return [];
+
+  let peers: z.infer<typeof additionalEndpointsSchema>;
+  try {
+    peers = additionalEndpointsSchema.parse(JSON.parse(raw));
+  } catch (cause) {
+    throw new MaisterError("CONFIG", "MAISTER_ADDITIONAL_EXECUTION_HOSTS must contain an array of up to one trusted supervisor descriptor", { cause });
+  }
+  const primary = configuredSelectedExecutionEndpoint();
+  if (peers.length && !primary)
+    throw new MaisterError("CONFIG", "Additional supervisors require a pinned default supervisor");
+  return peers.map((peer) => {
+    const url = supervisorOrigin(peer.url);
+    if (!url || url === primary?.url || peer.hostKey === primary?.hostKey)
+      throw new MaisterError("CONFIG", "An additional supervisor needs its own HTTP(S) origin and stable key");
+    return { ...peer, url };
+  });
+}
+
+export function configuredExecutionEndpointForHost(hostKey: string): SelectedExecutionEndpoint | null {
+  const primary = configuredSelectedExecutionEndpoint();
+  if (primary?.hostKey === hostKey) return primary;
+  return configuredAdditionalExecutionEndpoints().find((peer) => peer.hostKey === hostKey) ?? null;
 }

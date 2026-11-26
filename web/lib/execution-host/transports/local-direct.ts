@@ -11,6 +11,7 @@ import type {
   RuntimeObjectMetadata,
   WorkspaceRecord,
 } from "../contracts";
+import type { SelectedExecutionEndpoint } from "../selected-endpoint";
 import type { CommandEnvelope, CommandKind, WorkspaceKind } from "../types";
 
 import pino, { type Logger } from "pino";
@@ -119,24 +120,45 @@ function toRuntimeObjectMetadata(
 }
 
 export function createLocalDirectTransport(
-  options: Readonly<{ lagAgeMs?: number; logger?: Logger }> = {},
+  options: Readonly<{ lagAgeMs?: number; logger?: Logger; endpoint?: SelectedExecutionEndpoint }> = {},
 ): ExecutionHostTransport {
   const log = options.logger ?? defaultLog;
+
+  const call = <Args extends unknown[], Result>(
+    request: (...args: Args) => Result, ...args: Args
+  ): Result => options.endpoint
+    ? wire.withPinnedSupervisorEndpoint(options.endpoint, () => request(...args))
+    : request(...args);
+
+  // Async generators perform their HTTP requests when advanced.
+  async function* stream<T>(events: AsyncIterable<T>): AsyncGenerator<T> {
+    const iterator = events[Symbol.asyncIterator]();
+    const close = iterator.return?.bind(iterator);
+    try {
+      for (;;) {
+        const item = await call(() => iterator.next());
+        if (item.done) return;
+        yield item.value;
+      }
+    } finally {
+      if (close) await call(close);
+    }
+  }
 
   return {
     async health(opts) {
       return toHostHealth(
-        await wire.checkSupervisorHealth({
+        await call(wire.checkSupervisorHealth, {
           ...opts,
           lagAgeMs: options.lagAgeMs,
         }),
       );
     },
     capabilities() {
-      return wire.getExecutionHostCapabilities();
+      return call(wire.getExecutionHostCapabilities);
     },
     diagnostics(opts) {
-      return wire.checkSupervisorDiagnostics(opts);
+      return call(wire.checkSupervisorDiagnostics, opts);
     },
     // ADR-179: the caller may pass any number of names; the ROUTE takes at most
     // `ENV_REFS_MAX_PER_CALL`. De-duplicate first (so duplicates never consume
@@ -150,7 +172,7 @@ export function createLocalDirectTransport(
       for (let i = 0; i < distinct.length; i += wire.ENV_REFS_MAX_PER_CALL) {
         const chunk = distinct.slice(i, i + wire.ENV_REFS_MAX_PER_CALL);
 
-        for (const ref of await wire.checkSupervisorEnvRefs(chunk, opts)) {
+        for (const ref of await call(wire.checkSupervisorEnvRefs, chunk, opts)) {
           presence.set(ref.name, ref.present);
         }
       }
@@ -161,30 +183,30 @@ export function createLocalDirectTransport(
       }));
     },
     platformStatus(opts) {
-      return wire.checkSupervisorHealth({
+      return call(wire.checkSupervisorHealth, {
         ...opts,
         lagAgeMs: options.lagAgeMs,
         includeStream: true,
       });
     },
     resolveModelSuggestions(draft, opts) {
-      return wire.resolveModelSuggestions(draft, opts);
+      return call(wire.resolveModelSuggestions, draft, opts);
     },
     probeMcp(req) {
-      return wire.probeMcpViaSupervisor(req);
+      return call(wire.probeMcpViaSupervisor, req);
     },
     listSessions() {
-      return wire.listSessions();
+      return call(wire.listSessions);
     },
     listSessionsForRun(runId) {
-      return wire.listSessionsForRun(runId);
+      return call(wire.listSessionsForRun, runId);
     },
     streamSession(sessionId, opts) {
-      return wire.streamSession(sessionId, opts);
+      return stream(wire.streamSession(sessionId, opts));
     },
     async *streamRuntimeEvents(opts) {
       const health = toHostHealth(
-        await wire.checkSupervisorHealth({ lagAgeMs: options.lagAgeMs }),
+        await call(wire.checkSupervisorHealth, { lagAgeMs: options.lagAgeMs }),
       );
 
       if (health.kind !== "ready" || !health.identity) {
@@ -193,7 +215,7 @@ export function createLocalDirectTransport(
           "execution host identity is unavailable for runtime event streaming",
         );
       }
-      for await (const raw of wire.streamRuntimeEvents(opts)) {
+      for await (const raw of stream(wire.streamRuntimeEvents(opts))) {
         const parsed = RuntimeEventWireEnvelopeSchema.safeParse(raw);
 
         if (!parsed.success) {
@@ -213,7 +235,7 @@ export function createLocalDirectTransport(
       }
     },
     acknowledgeRuntimeEvents(input) {
-      return wire.acknowledgeRuntimeEvents(input);
+      return call(wire.acknowledgeRuntimeEvents, input);
     },
     // A span read is an optimisation over the canonical feed, so every wire,
     // status, shape or identity failure is an unavailable page, never a throw.
@@ -236,14 +258,14 @@ export function createLocalDirectTransport(
 
       try {
         const health = toHostHealth(
-          await wire.checkSupervisorHealth({ lagAgeMs: options.lagAgeMs }),
+          await call(wire.checkSupervisorHealth, { lagAgeMs: options.lagAgeMs }),
         );
 
         if (health.kind !== "ready" || !health.identity)
           return failed({ failure: "health", health: health.kind });
         const hostKey = health.identity.hostKey;
         const body = RuntimeEventSpanSchema.parse(
-          await wire.readRuntimeEventSpan(input),
+          await call(wire.readRuntimeEventSpan, input),
         );
 
         if (
@@ -266,68 +288,68 @@ export function createLocalDirectTransport(
       }
     },
     async getCommandReceipt(commandId) {
-      const receipt = await wire.getCommandReceipt(commandId);
+      const receipt = await call(wire.getCommandReceipt, commandId);
 
       return receipt ? toReceipt(receipt) : null;
     },
     sendWorkspacePreparation(...args) {
-      return wire.sendWorkspacePreparation(...args);
+      return call(wire.sendWorkspacePreparation, ...args);
     },
     sendWorkspaceMaterialization(...args) {
-      return wire.sendWorkspaceMaterialization(...args);
+      return call(wire.sendWorkspaceMaterialization, ...args);
     },
     sendWorkspaceWorkload(...args) {
-      return wire.sendWorkspaceWorkload(...args);
+      return call(wire.sendWorkspaceWorkload, ...args);
     },
     sendWorkspaceGitCommand(...args) {
-      return wire.sendWorkspaceGitCommand(...args);
+      return call(wire.sendWorkspaceGitCommand, ...args);
     },
     sendRetainedWorkspaceCommand(...args) {
-      return wire.sendRetainedWorkspaceCommand(...args);
+      return call(wire.sendRetainedWorkspaceCommand, ...args);
     },
     getWorkspacePublicationTarget(...args) {
-      return wire.getWorkspacePublicationTarget(...args);
+      return call(wire.getWorkspacePublicationTarget, ...args);
     },
     getWorkspacePullRequest(...args) {
-      return wire.getWorkspacePullRequest(...args);
+      return call(wire.getWorkspacePullRequest, ...args);
     },
     cancelWorkspaceWorkload(...args) {
-      return wire.cancelWorkspaceWorkload(...args);
+      return call(wire.cancelWorkspaceWorkload, ...args);
     },
     getWorkspaceCommandReceipt(...args) {
-      return wire.getWorkspaceCommandReceipt(...args);
+      return call(wire.getWorkspaceCommandReceipt, ...args);
     },
     getWorkspaceStatus(...args) {
-      return wire.getWorkspaceStatus(...args);
+      return call(wire.getWorkspaceStatus, ...args);
     },
     getWorkspaceDiff(...args) {
-      return wire.getWorkspaceDiff(...args);
+      return call(wire.getWorkspaceDiff, ...args);
     },
     getWorkspaceReviewFingerprint(...args) {
-      return wire.getWorkspaceReviewFingerprint(...args);
+      return call(wire.getWorkspaceReviewFingerprint, ...args);
     },
     getWorkspaceLog(...args) {
-      return wire.getWorkspaceLog(...args);
+      return call(wire.getWorkspaceLog, ...args);
     },
     observeWorkspaceRevision(...args) {
-      return wire.observeWorkspaceRevision(...args);
+      return call(wire.observeWorkspaceRevision, ...args);
     },
     resolveWorkspaceRevision(...args) {
-      return wire.resolveWorkspaceRevision(...args);
+      return call(wire.resolveWorkspaceRevision, ...args);
     },
     listWorkspaceSourceRefs(...args) {
-      return wire.listWorkspaceSourceRefs(...args);
+      return call(wire.listWorkspaceSourceRefs, ...args);
     },
     retireCommand(commandId, request) {
-      return wire.retireCommand(commandId, request);
+      return call(wire.retireCommand, commandId, request);
     },
     async getWorkspace(executionWorkspaceId) {
-      const record = await wire.getWorkspace(executionWorkspaceId);
+      const record = await call(wire.getWorkspace, executionWorkspaceId);
 
       return record ? toWorkspaceRecord(record) : null;
     },
     async getRuntimeObject(objectId) {
-      const metadata = await wire.getRuntimeObject(objectId);
+      const metadata = await call(wire.getRuntimeObject, objectId);
 
       return metadata ? toRuntimeObjectMetadata(metadata) : null;
     },
@@ -335,42 +357,42 @@ export function createLocalDirectTransport(
       objectId,
       opts,
     ): Promise<RuntimeObjectContent> {
-      return wire.getRuntimeObjectContent(objectId, opts);
+      return call(wire.getRuntimeObjectContent, objectId, opts);
     },
     async openRuntimeObjectContent(objectId, opts) {
-      return wire.openRuntimeObjectContent(objectId, opts);
+      return call(wire.openRuntimeObjectContent, objectId, opts);
     },
     async reserveRuntimeObject(envelope, opts) {
       return toRuntimeObjectMetadata(
-        await wire.reserveRuntimeObject(envelope, opts),
+        await call(wire.reserveRuntimeObject, envelope, opts),
       );
     },
     async uploadRuntimeObject(input) {
-      return toRuntimeObjectMetadata(await wire.uploadRuntimeObject(input));
+      return toRuntimeObjectMetadata(await call(wire.uploadRuntimeObject, input));
     },
     deleteRuntimeObject(objectId, envelope, opts) {
-      return wire.deleteRuntimeObject(objectId, envelope, opts);
+      return call(wire.deleteRuntimeObject, objectId, envelope, opts);
     },
     dispatchStandRestart(envelope, opts) {
-      return wire.dispatchStandRestart(envelope, opts);
+      return call(wire.dispatchStandRestart, envelope, opts);
     },
     readStandReceipt(input) {
-      return wire.readStandReceipt(input);
+      return call(wire.readStandReceipt, input);
     },
     observeStandOperation(input) {
-      return wire.observeStandOperation(input);
+      return call(wire.observeStandOperation, input);
     },
     verifyStandOperation(input) {
-      return wire.verifyStandOperation(input);
+      return call(wire.verifyStandOperation, input);
     },
     readStandLogs(input) {
-      return wire.readStandLogs(input);
+      return call(wire.readStandLogs, input);
     },
     async adoptWorkspace(
       envelope: CommandEnvelope<AdoptWorkspaceWire>,
       opts,
     ): Promise<AdoptWorkspaceResult> {
-      const result = await wire.adoptWorkspace(envelope, opts);
+      const result = await call(wire.adoptWorkspace, envelope, opts);
 
       return {
         executionWorkspaceId: asExecutionWorkspaceId(
@@ -381,46 +403,47 @@ export function createLocalDirectTransport(
       };
     },
     releaseWorkspace(executionWorkspaceId, envelope, opts) {
-      return wire.releaseWorkspace(executionWorkspaceId, envelope, opts);
+      return call(wire.releaseWorkspace, executionWorkspaceId, envelope, opts);
     },
     observeWaitWorkspaceHead(executionWorkspaceId, envelope, opts) {
-      return wire.observeWaitWorkspaceHead(
+      return call(
+        wire.observeWaitWorkspaceHead,
         executionWorkspaceId,
         envelope,
         opts,
       );
     },
     workspacePublication(executionWorkspaceId, envelope, opts) {
-      return wire.workspacePublication(executionWorkspaceId, envelope, opts);
+      return call(wire.workspacePublication, executionWorkspaceId, envelope, opts);
     },
     async createSession(envelope: CommandEnvelope<CreateSessionPayload>, opts) {
       try {
-        await wire.listSessionsForRun(envelope.fence.runId);
+        await call(wire.listSessionsForRun, envelope.fence.runId);
       } catch (error) {
         if (isPendingSessionInventory(error))
           throw new SessionInventoryPending(envelope.fence.runId, error);
         throw error;
       }
 
-      return wire.createSessionEnveloped(envelope, opts);
+      return call(wire.createSessionEnveloped, envelope, opts);
     },
     startPrompt(sessionId, envelope, opts) {
-      return wire.startPromptEnveloped(sessionId, envelope, opts);
+      return call(wire.startPromptEnveloped, sessionId, envelope, opts);
     },
     deliverInput(sessionId, envelope: CommandEnvelope<InputPayload>, opts) {
-      return wire.deliverInputEnveloped(sessionId, envelope, opts);
+      return call(wire.deliverInputEnveloped, sessionId, envelope, opts);
     },
     steer(sessionId, envelope: CommandEnvelope<SteerPayload>, opts) {
-      return wire.steerEnveloped(sessionId, envelope, opts);
+      return call(wire.steerEnveloped, sessionId, envelope, opts);
     },
     cancelPrompt(sessionId, envelope, opts) {
-      return wire.cancelPromptEnveloped(sessionId, envelope, opts);
+      return call(wire.cancelPromptEnveloped, sessionId, envelope, opts);
     },
     checkpointSession(sessionId, envelope, opts) {
-      return wire.checkpointSessionEnveloped(sessionId, envelope, opts);
+      return call(wire.checkpointSessionEnveloped, sessionId, envelope, opts);
     },
     deleteSession(sessionId, envelope, opts) {
-      return wire.deleteSessionEnveloped(sessionId, envelope, opts);
+      return call(wire.deleteSessionEnveloped, sessionId, envelope, opts);
     },
   };
 }

@@ -2682,6 +2682,13 @@
       "when": 1795521440717,
       "tag": "0386_stage_c_addressed_agent_launch",
       "breakpoints": true
+    },
+    {
+      "idx": 387,
+      "version": "7",
+      "when": 1795688971544,
+      "tag": "0387_execution-host-peer-registry",
+      "breakpoints": true
     }
   ]
 }

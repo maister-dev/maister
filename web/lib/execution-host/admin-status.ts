@@ -16,7 +16,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { collectExecutionEventLag } from "@/lib/execution-host/events/lag-read-model";
 import { parseExecutionObservability } from "@/lib/execution-host/events/lag-observation";
 import { getPlatformStatus } from "@/lib/execution-host/platform-status";
-import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
+import { configuredAdditionalExecutionEndpoints, configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { getSchedulerClockStatus } from "@/lib/queries/scheduler";
 import {
   DEFAULT_SYSTEM_SWEEP_JOB_ID,
@@ -89,6 +89,7 @@ export type AdminExecutionHostStatus = Readonly<{
   sampledAt: string;
   hosts: readonly AdminExecutionHostRow[] | AdminPanelFailure;
   selectedHost: AdminSelectedHost | null;
+  additionalHosts?: readonly AdminSelectedHost[];
   lag: ExecutionEventLagReadModel | AdminPanelFailure;
   latestSweep:
     | Readonly<{
@@ -153,25 +154,37 @@ async function listHosts(db: AdminStatusDb): Promise<AdminExecutionHostRow[]> {
   }));
 }
 
-function readSelectedHost(
+function observedConfiguredHost(
   hosts: AdminExecutionHostStatus["hosts"],
-): AdminSelectedHost | null {
+  hostKey: string,
+): AdminSelectedHost {
+  if (isPanelUnavailable(hosts))
+    return { kind: "registry_unavailable", hostKey };
+  const host = hosts.find(
+    (candidate) => candidate.hostKey === hostKey && !candidate.retiredAt,
+  );
+  return host
+    ? { kind: "registered", hostKey, hostId: host.id }
+    : { kind: "unregistered", hostKey };
+}
+
+function readSelectedHost(hosts: AdminExecutionHostStatus["hosts"]): AdminSelectedHost | null {
   try {
     const configured = configuredSelectedExecutionEndpoint();
-    if (!configured) return null;
-    const { hostKey } = configured;
-    if (isPanelUnavailable(hosts))
-      return { kind: "registry_unavailable", hostKey };
-    const host = hosts.find(
-      (candidate) => candidate.hostKey === hostKey && !candidate.retiredAt,
-    );
-
-    return host
-      ? { kind: "registered", hostKey, hostId: host.id }
-      : { kind: "unregistered", hostKey };
+    return configured ? observedConfiguredHost(hosts, configured.hostKey) : null;
   } catch (error) {
     if (isMaisterError(error) && error.code === "CONFIG")
       return { kind: "invalid_configuration" };
+    throw error;
+  }
+}
+
+function readAdditionalHosts(hosts: AdminExecutionHostStatus["hosts"]): readonly AdminSelectedHost[] {
+  try {
+    return configuredAdditionalExecutionEndpoints().map(({ hostKey }) => observedConfiguredHost(hosts, hostKey));
+  } catch (error) {
+    if (isMaisterError(error) && error.code === "CONFIG")
+      return [{ kind: "invalid_configuration" }];
     throw error;
   }
 }
@@ -272,10 +285,12 @@ export async function getAdminExecutionHostStatus(
     settlePanel(() => latestSweepObservation(db), "latestSweep", logger),
   ]);
 
+  const additionalHosts = readAdditionalHosts(hosts);
   return {
     sampledAt: now.toISOString(),
     hosts,
     selectedHost: readSelectedHost(hosts),
+    ...(additionalHosts.length ? { additionalHosts } : {}),
     lag,
     latestSweep,
     workers: durableWorkersHealth(),

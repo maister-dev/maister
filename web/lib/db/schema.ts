@@ -2981,8 +2981,10 @@ export const executionHosts = pgTable(
     hostKey: text("host_key").notNull().unique(),
     kind: text("kind", { enum: EXECUTION_HOST_KINDS }).notNull(),
     displayName: text("display_name").notNull(),
-    // {kind:'local_direct'} — the URL is env, never a column.
-    transport: jsonb("transport").$type<{ kind: "local_direct" }>().notNull(),
+    // The operator configures addresses outside the database.
+    transport: jsonb("transport")
+      .$type<{ kind: "local_direct"; role?: "secondary" }>()
+      .notNull(),
     capabilities: jsonb("capabilities")
       .$type<Record<string, unknown>>()
       .notNull()
@@ -3005,10 +3007,10 @@ export const executionHosts = pgTable(
     retiredAt: timestamp("retired_at", { withTimezone: true, mode: "date" }),
   },
   (t) => ({
-    // E-EH-01: at most one non-retired local host.
+    // E-EH-01: at most one live legacy default.
     uniqLocalActive: uniqueIndex("execution_hosts_local_active_uq")
       .on(t.kind)
-      .where(sql`${t.kind} = 'local_direct' AND ${t.retiredAt} IS NULL`),
+      .where(sql`${t.kind} = 'local_direct' AND ${t.retiredAt} IS NULL AND coalesce(${t.transport}->>'role', 'default') = 'default'`),
     kindCheck: check(
       "execution_hosts_kind_check",
       inLiteralList(t.kind, EXECUTION_HOST_KINDS),

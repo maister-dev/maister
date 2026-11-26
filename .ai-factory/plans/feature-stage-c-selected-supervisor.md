@@ -935,6 +935,19 @@ and its real HTTP command outcomes are qualified in T04–T05H.
 ### C5–C7 — separately shippable two-host pilot
 
 - [ ] **T12 · Registry / transport (after local G1).** Extend T04 to two configured endpoints. Activate the G2 PostgreSQL constraint change after draining incompatible registrars. Bind each descriptor to its observed key and distinguish restart from replacement. Update registrar, resolver, client, default transport, event-plane activation, admin status and recovery. Keep one legacy default and require compatible Web writers before enabling a second entry. Start independent event consumers/cursors/ACKs per host. Hold a projector after ingest and confirm its host still receives the ACK. Then prove identical command IDs or cursors cannot cross identities and an unreachable A leaves B usable. Log per-host negotiation, lag, drain and last seen.
+
+  C-13 RED registered only A. GREEN on Darwin arm64 and Node 24.15.0 used
+  two real supervisor processes with separate stores. Each checked out the
+  exact approved Git commit and independently acknowledged sequence zero.
+  B applied its checkout while A's projection was held. A then applied its
+  original event. A foreign receipt and stream both failed to resolve on B.
+  When A stopped, B still handled session inventory and workspace reads.
+  Restarting B kept its host key, registry row, checkout and exact receipt.
+  Migration 0387 passed populated upgrade and singleton-writer refusal.
+  The first single-host regression exposed a missing consumer activation
+  when a launch selects a host explicitly. The fixture now receives the
+  original preparation refusal and holds the launch. The same-path
+  container witness and full two-host board run are pending.
 - [ ] **T13 · Scheduler / quiescence (after T12).** Reserve host capacity atomically in addition to the global limit; enforce adapter/project/host eligibility and shared-root affinity. Integrate pressure, bounded retries and stale-owner fencing with the existing scheduler. Interrupt during acceptance, heartbeat timeout and cancellation; prove two distinct launches cannot exceed a single slot, old host effects cannot race a new owner, and pinned work never silently relocates. Expose waiting reason and operator recovery. Log reservation, last observed health and quiescence witness.
 - [ ] **T14 · Pilot / G2 (after T12–13).** Qualify the two-host matrix below and reconcile actual wire/schema versions, admin guide, metrics, test topology, deployment and error taxonomy. Validate migration/journal against latest master and reject rollback to a singleton writer while a second host owns work. Document shutdown/drain and coordinated restore. Release the pilot only for configurations matching its evidence. **Checkpoint 4:** two-host placement and recovery.
 

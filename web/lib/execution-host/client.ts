@@ -102,7 +102,7 @@ import {
   type RuntimeObjectBinding,
 } from "./runtime-object-evidence";
 import { runEventWakeBus } from "./events/run-wake";
-import { defaultTransport } from "./default-transport";
+import { defaultTransport, transportForExecutionHost } from "./default-transport";
 import { streamCanonicalSessionEvents } from "./events/session-stream";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
@@ -403,7 +403,7 @@ async function assertSteerDeliverySources(
 export function createExecutionHosts(
   deps: ExecutionHostsDeps = {},
 ): ExecutionHosts {
-  const transport = deps.transport ?? defaultTransport();
+  const defaultHostTransport = deps.transport ?? defaultTransport();
   const logger = deps.logger ?? defaultLog;
   const dbOf = () => deps.db ?? getDb();
 
@@ -411,6 +411,7 @@ export function createExecutionHosts(
     assignment: ExecutionAssignment,
     host: ExecutionHost,
   ): BoundClient {
+    const transport = transportForExecutionHost(host, defaultHostTransport);
     let current = assignment;
     const db = dbOf();
 
@@ -1275,7 +1276,7 @@ export function createExecutionHosts(
     return client;
   }
 
-  function adminForRun(runId?: string): HostAdminClient {
+  function adminForRun(runId?: string, transport = defaultHostTransport): HostAdminClient {
     return {
       health(opts) {
         return transport.health(opts);
@@ -1369,7 +1370,7 @@ export function createExecutionHosts(
 
     return bind(
       assignment,
-      await hostForAssignment(db, assignment, { logger, transport }),
+      await hostForAssignment(db, assignment, { logger, transport: defaultHostTransport }),
     );
   }
 
@@ -1383,17 +1384,17 @@ export function createExecutionHosts(
       (opts?.teardown ? await getLatestAssignment(db, runId) : null) ??
       (await ensureAssignment(db, runId, opts?.reason ?? "legacy_backfill", {
         logger,
-        transport,
+        transport: defaultHostTransport,
       }));
 
     return bind(
       assignment,
-      await hostForAssignment(db, assignment, { logger, transport }),
+      await hostForAssignment(db, assignment, { logger, transport: defaultHostTransport }),
     );
   }
 
   return {
-    transport,
+    transport: defaultHostTransport,
     forAssignment,
     forRun,
     async executionFor(runId, opts) {
@@ -1401,7 +1402,10 @@ export function createExecutionHosts(
         ? await forAssignment({ id: opts.assignmentId })
         : await forRun(runId, opts);
 
-      return { client, admin: adminForRun(runId) };
+      return {
+        client,
+        admin: adminForRun(runId, transportForExecutionHost(client.host, defaultHostTransport)),
+      };
     },
     local() {
       return admin;

@@ -19,6 +19,8 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { isUniqueViolation } from "@/lib/db/pg-error";
 
+import { declareExecutionHostRegistryWriter } from "./hosts";
+
 const defaultLog = pino({
   name: "execution-host",
   level: process.env.LOG_LEVEL ?? "info",
@@ -170,6 +172,7 @@ export async function mintAssignment(
   let row: ExecutionAssignment;
 
   try {
+    await declareExecutionHostRegistryWriter(tx);
     [row] = await tx
       .insert(executionAssignments)
       .values({

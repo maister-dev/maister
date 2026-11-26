@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -630,5 +631,34 @@ describe("C-02 workspace ownership", () => {
       applyMainMigration(tx, "0386_stage_c_addressed_agent_launch"),
     );
     expect(await retained()).toEqual(before);
+  });
+
+  it("preserves host ownership through 0387 and refuses singleton writers while a peer is retained", async () => {
+    const readHistory = async () => (await database.pool.query(
+      `SELECT h.id, h.host_key, h.transport, a.id AS assignment_id, a.run_id
+       FROM execution_hosts h LEFT JOIN execution_assignments a ON a.execution_host_id=h.id ORDER BY h.id,a.id`,
+    )).rows;
+    const before = await readHistory();
+    expect(before.some(({ assignment_id }) => assignment_id !== null)).toBe(true);
+    await database.db.transaction((tx) =>
+      applyMainMigration(tx, "0387_execution-host-peer-registry"),
+    );
+    expect(await readHistory()).toEqual(before);
+    await database.pool.query("UPDATE execution_hosts SET display_name=display_name WHERE id=$1", [hostId]);
+    const secondary = randomUUID();
+    await database.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('maister.execution_host_registry_writer', 'v2', true)`);
+      await tx.execute(sql`INSERT INTO execution_hosts (id, host_key, kind, display_name, transport)
+        VALUES (${secondary}, ${`eh_${secondary.replaceAll("-", "")}`}, 'local_direct', 'Peer fixture',
+          '{"kind":"local_direct","role":"secondary"}'::jsonb)`);
+    });
+    await expect(database.pool.query(
+      "UPDATE execution_hosts SET display_name=display_name WHERE id=$1", [hostId],
+    )).rejects.toMatchObject({ code: "P0001", message: expect.stringContaining("registry writer") });
+    await expect(database.pool.query(
+      `INSERT INTO execution_assignments (id, run_id, execution_host_id, epoch, state, placement_reason)
+       VALUES ($1,$2,$3,2,'active','launch')`,
+      [randomUUID(), before.find(({ run_id }) => run_id !== null)?.run_id, secondary],
+    )).rejects.toMatchObject({ code: "P0001", message: expect.stringContaining("registry writer") });
   });
 });

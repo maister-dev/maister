@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import { transportForSelectedHostId } from "@/lib/execution-host/default-transport";
 import type { CapabilityBundleSource } from "@/lib/capabilities/materialize-bundle";
 import type { TaskAdmissionSnapshot } from "./qualification-types";
 import type {
@@ -268,15 +269,19 @@ export async function assertFrozenTaskLaunchRepository(
   if (!project) throw launchRefusal("launch_task_missing", "PRECONDITION");
   const [bound] = intent.runId
     ? await db
-        .select({ ownershipKind: workspaces.ownershipKind })
+        .select({ ownershipKind: workspaces.ownershipKind, executionHostId: workspaces.executionHostId })
         .from(workspaces)
         .where(eq(workspaces.runId, intent.runId))
     : [];
+  const selectedHostId = intent.effectiveExecutionHostId ??
+    (bound?.ownershipKind === "host_owned" ? bound.executionHostId : null);
+  const transport = selectedHostId ? await transportForSelectedHostId(db, selectedHostId) : undefined;
   const pinned = intent.effectiveExecutionHostId
     ? await resolveAddressedWorkspaceRevision(
         intent.projectId,
         settings.baseBranch,
         settings.baseCommit,
+        transport,
       )
     : null;
   if (pinned && pinned.pinnedCommit !== settings.baseCommit)
@@ -309,6 +314,7 @@ export async function assertFrozenTaskLaunchRepository(
         ? await observeSelectedWorkspaceRevision(
             intent.projectId,
             settings.baseBranch,
+            transport,
           )
         : await resolveBaseCommit({
             projectRepoPath: project.repoPath,

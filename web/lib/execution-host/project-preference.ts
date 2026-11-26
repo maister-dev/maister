@@ -3,12 +3,13 @@ import "server-only";
 import type { Db } from "./db";
 import type { ExecutionHost } from "@/lib/db/schema";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { workspaceEvidenceDigest } from "../../../runtime/workspace-prepare";
 import {
   configuredSelectedExecutionEndpoint,
+  configuredAdditionalExecutionEndpoints,
   selectedEndpointAllowsProject,
 } from "./selected-endpoint";
 import { usesHostWorkspacePreparation } from "./workspace-preparation";
@@ -56,23 +57,25 @@ function eligibleForProject(projectId: string, host: ExecutionHost): boolean {
     host.retiredAt === null &&
     host.readinessReason !== "identity_changed" &&
     usesHostWorkspacePreparation(host) &&
-    selectedEndpointAllowsProject(projectId)
+    selectedEndpointAllowsProject(projectId, host.hostKey)
   );
 }
 
 function selectedEndpointHosts(db: Db) {
   const endpoint = configuredSelectedExecutionEndpoint();
   if (!endpoint) return null;
+  const keys = [endpoint.hostKey, ...configuredAdditionalExecutionEndpoints().map((peer) => peer.hostKey)];
 
   return db
     .select()
     .from(executionHosts)
     .where(
       and(
-        eq(executionHosts.hostKey, endpoint.hostKey),
+        inArray(executionHosts.hostKey, keys),
         isNull(executionHosts.retiredAt),
       ),
-    );
+    )
+    .orderBy(asc(executionHosts.hostKey));
 }
 
 async function eligibleHostIds(db: Db, projectId: string): Promise<readonly string[]> {
@@ -136,7 +139,8 @@ export async function resolveTaskLaunchPlacement(
   const candidates = (await selectedEndpointHosts(db)) ?? [];
   const eligible = candidates.filter((host) => eligibleForProject(project.id, host));
   const eligibleIds = eligible.map(({ id }) => id);
-  const defaultExecutionHostId = sharedRootHostId ?? project.defaultExecutionHostId ?? eligibleIds[0] ?? null;
+  const instanceDefault = eligible.find((host) => host.transport.role !== "secondary");
+  const defaultExecutionHostId = sharedRootHostId ?? project.defaultExecutionHostId ?? instanceDefault?.id ?? null;
   const effective = requested ?? defaultExecutionHostId;
   if (!effective || !eligibleIds.includes(effective)) throw ineligibleHost();
 

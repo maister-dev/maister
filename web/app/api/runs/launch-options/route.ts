@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import { transportForSelectedHostId } from "@/lib/execution-host/default-transport";
 import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
 
@@ -891,7 +892,9 @@ async function finalizeLaunchOptions(
   // reads cannot hold a database snapshot open.
   const [branchPage, availablePackageVersions, assets] = await Promise.all([
     placement
-      ? listAddressedWorkspaceRefs(projectId, branchCursor).then((page) => ({
+      ? transportForSelectedHostId(db, placement.selection.effectiveExecutionHostId)
+        .then((transport) => listAddressedWorkspaceRefs(projectId, branchCursor, transport))
+        .then((page) => ({
           branches: page.refs.map((ref) => ref.slice("refs/heads/".length)),
           branchesNextCursor: page.nextCursor,
         }))

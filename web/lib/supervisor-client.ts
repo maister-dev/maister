@@ -26,7 +26,9 @@ import type {
   RuntimeObjectContent,
   RuntimeObjectContentStream,
 } from "@/lib/execution-host/contracts";
+import type { SelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 
 import pino from "pino";
@@ -74,6 +76,16 @@ const logger = pino({
   name: "supervisor-client",
   level: process.env.LOG_LEVEL ?? "info",
 });
+const supervisorEndpointScope = new AsyncLocalStorage<SelectedExecutionEndpoint>();
+
+/** Preserve the selected origin and stable key for the full async wire call. */
+export function withPinnedSupervisorEndpoint<T>(endpoint: SelectedExecutionEndpoint, action: () => T): T {
+  return supervisorEndpointScope.run(endpoint, action);
+}
+
+function supervisorEndpoint(): SelectedExecutionEndpoint | null {
+  return supervisorEndpointScope.getStore() ?? configuredSelectedExecutionEndpoint();
+}
 
 const DEFAULT_BASE_URL = "http://localhost:7777";
 const DEFAULT_HEALTH_TIMEOUT_MS = 1_000;
@@ -686,7 +698,7 @@ export type SupervisorEvent =
     };
 
 function baseUrl(): string {
-  const selected = configuredSelectedExecutionEndpoint();
+  const selected = supervisorEndpoint();
   if (selected) return selected.url;
   const configured = process.env.MAISTER_SUPERVISOR_URL;
 
@@ -714,7 +726,7 @@ function supervisorAddressOptions(headers?: Record<string, string>): {
   headers?: Record<string, string>;
   redirect?: "error";
 } {
-  const endpoint = configuredSelectedExecutionEndpoint();
+  const endpoint = supervisorEndpoint();
 
   if (!endpoint) return { headers };
 
@@ -885,7 +897,7 @@ export async function checkSupervisorHealth(
 
   try {
     res = await fetch(url, {
-      redirect: configuredSelectedExecutionEndpoint() ? "error" : undefined,
+      redirect: supervisorEndpoint() ? "error" : undefined,
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
@@ -922,7 +934,7 @@ export async function checkSupervisorHealth(
 
   if (!parsed.success) {
     const incompatible =
-      configuredSelectedExecutionEndpoint() &&
+      supervisorEndpoint() &&
       parsed.error.issues.some(
         ({ path }) => path[0] === "host" && path[1] === "protocolVersion",
       );

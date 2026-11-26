@@ -10,6 +10,7 @@ import {
 } from "@/lib/execution-host/selected-endpoint";
 
 import type { Db } from "@/lib/execution-host/db";
+import { transportForSelectedHostId } from "@/lib/execution-host/default-transport";
 import type { Run } from "@/lib/db/schema";
 import type { TaskLaunchRequest } from "./launch-schema";
 import type { TaskLaunchSettingsV2Snapshot } from "./launch-types";
@@ -809,14 +810,15 @@ export async function resolveTaskLaunchBase(
         throw launchRefusal("launch_settings_changed");
       return { baseCommit: shared.baseCommit, currentBaseCommit: shared.baseCommit };
     }
+    const transport = await transportForSelectedHostId(db, addressedHostId);
     const observeBase = async (ref: string) => {
-      const base = await resolveAddressedWorkspaceRevision(project.id, ref, request.baseCommit);
+      const base = await resolveAddressedWorkspaceRevision(project.id, ref, request.baseCommit, transport);
       if (request.baseCommit && !base.pinnedCommit)
         throw new MaisterError("ACP_PROTOCOL", "The supervisor did not verify the requested base commit");
       return { baseCommit: base.pinnedCommit ?? base.commit, currentBaseCommit: base.commit };
     };
     if (settings.targetBranch !== settings.baseBranch)
-      await observeSelectedWorkspaceRevision(project.id, settings.targetBranch);
+      await observeSelectedWorkspaceRevision(project.id, settings.targetBranch, transport);
     const workspaceRef = settings.workspace === "repo_read" && settings.agentSnapshot?.workspaceRef;
     if (!workspaceRef) return observeBase(settings.baseBranch);
     const { resolveWorkspaceRefCommittish } = await import("@/lib/agents/launch");
@@ -884,7 +886,8 @@ export async function resolveTaskLaunchAutomaticEvidenceCommit(
   );
 
   if (addressedHostId)
-    return observeSelectedWorkspaceRevision(project.id, qualification.target);
+    return observeSelectedWorkspaceRevision(project.id, qualification.target,
+      await transportForSelectedHostId(db, addressedHostId));
 
   return resolveBaseCommit({
     projectRepoPath: project.repoPath,

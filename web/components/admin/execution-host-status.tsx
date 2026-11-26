@@ -128,10 +128,12 @@ function verdictTone(verdict: string): Tone {
 function HostsPanel({
   hosts,
   selectedHost,
+  additionalHosts = [],
   format,
 }: {
   hosts: AdminExecutionHostStatus["hosts"];
   selectedHost: AdminExecutionHostStatus["selectedHost"];
+  additionalHosts?: AdminExecutionHostStatus["additionalHosts"];
   format: Format;
 }): ReactElement {
   const { t, time } = format;
@@ -150,6 +152,17 @@ function HostsPanel({
               )}
         </p>
       ) : null}
+      {additionalHosts.map((host) =>
+        host.kind === "registered" ? null : (
+          <p key={host.kind === "invalid_configuration" ? host.kind : host.hostKey}
+            className="px-5 py-3 text-sm text-amber" role="status">
+            {host.kind === "invalid_configuration"
+              ? t("hosts.invalidAdditionalConfiguration")
+              : t(host.kind === "unregistered" ? "hosts.awaitingRegistration" : "hosts.registrationUnavailable",
+                  { hostKey: host.hostKey })}
+          </p>
+        ),
+      )}
       {isPanelUnavailable(hosts) ? (
         <PanelUnavailable t={t} />
       ) : (
@@ -174,6 +187,9 @@ function HostsPanel({
                       {selectedHost?.kind === "registered" &&
                       selectedHost.hostId === host.id ? (
                         <Badge>{t("hosts.selected")}</Badge>
+                      ) : null}
+                      {additionalHosts.some((peer) => peer.kind === "registered" && peer.hostId === host.id) ? (
+                        <Badge>{t("hosts.additional")}</Badge>
                       ) : null}
                     </div>
                     <div className="mt-1 font-mono text-[11px] text-mute">
@@ -789,6 +805,7 @@ export async function ExecutionHostStatus({
   return (
     <div className="flex flex-col gap-5">
       <HostsPanel
+        additionalHosts={status.additionalHosts}
         format={format}
         hosts={status.hosts}
         selectedHost={status.selectedHost}

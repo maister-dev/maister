@@ -378,10 +378,13 @@ import { taskAgentPackageContentDigest } from "@/lib/tasks/launch-agent-resoluti
 import { captureAddressedAgentContexts } from "@/lib/context-mounts/addressed-capture";
 import {
   observeSelectedWorkspaceRevision,
+  readAddressedSharedRoot,
   reserveHostWorkspace,
   usesHostWorkspacePreparation,
 } from "@/lib/execution-host/workspace-preparation";
 import { assertBoundTaskLaunchHost } from "@/lib/execution-host/project-preference";
+import { hostForSelection } from "@/lib/execution-host/resolver";
+import { transportForExecutionHost } from "@/lib/execution-host/default-transport";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -1818,9 +1821,23 @@ async function launchAgentRunWithAdmission(
     }
   }
 
-  const selectedHost = configuredSelectedExecutionEndpoint() && selectedEndpointAllowsProject(input.projectId)
-    ? await localHost({ db: _db as unknown as ExecutionDb, force: true })
+  const hostDb = _db as unknown as ExecutionDb;
+  const isShared = input.workspaceMode === "shared" && input.rootRunId != null;
+  const sharedRoot = isShared && input.rootRunId
+    ? await readAddressedSharedRoot(hostDb, input.rootRunId)
     : null;
+  const selectedHostId = sharedRoot?.executionHostId ?? (acceptedExecution
+    ? acceptedExecution.intent.effectiveExecutionHostId
+    : ctx.project.defaultExecutionHostId);
+  const selectedHost = selectedHostId
+    ? await hostForSelection(hostDb, selectedHostId)
+    : configuredSelectedExecutionEndpoint() && selectedEndpointAllowsProject(input.projectId)
+      ? await localHost({ db: hostDb, force: true })
+      : null;
+  if (selectedHost && !selectedEndpointAllowsProject(input.projectId, selectedHost.hostKey))
+    throw new MaisterError("PRECONDITION", "The selected execution host is not eligible for this project", {
+      details: { reason: "host_ineligible" },
+    });
   const hostPreparesWorkspace = selectedHost !== null && usesHostWorkspacePreparation(selectedHost);
   if (hostPreparesWorkspace && ctx.effective.parsed.kind === "operational")
     throw new MaisterError("PRECONDITION", "The selected supervisor cannot verify operational workspace integrity", {
@@ -1901,8 +1918,8 @@ async function launchAgentRunWithAdmission(
   const placementHost = selectedHost ?? await localHost({ db: _db as unknown as ExecutionDb });
   assertBoundTaskLaunchHost(acceptedExecution?.intent.effectiveExecutionHostId, placementHost);
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
+  const placementTransport = transportForExecutionHost(placementHost);
 
-  const isShared = input.workspaceMode === "shared" && input.rootRunId != null;
   // Hold the shared worktree directory's mutex through provenance, row commit
   // and failure compensation. Keep its files outside the project checkout;
   // Git still runs before the PostgreSQL transaction.
@@ -1924,7 +1941,7 @@ async function launchAgentRunWithAdmission(
         : null;
       try {
         return [
-          ...await captureAddressedAgentContexts(_db as ExecutionDb, input.projectId, input.agentId),
+          ...await captureAddressedAgentContexts(_db as ExecutionDb, input.projectId, input.agentId, placementTransport),
           ...await captureWorkspaceBundles(_db as ExecutionDb, {
             projectId: input.projectId,
             runId,
@@ -1966,7 +1983,7 @@ async function launchAgentRunWithAdmission(
         ctx.effective.parsed.recommended?.branch_base ??
         ctx.project.mainBranch;
       if (workspace !== "none" && !isShared) {
-        const observeRevision = (ref: string) => observeSelectedWorkspaceRevision(input.projectId, ref);
+        const observeRevision = (ref: string) => observeSelectedWorkspaceRevision(input.projectId, ref, placementTransport);
         baseCommit =
           acceptedExecution?.settings.baseCommit ??
           replacement?.worktree?.baseCommit ?? replacement?.readOnly?.commit ??

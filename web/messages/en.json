@@ -4103,9 +4103,11 @@
       "subtitle": "Durable manager registration remains visible when the supervisor is unavailable.",
       "empty": "No execution hosts are registered.",
       "selected": "Selected for execution",
+      "additional": "Additional supervisor",
       "awaitingRegistration": "Waiting for the supervisor with key {hostKey} to register.",
       "registrationUnavailable": "Registration for the configured supervisor {hostKey} could not be verified.",
-      "invalidConfiguration": "The selected supervisor configuration is invalid."
+      "invalidConfiguration": "The selected supervisor configuration is invalid.",
+      "invalidAdditionalConfiguration": "The additional supervisor configuration is invalid."
     },
     "streams": {
       "title": "Event streams",

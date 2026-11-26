@@ -41,6 +41,9 @@ import {
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import { hostForSelection } from "@/lib/execution-host/resolver";
+import { transportForExecutionHost } from "@/lib/execution-host/default-transport";
+import { assertProjectExecutionHost } from "@/lib/execution-host/project-preference";
 import {
   observeSelectedWorkspaceRevision,
   reserveHostWorkspace,
@@ -970,11 +973,12 @@ export async function* launchScratchRunStaged(
   // ADR-166: the launch places the run on the local execution host; an
   // unavailable host refuses the launch before any row or worktree exists.
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
-  const placementHost = await localHost({
-    db,
-    transport: hosts.transport,
-    force: configuredSelectedExecutionEndpoint() !== null,
-  });
+  const placementHost = project.defaultExecutionHostId
+    ? await hostForSelection(db, project.defaultExecutionHostId, { transport: hosts.transport })
+    : await localHost({
+        db, transport: hosts.transport, force: configuredSelectedExecutionEndpoint() !== null,
+      });
+  assertProjectExecutionHost(project, placementHost);
   const hostPreparesWorkspace = usesHostWorkspacePreparation(placementHost);
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
@@ -983,7 +987,7 @@ export async function* launchScratchRunStaged(
   const runId = randomUUID();
   const branch = resolveScratchBranch({ body: args.body, project, runId });
   const baseCommit = hostPreparesWorkspace
-    ? await observeSelectedWorkspaceRevision(project.id, args.body.baseBranch, hosts.transport)
+    ? await observeSelectedWorkspaceRevision(project.id, args.body.baseBranch, transportForExecutionHost(placementHost, hosts.transport))
     : await resolveBaseCommit({ projectRepoPath: project.repoPath, baseRef: args.body.baseBranch });
 
   if (!hostPreparesWorkspace && await branchExists({ projectRepoPath: project.repoPath, branch })) {

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ContextRepoDecl } from "./types";
 import type { Db } from "@/lib/execution-host/db";
+import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { WorkspaceInputFile } from "@/lib/execution-host/workspace-inputs";
 import type { WorkspaceContextInput } from "../../../runtime/workspace-context-input";
 
@@ -28,6 +29,7 @@ export async function captureAddressedFlowContexts(
   db: Db,
   declarations: readonly ContextDeclarations[],
   userId: string | null | undefined,
+  transport?: ExecutionHostTransport,
 ): Promise<readonly WorkspaceInputFile[]> {
   if (!contextMountEnabled()) return [];
 
@@ -50,6 +52,7 @@ export async function captureAddressedFlowContexts(
         "readRepoFiles",
       ]);
     },
+    transport,
   );
 }
 
@@ -58,6 +61,7 @@ export async function captureAddressedAgentContexts(
   db: Db,
   projectId: string,
   agentId: string,
+  transport?: ExecutionHostTransport,
 ): Promise<readonly WorkspaceInputFile[]> {
   if (!contextMountEnabled()) return [];
   const [link] = await db
@@ -76,6 +80,7 @@ export async function captureAddressedAgentContexts(
     db,
     [{ stepId: "agent", repositories: link.contextRepos }],
     async () => {},
+    transport,
   );
 }
 
@@ -83,6 +88,7 @@ async function captureAddressedContexts(
   db: Db,
   declarations: readonly ContextDeclarations[],
   authorize: (projectId: string, projectSlug: string) => Promise<void>,
+  transport: ExecutionHostTransport | undefined,
 ): Promise<readonly WorkspaceInputFile[]> {
   const captured: WorkspaceContextInput[] = [];
 
@@ -122,7 +128,7 @@ async function captureAddressedContexts(
             },
           },
         );
-      const commit = await observeSelectedWorkspaceRevision(project.id, ref);
+      const commit = await observeSelectedWorkspaceRevision(project.id, ref, transport);
       captured.push({
         stepId,
         repositoryId: project.id,

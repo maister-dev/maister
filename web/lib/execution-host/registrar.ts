@@ -2,20 +2,23 @@ import type { Db } from "./db";
 import type { ExecutionHost } from "@/lib/db/schema";
 import type { ExecutionHostTransport } from "./contracts";
 import type { HostCapabilities } from "./hosts";
+import type { AdditionalExecutionEndpoint, SelectedExecutionEndpoint } from "./selected-endpoint";
 
 import pino, { type Logger } from "pino";
 
 import {
   countLiveAssignmentsForHost,
   findActiveLocalHost,
+  getHostByKey,
   insertLocalHost,
   listLiveRunIdsForHost,
   lockActiveLocalHost,
+  lockHostByKey,
   markHostReadiness,
   retireHost,
   touchLocalHost,
 } from "./hosts";
-import { defaultTransport } from "./default-transport";
+import { defaultTransport, pinnedExecutionHostTransport } from "./default-transport";
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { HOST_IDENTITY_MISMATCH_REASON } from "./types";
 
@@ -139,10 +142,11 @@ async function markUnavailable(
   message: string,
   now: Date,
   logger: Logger,
+  peer?: AdditionalExecutionEndpoint,
 ): Promise<RegistrationResult> {
-  const row = await findActiveLocalHost(db);
+  const row = peer ? await getHostByKey(db, peer.hostKey) : await findActiveLocalHost(db);
 
-  if (row) {
+  if (row && row.retiredAt === null && (!peer || row.transport.role === "secondary")) {
     // At most one readiness write per 30 s window (D1) — a down supervisor
     // must not turn every launch attempt into an UPDATE.
     if (!withinMarkWindow(row.id, now)) {
@@ -164,25 +168,42 @@ async function markUnavailable(
 export async function ensureLocalExecutionHost(
   opts: EnsureLocalHostOptions = {},
 ): Promise<RegistrationResult> {
+  return registerExecutionHost(opts, configuredSelectedExecutionEndpoint());
+}
+
+export function ensureAdditionalExecutionHost(
+  peer: AdditionalExecutionEndpoint,
+  opts: EnsureLocalHostOptions = {},
+): Promise<RegistrationResult> {
+  return registerExecutionHost(
+    { ...opts, transport: opts.transport ?? pinnedExecutionHostTransport(peer) },
+    peer,
+    peer,
+  );
+}
+
+async function registerExecutionHost(
+  opts: EnsureLocalHostOptions,
+  selected: SelectedExecutionEndpoint | null,
+  peer?: AdditionalExecutionEndpoint,
+): Promise<RegistrationResult> {
   const db = opts.db ?? getDb();
   const transport = opts.transport ?? defaultTransport();
-  const selected = configuredSelectedExecutionEndpoint();
   const logger = opts.logger ?? defaultLog;
   const now = opts.now ?? (() => new Date());
+  const unavailable = (reason: string, message: string): Promise<RegistrationResult> =>
+    markUnavailable(db, reason, message, now(), logger, peer);
   const health = await transport.health({
     timeoutMs: opts.healthTimeoutMs,
   });
 
   if (health.kind !== "ready") {
-    return markUnavailable(db, health.reason, health.message, now(), logger);
+    return unavailable(health.reason, health.message);
   }
   if (!health.identity) {
-    return markUnavailable(
-      db,
+    return unavailable(
       selected ? "workspace_protocol_unsupported" : "no_identity",
       "supervisor /health carries no execution-host identity (pre-ADR-166 supervisor)",
-      now(),
-      logger,
     );
   }
   if (selected && selected.hostKey !== health.identity.hostKey) {
@@ -194,12 +215,9 @@ export async function ensureLocalExecutionHost(
       "execution-host-endpoint-identity-mismatch",
     );
 
-    return markUnavailable(
-      db,
+    return unavailable(
       HOST_IDENTITY_MISMATCH_REASON,
       "selected supervisor endpoint is announcing a different host key",
-      now(),
-      logger,
     );
   }
 
@@ -210,28 +228,23 @@ export async function ensureLocalExecutionHost(
       timeoutMs: opts.healthTimeoutMs,
     });
   } catch (error) {
-    return markUnavailable(
-      db,
+    return unavailable(
       selected ? "workspace_protocol_unsupported" : "capabilities_invalid",
       error instanceof Error
         ? `supervisor capability discovery failed: ${error.message}`
         : "supervisor capability discovery failed",
-      now(),
-      logger,
     );
   }
   if (
     selected &&
     (!dataPlane?.eventStream ||
       !dataPlane.asyncPrompt ||
-      !dataPlane.runtimeObjects)
+      !dataPlane.runtimeObjects ||
+      (peer && dataPlane.workspaceProtocol?.[0] !== 1))
   ) {
-    return markUnavailable(
-      db,
+    return unavailable(
       "workspace_protocol_unsupported",
       "selected supervisor lacks the durable execution data plane",
-      now(),
-      logger,
     );
   }
 
@@ -260,7 +273,12 @@ export async function ensureLocalExecutionHost(
   const apply = async (): Promise<RegistrationResult> =>
     db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
-      const activeRow = await lockActiveLocalHost(txDb);
+      const activeRow = peer ? await lockHostByKey(txDb, peer.hostKey) : await lockActiveLocalHost(txDb);
+      if (peer && activeRow && (activeRow.retiredAt !== null || activeRow.transport.role !== "secondary"))
+        return {
+          status: "unavailable", reason: HOST_IDENTITY_MISMATCH_REASON,
+          host: activeRow, message: "The configured peer key already belongs to a different registry role",
+        };
       const liveAssignments = activeRow
         ? await countLiveAssignmentsForHost(txDb, activeRow.id)
         : 0;
@@ -277,6 +295,7 @@ export async function ensureLocalExecutionHost(
             hostKey: observed.hostKey,
             bootId: observed.bootId,
             capabilities: observed.capabilities,
+            ...(peer ? { role: "secondary", displayName: peer.displayName } : {}),
             now: at,
             logger,
           });

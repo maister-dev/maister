@@ -32,7 +32,7 @@ import { lostStreamHostIds } from "./events/stream-health";
 import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
-import { defaultTransport } from "./default-transport";
+import { defaultTransport, transportForExecutionHost } from "./default-transport";
 import { isAddressedRetainedWorkspaceCommand, recoverWorkspacePreparation } from "./workspace-prepare-delivery";
 import { recoverWorkspaceInputCaptures, recoverWorkspacePreflight } from "./workspace-input-recovery";
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
@@ -482,7 +482,7 @@ export async function recoverExecutionCommands(
   opts: RecoveryOptions = {},
 ): Promise<ExecutionCommandRecoverySummary> {
   const db = opts.db ?? getDb();
-  const transport = opts.transport ?? defaultTransport();
+  const defaultHostTransport = opts.transport ?? defaultTransport();
   const logger = opts.logger ?? defaultLog;
   const now = opts.now ?? (() => new Date());
   const graceMs = opts.graceMs ?? DELIVERING_IN_FLIGHT_GRACE_MS;
@@ -497,8 +497,8 @@ export async function recoverExecutionCommands(
     errors: [],
   };
   const hosts = new Map<string, ExecutionHost | null>();
-  if (configuredSelectedExecutionEndpoint() && transport.sendWorkspaceMaterialization) {
-    await recoverWorkspaceInputCaptures(db, transport, (runId, error) => {
+  if (configuredSelectedExecutionEndpoint() && defaultHostTransport.sendWorkspaceMaterialization) {
+    await recoverWorkspaceInputCaptures(db, defaultHostTransport, (runId, error) => {
       const reason = error instanceof MaisterError ? error.details?.reason : undefined;
 
       logger.warn(
@@ -508,7 +508,7 @@ export async function recoverExecutionCommands(
       summary.errors.push(`workspace inputs ${runId}: ${reason ?? "unexpected_error"}`);
     });
   }
-  if (configuredSelectedExecutionEndpoint() && transport.sendWorkspaceWorkload) {
+  if (configuredSelectedExecutionEndpoint() && defaultHostTransport.sendWorkspaceWorkload) {
     await recoverWorkspacePreflight(db, (runId, error) => {
       const reason = error instanceof MaisterError ? error.details?.reason : undefined;
 
@@ -551,7 +551,7 @@ export async function recoverExecutionCommands(
 
         return;
       }
-      const sent = await recoverWorkspacePreparation(db, row, transport, at);
+      const sent = await recoverWorkspacePreparation(db, row, defaultHostTransport, at);
       summary[sent ? "redelivered" : "skippedInFlight"] += 1;
 
       return;
@@ -581,6 +581,7 @@ export async function recoverExecutionCommands(
       return;
     }
 
+    const transport = transportForExecutionHost(host, defaultHostTransport);
     const redeliver = async (queued: ExecutionCommand): Promise<void> => {
       const send = queued.driverless ? driverlessSend(queued, transport) : null;
 

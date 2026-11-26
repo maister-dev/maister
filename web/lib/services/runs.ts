@@ -153,6 +153,8 @@ import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { localHost, mintPlacement } from "@/lib/execution-host";
+import { hostForSelection } from "@/lib/execution-host/resolver";
+import { transportForExecutionHost } from "@/lib/execution-host/default-transport";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import { assertBoundTaskLaunchHost, assertProjectExecutionHost } from "@/lib/execution-host/project-preference";
@@ -979,10 +981,14 @@ async function* executeFlowLaunch(
   // unreachable, refused (identity changed under live runs), or pre-ADR-166
   // supervisors all surface as EXECUTOR_UNAVAILABLE here. The host row is what
   // the launch tx places the run on.
-  const placementHost = await localHost({
-    db: _db as unknown as ExecutionDb,
-    force: configuredSelectedExecutionEndpoint() !== null,
-  });
+  const hostDb = _db as unknown as ExecutionDb;
+  const placementHostId = accepted
+    ? accepted.intent.effectiveExecutionHostId
+    : project.defaultExecutionHostId;
+  const placementHost = placementHostId
+    ? await hostForSelection(hostDb, placementHostId)
+    : await localHost({ db: hostDb, force: configuredSelectedExecutionEndpoint() !== null });
+  const placementTransport = transportForExecutionHost(placementHost);
   if (!accepted) assertProjectExecutionHost(project, placementHost);
   assertBoundTaskLaunchHost(accepted?.intent.effectiveExecutionHostId, placementHost);
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
@@ -1732,7 +1738,7 @@ async function* executeFlowLaunch(
       input.baseCommit ?? taskAdmission.baseCommit ?? undefined;
     let baseCommit: string;
     if (hostPreparesWorkspace) {
-      baseCommit = requestedBaseCommit ?? await observeSelectedWorkspaceRevision(project.id, base);
+      baseCommit = requestedBaseCommit ?? await observeSelectedWorkspaceRevision(project.id, base, placementTransport);
     } else {
       // Refresh origin (read-only: updates remote-tracking refs, never the working
       // tree) so the branch allow-list and the base commit reflect the freshest
@@ -2054,6 +2060,7 @@ async function* executeFlowLaunch(
                   ?.context_repos,
               })),
               agentId ? null : ctx.actorUserId,
+              placementTransport,
             ),
             ...await captureWorkspaceBundles(_db as ExecutionDb, {
               projectId: project.id,

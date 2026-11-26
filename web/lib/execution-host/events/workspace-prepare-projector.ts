@@ -107,11 +107,10 @@ export async function prepareWorkspaceEvidence(
     command.assignmentEpoch !== event.assignmentEpoch
   )
     throw inconsistent();
-  const transport = defaultTransport();
-  const { host } = await resolveWorkspacePreparationPeer(
+  const { host, transport } = await resolveWorkspacePreparationPeer(
     db,
     command,
-    transport,
+    defaultTransport(),
   );
   let expectedDigest: string;
   if (payload.operationId === "stageCPrepare") {

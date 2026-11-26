@@ -4103,9 +4103,11 @@
       "subtitle": "Сохранённая регистрация менеджера остаётся видимой, когда supervisor недоступен.",
       "empty": "Хосты исполнения не зарегистрированы.",
       "selected": "Выбран для исполнения",
+      "additional": "Дополнительный супервизор",
       "awaitingRegistration": "Ожидается регистрация supervisor с ключом {hostKey}.",
       "registrationUnavailable": "Не удалось проверить регистрацию настроенного supervisor {hostKey}.",
-      "invalidConfiguration": "Некорректная конфигурация выбранного supervisor."
+      "invalidConfiguration": "Некорректная конфигурация выбранного supervisor.",
+      "invalidAdditionalConfiguration": "Некорректная конфигурация дополнительного супервизора."
     },
     "streams": {
       "title": "Потоки событий",
