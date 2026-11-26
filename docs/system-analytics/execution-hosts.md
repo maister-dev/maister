@@ -934,7 +934,7 @@ opening a receipt or accepting a command. A reboot with the same key retains
 the descriptor and recovers commands against the same store. A different
 key marks the descriptor unavailable and requires operator review.
 
-Migration 0394 preserves the existing default host row and its retained
+Migration 0396 preserves the existing default host row and its retained
 assignments. Web can register one additional trusted descriptor with
 `MAISTER_ADDITIONAL_EXECUTION_HOSTS`. The persisted role marks that row as a
 secondary, while the HTTP origin stays in operator configuration. Upgrade
@@ -1013,7 +1013,7 @@ The prepared tree is bounded to 255 entries and 64 MiB of regular files.
 
 For an addressed project, approving executable trust leaves the Flow's local
 setup status pending. Web binds the approved revision to the workspace
-capture in migration 0391. Preparation order is checkout, materialization,
+capture in migration 0393. Preparation order is checkout, materialization,
 required setup, declared requirement probes and first dispatch. A receipt
 must prove zero exit and group retirement before the next phase opens.
 Web checks current executable trust on the pinned revision before sending
@@ -1118,7 +1118,7 @@ history and rechecks it after verifying the sealed page.
 Addressed Graph attempts with an explicit `rewind-to-node-checkpoint` retry
 policy use a private Git ref and a temporary index on the owning supervisor.
 The checkpoint preserves tracked and untracked content while leaving the live
-index intact. PostgreSQL migration 0385 binds the command to the active Run,
+index intact. PostgreSQL migration 0387 binds the command to the active Run,
 assignment and generation. The supervisor uses its durable workspace writer
 claim to exclude process admission and release during Git mutation. After an
 interrupted restore it verifies HEAD, the live index and the captured tree
@@ -1163,7 +1163,7 @@ same object identity and byte witness as declared Git artifacts.
 When a Run starts another epoch on the same addressed workspace, the
 preparation assignment remains the immutable source of materialization
 evidence. The current assignment must inherit that host and handle.
-PostgreSQL migration 0386 preserves the original records and refuses a
+PostgreSQL migration 0388 preserves the original records and refuses a
 substituted host or handle on placement. A previous epoch's checkpoint can be
 restored by the current owner only for the same Run, workspace and generation.
 The old epoch cannot admit a new workload.
@@ -1189,7 +1189,7 @@ checkout. Restore retries recheck retained evidence without repeating a
 settled mutation.
 
 A retained publication command binds the registered host, workspace handle,
-generation, claim ID and monotonic publication fence. PostgreSQL 0387 binds
+generation, claim ID and monotonic publication fence. PostgreSQL 0389 binds
 the command to its historical assignment and a held promotion or workbench
 claim. It prevents claim replacement and workspace removal while the outcome
 is unresolved. The supervisor verifies the configured repository, clean HEAD
@@ -1206,7 +1206,7 @@ publication request carries the exact commit and snapshot fingerprint that
 the operator reviewed. Web compares both with the original supervisor before
 claiming publication. Web reserves the dedicated branch, returns the verified
 delivery on retry and changes Review to Done once. Manual archive retains the
-same owning supervisor for preservation and release. Migration 0388 prevents
+same owning supervisor for preservation and release. Migration 0390 prevents
 an early release and keeps the Web claim until the physical release receipt
 applies. Human mechanical sync uses the same retained workspace fence.
 The supervisor checks the exact advertised target again at fetch, computes
@@ -1236,7 +1236,7 @@ stop still requires retirement evidence from the original process group.
 
 For a running addressed project Flow, Web locks the Run and assignment,
 checks current `recoverRun`, stores the first operator and timestamp, and
-invalidates the Flow driver lease. PostgreSQL `0384` blocks new execution
+invalidates the Flow driver lease. PostgreSQL `0386` blocks new execution
 commands under that assignment and preserves its immutable Stop witness.
 Existing workload commands each get a stable, exact cancellation command.
 Never claim retirement from a missing session or a request timeout. Once
@@ -1245,7 +1245,7 @@ stop-to-Review and release the assignment in one transaction. A repeated
 request or the normal recovery sweep can resume the retained Stop while the
 operator's current authority still holds.
 
-Migration `0392` extends the Stop fence to the owner's Run tree. It permits
+Migration `0394` extends the Stop fence to the owner's Run tree. It permits
 claiming a Pending child before it has a workspace handle and prevents new
 execution commands under the stopped ancestor. A never-delivered child
 checkout command is settled without contacting the host. An uncertain

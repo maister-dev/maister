@@ -390,7 +390,7 @@ the physical host. A saturated, stale or draining host leaves the intent
 waiting with a bounded reason and preserves existing ordering among eligible
 queued intents.
 
-Migration `0395` records one reservation per physical assignment. Admission
+Migration `0397` records one reservation per physical assignment. Admission
 locks the host row under the existing scheduler lock before counting occupied
 slots. A selected-host limit applies in addition to the global pool limit.
 The queue reports host capacity, drain, pressure or unavailability for the

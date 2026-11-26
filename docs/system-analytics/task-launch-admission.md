@@ -431,7 +431,7 @@ require a fresh decision.
 
 An addressed Agent reserves preparation identity version 4 with the
 selected host, resource incarnation and pinned revision. Its manager paths
-are null. Migration 0393 keeps version 2 receipts readable and validates new
+are null. Migration 0395 keeps version 2 receipts readable and validates new
 Agent dispatch receipts against the applied preparation, owning assignment,
 child handle and materialization generation. For a shared child it also
 checks the parent handle and generation in the retained preparation request.
@@ -457,7 +457,7 @@ For a Flow pinned to an addressed supervisor, acceptance verifies the base
 and delivery refs against that supervisor's approved Git source. A historical
 base must be reachable from the advertised branch tip. The version 3
 preparation identity records the Run, source commit and selected host with
-null checkout paths. Migration 0383 checks the identity against the immutable
+null checkout paths. Migration 0385 checks the identity against the immutable
 intent and verifies host, active assignment and workspace when the Run binds.
 The host prepares that exact checkout. The scheduler waits for applied
 preparation and materialization before first dispatch.

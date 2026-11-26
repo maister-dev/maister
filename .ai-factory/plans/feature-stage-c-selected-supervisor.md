@@ -1,6 +1,6 @@
 # Run board tasks on a selected supervisor
 
-Branch `feature/stage-c-selected-supervisor` · Initial base `22df665aa` · Current integrated master `cb6cc7d2e` · Local G1 and G2 qualified. Hosted A/B release and qualification on two physical hosts are tracked under [release and physical-host evidence](#release-and-physical-host-evidence).
+Branch `feature/stage-c-selected-supervisor` · Initial base `22df665aa` · Current integrated master `ce4d7a59e` · Local G1 and G2 qualification receipts are pinned to the tested revisions below. Hosted A/B release and qualification on two physical hosts are tracked under [release and physical-host evidence](#release-and-physical-host-evidence).
 
 ## Settings
 
@@ -188,13 +188,13 @@ For each operation put executable success, refusal and replay examples alongside
 
 ### Storage contracts and cutover
 
-Use PostgreSQL 0377 and SQLite 19 for the G1 expansion. Assign the
+Use PostgreSQL 0379 and SQLite 19 for the G1 expansion. Assign the
 G2 singleton-index replacement after the G1 migration on the current merge
 tip. Check the final journal and SQLite upgrade chain before generating SQL.
 
 | Store and owner | Required migration and qualification |
 |---|---|
-| Web / PostgreSQL | Begin at the actual merge tip (master through 0375; Stage C through 0397). Extend Drizzle host/project eligibility, launch intent selection and workspace ownership. Reference durable host rows with restrictive deletion for retained ownership. Preserve the unique host key and one active assignment per Run. Keep the singleton local-host constraint through G1. In G2 replace it with uniqueness for the live default and operator-configured identity. Index host/status and the claim/recovery predicates used by workers. Verify constraints with competing transactions on independent connections. |
+| Web / PostgreSQL | The current master lineage ends at 0377. The Stage C branch extends it through 0399. Extend Drizzle host/project eligibility, launch intent selection and workspace ownership. Reference durable host rows with restrictive deletion for retained ownership. Preserve the unique host key and one active assignment per Run. Keep the singleton local-host constraint through G1. In G2 replace it with uniqueness for the live default and operator-configured identity. Index host/status and the claim/recovery predicates used by workers. Verify constraints with competing transactions on independent connections. |
 | Workspace and historical data / PostgreSQL | Today `workspaces.worktree_path` is globally unique and required, `parent_repo_path` is required, and existing preparation witnesses can contain absolute paths. Expand with a tagged host-owned form (host ID, opaque handle, incarnation/generation) and a legacy form; establish checks for valid combinations and owner-scoped uniqueness. Reserve logical workspace ownership before a handle exists. Allow identical private paths on different hosts and enforce writer exclusion on the canonical physical root within a host, including aliases and shared children. Inventory project path, scheduled launch, intent preparation and history readers. Keep legacy bytes readable and version new writes. Never synthesize placeholder paths. |
 | Supervisor / private SQLite | Baseline `supervisor/src/host-state.ts` uses `PRAGMA user_version = 18`. Extend the existing ordered upgrade chain and fresh-schema path. Migrate handles, materialization identities, generation/fence and command receipt/outbox state in transactional steps with version advancement in the same commit. Preserve host key, receipt tombstones, cursor and uncertain effects. Test a populated v18 store, failure inside migration followed by reopen, a fresh store, and an older reader facing a newer version. Reopening the migrated store preserves the same identities and outcomes. |
 
@@ -202,12 +202,12 @@ tip. Check the final journal and SQLite upgrade chain before generating SQL.
 
 **Upgrade and recovery tests.** Exercise both supervisor-first and Web-first deployments. During mixed versions continue the compatible local mode or return a typed unavailable reason for the requested new operation before effects. Take a coordinated backup of Postgres, each supervisor store and its corresponding Git/workspace/runtime data under quiescence. Restore into isolated roots and verify the host key, outstanding commands, assignments, retained Review and dirty work before admitting writes. After the new format or a second owner is active, refuse incompatible writers. Recover through roll-forward or a verified coordinated restore after reconciling any external Git publication.
 
-The branch integrates master `cb6cc7d2e` with its migration prefix through
-`0375_package_skill_readiness`. The unpublished branch migrations are ordered
-after that prefix at 0376–0397. Their SQL bodies are identical to the phase
-commits. The regenerated snapshots preserve both histories and link to the
-master snapshot. The 0394 registry and 0395 capacity gates still require a
-writer that understands retained placement on both supervisors.
+The branch is based on master `ce4d7a59e`. Its PostgreSQL journal retains
+master through `0377_optimize_peek_hint_triggers`. The 22 unpublished branch
+migrations follow at 0378–0399 with their original SQL bodies. The regenerated
+snapshots preserve both histories and link to the master snapshot. The 0396
+registry and 0397 capacity gates require a writer that understands retained
+placement on both supervisors.
 
 ### Reservation and ownership transitions
 

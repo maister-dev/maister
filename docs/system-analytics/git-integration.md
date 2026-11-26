@@ -495,7 +495,7 @@ the Run parked. Web verifies the same ownership when applying finalization.
 
 Dropping a parked addressed Run or discarding it through the existing
 workbench endpoint first seals the original supervisor's preserved Git tree.
-PostgreSQL migration `0396` requires matching preservation and release
+PostgreSQL migration `0398` requires matching preservation and release
 receipts for both operations. Web records removal and abandonment together
 under the held lifecycle claim. A completed Run keeps its `Done` status.
 Repeating the same disposal returns its recorded outcome without another
@@ -530,7 +530,7 @@ conflicting paths and leaves the live checkout and publication intact.
    publishes only against the approved lease and verifies the actual ref.
    After a confirmed push, reconciliation applies the retained receipt.
    It cannot restore an earlier checkout over that publication. The same
-   attempt and workspace claim settle together in PostgreSQL. Migration 0397
+   attempt and workspace claim settle together in PostgreSQL. Migration 0399
    requires the exact predecessor and an increasing fence. A prepared conflict
    holds the workspace until a verified or aborted receipt is applied.
 

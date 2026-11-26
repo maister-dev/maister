@@ -838,7 +838,7 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `scratch_capability_profiles.run_id` UNIQUE — run-scoped capability snapshot
   lookup.
 - `workspaces.worktree_path` UNIQUE — preserves uniqueness for legacy local
-  paths. Migration `0377` permits null on host-owned rows and scopes the
+  paths. Migration `0379` permits null on host-owned rows and scopes the
   unique live Supervisor handle to its execution host. See
   [execution host storage](execution-hosts-domain.md#stage-c-workspace-ownership-migration-implemented-adr-219).
 - **(ADR-140, migration 0105, Implemented)** `workspaces_pr_state_scan_idx` partial index

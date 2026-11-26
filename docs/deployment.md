@@ -464,7 +464,7 @@ sudo systemctl start maister-web
 ```
 
 Stop every Web replica on the database before the execution-plane cutover.
-On its first boot after migration `0376`, the new Web rechecks the exact
+On its first boot after migration `0378`, the new Web rechecks the exact
 released-session crashes before it starts its projectors. This also repairs
 crashes an old Web projector skipped between migration and shutdown. The
 repair and its completion marker commit together.
@@ -789,8 +789,8 @@ private origin, stable key, display name and optional project allowlist and
 concurrency limit. The board can select either eligible supervisor. The admin
 screen displays each registered identity, its last observation and drain state.
 
-Before enabling the second supervisor, apply PostgreSQL migrations `0394`
-and `0395` and drain Web processes using the older singleton registry writer.
+Before enabling the second supervisor, apply PostgreSQL migrations `0396`
+and `0397` and drain Web processes using the older singleton registry writer.
 Retain both endpoint descriptors while either host has retained work. To drain
 new work on B, set its descriptor's `draining` field to `true` and reload Web.
 Existing work stays with its owner. If the host becomes unreachable, restore
