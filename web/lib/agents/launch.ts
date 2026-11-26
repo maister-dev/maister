@@ -30,6 +30,7 @@ import type { AgentMcpTarget } from "@/lib/capabilities/mcp-targets";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
@@ -382,7 +383,7 @@ import {
   configuredSelectedExecutionEndpoint,
   selectedEndpointAllowsProject,
 } from "@/lib/execution-host/selected-endpoint";
-import { captureWorkspaceBundles } from "@/lib/execution-host/workspace-input-capture";
+import { captureAddressedAgentPackages } from "@/lib/execution-host/workspace-input-capture";
 import { taskAgentPackageContentDigest } from "@/lib/tasks/launch-agent-resolution";
 import { captureAddressedAgentContexts } from "@/lib/context-mounts/addressed-capture";
 import {
@@ -1970,23 +1971,33 @@ async function launchAgentRunWithAdmission(
           })
         : null;
       try {
-        return [
-          ...await captureAddressedAgentContexts(_db as ExecutionDb, input.projectId, input.agentId, placementTransport),
-          ...await captureWorkspaceBundles(_db as ExecutionDb, {
-            projectId: input.projectId,
-            runId,
-            intentId: acceptedExecution?.intent.id,
-            acceptedBundles: acceptedExecution?.settings.capabilityBundles,
-            agentPackageRoots: capture
-              ? await packageSkillMaterializationRoots(capture.definition, _db, input.projectId)
-              : [],
-          }),
-        ];
+        const packageInputs = await captureAddressedAgentPackages(
+          capture
+            ? await packageSkillMaterializationRoots(capture.definition, _db, input.projectId)
+            : [],
+          definition.parsed.capabilityProfile?.skills,
+        );
+
+        return {
+          files: [
+            ...(await captureAddressedAgentContexts(
+              _db as ExecutionDb,
+              input.projectId,
+              input.agentId,
+              placementTransport,
+            )),
+            ...packageInputs.files,
+          ],
+          skills: packageInputs.skills,
+        };
       } finally {
         await capture?.release();
       }
     };
-    const workspaceInputs = hostPreparesWorkspace ? await captureInputs() : [];
+    const addressedInputs = hostPreparesWorkspace
+      ? await captureInputs()
+      : undefined;
+    const workspaceInputs = addressedInputs?.files ?? [];
     let worktreePath: string | null = null;
     let branch: string | null = null;
     let baseCommit: string | null = null;
@@ -2540,21 +2551,37 @@ async function launchAgentRunWithAdmission(
             projectId: input.projectId,
             reservation: input.agentTriggerReservation,
           });
+        const projectAgentProfile = retryIntent
+          ? retryIntent.recipe.version === 2
+            ? (retryIntent.recipe.projectAgentProfile ?? null)
+            : null
+          : await captureProjectAgentProfile(tx, {
+              projectId: input.projectId,
+              agentId: input.agentId,
+              packageName: ctx.effective.packageName,
+              packageInstallId: ctx.effective.packageInstallId,
+              definition: ctx.effective.parsed,
+            });
+
+        if (
+          projectAgentProfile?.addressedPackageSkills &&
+          addressedInputs &&
+          !isDeepStrictEqual(projectAgentProfile.addressedPackageSkills, addressedInputs.skills)
+        )
+          throw new MaisterError(
+            "PRECONDITION",
+            "Addressed package skill selection changed since the admitted Run",
+            { details: { reason: "package_skill_view_integrity", runId } },
+          );
+
         const rows = await tx
           .insert(runs)
           .values({
             ...runRow,
-            projectAgentProfile: retryIntent
-              ? retryIntent.recipe.version === 2
-                ? (retryIntent.recipe.projectAgentProfile ?? null)
-                : null
-              : await captureProjectAgentProfile(tx, {
-                  projectId: input.projectId,
-                  agentId: input.agentId,
-                  packageName: ctx.effective.packageName,
-                  packageInstallId: ctx.effective.packageInstallId,
-                  definition: ctx.effective.parsed,
-                }),
+            projectAgentProfile:
+              projectAgentProfile && addressedInputs
+                ? { ...projectAgentProfile, addressedPackageSkills: addressedInputs.skills }
+                : projectAgentProfile,
             agentScheduleId,
             knowledgeAccess:
               assignmentCapture ??
@@ -4217,7 +4244,7 @@ export async function resolveAgentProfileMcpServers(args: {
     { loadSelectableCapabilities, resolveCapabilityProfile },
     { mapProfileToAgentArtifacts },
     { loadProjectMcpBindings, loadProjectMcpOverlays },
-    { gateAndOverlayMcpServers },
+    { assertRequiredMcpServers, gateAndOverlayMcpServers },
   ] = await Promise.all([
     import("@/lib/capabilities/resolver"),
     import("@/lib/capabilities/agent-map"),
@@ -4313,6 +4340,8 @@ export async function resolveAgentProfileMcpServers(args: {
       "agent MCP servers withheld (trust/exec-trust/transport) — persisted",
     );
   }
+
+  assertRequiredMcpServers(args.requiredMcpRefs ?? [], mcpServers, withheld);
 
   return mcpServers;
 }
@@ -6139,6 +6168,9 @@ async function driveAgentSession(
           stepId: "agent",
           executor: runnerExecutorInput(snapshot),
           runner: runnerSupervisorInput({ snapshot }),
+          addressedPackageSkills: addressedWorkspace
+            ? projectProfile?.addressedPackageSkills
+            : undefined,
           adapterLaunch: mergeRunnerAdapterLaunch(
             snapshot,
             packageSkillHome ?? undefined,

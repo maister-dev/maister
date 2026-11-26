@@ -388,8 +388,13 @@ revision must still be trusted. Current bindings and overlays still apply.
 Disabling the ref or revoking the original revision's trust refuses a required
 standalone MCP.
 
-For versioned Flow delivery the supervisor checks the selected tree digest
-and prepares a private adapter home. Claude uses `CLAUDE_CONFIG_DIR`, Codex
+For versioned project sessions the supervisor checks the selected tree digests
+and prepares a private adapter home. A host-owned workspace receives the
+sealed selection in `addressedPackageSkills`. The supervisor verifies each
+selected tree against its retained generation and uses the same selection for
+adapter discovery and progressive disclosure. An explicit empty list produces
+an empty packaged skill view. Legacy workspace sessions use their existing
+`packageSkillView` contract. Claude uses `CLAUDE_CONFIG_DIR`, Codex
 uses `CODEX_HOME` and Gemini, OpenCode and MiMo use their own configuration
 roots. The selected package skill discovery inventory matches the
 progressive-disclosure prompt. Private homes link the supported credential

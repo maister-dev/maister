@@ -12,6 +12,8 @@ import {
 } from "../../runtime/mcp-distribution";
 import { COMMAND_KINDS } from "../../runtime/command-kinds";
 import { CLAUDE_NATIVE_MODES } from "../../runtime/claude-native-permissions";
+import { ADDRESSED_PACKAGE_SKILL_SLUG } from "../../runtime/package-skill-tree";
+import { WORKSPACE_INPUT_MAX_FILES } from "../../runtime/workspace-input-policy";
 
 import { NEW_WORK_REFUSALS, type OutboxLimit } from "./host-runtime-errors";
 import { RuntimeEventSequenceSchema } from "./runtime-events";
@@ -495,6 +497,22 @@ export const StartSessionRequestSchema = z
       })
       .strict()
       .optional(),
+    addressedPackageSkills: z
+      .array(
+        z
+          .object({
+            slug: z.string().max(128).regex(ADDRESSED_PACKAGE_SKILL_SLUG),
+            treeDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .strict(),
+      )
+      .max(WORKSPACE_INPUT_MAX_FILES)
+      .refine(
+        (skills) =>
+          new Set(skills.map(({ slug }) => slug)).size === skills.length,
+        "addressed package skill slugs must be unique",
+      )
+      .optional(),
     nodeAttemptId: z
       .string()
       .min(1)
@@ -568,7 +586,12 @@ export const StartSessionRequestSchema = z
     // present only for a session enforcing strict tools/mcps.
     enforcementProfile: SessionEnforcementProfileSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ packageSkillView, addressedPackageSkills }) =>
+      packageSkillView === undefined || addressedPackageSkills === undefined,
+    "legacy and addressed package skill views are mutually exclusive",
+  );
 
 // --- ADR-166: execution-host contract (envelope, fences, adoption, receipts) ---
 

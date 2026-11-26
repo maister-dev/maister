@@ -7,6 +7,8 @@ import type { HostState, HostRuntimeObjectRow } from "./host-state";
 import type { RuntimeObjectRegistry } from "./runtime-objects";
 import type { ContextMount } from "./types";
 import type { WorkspaceClaudeSubagent } from "../../runtime/workspace-flow-persona";
+import type { AddressedPackageSkill } from "../../runtime/package-skill-tree";
+import type { AddressedPackageSkillSource } from "./package-skill-home";
 
 import { createHash } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
@@ -38,12 +40,14 @@ import {
 } from "../../runtime/workspace-input-policy";
 import { workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
 import { WORKSPACE_CONTEXT_INPUT } from "../../runtime/workspace-context-input";
+import { packageSkillManifestDigest } from "../../runtime/package-skill-tree";
 import {
   WORKSPACE_FLOW_PERSONAS_FILE,
   WORKSPACE_FLOW_PERSONAS_MAX_BYTES,
   WORKSPACE_FLOW_ROLE_STEM,
 } from "../../runtime/workspace-flow-persona";
 
+import { skillViewIntegrityFailure } from "./package-skill-home";
 import { withSqliteFileLock } from "./sqlite-file-lock";
 import { SupervisorError } from "./types";
 import {
@@ -291,6 +295,7 @@ type WorkspaceSessionInputs = Readonly<{
   readOnlyCheckout?: true;
   contextMounts: ContextMount[];
   packageInstructions?: string;
+  addressedPackageSkills?: readonly AddressedPackageSkillSource[];
   claudeSubagent?: WorkspaceClaudeSubagent;
 }>;
 
@@ -318,10 +323,9 @@ async function workspaceSubagent(
   return { stem: persona.stem, description: persona.description, prompt: persona.prompt };
 }
 
-function packagedSkillInstructions(
-  directory: string,
+function legacyPackagedSkills(
   files: InputManifest["files"],
-): string | undefined {
+): ReadonlyMap<string, string> {
   const packageSkills = files
     .flatMap(({ path }) => {
       const match =
@@ -336,6 +340,14 @@ function packagedSkillInstructions(
 
   for (const { slug, path } of packageSkills)
     if (!selected.has(slug)) selected.set(slug, path);
+
+  return selected;
+}
+
+function packagedSkillInstructions(
+  directory: string,
+  selected: ReadonlyMap<string, string>,
+): string | undefined {
   if (selected.size === 0) return undefined;
 
   return [
@@ -345,15 +357,66 @@ function packagedSkillInstructions(
   ].join("\n");
 }
 
+function addressedPackageSkillSource(
+  directory: string,
+  manifest: InputManifest,
+  selection: AddressedPackageSkill,
+): AddressedPackageSkillSource {
+  const { slug, treeDigest } = selection;
+  const matchingFile = `skills/${slug}/SKILL.md`;
+
+  for (const { path } of manifest.files) {
+    const [category, bundle, ...member] = path.split("/");
+
+    if (
+      category !== "bundles" ||
+      !/^\d+$/.test(bundle) ||
+      member.join("/") !== matchingFile
+    )
+      continue;
+    const prefix = `bundles/${bundle}/skills/${slug}/`;
+    const files = manifest.files.filter(({ path }) => path.startsWith(prefix));
+    const tree = files.map(({ path, sha256 }) => ({
+      path: path.slice(prefix.length),
+      sha256,
+    }));
+
+    if (packageSkillManifestDigest(tree) !== treeDigest) continue;
+
+    return {
+      slug,
+      treeDigest,
+      instructionPath: path,
+      async *readFiles() {
+        for (const reference of files)
+          yield {
+            path: reference.path.slice(prefix.length),
+            bytes: await readVerifiedInputFile(
+              directory,
+              reference,
+              WORKSPACE_INPUT_MAX_BYTES,
+            ),
+          };
+      },
+    };
+  }
+  throw skillViewIntegrityFailure();
+}
+
 export async function verifyWorkspaceSessionInputs(
   state: HostState,
   handle: string,
   runtimeRoot: string,
   stepId: string,
+  skillSelection?: readonly AddressedPackageSkill[],
 ): Promise<WorkspaceSessionInputs | undefined> {
   const retained = state.getWorkspaceExecutionState(handle);
 
-  if (!retained?.inputDigest) return;
+  if (!retained?.inputDigest) {
+    if (skillSelection !== undefined) throw skillViewIntegrityFailure();
+
+    return;
+  }
   if (!retained.materializationGeneration || !retained.materializationDigest)
     throw new SupervisorError(
       "PRECONDITION",
@@ -392,16 +455,34 @@ export async function verifyWorkspaceSessionInputs(
         directory, retained.materializationDigest, WORKSPACE_CONTEXT_INPUT, 64 * 1024,
       )).filter((context) => context.stepId === stepId),
     });
+    const addressedPackageSkills = skillSelection?.map((selection) =>
+      addressedPackageSkillSource(directory, manifest, selection),
+    );
+    const instructions =
+      addressedPackageSkills === undefined
+        ? legacyPackagedSkills(manifest.files)
+        : new Map(
+            addressedPackageSkills.map(({ slug, instructionPath }) => [
+              slug,
+              instructionPath,
+            ]),
+          );
 
     return {
       ownershipKind: "host_owned",
       ...(retained.preparationMode === "readOnlyCheckout"
         ? { readOnlyCheckout: true as const } : {}),
       contextMounts,
-      packageInstructions: packagedSkillInstructions(directory, manifest.files),
+      packageInstructions: packagedSkillInstructions(directory, instructions),
+      addressedPackageSkills,
       claudeSubagent: await workspaceSubagent(directory, manifest, stepId),
     };
   } catch (cause) {
+    if (
+      cause instanceof SupervisorError &&
+      cause.details?.reason === "package_skill_view_integrity"
+    )
+      throw cause;
     throw new SupervisorError(
       "PRECONDITION",
       "Host workspace input generation failed its integrity check",

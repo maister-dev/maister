@@ -39,8 +39,8 @@ const REENTRY_NODE_ID = "checks";
 const placementHost: ExecutionHost = {
   id: "host-1",
   hostKey: "takeover-supervisor",
-  kind: "remote_direct",
-  transport: { kind: "remote_direct" },
+  kind: "local_direct",
+  transport: { kind: "local_direct", role: "secondary" },
   displayName: "Takeover supervisor",
   readiness: "ready",
   readinessReason: null,

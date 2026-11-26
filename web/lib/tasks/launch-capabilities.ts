@@ -100,7 +100,14 @@ export async function taskLaunchBoundCapabilityAuthority(
         WHERE i.id=ANY(${sql.param(pins)}::text[])) AS releases,
       (SELECT jsonb_agg(jsonb_build_array(c.id,c.kind,c.source,c.capability_ref_id,c.revision,c.agents,c.enforceability,c.selected_by_default,c.selectable,c.material) ORDER BY c.id)
          FROM capability_records c WHERE c.project_id=${projectId} AND c.disabled_at IS NULL
-         AND (c.source<>'flow-package' OR c.material->>'packageInstallId' IS NULL)) AS records,
+         AND (c.source<>'flow-package' OR (
+           c.material->>'packageInstallId' IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM capability_imports i
+             WHERE c.material->>'origin'='dependency-import' AND i.project_id=c.project_id
+               AND i.id=c.material->>'importId' AND i.package_install_id IS NOT NULL
+           )
+         ))) AS records,
       (SELECT jsonb_agg(jsonb_build_array(b.ref_id,b.target_kind,b.target_id,b.enabled,b.config_overlay) ORDER BY b.ref_id)
          FROM project_mcp_bindings b WHERE b.project_id=${projectId} AND b.target_kind<>'package') AS bindings,
       (SELECT jsonb_agg(jsonb_build_array(i.id,i.resolved_revision,i.manifest_digest,i.installed_path,i.setup_status,i.trust_status) ORDER BY i.id)

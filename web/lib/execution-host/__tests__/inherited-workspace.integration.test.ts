@@ -51,12 +51,12 @@ import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { nodeWorkloadDeclarationId } from "@/lib/flows/addressed-workload-input";
 import { git, initRepo } from "@/test-support/git-fixture";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
+import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import {
   addProjectMember,
   seedActiveUser,
 } from "@/test-support/librarian-seed";
 import {
-  applyMainMigration,
   declareCurrentTestDatabaseWriter,
   startMainPostgresTestDb,
   startMainPostgresTestDbUpTo,
@@ -138,10 +138,12 @@ async function prepareWorkspaceFixture(options?: { usePullRequestProvider?: true
     ? await installLocalPullRequestProvider(root, repository)
     : null;
   const databaseOptions = { databaseName: "eh_inherited_workspace" };
-  database = options?.upgradeRetainedSync
-    ? await startMainPostgresTestDbUpTo(databaseOptions, "0398_stage-c-addressed-drop")
+  const cutoff = options?.upgradeRetainedSync ? "0398_stage-c-addressed-drop" : null;
+  const testDb = cutoff
+    ? await startMainPostgresTestDbUpTo(databaseOptions, cutoff)
     : await startMainPostgresTestDb(databaseOptions);
-  if (options?.upgradeRetainedSync) await declareCurrentTestDatabaseWriter(database);
+  database = testDb;
+  if (cutoff) await declareCurrentTestDatabaseWriter(testDb);
   const db = database.db as unknown as Db;
   session.userId = await seedActiveUser(database.db);
   const seeded = await seedGraphRun(
@@ -192,6 +194,13 @@ async function prepareWorkspaceFixture(options?: { usePullRequestProvider?: true
       workspace: false,
       flowRevision: true,
       run: { status: "Pending", createdByUserId: session.userId },
+      ...(cutoff ? { insertRun: async (run) => {
+        await testDb.pool.query(`INSERT INTO runs
+          (id, task_id, project_id, flow_id, flow_revision_id, flow_version, status, created_by_user_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [run.id, run.taskId, run.projectId, run.flowId, run.flowRevisionId,
+            run.flowVersion, run.status, run.createdByUserId]);
+      } } : {}),
     },
   );
   const { projectId, runId } = seeded;
@@ -267,15 +276,11 @@ async function prepareWorkspaceFixture(options?: { usePullRequestProvider?: true
   });
   const readWorkspace = async () =>
     (await db.select().from(workspaces).where(eq(workspaces.runId, runId)))[0];
-  if (options?.upgradeRetainedSync) {
+  if (cutoff) {
     const previousWorkspace = await readWorkspace();
     const previousAssignment = await getLatestAssignment(db, runId);
     const previousCommands = await listCommandsForRun(db, runId);
-    await database.db.transaction(async (tx) => {
-      await applyMainMigration(tx, "0399_stage_c_retained_sync_resolver");
-      await applyMainMigration(tx, "0400_stage_c_quarantine_unverified_workspace_events");
-      await applyMainMigration(tx, "0401_stage_c_permanent_host_loss");
-    });
+    await upgradeMainTestDb(testDb, cutoff);
     expect(await readWorkspace()).toEqual(previousWorkspace);
     expect(await getLatestAssignment(db, runId)).toEqual(previousAssignment);
     expect(await listCommandsForRun(db, runId)).toEqual(previousCommands);

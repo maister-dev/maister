@@ -1,4 +1,5 @@
 import type { WorkspaceResolution } from "./workspace-registry";
+import type { AddressedPackageSkill } from "../../runtime/package-skill-tree";
 
 import { createHash } from "node:crypto";
 import {
@@ -6,6 +7,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rename,
@@ -54,7 +56,13 @@ const adapters = {
   },
 } as const;
 
-function skillViewIntegrityFailure(cause?: unknown): SupervisorError {
+export type AddressedPackageSkillSource = AddressedPackageSkill &
+  Readonly<{
+    instructionPath: string;
+    readFiles(): AsyncIterable<Readonly<{ path: string; bytes: Buffer }>>;
+  }>;
+
+export function skillViewIntegrityFailure(cause?: unknown): SupervisorError {
   return new SupervisorError(
     "PRECONDITION",
     "The accepted package skill view is missing or changed",
@@ -77,6 +85,63 @@ async function verifiedSettings(file: string, digest: string): Promise<Buffer> {
     throw skillViewIntegrityFailure();
 
   return bytes;
+}
+
+async function verifyAddressedSkillDirectory(
+  directory: string,
+  skills: readonly AddressedPackageSkillSource[],
+): Promise<void> {
+  const expected = new Set(skills.map(({ slug }) => slug));
+  const entries = await readdir(directory);
+
+  if (
+    entries.length !== expected.size ||
+    entries.some((entry) => !expected.has(entry))
+  )
+    throw skillViewIntegrityFailure();
+  for (const { slug, treeDigest } of skills)
+    await assertSkillTreeDigest(path.join(directory, slug), treeDigest);
+}
+
+async function copyAddressedSkills(
+  directory: string,
+  skills: readonly AddressedPackageSkillSource[],
+): Promise<void> {
+  await mkdir(directory, { mode: 0o700 });
+
+  for (const { slug, readFiles } of skills)
+    for await (const file of readFiles()) {
+      const destination = path.join(directory, slug, file.path);
+
+      await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+      await writeFile(destination, file.bytes, { flag: "wx", mode: 0o444 });
+    }
+}
+
+async function legacySkillViewSource(
+  request: StartSessionRequest,
+  workspace: WorkspaceResolution,
+): Promise<string> {
+  if (
+    !request.nodeAttemptId ||
+    !/^[A-Za-z0-9_-]+$/.test(request.nodeAttemptId) ||
+    !/^[A-Za-z0-9_-]+$/.test(workspace.runId)
+  )
+    throw new SupervisorError(
+      "PRECONDITION",
+      "Package skill discovery requires an exact Run and attempt",
+    );
+  const source = path.join(
+    await realpath(workspace.cwd),
+    ".maister",
+    "capabilities",
+    workspace.runId,
+    request.nodeAttemptId,
+  );
+
+  if ((await realpath(source)) !== source) throw skillViewIntegrityFailure();
+
+  return source;
 }
 
 /** The assigned host derives private adapter state from its own adopted workspace and authenticated create payload. */
@@ -106,49 +171,45 @@ async function prepareSkillHome(
   workspace: WorkspaceResolution,
 ): Promise<Record<string, string>> {
   const view = request.packageSkillView;
+  const addressed = workspace.addressedPackageSkills;
 
-  if (!view) return {};
-  if (
-    !request.nodeAttemptId ||
-    !/^[A-Za-z0-9_-]+$/.test(request.nodeAttemptId) ||
-    !/^[A-Za-z0-9_-]+$/.test(workspace.runId)
-  )
-    throw new SupervisorError(
-      "PRECONDITION",
-      "Package skill discovery requires an exact Run and attempt",
-    );
-  const adapter = adapters[request.executor.agent];
+  if (request.addressedPackageSkills !== undefined && addressed === undefined)
+    throw skillViewIntegrityFailure();
+  if (view === undefined && addressed === undefined) return {};
+  const adapterId = request.runner?.adapter ?? request.executor.agent;
+  const adapter = adapters[adapterId];
 
   if (!adapter)
     throw new SupervisorError(
       "PRECONDITION",
       "Unsupported adapter skill discovery",
     );
-  const cwd = await realpath(workspace.cwd);
-  const source = path.join(
-    cwd,
-    ".maister",
-    "capabilities",
-    workspace.runId,
-    request.nodeAttemptId,
-  );
+  const source = view
+    ? await legacySkillViewSource(request, workspace)
+    : undefined;
+  const verifySkills = async (directory: string): Promise<void> => {
+    if (view) await assertSkillTreeDigest(directory, view.skillsDigest);
+    else if (addressed)
+      await verifyAddressedSkillDirectory(directory, addressed);
+  };
 
-  if ((await realpath(source)) !== source) throw skillViewIntegrityFailure();
   const logicalOwner = createHash("sha256")
     .update(
       JSON.stringify([
-        request.executor.agent,
+        adapterId,
         request.sessionName ?? "default",
         !request.sessionName || request.sessionName === "default"
           ? request.stepId
           : null,
-        view,
+        view ??
+          addressed?.map(({ slug, treeDigest }) => ({ slug, treeDigest })),
       ]),
     )
     .digest("hex");
   const parent = path.join(await realpath(workspace.runDir), "adapter-homes");
 
   await mkdir(parent, { recursive: true, mode: 0o700 });
+  if ((await realpath(parent)) !== parent) throw skillViewIntegrityFailure();
   const home = path.join(parent, logicalOwner);
   const config = path.join(home, adapter.suffix);
   const target = path.join(config, "skills");
@@ -160,9 +221,9 @@ async function prepareSkillHome(
   });
 
   if (existing) {
-    if ((await realpath(home)) !== home) throw skillViewIntegrityFailure();
-    await assertSkillTreeDigest(target, view.skillsDigest);
-    if (view.settingsDigest)
+    if ((await realpath(config)) !== config) throw skillViewIntegrityFailure();
+    await verifySkills(target);
+    if (view?.settingsDigest)
       await verifiedSettings(
         path.join(config, "settings.json"),
         view.settingsDigest,
@@ -174,17 +235,15 @@ async function prepareSkillHome(
 
   try {
     const stagedConfig = path.join(staged, adapter.suffix);
+    const stagedSkills = path.join(stagedConfig, "skills");
 
     await mkdir(stagedConfig, { recursive: true, mode: 0o700 });
-    await cp(
-      path.join(source, "package-skills"),
-      path.join(stagedConfig, "skills"),
-      { recursive: true },
-    );
-    await assertSkillTreeDigest(
-      path.join(stagedConfig, "skills"),
-      view.skillsDigest,
-    );
+    if (source)
+      await cp(path.join(source, "package-skills"), stagedSkills, {
+        recursive: true,
+      });
+    else if (addressed) await copyAddressedSkills(stagedSkills, addressed);
+    await verifySkills(stagedSkills);
     const globalHome = process.env[adapter.key]
       ? path.join(process.env[adapter.key]!, adapter.suffix)
       : path.join(homedir(), adapter.global);
@@ -200,8 +259,8 @@ async function prepareSkillHome(
       }
       await symlink(original, path.join(stagedConfig, file));
     }
-    if (view.settingsDigest) {
-      if (request.executor.agent !== "claude")
+    if (source && view?.settingsDigest) {
+      if (adapterId !== "claude")
         throw new SupervisorError(
           "PRECONDITION",
           "Native settings are not supported for this adapter",

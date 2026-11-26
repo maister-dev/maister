@@ -116,7 +116,7 @@ export async function claimLibrarianResumeInTransaction(
     ? await getHostById(tx, previous.executionHostId)
     : null;
   const host =
-    previousHost?.kind === "remote_direct" ? previousHost : input.host;
+    previousHost?.transport.role === "secondary" ? previousHost : input.host;
 
   if (
     (previous && !previousHost) ||

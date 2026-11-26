@@ -339,18 +339,17 @@ describe("IT-LCV-04 part 3: a turn round-trips through its own prompt owner", ()
   });
 
   it("IT-LAU-11 (send site): the session is MCP-only, auto-approved, never readOnlySession", async () => {
-    vi.stubEnv(
-      "MAISTER_ADDITIONAL_EXECUTION_HOSTS",
-      '[{"hostKey":"eh_supervisor_b","url":"https://supervisor-b.example.invalid"}]',
-    );
-    vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", "supervisor-b");
-    vi.stubEnv("MAISTER_EXECUTION_HOST_SHARED_WORKSPACE", "1");
     vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", "/fixtures/local-maister-mcp");
     const ownerId = await seedActiveUser(db);
 
+    const before = creates().length;
+
     await send(ownerId, "hello");
     await settle();
-    const payload = creates().at(-1)!;
+    const payloads = creates().slice(before);
+
+    expect(payloads).toHaveLength(1);
+    const [payload] = payloads;
     const servers = payload.mcpServers as {
       name: string;
       command: string;

@@ -107,6 +107,7 @@ async function response<T>(req: Promise<Response>): Promise<T> {
 
 const catalogFailureLabels = {
   approval_revoked: "approvalRevoked",
+  catalog_identity_unavailable: "catalogIdentityUnavailable",
   upstream_access_denied: "upstreamAccessDenied",
   preview_limit_reached: "previewLimitReached",
   remote_requirements_unsupported: "remoteRequirementsUnsupported",
@@ -175,6 +176,41 @@ function failureText(
 
 function resultKey(result: SearchResult): string {
   return `${result.sourceId}/${result.resultId}`;
+}
+
+const SKILL_SEARCH_SCOPES = ["skills.sh", "repositories"] as const;
+
+function mergeSearchResults(
+  previous: SearchResponse | null,
+  reply: SearchResponse,
+): SearchResponse {
+  const seen = new Set<string>();
+  const indexedSkills = new Map<string, boolean>();
+  const results = [...(previous?.results ?? []), ...reply.results].filter(
+    (result) => {
+      const key = resultKey(result);
+
+      if (seen.has(key)) return false;
+      if (result.canonicalSkillId) {
+        const fromIndex = result.sourceId === "skills.sh";
+        const firstSource = indexedSkills.get(result.canonicalSkillId);
+
+        // Keep the first visible option stable when its other source arrives.
+        if (firstSource !== undefined && firstSource !== fromIndex)
+          return false;
+        indexedSkills.set(result.canonicalSkillId, fromIndex);
+      }
+      seen.add(key);
+
+      return true;
+    },
+  );
+
+  return {
+    results,
+    sources: [...(previous?.sources ?? []), ...reply.sources],
+    nextCursor: reply.nextCursor,
+  };
 }
 
 function CatalogFileDiff({ file }: { file: ReviewFile }): ReactElement {
@@ -293,11 +329,14 @@ export function CatalogImportPanel({
   const [applying, setApplying] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [searchFailure, setSearchFailure] =
+    useState<CatalogRequestError | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const requestKey = useRef("");
   const alive = useRef(true);
   const searchEpoch = useRef(0);
+  const searchRequest = useRef<AbortController | null>(null);
   const previewRequest = useRef<AbortController | null>(null);
   const manifest = parsePackageManifest(
     files.find((f) => f.path === PACKAGE_MANIFEST_FILENAME)?.content ?? "",
@@ -310,6 +349,10 @@ export function CatalogImportPanel({
   );
   const origins = readOrigins(files, kind);
   const resultItems = data?.results ?? [];
+  const unavailable =
+    data?.sources.filter((source) => source.state !== "available") ?? [];
+  const visibleError =
+    error || (searchFailure && failureText(searchFailure, t));
 
   function clearPreview(): void {
     previewRequest.current?.abort();
@@ -332,38 +375,54 @@ export function CatalogImportPanel({
     if (!open || !q.trim()) return;
     const controller = new AbortController();
     const epoch = searchEpoch.current;
+    const scopes = kind === "skill" ? SKILL_SEARCH_SCOPES : [undefined];
+    let pending = scopes.length;
+    const current = () =>
+      !controller.signal.aborted && epoch === searchEpoch.current;
+
+    searchRequest.current = controller;
     const timeout = setTimeout(() => {
-      void response<SearchResponse>(
-        fetch(base + "/search?" + new URLSearchParams({ kind, q }), {
-          signal: controller.signal,
-        }),
-      )
-        .then((reply) => {
-          if (!controller.signal.aborted && epoch === searchEpoch.current) {
-            setData(reply);
-            setSearching(false);
-          }
-        })
-        .catch((e) => {
-          if (!controller.signal.aborted && epoch === searchEpoch.current) {
-            setError(failureText(e, t));
-            setSearching(false);
-          }
-        });
+      for (const scope of scopes) {
+        const params = new URLSearchParams({ kind, q });
+
+        if (scope) params.set("scope", scope);
+        void response<SearchResponse>(
+          fetch(base + "/search?" + params, { signal: controller.signal }),
+        )
+          .then((reply) => {
+            if (current())
+              setData((previous) => mergeSearchResults(previous, reply));
+          })
+          .catch((failure: unknown) => {
+            if (current())
+              setSearchFailure(
+                failure instanceof CatalogRequestError
+                  ? failure
+                  : new CatalogRequestError("error"),
+              );
+          })
+          .finally(() => {
+            if (--pending === 0 && current()) setSearching(false);
+          });
+      }
     }, 250);
 
     return () => {
       clearTimeout(timeout);
       controller.abort();
+      if (searchRequest.current === controller) searchRequest.current = null;
     };
-  }, [base, kind, open, q, t]);
+  }, [base, kind, open, q]);
   function query(value: string): void {
+    if (value === q && value.trim()) return;
     searchEpoch.current++;
+    searchRequest.current?.abort();
     clearPreview();
     setQ(value);
     setData(null);
     setSelected(null);
     setError("");
+    setSearchFailure(null);
     setSearching(Boolean(value.trim()));
     setLoadingMore(false);
   }
@@ -550,17 +609,31 @@ export function CatalogImportPanel({
       </div>
       {dirty ? <p role="status">{t("dirty")}</p> : null}
       {searching ? <p role="status">{t("searching")}</p> : null}
-      {data && !data.results.length ? <p role="status">{t("empty")}</p> : null}
-      {data?.sources
-        .filter((s) => s.state !== "available")
-        .map((s) => (
-          <p key={s.sourceId} role="status">
-            {s.sourceId}:{" "}
-            {t(s.state === "rate_limited" ? "rateLimit" : "unavailable")}
-          </p>
-        ))}
+      {!searching &&
+      !searchFailure &&
+      data &&
+      !resultItems.length &&
+      (!unavailable.length ||
+        data.sources.some((source) => source.state === "available")) ? (
+        <p role="status">{t(unavailable.length ? "partialEmpty" : "empty")}</p>
+      ) : null}
+      {unavailable.map((source) => (
+        <p key={source.sourceId} role="status">
+          {source.sourceId}:{" "}
+          {t(
+            source.state === "rate_limited"
+              ? "rateLimit"
+              : source.reason === "catalog_identity_unavailable"
+                ? "catalogIdentityUnavailable"
+                : "unavailable",
+          )}
+        </p>
+      ))}
       {q.trim() ? (
-        <div aria-busy={searching || loadingMore} data-testid="catalog-results">
+        <div
+          aria-busy={(searching && !resultItems.length) || loadingMore}
+          data-testid="catalog-results"
+        >
           <ListBox
             disallowEmptySelection
             aria-label={t("results")}
@@ -599,13 +672,15 @@ export function CatalogImportPanel({
           onPress={async () => {
             const cursor = data.nextCursor;
             const epoch = searchEpoch.current;
+            const controller = searchRequest.current;
 
-            if (!cursor || loadingMore) return;
+            if (!cursor || loadingMore || !controller) return;
             setLoadingMore(true);
             try {
               const next = await response<SearchResponse>(
                 fetch(
                   base + "/search?" + new URLSearchParams({ kind, q, cursor }),
+                  { signal: controller.signal },
                 ),
               );
 
@@ -692,7 +767,7 @@ export function CatalogImportPanel({
         </Button>
       ))}
       {previewing ? <p role="status">{t("previewing")}</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
+      {visibleError ? <p role="alert">{visibleError}</p> : null}
       {preview ? (
         <div className="space-y-2" data-testid="catalog-preview">
           <p>

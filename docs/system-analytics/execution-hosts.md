@@ -29,11 +29,12 @@ restart, and how a pre-Stage-A run is folded in. It does **not** own the run
 state machine ([runs.md](runs.md)), HITL semantics ([hitl.md](hitl.md)),
 crash classification ([reconciliation-gc.md](reconciliation-gc.md)),
 worktree creation and promotion ([workspaces.md](workspaces.md)), or the
-runner/session model ([sessions.md](sessions.md)). The supported deployment
-keeps one host and loopback HTTP: no remote transport, multiple-host placement,
-host UI, or remote enrollment. Repository/worktree paths remain a same-host
-Stage C boundary, while the Stage B execution event/runtime-data plane is
-fully path-free.
+runner/session model ([sessions.md](sessions.md)). The local default uses
+loopback HTTP. [Stage C](#selected-supervisor-stage-c-implemented) adds
+placement through operator-configured private endpoints and makes the
+selected supervisor the repository and workspace owner. Runtime events
+and data use the path-free Stage B contract. Managed enrollment and relay
+remain Stage D.
 
 The assignment, command, receipt, and opaque workspace contracts remain this
 domain's authority. Runtime event and file metadata are now owned by the
@@ -1353,14 +1354,14 @@ flowchart LR
 
 The workload uses the registered endpoint for its assignment. A local path on A never identifies an executable on B. Publish only after artifact and transitive inputs match the reviewed descriptor. Recheck current trust and fencing at launch. A clean host obtains and validates its own copy. A missing runtime or unavailable distribution leaves the required server unready with a typed reason.
 
-New placements use the selected preferred host and require shared-workspace
-opt-in for a remote placement. Admission checks strict tools/MCP and read-only
-runner evidence where required on that selected host. A dispatch that would
-create or replace a session rechecks the corresponding assigned host's
-evidence. Adoption validates Web-created paths on the assigned host. Run
-dispatch, events, content, receipts and checkpoint recovery use the durable
-assignment's endpoint. Repository-backed deployment follows the path and
-permission requirements in [ADR-219](../decisions/adr-219.md).
+New addressed placements follow the selected host policy in
+[ADR-219](../decisions/adr-219.md). Admission checks strict tools/MCP and
+read-only runner evidence where required on that selected host. A dispatch
+that would create or replace a session rechecks the corresponding assigned
+host's evidence. The supervisor owns the prepared repository and worktree.
+Run dispatch, events, content, receipts and checkpoint recovery use the durable
+assignment's endpoint. [ADR-223](../decisions/adr-223.md) applies the same
+assignment and fence to MCP preparation.
 
 For stdio, the assigned host verifies the approved self-contained npm
 descriptor and host compatibility, including the publisher, exact release,
@@ -1385,8 +1386,9 @@ for the public .NET introduction. A separate helper limits egress to the
 unprivileged probe process and the pinned HTTPS peer. The fixture disconnects
 the public network before starting the supervisor. The log links each public
 receipt to the same container and assignment used for the private tool calls.
-Both requests returned HTTP 200 and the requested 9,905-byte document. The
-public receipts contain the call identity, status and digests.
+The pre-rebase shared-workspace fixture recorded HTTP 200 and the requested
+9,905-byte document from both hosts. Those historical receipts contain the
+call identity, status and digests. The shipping build requires fresh evidence.
 
 Use a local Linux helper image with `iptables` and `ip6tables` and a Docker
 release that supports `network connect --gw-priority`. The qualified helper

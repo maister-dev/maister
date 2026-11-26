@@ -281,7 +281,7 @@ test("B3 keeps history and attention scrollable without displacing the composer"
   }
 });
 
-test("E2E-ASK-02 owner answers a private question from the transcript with the keyboard", async ({
+test("E2E-ASK-02-KEYBOARD owner answers an opened private question from the transcript with the keyboard", async ({
   page,
 }) => {
   await page.goto("/inbox");
@@ -300,10 +300,10 @@ test("E2E-ASK-02 owner answers a private question from the transcript with the k
     await pool.query(
       `WITH t AS (
       INSERT INTO librarian_turns (id,conversation_id,segment_id,variant,status)
-      VALUES ($1,$2,$3,'owner_message','awaiting_answer') RETURNING id
+      VALUES ($1,$2,$3,'owner_message','queued') RETURNING id
     ), card AS (
       INSERT INTO librarian_cards (id,conversation_id,segment_id,kind,status,target,payload,payload_digest,requires_owner,expires_at,question_turn_id,question_key,question_checkpoint_at)
-      SELECT $4,$2,$3,'question','pending','{}',$5,'fixture',true,now()+interval '1 day',t.id,'journey',now() FROM t RETURNING id
+      SELECT $4,$2,$3,'question','pending','{}',$5,'fixture',true,now()+interval '1 day',t.id,'journey',NULL FROM t RETURNING id
     ), seq AS (
       UPDATE librarian_conversations SET last_seq=last_seq+1 WHERE id=$2 RETURNING last_seq
     ) INSERT INTO librarian_messages (id,conversation_id,segment_id,turn_id,card_id,author_kind,seq,body,delivery_state)
@@ -339,6 +339,28 @@ test("E2E-ASK-02 owner answers a private question from the transcript with the k
       .getByTestId("librarian-private-question")
       .filter({ hasText: "Which customer journey?" });
 
+    const beforeCheckpoint = await page.request.get(
+      "/api/librarian/messages?view=work",
+    );
+
+    expect(beforeCheckpoint.ok()).toBe(true);
+    expect((await beforeCheckpoint.json()).messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: messageId, card: null }),
+      ]),
+    );
+    await expect(question).toHaveCount(0);
+    await withE2EDb(async (pool) => {
+      await pool.query(
+        `WITH turn AS (
+          UPDATE librarian_turns SET status='awaiting_answer' WHERE id=$1 RETURNING id
+        ) UPDATE librarian_cards SET question_checkpoint_at=now()
+          FROM turn WHERE librarian_cards.id=$2 AND question_turn_id=turn.id`,
+        [turnId, cardId],
+      );
+    });
+    await page.reload();
+    await openPanel(page);
     await expect(question).toBeVisible();
     await page.getByTestId("librarian-composer").fill("Checkout draft");
     await expect(page.getByTestId("librarian-send")).toBeDisabled();

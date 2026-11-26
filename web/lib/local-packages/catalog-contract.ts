@@ -10,6 +10,7 @@ export type CatalogKind = z.infer<typeof catalogKind>;
 const catalogFailureReason = z.enum([
   "approval_revoked",
   "upstream_access_denied",
+  "catalog_identity_unavailable",
   "preview_limit_reached",
   "remote_requirements_unsupported",
   "distribution_requirements_unsupported",
@@ -46,8 +47,14 @@ export const searchQuery = z
     kind: catalogKind,
     q: bounded,
     cursor: z.string().min(1).max(2048).optional(),
+    scope: z.enum(["skills.sh", "repositories"]).optional(),
   })
-  .strict();
+  .strict()
+  .refine((query) => query.kind === "skill" || !query.scope, {
+    path: ["scope"],
+    message: "Catalog search scope is supported for skills only",
+  });
+export type SearchQuery = z.infer<typeof searchQuery>;
 export const previewBody = z
   .object({
     sessionId: editSession,
@@ -83,12 +90,17 @@ export type SearchResult = {
   publisher: string;
   name: string;
   kind: CatalogKind;
+  canonicalSkillId?: string;
 };
 export type SearchResponse = {
   results: SearchResult[];
   sources: {
     sourceId: string;
     state: "available" | "unavailable" | "rate_limited";
+    reason?: Extract<
+      CatalogFailureDetails["reason"],
+      "catalog_identity_unavailable"
+    >;
   }[];
   nextCursor: string | null;
 };

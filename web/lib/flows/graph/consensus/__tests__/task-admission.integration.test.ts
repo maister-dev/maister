@@ -131,6 +131,18 @@ beforeAll(async () => {
     [randomUUID(), fixture.projectId, packageId],
   );
   await database.pool.query(
+    `INSERT INTO capability_imports
+       (id,project_id,capability_ref_id,source,version_tag,resolved_revision,
+        manifest_digest,manifest,installed_path,package_install_id,package_status,trust_status,setup_status)
+     VALUES($1,$2,'writer-bundle','local','v1','consensus-revision','digest','{}',$3,$4,'Installed','trusted','not_required')`,
+    [
+      randomUUID(),
+      fixture.projectId,
+      path.join(installed, "bundle"),
+      packageId,
+    ],
+  );
+  await database.pool.query(
     "INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path,enabled) VALUES('consensus-fixture:writer','consensus-fixture','v1','authored','Writer','owned consensus participant','repo_read','session','[\"flow\"]','read_only',$1,true)",
     [source],
   );

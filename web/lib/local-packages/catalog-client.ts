@@ -19,11 +19,15 @@ const log = pino({
 });
 const hosts = new Set([
   "api.github.com",
+  "skills.sh",
   "registry.modelcontextprotocol.io",
   "registry.npmjs.org",
 ]);
 
-export type CatalogClient = (url: URL) => Promise<unknown>;
+export type CatalogClient = (
+  url: URL,
+  signal?: AbortSignal,
+) => Promise<unknown>;
 
 export class CatalogError extends MaisterError {
   constructor(
@@ -44,7 +48,8 @@ export class CatalogError extends MaisterError {
   }
 }
 
-export const jsonFromCatalog: CatalogClient = async (url) => {
+export const jsonFromCatalog: CatalogClient = async (url, signal) => {
+  signal?.throwIfAborted();
   if (
     url.protocol !== "https:" ||
     !hosts.has(url.hostname) ||
@@ -57,12 +62,14 @@ export const jsonFromCatalog: CatalogClient = async (url) => {
   for (let attempt = 1; ; attempt++) {
     const destination = await resolveAllowedDestination(url.hostname, {});
 
+    signal?.throwIfAborted();
     if (!destination.ok || !destination.addresses?.length)
       throw new CatalogError(
         503,
         "Catalog DNS did not resolve to public addresses",
       );
     const dispatcher = pinnedDispatcher(destination.addresses);
+    const timeout = AbortSignal.timeout(10_000);
 
     try {
       const response = await fetchPublic(url, {
@@ -72,7 +79,7 @@ export const jsonFromCatalog: CatalogClient = async (url) => {
           "user-agent": "MAIster-Studio-Catalog",
         },
         redirect: "manual",
-        signal: AbortSignal.timeout(10000),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       });
 
       if (!response.ok) {
@@ -126,13 +133,17 @@ export const jsonFromCatalog: CatalogClient = async (url) => {
         throw new CatalogError(422, "Catalog returned invalid JSON");
       }
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof CatalogError && error.status !== 503) throw error;
       log.warn({ source: url.hostname, attempt }, "Catalog request failed");
       if (attempt >= 2)
         throw error instanceof CatalogError
           ? error
           : new CatalogError(503, "Catalog source unavailable");
-      await delay(150);
+      await delay(150, undefined, { signal }).catch((error: unknown) => {
+        signal?.throwIfAborted();
+        throw error;
+      });
     } finally {
       await dispatcher.close();
     }

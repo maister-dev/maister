@@ -29,7 +29,7 @@ import {
   assertSafeAgentMaterializationPath,
   materializeWithAgentLease,
 } from "@/lib/agents/materialization-manifest";
-import { atomicWriteText } from "@/lib/atomic";
+import { atomicWriteJson, atomicWriteText } from "@/lib/atomic";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({

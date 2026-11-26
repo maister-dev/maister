@@ -13,7 +13,7 @@ import pino from "pino";
 import { mcpTransportFromMaterial } from "@/lib/capabilities/agent-map";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
-import { executionHosts } from "@/lib/execution-host";
+import { mcpAdminForProject } from "@/lib/mcp/readiness-host";
 
 // ADR-129 (W-F): resolve a probe target's NAMES-only config + enforce the D4
 // web-side PLATFORM trust gate (an untrusted-source platform stdio probe is
@@ -224,10 +224,7 @@ export async function probeAndCache(
   supervisorProbe: (
     req: SupervisorMcpProbeRequest,
   ) => Promise<SupervisorMcpProbeResult> = async (req) =>
-    (process.env.MAISTER_EXECUTION_HOST_PREFERRED_KEY
-      ? await executionHosts.preferred()
-      : executionHosts.local()
-    ).probeMcp(req),
+    (await mcpAdminForProject(projectId)).probeMcp(req),
 ): Promise<SupervisorMcpProbeResult> {
   const database = db(injected);
   const { request, cache } = await resolveProbeTarget(

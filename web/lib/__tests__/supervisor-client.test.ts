@@ -16,8 +16,9 @@ vi.mock("undici", async (importOriginal) => {
   return { ...actual, fetch: vi.fn() };
 });
 
+import { EXECUTION_HOST_KEY_HEADER } from "../../../runtime/execution-host-address";
+
 import {
-  callSupervisorAt,
   checkSupervisorDiagnostics,
   checkSupervisorHealth,
   createSessionEnveloped,
@@ -25,11 +26,11 @@ import {
   listSessions,
   resolveModelSuggestions,
   streamSession,
+  withPinnedSupervisorEndpoint,
   type SupervisorEvent,
   type SupervisorModelCatalogDraft,
 } from "@/lib/supervisor-client";
 import { MaisterError } from "@/lib/errors";
-import * as remoteTls from "@/lib/execution-host/remote-tls";
 
 let fetchSpy: MockInstance<typeof fetch>;
 let undiciFetchSpy: MockInstance<typeof undiciFetch>;
@@ -232,61 +233,34 @@ describe("createSessionEnveloped", () => {
   });
 });
 
-it("reports an unreadable pinned TLS credential as configuration, before an HTTP request", async () => {
-  vi.stubEnv(
-    "MAISTER_EXECUTION_HOST_TLS_CA_FILE",
-    "/no-such-maister-host-ca.pem",
-  );
-  vi.stubEnv(
-    "MAISTER_EXECUTION_HOST_TLS_CERT_FILE",
-    "/no-such-maister-web.pem",
-  );
-  vi.stubEnv("MAISTER_EXECUTION_HOST_TLS_KEY_FILE", "/no-such-maister-web.key");
+it("pins session creation to the selected host identity and rejects redirects", async () => {
+  const endpoint = {
+    url: "https://supervisor.example.invalid",
+    hostKey: "supervisor-secondary",
+  };
 
-  try {
-    const target = "https://supervisor.example.invalid";
-
-    await expect(
-      callSupervisorAt(target, checkSupervisorHealth),
-    ).rejects.toMatchObject({
-      code: "CONFIG",
-      details: {
-        reason: "execution_host_tls_file_unreadable",
-        variable: "MAISTER_EXECUTION_HOST_TLS_CA_FILE",
-      },
-    });
-    await expect(callSupervisorAt(target, listSessions)).rejects.toMatchObject({
-      code: "CONFIG",
-    });
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(undiciFetchSpy).not.toHaveBeenCalled();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
-
-it("configures the assigned HTTPS dispatcher with the session create budget", async () => {
-  const endpoint = "https://supervisor.example.invalid";
-  const dispatcher = new Agent();
-  const selected = vi
-    .spyOn(remoteTls, "assignedTlsDispatcher")
-    .mockReturnValue(dispatcher);
-
-  mockLongLivedOnce(
+  mockOnce(
     new Response(
       JSON.stringify({ sessionId: "s1", pid: 4242, acpSessionId: "a1" }),
       { status: 201 },
     ),
   );
 
-  try {
-    await callSupervisorAt(endpoint, () =>
+  await expect(
+    withPinnedSupervisorEndpoint(endpoint, () =>
       createSessionEnveloped(validEnvelope, { timeoutMs: 60_000 }),
-    );
-    expect(selected).toHaveBeenCalledWith(endpoint, 60_000);
-  } finally {
-    await dispatcher.close();
-  }
+    ),
+  ).resolves.toMatchObject({ sessionId: "s1" });
+  expect(fetchSpy).toHaveBeenCalledWith(
+    endpoint.url + "/sessions",
+    expect.objectContaining({
+      headers: expect.objectContaining({
+        [EXECUTION_HOST_KEY_HEADER]: endpoint.hostKey,
+      }),
+      redirect: "error",
+      signal: expect.any(AbortSignal),
+    }),
+  );
 });
 
 describe("listSessions", () => {

@@ -3282,7 +3282,6 @@ export function memoryExecutionHosts(fake: FakeExecutionHost): ExecutionHosts {
       return { client, admin };
     },
     inventoryForRun: (runId) => admin.listSessionsForRun(runId),
-    preferred: async () => admin,
     local: () => admin,
   };
 }

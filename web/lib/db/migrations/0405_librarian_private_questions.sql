@@ -6,11 +6,11 @@ ALTER TABLE "librarian_cards" ADD COLUMN "question_key" text;--> statement-break
 ALTER TABLE "librarian_cards" ADD COLUMN "question_checkpoint_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "librarian_cards" ADD COLUMN "question_answer" jsonb;--> statement-breakpoint
 ALTER TABLE "librarian_cards" ADD COLUMN "question_delivered_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "librarian_turns" ADD CONSTRAINT "librarian_turns_owner_uq" UNIQUE("id","conversation_id","segment_id");--> statement-breakpoint
 ALTER TABLE "librarian_cards" ADD CONSTRAINT "librarian_cards_question_owner_fk" FOREIGN KEY ("question_turn_id","conversation_id","segment_id") REFERENCES "public"."librarian_turns"("id","conversation_id","segment_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "librarian_cards_question_key_uq" ON "librarian_cards" USING btree ("question_turn_id","question_key") WHERE "librarian_cards"."kind" = 'question';--> statement-breakpoint
 CREATE UNIQUE INDEX "librarian_cards_pending_question_uq" ON "librarian_cards" USING btree ("question_turn_id") WHERE "librarian_cards"."kind" = 'question' AND "librarian_cards"."status" = 'pending';--> statement-breakpoint
 CREATE UNIQUE INDEX "librarian_turns_one_active_uq" ON "librarian_turns" USING btree ("conversation_id") WHERE "librarian_turns"."status" IN ('admitted', 'running', 'awaiting_answer');--> statement-breakpoint
-ALTER TABLE "librarian_turns" ADD CONSTRAINT "librarian_turns_owner_uq" UNIQUE("id","conversation_id","segment_id");--> statement-breakpoint
 ALTER TABLE "librarian_cards" ADD CONSTRAINT "librarian_cards_question_shape_check" CHECK ((
       ("librarian_cards"."kind" <> 'question' AND "librarian_cards"."question_turn_id" IS NULL AND "librarian_cards"."question_key" IS NULL
         AND "librarian_cards"."question_checkpoint_at" IS NULL AND "librarian_cards"."question_answer" IS NULL AND "librarian_cards"."question_delivered_at" IS NULL)

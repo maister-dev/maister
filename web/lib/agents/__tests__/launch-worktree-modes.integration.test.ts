@@ -880,6 +880,36 @@ describe("Addressed agent preparation", () => {
     const ids = await seedPackageWithAgents([
       { stem: "worker", workspace: "worktree" },
     ]);
+    const {
+      rows: [pkg],
+    } = await pool.query<{ id: string; installed_path: string }>(
+      `SELECT i.id, i.installed_path FROM package_installs i
+       JOIN project_package_attachments a ON a.package_install_id = i.id
+       WHERE a.project_id = $1`,
+      [projectId],
+    );
+    const ownBundle = path.join(pkg.installed_path, "capability");
+    const unrelated = path.join(cacheRoot, `shared-${projectId}`);
+    const skill = "skills/review/SKILL.md";
+
+    await mkdir(path.join(ownBundle, "skills/review"), { recursive: true });
+    await mkdir(path.join(unrelated, "skills/review"), { recursive: true });
+    await writeFile(path.join(ownBundle, skill), "Providing package skill");
+    await writeFile(path.join(unrelated, skill), "Unrelated project skill");
+    await pool.query(
+      `UPDATE package_installs SET manifest = $2::jsonb WHERE id = $1`,
+      [pkg.id, JSON.stringify({
+        spec: { capabilities: [{ id: "own-bundle", path: "capability" }] },
+      })],
+    );
+    await pool.query(
+      `INSERT INTO capability_imports
+       (id, project_id, capability_ref_id, source, version_tag, resolved_revision,
+        manifest_digest, manifest, installed_path, package_install_id, package_status, trust_status, setup_status)
+       VALUES ($1,$2,'own-bundle','local','v1','rev','digest','{}',$3,$4,'Installed','trusted','done'),
+              ($5,$2,'other-bundle','local','v1','rev','digest','{}',$6,NULL,'Installed','trusted','done')`,
+      [randomUUID(), projectId, ownBundle, pkg.id, randomUUID(), unrelated],
+    );
     const discovery = vi.spyOn(fake.transport, "capabilities").mockResolvedValue({
       ...readyExecutionHostCapabilities(),
       workspaceProtocol: [1],
@@ -921,6 +951,24 @@ describe("Addressed agent preparation", () => {
         execution_assignment_id: expect.any(String),
         preparation_assignment_id: ownership.rows[0]?.execution_assignment_id,
       })]);
+      const {
+        rows: [capture],
+      } = await pool.query(
+        `SELECT c.files, r.project_agent_profile->'addressedPackageSkills' AS skills
+         FROM workspace_input_captures c
+         JOIN workspaces w ON c.workspace_id = w.id
+         JOIN runs r ON r.id = w.run_id WHERE r.id = $1`,
+        [result.runId],
+      );
+      expect(capture).toMatchObject({
+        files: [
+          {
+            path: `bundles/0/${skill}`,
+            base64: Buffer.from("Providing package skill").toString("base64"),
+          },
+        ],
+        skills: [{ slug: "review", treeDigest: expect.stringMatching(/^[a-f0-9]{64}$/) }],
+      });
       expect(await exec("git", ["-C", repoPath, "worktree", "list", "--porcelain"]))
         .not.toHaveProperty("stdout", expect.stringContaining(result.runId));
     } finally {

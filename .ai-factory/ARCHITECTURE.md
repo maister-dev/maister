@@ -47,8 +47,8 @@ context.
 
 - **Project type:** Next.js control plane with a separate supervisor daemon.
   The default local deployment shares the host filesystem (ADR-023).
-  Pinned remote supervisors use identical operator-mounted workspace paths
-  through the same typed execution-host boundary (ADR-166, ADR-219).
+  Selected supervisors own their workspace generations through the same typed
+  execution-host boundary (ADR-166, ADR-219).
 - **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI
   v3 · Tailwind 4 · Drizzle ORM · Postgres 16 · ACP (Zed-standard) via
   separate `supervisor/` daemon · Node `child_process.spawn` for agent
@@ -58,8 +58,8 @@ context.
   plugin engine, multi-executor (claude + codex), workspace lifecycle,
   ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
   (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
-- **Scale:** one local supervisor by default. With shared workspace paths
-  explicitly enabled, the operator can select a pinned remote host for new assignments. The global cap is
+- **Scale:** one local supervisor by default. Stage C can route new assignments
+  to the selected supervisor or its registered peer. The global cap is
   `MAISTER_MAX_CONCURRENT_RUNS=6`.
 - **Key factors:**
   - ACP is the executor interface — the multi-executor pool is inherent,
@@ -364,17 +364,14 @@ affected editor e2e (`m27-flow-editor.spec.ts` precedent).
   `BoundClient` via `executionHosts.forAssignment(assignment)` (every
   command carries a unique id + the assignment fence and is written to the
   `execution_commands` ledger before the wire call) or a `HostAdminClient`
-  via `executionHosts.local()` or `executionHosts.preferred()`.
+  via `executionHosts.local()` or the paired `executionHosts.executionFor()`.
   `lib/supervisor-client.ts` is the transport behind that boundary.
   `MAISTER_SUPERVISOR_URL` configures loopback by default. Web routes a
-  remote assignment by its pinned host key through private HTTPS with
-  mutual TLS or an operator-managed authenticated tunnel. That host connects
-  to selected HTTP MCP servers and starts selected stdio servers and the
-  bundled remote facade. The operator provisions repository and workspace
-  paths there. General repository
-  and workspace placement remains Stage C, and a checkpoint stays with
-  its original host and workspace. The execution-runtime data plane uses
-  HTTP and SSE. [Operator settings](../docs/configuration.md#assigned-supervisor-mcps)
+  selected assignment by its pinned host key on a trusted network. That host
+  owns checkout and workspace preparation, connects to selected HTTP MCP
+  servers, and starts selected stdio servers and the bundled facade. Checkpoints
+  stay with their original host and workspace. The execution-runtime data plane
+  uses HTTP and SSE. [Operator settings](../docs/configuration.md#assigned-supervisor-mcps)
 - **Live updates:** the supervisor commits redacted events to its private
   SQLite outbox and the manager ingests canonical Postgres rows. Next.js
   `app/api/runs/[id]/stream/route.ts` replays those rows exclusively after

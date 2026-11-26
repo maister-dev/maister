@@ -130,21 +130,23 @@ test("E2E-CAP-06 delivers a designer's human answer and keeps its MCP out of a c
 
   expect(codingInventory).toEqual(expect.any(Array));
   expect(codingInventory).not.toContain(fx.mcp);
-  const proof = await singleValue(
-    `SELECT json_build_object('attemptId',h.flow_node_attempt_id,'deliveredAt',h.responded_at,
-       'hostId',s.execution_host_id,'acpId',s.acp_session_id) AS value
-       FROM hitl_requests h JOIN run_session_incarnations s
-       ON s.run_id=h.run_id AND s.id=h.schema->'flowQuestion'->>'incarnationId'
-       WHERE h.id=$1 AND s.acp_session_id IS NOT NULL`,
-    [questionId],
-  );
+  const readDeliveryProof = () =>
+    singleValue(
+      `SELECT json_build_object('attemptId',h.flow_node_attempt_id,'deliveredAt',h.responded_at,
+         'hostId',s.execution_host_id,'acpId',s.acp_session_id) AS value
+         FROM hitl_requests h JOIN run_session_incarnations s
+         ON s.run_id=h.run_id AND s.id=h.schema->'flowQuestion'->>'incarnationId'
+         WHERE h.id=$1 AND s.acp_session_id IS NOT NULL`,
+      [questionId],
+    );
 
-  expect(proof).toMatchObject({
+  await expect.poll(readDeliveryProof, { timeout: 30_000 }).toMatchObject({
     attemptId: expect.any(String),
     deliveredAt: expect.any(String),
     hostId: expect.any(String),
     acpId: expect.any(String),
   });
+  const proof = await readDeliveryProof();
   const agentApi =
     "/api/projects/" +
     fx.project.projectSlug +

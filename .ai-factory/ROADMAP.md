@@ -866,10 +866,10 @@
 | M51. See everything: team visibility and personal librarian                  | 2026-09-28 |
 
 [Reviewed Studio catalog imports](../docs/decisions/adr-221.md) and
-[per-session package capabilities](../docs/decisions/adr-218.md) shipped
-without a separate milestone. The same delivery adds
-[pinned shared-workspace transport](../docs/decisions/adr-219.md) and
-[Flow node questions](../docs/decisions/adr-220.md).
+[per-session package capabilities](../docs/decisions/adr-222.md) share a
+[branch acceptance plan](plans/feature-studio-catalog-imports.md) without a separate
+milestone. The plan also covers [assigned-supervisor MCP preparation](../docs/decisions/adr-223.md)
+and [Flow node questions](../docs/decisions/adr-220.md).
 
 ## Backlog (untriaged deferred work)
 

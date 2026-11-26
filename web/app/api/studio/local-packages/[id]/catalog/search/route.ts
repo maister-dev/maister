@@ -21,8 +21,10 @@ export async function GET(
       Object.fromEntries(req.nextUrl.searchParams),
     );
 
-    return NextResponse.json(await searchCatalog(query));
+    return NextResponse.json(await searchCatalog(query, undefined, req.signal));
   } catch (error) {
+    if (req.signal.aborted) return new NextResponse(null, { status: 204 });
+
     return catalogResponse(error);
   }
 }

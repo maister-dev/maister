@@ -192,7 +192,15 @@ paths:
     get:
       operationId: searchDraftCatalog
       summary: Search approved catalog sources for this editable draft
-      description: Active global member role and an active draft are required. Project-owned drafts additionally require editSettings.
+      description: |
+        Active global member role and an active draft are required. Project-owned
+        drafts additionally require editSettings. Skill searches include public
+        GitHub-backed skills.sh listings. Pass the opaque resultId to preview.
+        Omit scope for the aggregate search. Skill clients can query skills.sh
+        and configured repositories separately and display each source as it
+        completes. A scoped request returns source states even if every source
+        in that scope failed. The same canonicalSkillId identifies the same
+        verified GitHub skill across sources.
       security:
         - sessionCookie: []
       parameters:
@@ -218,9 +226,17 @@ paths:
             type: string
             minLength: 1
             maxLength: 256
+        - name: scope
+          in: query
+          required: false
+          description: Search only the specified provider group. Requires kind=skill.
+          schema:
+            type: string
+            enum: [skills.sh, repositories]
         - name: cursor
           in: query
           required: false
+          description: Opaque continuation for the same MCP search.
           schema:
             type: string
             minLength: 1
@@ -272,6 +288,11 @@ paths:
                           enum:
                             - skill
                             - mcp
+                        canonicalSkillId:
+                          type: string
+                          minLength: 1
+                          pattern: '^[a-z0-9._-]+/[a-z0-9._-]+/[a-z0-9][a-z0-9._-]{0,127}$'
+                          description: Verified owner/repository/skill identity for presentation deduplication.
                   sources:
                     type: array
                     items:
@@ -291,6 +312,10 @@ paths:
                             - available
                             - rate_limited
                             - unavailable
+                        reason:
+                          type: string
+                          enum: [catalog_identity_unavailable]
+                          description: The public source could not confirm the exact pasted skill identity.
                   nextCursor:
                     type: string
                     minLength: 1
@@ -321,7 +346,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "429":
-          description: All sources are rate limited. Retry after the indicated number of seconds.
+          description: All sources in the aggregate request are rate limited. Retry after the indicated number of seconds.
           headers:
             Retry-After: {schema: {type: string, enum: ["60"]}}
           content:
@@ -329,7 +354,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
         "503":
-          description: Upstream unavailable
+          description: Invalid source configuration, or all sources in the aggregate request failed and at least one is unavailable.
           content:
             application/json:
               schema:
@@ -342,7 +367,10 @@ paths:
         Requires catalog search permission and the authenticated editor's
         current draft edit session. Preview resolves approved sources and
         binds the exact pin, destination and draft base to the editor and
-        draft. MCP previews list compatible adapters for the transport. Launch
+        draft. The skills.sh identity must select exactly one declared skill in
+        the pinned public GitHub commit. Update from source resolves the
+        retained identity independently of text search ranking.
+        MCP previews list compatible adapters for the transport. Launch
         checks runner readiness and host approval. Typed catalog failures
         expose `StudioCatalogFailureDetails` when available.
       security:
@@ -37774,6 +37802,7 @@ components:
           enum:
             - approval_revoked
             - upstream_access_denied
+            - catalog_identity_unavailable
             - preview_limit_reached
             - remote_requirements_unsupported
             - distribution_requirements_unsupported
@@ -41357,7 +41386,7 @@ components:
           required: [id, state, question, schema, answer]
           properties:
             id: {type: string}
-            state: {type: string, enum: [checkpoint_pending, open, accepted, delivered, closed]}
+            state: {type: string, enum: [open, accepted, delivered, closed]}
             question: {type: string}
             schema: {type: object, description: Version-one MAIster form grammar.}
             answer: {type: object, nullable: true, additionalProperties: true}

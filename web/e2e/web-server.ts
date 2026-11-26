@@ -32,7 +32,7 @@ let web = await startRealWeb({
   authSecret: process.env.AUTH_SECRET,
   env: {
     HOME: path.join(worktreesRoot, ".fixture-home"),
-  ...(process.env.MAISTER_E2E_CATALOG_FIXTURE === "1" && {
+    ...(process.env.MAISTER_E2E_CATALOG_FIXTURE === "1" && {
       NODE_OPTIONS: [
         process.env.NODE_OPTIONS,
         `--import=${new URL("./_seed/catalog-upstream.mjs", import.meta.url).href}`,
@@ -41,8 +41,13 @@ let web = await startRealWeb({
         .join(" "),
       MAISTER_STUDIO_CATALOG_REPOS: JSON.stringify([
         { id: "fixture-skills", repo: "fixture/catalog-skills", kind: "skill" },
+        {
+          id: "indexed-fixture-skills",
+          repo: "catalog-author/checkout-skills",
+          kind: "skill",
+        },
       ]),
-  }),
+    }),
   },
   logFile: path.join(invocation.directory, "e2e-web.log"),
 });

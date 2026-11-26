@@ -664,9 +664,9 @@ mAIster/
   at adoption with `PRECONDITION workspace_rejected`. Mirror both in
   `supervisor/.env`.
 - **Using a separate supervisor host** — configure each host key, private ingress,
-  permitted workspace roots, workload web origin and approved npm cache. Provision
-  the selected repository/workspace at its registered path on the assigned host
-  before adoption. [Assigned supervisor MCPs](configuration.md#assigned-supervisor-mcps)
+  permitted workspace roots, approved Git sources and Git credentials. The selected
+  supervisor prepares and owns the workspace. Configure the Web origin and reviewed
+  npm MCP approvals on that host. [Assigned supervisor MCPs](configuration.md#assigned-supervisor-mcps)
 - **Copying `.maister/execution-host/` between machines** (ADR-166) — a
   `MAISTER_EXECUTION_HOST_KEY` pin that differs from the copied
   `state.sqlite` refuses boot. Unset the pin or wipe the directory; never

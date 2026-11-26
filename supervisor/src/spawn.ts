@@ -220,6 +220,7 @@ export async function spawnSession(
         sessionId,
         agent: request.executor.agent,
         adapter: adapterRuntime.id,
+        addressedPackageSkillCount: request.addressedPackageSkills?.length,
         binary,
         binarySource: binaryResolution.source,
         binaryOverrideEnv: binaryResolution.overrideEnv ?? null,

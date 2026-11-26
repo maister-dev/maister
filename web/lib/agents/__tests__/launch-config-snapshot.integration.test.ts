@@ -2,8 +2,8 @@
 // onto runs.agent_config. The prompt injection reads THAT snapshot, never
 // re-resolving from the (mutable) agent_project_links.config — so mutating the
 // instance config AFTER spawn changes neither the snapshot nor the injected
-// block. Driven end-to-end through launchAgentRun with tryStartRun stubbed (no
-// supervisor session spawns) against a real Postgres.
+// block. Driven through launchAgentRun against real Postgres, with allocated
+// starts deferred so reservations can be inspected before supervisor dispatch.
 
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -35,14 +35,9 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-vi.mock("@/lib/scheduler", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
-
-  return {
-    ...actual,
-    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
-  };
-});
+vi.mock("@/lib/scheduler/start-allocated-run", () => ({
+  startAllocatedRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
+}));
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;

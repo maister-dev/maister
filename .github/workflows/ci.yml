@@ -171,8 +171,13 @@ jobs:
           cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maister-web exec playwright install --with-deps chromium
-      - name: Catalog authoring and adoption in two projects
-        run: pnpm --filter maister-web test:e2e --project=authed e2e/studio-local-edit.spec.ts --grep E2E-CAT-02
+      - name: Catalog adoption, project persona and Librarian keyboard acceptance
+        run: >-
+          pnpm --filter maister-web test:e2e --project=authed
+          e2e/studio-local-edit.spec.ts
+          e2e/platform-agents-operational.spec.ts
+          e2e/librarian-panel.spec.ts
+          --grep 'E2E-CAT-02|E2E-CAP-05|E2E-ASK-02-KEYBOARD'
       - name: Scoped package delivery and Inbox continuation
         run: pnpm --filter maister-web test:e2e:studio-catalog
 

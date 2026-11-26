@@ -22,8 +22,16 @@ import {
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
+import {
+  declareExecutionHostRegistryWriter,
+  insertLocalHost,
+  retireHost,
+} from "@/lib/execution-host/hosts";
 import { mintPlacement } from "@/lib/execution-host/placement";
-import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
+import {
+  ensureAdditionalExecutionHost,
+  resetRegistrarStateForTests,
+} from "@/lib/execution-host/registrar";
 import {
   localHost,
   resetResolverForTests,
@@ -33,7 +41,6 @@ import { runReconcileSweep } from "@/lib/reconcile";
 import { teardownLiveSessionsForRuns } from "@/lib/runs/session-teardown";
 import { markAbandoned } from "@/lib/runs/state-transitions";
 import {
-  seedLocalHost,
   seedLocalPackage,
   seedProjectRow,
   seedRun,
@@ -92,26 +99,31 @@ async function withFakeLocalHost<T>(
   fake: FakeExecutionHost,
   fn: (fakeHost: { id: string; hostKey: string }) => Promise<T>,
 ): Promise<T> {
-  await db
-    .update(executionHosts)
-    .set({ retiredAt: new Date() })
-    .where(eq(executionHosts.id, hostId));
-  const fakeHost = await seedLocalHost(testDatabase.db, {
-    hostKey: fake.identity.hostKey,
-    bootId: fake.identity.bootId,
+  const fakeHost = await db.transaction(async (tx) => {
+    await retireHost(tx, hostId);
+
+    return insertLocalHost(tx, {
+      hostKey: fake.identity.hostKey,
+      bootId: fake.identity.bootId,
+      capabilities: {
+        protocolVersion: 1,
+        supervisorVersion: "test",
+        adapters: [],
+      },
+    });
   });
 
   try {
     return await fn(fakeHost);
   } finally {
-    await db
-      .update(executionHosts)
-      .set({ retiredAt: new Date() })
-      .where(eq(executionHosts.id, fakeHost.id));
-    await db
-      .update(executionHosts)
-      .set({ retiredAt: null })
-      .where(eq(executionHosts.id, hostId));
+    await db.transaction(async (tx) => {
+      await retireHost(tx, fakeHost.id);
+      await declareExecutionHostRegistryWriter(tx);
+      await tx
+        .update(executionHosts)
+        .set({ retiredAt: null })
+        .where(eq(executionHosts.id, hostId));
+    });
     resetResolverForTests();
   }
 }
@@ -173,15 +185,34 @@ describe("workspace adoption (real supervisor)", () => {
     const remote = await startRealSupervisor({
       workspaceRoots: [sup.runtimeRoot],
       fixtureArgs: ["--hang"],
-      env: { MAISTER_EXECUTION_HOST_KEY: hostKey },
+      env: {
+        MAISTER_EXECUTION_HOST_KEY: hostKey,
+        MAISTER_WORKSPACE_DIRECTORIES: JSON.stringify({
+          qualification: sup.runtimeRoot,
+        }),
+      },
     });
 
     try {
-      vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", hostKey);
-      vi.stubEnv("MAISTER_EXECUTION_HOST_SHARED_WORKSPACE", "1");
+      const health = await createLocalDirectTransport().health({
+        timeoutMs: 1_000,
+      });
+
+      if (health.kind !== "ready" || !health.identity)
+        throw new Error("Primary fixture has no ready identity");
       vi.stubEnv(
-        "MAISTER_EXECUTION_HOST_ENDPOINTS",
-        JSON.stringify({ [hostKey]: remote.url }),
+        "MAISTER_SELECTED_EXECUTION_HOST_KEY",
+        health.identity.hostKey,
+      );
+      const endpoint = {
+        hostKey,
+        url: remote.url,
+        displayName: "Adoption peer",
+      };
+
+      vi.stubEnv(
+        "MAISTER_ADDITIONAL_EXECUTION_HOSTS",
+        JSON.stringify([endpoint]),
       );
       const runId = await seedRun(testDatabase.db, {
         projectId: project.id,
@@ -199,25 +230,11 @@ describe("workspace adoption (real supervisor)", () => {
         worktreePath,
         parentRepoPath: project.repoPath,
       });
-      const fetchSpy = vi.spyOn(globalThis, "fetch");
-      let host: Awaited<ReturnType<typeof localHost>>;
+      const result = await ensureAdditionalExecutionHost(endpoint, { db });
 
-      try {
-        const [selected, concurrent] = await Promise.all([
-          localHost({ db }),
-          localHost({ db }),
-        ]);
-
-        expect(concurrent.id).toBe(selected.id);
-        expect(
-          fetchSpy.mock.calls.filter(([url]) =>
-            String(url).startsWith(`${remote.url}/health?`),
-          ),
-        ).toHaveLength(1);
-        host = selected;
-      } finally {
-        fetchSpy.mockRestore();
-      }
+      if (result.status !== "registered")
+        throw new Error("Peer was not registered");
+      const host = result.host;
       const boundHosts = createExecutionHosts({ db });
       const assignment = await db.transaction((tx) =>
         mintPlacement(tx, { runId, reason: "launch", host }),
@@ -226,7 +243,7 @@ describe("workspace adoption (real supervisor)", () => {
       const workspace = await client.ensureWorkspace();
       const session = await client.createSession(CREATE_PAYLOAD);
 
-      expect(host.kind).toBe("remote_direct");
+      expect(host.transport.role).toBe("secondary");
       expect(workspace).toMatch(/^ws_[0-9a-f]{32}$/);
       expect(await boundHosts.local().listSessionsForRun(runId)).toEqual([]);
       expect(await client.sessionsForRun()).toEqual([
@@ -235,8 +252,6 @@ describe("workspace adoption (real supervisor)", () => {
           sessionId: session.sessionId,
         }),
       ]);
-      // Removing the placement preference does not change the current assignment.
-      vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", undefined);
       vi.spyOn(boundHosts.local(), "listSessions").mockRejectedValue(
         new MaisterError("EXECUTOR_UNAVAILABLE", "fixture loopback outage"),
       );
@@ -246,7 +261,8 @@ describe("workspace adoption (real supervisor)", () => {
         runFlow: vi.fn(),
       });
 
-      expect(activeSweep).toMatchObject({ candidates: 1, crashed: 0 });
+      // Legacy worktree reconciliation waits for the primary inventory.
+      expect(activeSweep).toMatchObject({ candidates: 0, crashed: 0 });
       await teardownLiveSessionsForRuns([runId], {
         logLabel: "shared-worktree test",
         executionHosts: boundHosts,

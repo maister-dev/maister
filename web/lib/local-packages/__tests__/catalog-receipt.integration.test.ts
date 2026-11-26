@@ -172,6 +172,11 @@ it("IT-CAT-03 returns a durable owner-bound pending receipt during an actual HTT
     ok: true,
     addresses: [{ address: "192.0.2.10", family: 4 }],
   });
+  const blobPath = repo + "/git/blobs/" + blob;
+  const skillBlob = {
+    encoding: "base64",
+    content: Buffer.from(skill).toString("base64"),
+  };
   const upstream = [
     githubReply(repo + "/commits/HEAD", {
       sha: pin,
@@ -189,12 +194,12 @@ it("IT-CAT-03 returns a durable owner-bound pending receipt during an actual HTT
         },
       ],
     }),
-    githubReply(repo + "/git/blobs/" + blob, {
-      encoding: "base64",
-      content: Buffer.from(skill).toString("base64"),
-    }),
+    githubReply(blobPath, skillBlob),
+    githubReply(blobPath, skillBlob),
   ];
-  const search = await fetch(address + "/search?kind=skill&q=design");
+  const search = await fetch(
+    address + "/search?kind=skill&q=design&scope=repositories",
+  );
 
   expect(search.status).toBe(200);
   expect(await search.json()).toMatchObject({
@@ -202,7 +207,9 @@ it("IT-CAT-03 returns a durable owner-bound pending receipt during an actual HTT
   });
   const previewResponse = await previewPost("editor");
 
-  expect(previewResponse.status).toBe(200);
+  expect(previewResponse.status, await previewResponse.clone().text()).toBe(
+    200,
+  );
   const preview = await previewResponse.json();
 
   expect(preview).toMatchObject({

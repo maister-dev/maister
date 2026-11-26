@@ -11,7 +11,8 @@ const fetch = undici.fetch;
 const github = "api.github.com";
 const registry = "registry.modelcontextprotocol.io";
 const npm = "registry.npmjs.org";
-const hosts = new Set([github, registry, npm]);
+const skillsSh = "skills.sh";
+const hosts = new Set([github, registry, npm, skillsSh]);
 const isolatedCacheRoot = process.env.MAISTER_E2E_CATALOG_HOME;
 
 if (isolatedCacheRoot) {
@@ -20,6 +21,7 @@ if (isolatedCacheRoot) {
   os.homedir = () => isolatedCacheRoot;
 }
 const repo = "/repos/fixture/catalog-skills";
+const indexedRepo = "catalog-author/checkout-skills";
 const commit = "a".repeat(40);
 const tree = "b".repeat(40);
 const packageName = "maister-e2e-design-mcp";
@@ -35,6 +37,7 @@ const paths = new Map(
 );
 
 paths.set("skills/design/companion.md", "Fixture journey");
+paths.set("skills/unavailable/companion.md", "Unavailable fixture companion");
 const blobs = new Map();
 const entries = Array.from(paths, ([path, content]) => {
   const bytes = Buffer.from(content);
@@ -46,15 +49,40 @@ const entries = Array.from(paths, ([path, content]) => {
 });
 
 function fixtureReply(url) {
+  if (url.hostname === skillsSh && url.pathname === "/api/search") {
+    if (url.searchParams.get("q") === "unavailable")
+      return undici.Response.json({ message: "Fixture rate limit" }, { status: 429 });
+    const skills = url.searchParams.get("q") === "design" ? [{
+      id: `${indexedRepo}/design`, source: indexedRepo, skillId: "design", name: "design",
+    }] : [];
+
+    return undici.Response.json({ skills });
+  }
+  if (url.hostname === skillsSh && url.pathname === `/api/download/${indexedRepo}/design`) {
+    const contents = paths.get("skills/design/SKILL.md");
+
+    return undici.Response.json({
+      files: [{ path: "SKILL.md", contents }],
+      hash: createHash("sha256").update(contents).digest("hex"),
+    });
+  }
   if (url.hostname === github) {
-    if (url.pathname === `${repo}/commits/HEAD`)
+    const fromIndex = url.pathname.startsWith(`/repos/${indexedRepo}/`);
+    const upstreamRepo = fromIndex ? `/repos/${indexedRepo}` : repo;
+
+    if (url.pathname === `${upstreamRepo}/commits/HEAD`)
       return undici.Response.json({ sha: commit, commit: { tree: { sha: tree } } });
-    if (url.pathname === `${repo}/git/trees/${tree}` && url.searchParams.get("recursive") === "1")
-      return undici.Response.json({ tree: entries, truncated: false });
-    if (url.pathname.startsWith(`${repo}/git/blobs/`)) {
+    if (url.pathname === `${upstreamRepo}/git/trees/${tree}` && url.searchParams.get("recursive") === "1")
+      return undici.Response.json({
+        tree: fromIndex ? entries.filter(({ path }) => path.startsWith("skills/design/")).map((entry) => ({
+          ...entry, path: entry.path.replace(/^skills\/design\//, "skills/library/design-workflow/"),
+        })) : entries,
+        truncated: false,
+      });
+    if (url.pathname.startsWith(`${upstreamRepo}/git/blobs/`)) {
       const blob = blobs.get(url.pathname.split("/").at(-1));
 
-      if (blob && blob.path !== "skills/unavailable/SKILL.md") return undici.Response.json(blob);
+      if (blob && blob.path !== "skills/unavailable/companion.md") return undici.Response.json(blob);
 
       return undici.Response.json({ message: "Unknown fixture blob" }, { status: 404 });
     }

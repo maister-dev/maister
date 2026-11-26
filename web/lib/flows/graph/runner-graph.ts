@@ -30,7 +30,10 @@ import type { FlowDriverClaim } from "./driver-claim";
 import type { EmitWebhookEventInput } from "@/lib/webhooks/outbox";
 import type { RunDomainEventScope } from "@/lib/domain-events/outbox";
 import type { SupervisorDiagnosticsStatus } from "@/lib/execution-host";
-import type { PackageSkillView } from "../../../../runtime/package-skill-tree";
+import type {
+  AddressedPackageSkill,
+  PackageSkillView,
+} from "../../../../runtime/package-skill-tree";
 
 import { randomUUID } from "node:crypto";
 import { readFile, stat, unlink } from "node:fs/promises";
@@ -182,7 +185,10 @@ import {
 } from "@/lib/worktree-provenance";
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
 import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
-import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
+import {
+  assertRequiredMcpServers,
+  gateAndOverlayMcpServers,
+} from "@/lib/mcp/materialization-gate";
 import { resolveCurrentPackageSessionCatalog } from "@/lib/capabilities/session-package-catalog";
 import {
   materializePackageSessionSkills,
@@ -309,10 +315,6 @@ import {
   type MaisterErrorCode,
 } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
-import {
-  acpContextFailureReason,
-  type AcpContextFailureReason,
-} from "../../../../runtime/acp-context-failure";
 import { WORKSPACE_GIT_CHECKPOINT_PREFIX } from "../../../../runtime/workspace-prepare";
 
 import { nodeAttempts } from "@/lib/db/schema";
@@ -1625,6 +1627,7 @@ async function executeNodeAction(
     // work that outlives this traversal — a coordinator's child dispatch.
     rootDb: Db;
     packageSkillView?: PackageSkillView;
+    addressedPackageSkills?: readonly AddressedPackageSkill[];
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
     capabilityContent?: CapabilityBundleContent;
@@ -1909,6 +1912,7 @@ async function executeNodeAction(
             },
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
             packageSkillView: ctx.packageSkillView,
+            addressedPackageSkills: ctx.addressedPackageSkills,
             capabilityProfilePath: ctx.capabilityProfilePath,
             capabilityInstructionsPath: ctx.capabilityInstructionsPath,
             capabilityContent: ctx.capabilityContent,
@@ -2201,6 +2205,7 @@ async function findLatestRespondedHitl(
 // materialization ledger (that is T4.2).
 type MaterializedNodeCapabilities = {
   packageSkillView?: PackageSkillView;
+  addressedPackageSkills?: readonly AddressedPackageSkill[];
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   capabilityContent?: CapabilityBundleContent;
@@ -2363,7 +2368,7 @@ async function materializeNodeCapabilities(
   });
 
   const capabilityArgs = {
-    scopedSession: scoped ? true : undefined,
+    scopedSession: scoped ? (true as const) : undefined,
     runId: loaded.run.id,
     profile,
     nodeAttemptId,
@@ -2415,14 +2420,7 @@ async function materializeNodeCapabilities(
     adapter: agent,
   });
 
-  if (scoped)
-    for (const ref of required) {
-      if (!mcpServers.some((server) => server.name === ref))
-        throw new MaisterError(
-          "PRECONDITION",
-          `Required MCP ${ref} was withheld by the current transport or trust gate`,
-        );
-    }
+  if (scoped) assertRequiredMcpServers(required, mcpServers, withheldMcps);
   if (overlaidRefs.length > 0) {
     logger.debug(
       { nodeId: node.id, overlaidRefs },
@@ -2514,6 +2512,14 @@ async function materializeNodeCapabilities(
 
   return {
     packageSkillView: scoped && worktreePath && "settingsLocalPath" in m ? await witnessPackageSkillView(worktreePath, loaded.run.id, nodeAttemptId, m.settingsLocalPath) : undefined,
+    addressedPackageSkills: addressed && scoped
+      ? scoped.skills.map(({ slug, digest }) => {
+          if (!digest)
+            throw new MaisterError("PRECONDITION", `Addressed skill ${slug} has no captured tree digest`);
+
+          return { slug, treeDigest: digest };
+        })
+      : undefined,
     ...("capabilityContent" in m
       ? {
           capabilityContent: m.capabilityContent,
@@ -4358,6 +4364,7 @@ export async function runGraph(
               bindExecution: ensureExecution,
               rootDb,
               packageSkillView: materialized?.packageSkillView,
+              addressedPackageSkills: materialized?.addressedPackageSkills,
               capabilityProfilePath: materialized?.capabilityProfilePath,
               capabilityInstructionsPath:
                 materialized?.capabilityInstructionsPath,

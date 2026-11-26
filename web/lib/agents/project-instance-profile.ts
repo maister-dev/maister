@@ -11,6 +11,9 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
+import { ADDRESSED_PACKAGE_SKILL_SLUG } from "../../../runtime/package-skill-tree";
+import { WORKSPACE_INPUT_MAX_FILES } from "../../../runtime/workspace-input-policy";
+
 import { resolveEffectiveAgentDefinition } from "./effective";
 
 import {
@@ -76,6 +79,17 @@ export const projectAgentProfileSnapshotSchema = z
     promptSha256: z.string().regex(/^[a-f0-9]{64}$/),
     promptOrigin: z.enum(["package", "project"]),
     packageMcpRefs: z.array(capabilityRefIdSchema),
+    addressedPackageSkills: z
+      .array(
+        z
+          .object({
+            slug: z.string().max(128).regex(ADDRESSED_PACKAGE_SKILL_SLUG),
+            treeDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .strict(),
+      )
+      .max(WORKSPACE_INPUT_MAX_FILES)
+      .optional(),
     mcpTargets: z.array(mcpTargetSchema),
     additionalMcpRefs: additionalMcpRefsSchema,
     sharedMcps: z.array(

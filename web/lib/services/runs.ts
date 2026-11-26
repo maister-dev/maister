@@ -2101,6 +2101,7 @@ async function* executeFlowLaunch(
               runId,
               intentId: accepted?.intent.id,
               acceptedBundles: accepted?.settings.capabilityBundles,
+              delivery: resolvedCapabilitySet.delivery,
             }),
           ]
         : [];

@@ -21,17 +21,18 @@ supported.
 
 ## Studio package delivery, project agent profiles and human questions
 
-Apply main-line migrations 0369–0375 before starting the new writers. Historical rows use the previous read path when the new fields are absent.
+Apply main-line migrations 0402–0409 before starting the new writers. Historical rows use the previous read path when the new fields are absent.
 
 | Migration | Durable state and ownership |
 | --- | --- |
-| 0369 | `project_package_attachments.scope_revision` starts at 1. A row in `project_package_mcp_scope_overrides` selects package or project scope for one attachment and logical ref. Reset deletes the row. Detach cascades. |
-| 0370 | `agent_project_links.prompt_override` holds nonblank local persona text, up to 65,536 characters. Null inherits the package prompt. The primary key of `agent_project_mcp_additions` prevents duplicate refs on a link. Detach cascades. `runs.project_agent_profile` retains the admitted standalone profile for retry. |
-| 0371 | Existing host and command checks admit `remote_direct` and `mcp.prepare`. Assignment, epoch and operation evidence stay on the execution ledgers. The execution host stores the installed artifact bytes. |
-| 0372 | A private question card references the exact turn, conversation and segment through a composite foreign key. A unique request key and a partial unique index allow replay and one pending question per turn. The accepted answer and delivery timestamp distinguish submission from continuation. |
-| 0373 | A Flow question references its Run and node attempt together. A partial unique index admits one question per attempt and prompt ordinal. Separate fields record the accepted answer and its responder. The action resume record links to the checkpoint, source command, incarnation and assignment. |
-| 0374 | An undelivered Flow node question can close with `superseded_at` and empty successor fields. The accepted answer, if any, remains immutable. Task questions and permission continuation retain their existing successor checks. |
-| 0375 | `project_package_mcp_scope_overrides.ref_id` gains the same safe segment check used by agent instance MCP additions. |
+| 0402 | `project_package_attachments.scope_revision` starts at 1. A row in `project_package_mcp_scope_overrides` selects package or project scope for one attachment and logical ref. Reset deletes the row. Detach cascades. |
+| 0403 | `agent_project_links.prompt_override` holds nonblank local persona text, up to 65,536 characters. Null inherits the package prompt. The primary key of `agent_project_mcp_additions` prevents duplicate refs on a link. Detach cascades. `runs.project_agent_profile` retains the admitted standalone profile for retry. |
+| 0404 | `execution_commands_kind_check` adds `mcp.prepare` alongside the existing Stage C command kinds. The stable host kind and role constraints stay unchanged. The ledger retains assignment, epoch and operation evidence. The assigned supervisor stores the installed artifact bytes. |
+| 0405 | A private question card references the exact turn, conversation and segment through a composite foreign key. A unique request key and a partial unique index allow replay and one pending question per turn. The accepted answer and delivery timestamp distinguish submission from continuation. |
+| 0406 | A Flow question references its Run and node attempt together. A partial unique index admits one question per attempt and prompt ordinal. Separate fields record the accepted answer and its responder. The action resume record links to the checkpoint, source command, incarnation and assignment. |
+| 0407 | An undelivered Flow node question can close with `superseded_at` and empty successor fields. The accepted answer, if any, remains immutable. Task questions and permission continuation retain their existing successor checks. |
+| 0408 | `project_package_mcp_scope_overrides.ref_id` gains the same safe segment check used by agent instance MCP additions. |
+| 0409 | Committed changes to the Flow prompt, session incarnation or question authority wake Web processes through PostgreSQL notifications. The receiver rechecks the durable Run and attempt under lock. No persisted question columns change. |
 
 Adopting an earlier package revision changes the attachment for future executions. Existing Run inventory, retry snapshots and retained questions keep their captured owners and pins. Deployment rollback must retain these columns and stop new writers before running readers that predate the new question and command kinds.
 
@@ -808,13 +809,13 @@ Multi-flow package grouping above the per-revision substrate. Process contract:
   `project_id` (FK cascade), `package_install_id` (FK restrict),
   `package_name` (denormalized), `attached_at`. UNIQUE
   `(project_id, package_name)` — one attached version of a package per
-  project. Migration `0369` adds `scope_revision` (integer, NOT NULL,
+  project. Migration `0402` adds `scope_revision` (integer, NOT NULL,
   default `1`) for compare-and-swap edits of MCP scope.
-- **`project_package_mcp_scope_overrides`** (`0369`) — sparse override keyed
+- **`project_package_mcp_scope_overrides`** (`0402`) — sparse override keyed
   by `(attachment_id, ref_id)`. `attachment_id` cascades from the stable
   attachment. `scope` is required and checked against `package|project`.
   `ref_id` is required text and must be a safe segment of 1–128 characters
-  (`0375`). The service checks that the logical ref belongs to the attached
+  (`0408`). The service checks that the logical ref belongs to the attached
   release. Deleting the row restores the release default.
 - **FK group links** — `flows.package_install_id` and
   `capability_imports.package_install_id` (both nullable): membership of a row
@@ -1142,7 +1143,7 @@ agent_project_links {
   agentId,                         // FK -> agents.id CASCADE
   projectId,                       // FK -> projects.id CASCADE
   enabled,
-  promptOverride?,                 // (0370) NULL inherits the package persona;
+  promptOverride?,                 // (0403) NULL inherits the package persona;
                                    // nonblank and at most 65,536 characters
   runnerOverrideId?,               // FK -> platform_acp_runners.id SET NULL;
                                    //   tier 2 of the standalone runner chain
@@ -1224,7 +1225,7 @@ authored_capabilities {
   createdAt, updatedAt
 }
 
-agent_project_mcp_additions {      // (0370)
+agent_project_mcp_additions {      // (0403)
   linkId,                          // FK -> agent_project_links.id CASCADE
   refId                            // required safe path segment, 1–128 chars
                                    // PRIMARY KEY (linkId, refId)
@@ -2212,7 +2213,7 @@ ALTER TABLE domain_events ADD CONSTRAINT domain_events_kind_check CHECK (kind IN
   lacks `run.review_opened` and `run.needs_input`) and is corrected in the same
   change.
 
-### `0372_librarian_private_questions` (Implemented)
+### `0405_librarian_private_questions` (Implemented)
 
 - `librarian_turns` admits `awaiting_answer`, which joins `admitted` and
   `running` in `librarian_turns_one_active_uq` on `conversation_id`. The
@@ -2394,7 +2395,7 @@ CREATE TABLE librarian_segment_summaries (
                                  //   effective workspace axis at spawn;
                                  //   terminal L3 enforcement gates off this,
                                  //   not the mutable catalog index
-  projectAgentProfile?,          // (0370) nullable jsonb with the admitted
+  projectAgentProfile?,          // (0403) nullable jsonb with the admitted
                                  //   standalone persona and MCP profile
   taskId?,                       // nullable for scratch runs
   projectId?,                    // (migration 0059): NULLABLE — NULL for the
@@ -4335,7 +4336,7 @@ survive.
   id, runId, stepId,
   kind: 'permission' | 'form' | 'human' | 'infra_recovery' | 'budget_breach'
             | 'hook_trip'         // 'hook_trip' Designed — ADR-108 (migration 0066)
-            | 'agent_question',   // includes Flow node questions (0373–0374)
+            | 'agent_question',   // includes Flow node questions (0406–0407)
   schema (jsonb)?,               // form_schema with required schemaVersion
                                  // OR permission descriptor:
                                  //   { requestId, options, toolCall,
@@ -4362,7 +4363,7 @@ survive.
 }
 ```
 
-Ordinary Flow node questions (`0373–0374`) use the composite FK
+Ordinary Flow node questions (`0406–0407`) use the composite FK
 `(run_id, flow_node_attempt_id) → node_attempts(run_id, id) ON DELETE CASCADE`.
 The responder FK `flow_answer_user_id → users(id)` uses `ON DELETE RESTRICT`.
 The partial unique index `hitl_flow_question_turn_uq` covers

@@ -438,7 +438,7 @@ the first attempt hits it and reads the existing result, and reconciling an
 
 ## Private questions
 
-Migration `0372_librarian_private_questions` adds the unique turn target
+Migration `0405_librarian_private_questions` adds the unique turn target
 `(id, conversation_id, segment_id)` and the card FK `(question_turn_id,
 conversation_id, segment_id)` with `ON DELETE CASCADE`. The partial unique
 index `(question_turn_id, question_key)` applies to every `question` card.
@@ -449,4 +449,4 @@ the owner's validated `question_answer` and `decided_at` after
 `question_checkpoint_at` is present. Success writes `question_delivered_at`.
 Reset may close a pending card or an accepted card awaiting delivery. The
 shape check excludes question fields on every earlier card kind. See the
-[detailed table changes](../database-schema.md#0372_librarian_private_questions-implemented).
+[detailed table changes](../database-schema.md#0405_librarian_private_questions-implemented).

@@ -356,7 +356,7 @@ Positive and missing numbers use bounded integers at the command boundary.
 
 ## Package and agent delivery
 
-Migration `0370` adds nullable `agent_project_links.prompt_override`. Null
+Migration `0403` adds nullable `agent_project_links.prompt_override`. Null
 inherits the package persona. A value must contain non-whitespace text and is
 limited to 65,536 characters. `agent_project_mcp_additions` has primary key
 `(link_id, ref_id)`, with `link_id` cascading from `agent_project_links.id`.

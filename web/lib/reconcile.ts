@@ -1937,10 +1937,12 @@ export async function runReconcileSweep(
   let defaultInventoryAvailable = false;
   // One live session per run — the in-flight guard's index.
   let cutoverSessionsStopped = 0;
-  let orphanSessionsReaped = 0;
+  const orphanRecords: SupervisorSessionRecord[] = [];
 
   try {
     const records = await hosts.local().listSessions();
+
+    orphanRecords.push(...records);
 
     const { recoverPendingAgentQuestions } =
       await import("@/lib/services/agent-question");
@@ -1978,15 +1980,6 @@ export async function runReconcileSweep(
       records,
       hosts,
     });
-    orphanSessionsReaped = await reapAbandonedRunSessions({
-      db,
-      records,
-      stopSession: async (record) => {
-        const client = await hosts.forRun(record.runId, { teardown: true });
-
-        await client.deleteSession(record.sessionId);
-      },
-    });
     for (const rec of records) {
       if (rec.status !== "live") continue;
       // Per-(run, step) index of positive live observations. The in-flight
@@ -2002,6 +1995,21 @@ export async function runReconcileSweep(
       "reconcile sweep: default inventory unavailable; continuing with addressed candidates",
     );
   }
+
+  try {
+    orphanRecords.push(...(await remoteAbandonedRunSessions(db, hosts)));
+  } catch (err) {
+    log.warn({ err }, "reconcile: peer orphan inventory unavailable");
+  }
+  const orphanSessionsReaped = await reapAbandonedRunSessions({
+    db,
+    records: orphanRecords,
+    stopSession: async (record) => {
+      const client = await hosts.forRun(record.runId, { teardown: true });
+
+      await client.deleteSession(record.sessionId);
+    },
+  });
 
   const handlesLost = await checkWorkspaceHandles({ db, hosts });
   const candidates = (await loadCandidates(db)).filter(

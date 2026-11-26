@@ -39,7 +39,7 @@ export default defineConfig({
         GEMINI_CLI_HOME: resolve(fixtureSettings, "gemini"),
         OPENCODE_CONFIG_DIR: resolve(fixtureSettings, "opencode"),
         XDG_CONFIG_HOME: resolve(fixtureSettings, "xdg"),
-        MAISTER_WORKLOAD_API_BASE_URL: String(live.use?.baseURL),
+        MAISTER_API_BASE_URL: String(live.use?.baseURL),
         MAISTER_ADAPTER_BINARY_CLAUDE: adapter,
         MAISTER_ADAPTER_BINARY_CODEX: adapter,
         MAISTER_ADAPTER_BINARY_GEMINI: adapter,

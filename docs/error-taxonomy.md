@@ -900,6 +900,7 @@ and [`system-analytics/librarian-conversation.md`](system-analytics/librarian-co
 | --- | --- | --- |
 | `approval_revoked` | `CONFIG` (HTTP 403) | The source approval no longer authorizes the preview. A pending apply can also return this reason in its aborted receipt. |
 | `upstream_access_denied` | `CONFIG` | The approved source refused public access. |
+| `catalog_identity_unavailable` | `EXECUTOR_UNAVAILABLE` (HTTP 503) | The public connector could not confirm the exact skills.sh identity. Scoped search exposes this reason with the affected source. |
 | `preview_limit_reached` | `EXECUTOR_UNAVAILABLE` (HTTP 429) | The draft's active preview limit is full. |
 | `remote_requirements_unsupported` | `CONFIG` | The preview cannot represent the required remote transport configuration. It can include safe HTTP header and URL variable names. |
 | `distribution_requirements_unsupported` | `CONFIG` | The preview cannot represent the declared installation or stdio configuration. It can include safe environment variable names. |
@@ -917,14 +918,8 @@ and [`system-analytics/librarian-conversation.md`](system-analytics/librarian-co
 | `package_sync_contract_conflict` | `PRECONDITION` | Package source sync cannot reconcile the manifest contract. |
 | `launch_settings_changed` | `CONFLICT` | Package delivery settings changed while the task was being admitted. |
 | `launch_capabilities_changed` | `PRECONDITION` | The launch cannot reproduce the selected capability bundle. |
-| `agent_mcp_target_unavailable` | `PRECONDITION` | A required captured standalone agent MCP changed or is unavailable on resume. |
-| `remote_shared_workspace_required` | `CONFIG` | Preferred remote placement requires `MAISTER_EXECUTION_HOST_SHARED_WORKSPACE=1` and identical shared workspace paths. |
-| `execution_host_endpoint_missing` | `EXECUTOR_UNAVAILABLE` | No endpoint is configured for the durable assignment's supervisor. |
-| `execution_host_resolution_in_transaction` | `PRECONDITION` | Remote host resolution must finish before the claim transaction. |
-| `execution_host_tls_files_required` | `CONFIG` | HTTPS routing lacks a configured CA, client certificate or client key. |
-| `execution_host_tls_file_unreadable` | `CONFIG` | The TLS file selected by the named variable is unreadable. |
-| `execution_host_unavailable` | `EXECUTOR_UNAVAILABLE` | The assigned supervisor could not be reached. |
-| `execution_host_unregistered_for_claim` | `EXECUTOR_UNAVAILABLE` | No ready local supervisor is registered for the claim. |
+| `agent_mcp_target_unavailable` | `PRECONDITION` | A required captured standalone agent MCP is absent from the final executable set at dispatch or resume. |
+| `execution_host_unregistered_for_claim` | `EXECUTOR_UNAVAILABLE` | No ready selected supervisor is registered for the claim. |
 | `mcp_distribution_unsupported` | `PRECONDITION` | The distribution, archive or executable falls outside the supported npm stdio contract. |
 | `mcp_distribution_runtime` | `PRECONDITION` | The npm MCP needs a different OS, architecture or Node runtime. |
 | `mcp_distribution_untrusted` | `PRECONDITION` | The current supervisor does not approve the reviewed npm descriptor digest. |

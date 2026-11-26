@@ -342,7 +342,6 @@ export type ExecutionHosts = {
   // Read the active or released host inventory without minting a placement.
   inventoryForRun(runId: string): Promise<SupervisorSessionRecord[]>;
   local(): HostAdminClient;
-  preferred(): Promise<HostAdminClient>;
 };
 
 export type ExecutionHostsDeps = {
@@ -1536,9 +1535,6 @@ export function createExecutionHosts(
         : admin.listSessionsForRun(runId);
     },
     local() {
-      return admin;
-    },
-    async preferred() {
       return admin;
     },
   };

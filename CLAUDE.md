@@ -510,8 +510,8 @@ opened as `pr_state='open'` and clears a previous PR's fields.
 - **`supervisor/` daemon**: separate Node process owning ACP sessions,
   process-per-session spawn, heartbeat, permission input delivery,
   cost-token metric on disk. Talks HTTP+SSE to Next.js through the registered
-  execution-host boundary (ADR-166). Web-owned workspace paths are shared
-  locally or mounted identically for the pinned remote topology (ADR-219).
+  execution-host boundary (ADR-166). Legacy workspaces share local paths.
+  Stage C prepares and retains workspaces on the selected supervisor (ADR-219).
 - **Project portfolio (home)**: superset.sh-style grid of every active
   workspace across all projects — project · branch · status · last activity ·
   executor · quick actions (View / Resume / Abandon). Filters by project +
@@ -643,7 +643,7 @@ agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   binding, completion after a confirmed PR merge, run duration/execution
   timing, active-rail attention membership (ADR-206..209; `tasks.md`,
   `runs.md`) · reviewed public Studio catalog imports (ADR-221) · package
-  capability delivery and retired node skill lists (ADR-218) · pinned shared-workspace supervisors (ADR-219)
+  capability delivery and retired node skill lists (ADR-222) · assigned-supervisor MCP preparation (ADR-223)
   · Flow node questions with Inbox and checkpoint continuation (ADR-220).
 
 Historical product backlog/wave rationale: `docs/pv/improvement-roadmap.md`.

@@ -2,6 +2,10 @@ import "server-only";
 
 import type { ChildLaunchReceipt } from "@/lib/orchestrator/child-launch-context";
 import type { ClaudeNativePermissions } from "../../../runtime/claude-native-permissions";
+import type {
+  AddressedPackageSkill,
+  PackageSkillView,
+} from "../../../runtime/package-skill-tree";
 import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -223,7 +227,8 @@ export type RunAgentStepCtx = {
   // consensus/runtime, and `sync-${attempt}` in runs/sync-target).
   sessionName: string;
   context: ExecutionFlowContext;
-  packageSkillView?: import("../../../runtime/package-skill-tree").PackageSkillView;
+  packageSkillView?: PackageSkillView;
+  addressedPackageSkills?: readonly AddressedPackageSkill[];
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   capabilityContent?: CapabilityBundleContent;
@@ -1489,7 +1494,9 @@ async function dispatchAgentStep(
       : await workspacePackageSkillsPrompt(
           ctx.worktreePath,
           ctx.runId,
-          ctx.packageSkillView ? ctx.nodeAttemptId : undefined,
+          ctx.packageSkillView || ctx.addressedPackageSkills
+            ? ctx.nodeAttemptId
+            : undefined,
         );
   const ordinaryPrompt = appendScheduledRequest(
     nativeFindingsCompletionPrompt(
@@ -1826,6 +1833,7 @@ async function runNewSession(
         ...(ctx.packageSkillView
           ? { packageSkillView: ctx.packageSkillView }
           : {}),
+        addressedPackageSkills: ctx.addressedPackageSkills,
         executor: executorToSupervisorInput(ctx.executor),
         runner: ctx.runner,
         capabilityProfileObjectId: capabilityBundle?.profileObjectId,

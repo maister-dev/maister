@@ -89,8 +89,8 @@ For the full vision, product model, architecture, and roadmap see
 - **ACP-driven agent execution**: the separate `supervisor/` Node daemon
   owns ACP sessions. Web uses loopback by default and can route assignments
   to pinned supervisor endpoints through private ingress or an authenticated
-  tunnel. For remote assignments the operator provisions repository and
-  workspace paths on the assigned host. Runtime events and objects use
+  tunnel. The selected supervisor prepares its checkout from a configured
+  repository identity and owns the workspace. Runtime events and objects use
   durable, path-free contracts (ADR-166/167).
   One agent process per session. Spawned on Launch; permission HITL is
   resolved live. Checkpoint/idle resume is implemented.
@@ -145,7 +145,7 @@ CHECKPOINT`). UI branches on `code`, never on string matching.
 | Model routing     | Anthropic-compatible providers configured through runner fields   |
 |                   | and supervisor environment references.                            |
 | Web ↔ supervisor | HTTP and SSE through the ADR-166/167 execution-host contracts. Loopback by default, with private pinned endpoint routing for remote assignments. |
-|                   | Operators provision remote repository and workspace paths. Managed placement remains Stage C, and managed trust and relay remain Stage D. |
+|                   | Stage C places checkouts and workspaces on the selected supervisor. Managed trust and relay remain Stage D. |
 | Flow plugins      | git repos pinned by tag; installed to                             |
 |                   | `~/.maister/flows/<id>@<tag>/` and symlinked per project          |
 | Git workspaces    | Thin wrapper around `git worktree add/remove/list`                |

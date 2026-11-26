@@ -3,12 +3,15 @@ import type { Db } from "@/lib/execution-host/db";
 import { randomUUID } from "node:crypto";
 
 import { sql, eq, and } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 import { after, NextRequest } from "next/server";
+import { Client } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { POST as postFlowNodeHumanAsk } from "@/app/api/v1/ext/flow-node/human-asks/route";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
 import { SCOPED_HUMAN_ASK_MAX_BYTES } from "@/lib/services/agent-question-contract";
+import * as databaseSchema from "@/lib/db/schema";
 import {
   nodeAttempts,
   runs,
@@ -49,7 +52,6 @@ import { captureFlowQuestionSource } from "@/lib/execution-host/flow-question-so
 import { markHostReadiness, retireHost } from "@/lib/execution-host/hosts";
 import { executionHosts as registeredHosts } from "@/lib/db/schema";
 import { runPass2 } from "@/lib/runs/keepalive-sweeper";
-import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import {
   seedLocalHost,
   seedProject,
@@ -86,6 +88,11 @@ vi.mock("next/server", async (importOriginal) => ({
 vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
   getDb: () => requestDb ?? db,
+  createDbNotificationClient: () =>
+    new Client({
+      connectionString: database.databaseUrl,
+      application_name: "maister-flow-question-test",
+    }),
 }));
 
 beforeAll(async () => {
@@ -942,7 +949,7 @@ it("IT-ASK-03 / IT-ASK-04 / IT-EDGE-ASK-04 recovers both sibling answers from th
   }
 });
 
-it("waits for the exact node prompt and its live session to become durable", async () => {
+it("IT-ASK-03-CROSS-WEB waits for the exact durable prompt and session without polling", async () => {
   const fake = createFakeExecutionHost();
   const projectId = await seedProject(database.db);
 
@@ -1012,6 +1019,8 @@ it("waits for the exact node prompt and its live session to become durable", asy
     await releaseAcceptance.promise;
   });
   const cancel = new AbortController();
+  const questionDb = drizzle(database.pool, { schema: databaseSchema });
+  const questionTransactions = vi.spyOn(questionDb, "transaction");
 
   fake.setPromptBehavior(() => completePrompt.promise);
   const delivery = client.prompt(
@@ -1030,38 +1039,71 @@ it("waits for the exact node prompt and its live session to become durable", asy
         .where(eq(executionCommands.id, commandId));
     const questions = () =>
       db.select().from(hitlRequests).where(eq(hitlRequests.runId, runId));
+    const activeListeners = async () =>
+      (
+        await database.pool.query(
+          "SELECT pid FROM pg_stat_activity WHERE application_name='maister-flow-question-test'",
+        )
+      ).rows;
 
     expect(await readCommand()).toEqual([{ state: "delivering" }]);
-    const expectWaiting = async (asking: Promise<unknown>): Promise<void> => {
+    const expectWaiting = async (
+      asking: Promise<unknown>,
+      transactionsBefore: number,
+    ): Promise<void> => {
       await expect(
         Promise.race([
           asking.then(() => "settled"),
           vi
-            .waitFor(() => expect(runEventWakeBus.waiterCount(runId)).toBe(1))
+            .waitFor(() =>
+              expect(
+                questionTransactions.mock.calls.length,
+              ).toBeGreaterThanOrEqual(transactionsBefore + 2),
+            )
             .then(() => "waiting"),
         ]),
       ).resolves.toBe("waiting");
     };
     const revoked = requestFlowNodeQuestion(
-      db,
+      questionDb,
       token.tokenId,
       input,
       cancel.signal,
     );
 
-    await expectWaiting(revoked);
+    await expectWaiting(revoked, 0);
+    // Keep the source unchanged beyond two intervals of the former wait loop.
+    await database.pool.query("SELECT pg_sleep(0.6)");
+    expect(questionTransactions).toHaveBeenCalledTimes(2);
+    expect(await activeListeners()).toHaveLength(1);
     const current = await issueToken();
 
     // Credential rotation commits without a process-local Run wake.
     await expect(revoked).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect.poll(activeListeners).toEqual([]);
+
+    const beforeAbort = questionTransactions.mock.calls.length;
+    const aborted = new AbortController();
+    const abortedAsk = requestFlowNodeQuestion(
+      questionDb,
+      current.tokenId,
+      input,
+      aborted.signal,
+    );
+
+    await expectWaiting(abortedAsk, beforeAbort);
+    aborted.abort();
+    await expect(abortedAsk).rejects.toMatchObject({ name: "AbortError" });
+    await expect.poll(activeListeners).toEqual([]);
+    const beforeAsking = questionTransactions.mock.calls.length;
     const asking = requestFlowNodeQuestion(
-      db,
+      questionDb,
       current.tokenId,
       input,
       cancel.signal,
     );
 
-    await expectWaiting(asking);
+    await expectWaiting(asking, beforeAsking);
     expect(await questions()).toEqual([]);
     releaseAcceptance.resolve();
     await delivery;
@@ -1072,21 +1114,24 @@ it("waits for the exact node prompt and its live session to become durable", asy
         .from(runSessionIncarnations)
         .where(eq(runSessionIncarnations.id, owner.ref.incarnationId)),
     ).toEqual([{ state: "created" }]);
-    await expectWaiting(asking);
+    await expect
+      .poll(() => questionTransactions.mock.calls.length)
+      .toBeGreaterThan(beforeAsking + 2);
     await expect(asking).rejects.toMatchObject({
       code: "EXECUTOR_UNAVAILABLE",
       details: { reason: "flow_question_prompt_acceptance_pending" },
     });
-    expect(runEventWakeBus.waiterCount(runId)).toBe(0);
+    await expect.poll(activeListeners).toEqual([]);
     expect(await questions()).toEqual([]);
+    const beforeRetry = questionTransactions.mock.calls.length;
     const retry = requestFlowNodeQuestion(
-      db,
+      questionDb,
       current.tokenId,
       input,
       cancel.signal,
     );
 
-    await expectWaiting(retry);
+    await expectWaiting(retry, beforeRetry);
     await fake.releaseIngest();
     const receipt = await retry;
     const [question] = await db
@@ -1099,7 +1144,7 @@ it("waits for the exact node prompt and its live session to become durable", asy
       supervisorSessionId: session.hostSessionId,
       flowQuestion: { commandId, nodeAttemptId, promptOrdinal: 0 },
     });
-    expect(runEventWakeBus.waiterCount(runId)).toBe(0);
+    await expect.poll(activeListeners).toEqual([]);
   } finally {
     cancel.abort();
     releaseAcceptance.resolve();

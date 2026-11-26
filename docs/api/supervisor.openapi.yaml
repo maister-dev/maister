@@ -4149,6 +4149,8 @@ components:
       type: object
       required: [executionWorkspaceId, stepId, executor]
       additionalProperties: false
+      not:
+        required: [packageSkillView, addressedPackageSkills]
       description: |
         (Implemented — ADR-166) The `session.create` payload. `executionWorkspaceId`
         names an adopted workspace; the host derives `cwd`, the content-block
@@ -4220,6 +4222,32 @@ components:
             skillsDigest: {type: string, pattern: "^[a-f0-9]{64}$"}
             settingsDigest: {type: string, pattern: "^[a-f0-9]{64}$"}
           description: The assigned host verifies the selected skill tree and optional native settings before opening the node's private adapter home. Requires nodeAttemptId.
+        addressedPackageSkills:
+          type: array
+          maxItems: 255
+          uniqueItems: true
+          description: |
+            Selected skills for a verified host-owned workspace generation.
+            Each slug is unique. The host revalidates the selected trees in
+            its retained input manifest and uses the same selection for the
+            private adapter home and prompt index. An empty array selects no
+            packaged skills. Omission retains the existing discovery behavior.
+            Mutually exclusive with packageSkillView. A missing or changed
+            selected tree returns PRECONDITION (409), package_skill_view_integrity
+            and quiescence not_started.
+          items:
+            type: object
+            additionalProperties: false
+            required: [slug, treeDigest]
+            properties:
+              slug:
+                type: string
+                minLength: 1
+                maxLength: 128
+                pattern: '^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$'
+              treeDigest:
+                type: string
+                pattern: '^[a-f0-9]{64}$'
         nodeAttemptId:
           type: string
           minLength: 1

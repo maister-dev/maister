@@ -115,9 +115,9 @@ Regions, top to bottom:
    longer see renders an unavailable marker; the owner's own messages always
    render. Arriving messages never move a reader who scrolled up; a
    **Jump to latest** control appears instead.
-   Private questions appear inline on the originating turn. While the turn
-   records its checkpoint, the card shows a waiting state. Once open, it
-   offers the requested fields and **Send answer**. The card distinguishes
+   Private questions appear inline on the originating turn after the turn
+   records its checkpoint. The open card offers the requested fields and
+   **Send answer**. The card distinguishes
    queued, delivered and closed answers. Validation keeps the owner's draft
    available, and a closed or changed question refreshes the card from the
    conversation. Errors use localized instructions.

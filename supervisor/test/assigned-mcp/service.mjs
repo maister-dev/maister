@@ -53,7 +53,7 @@ createServer(
     }
     if (
       req.url === "/api/v1/ext/projects" &&
-      req.headers.authorization === "Bearer mai_qualification_only"
+      req.headers.authorization === "Bearer mai_" + "q".repeat(43)
     ) {
       facadeCalls++;
       return send(res, 200, { items: ["qualification-project"] });

@@ -11,7 +11,6 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import {
   seedProjectRow,
   seedRun,
-  seedWorkspace,
 } from "@/test-support/execution-host-seed";
 import {
   claimCronAgentAttempt,
@@ -72,12 +71,12 @@ it("IT-CBX-01 applies company migrations after the current master journal and pr
     );
     const project = await seedProjectRow(master.db);
     const runId = await seedRun(master.db, { projectId: project.id });
-    const workspaceId = await seedWorkspace(master.db, {
-      runId,
-      projectId: project.id,
-      worktreePath: "/unused-company-upgrade-worktree",
-      parentRepoPath: project.repoPath,
-    });
+    const workspaceId = randomUUID();
+    await master.pool.query(
+      `INSERT INTO workspaces (id,run_id,project_id,branch,worktree_path,parent_repo_path)
+       VALUES ($1,$2,$3,'fixture','/unused-company-upgrade-worktree',$4)`,
+      [workspaceId, runId, project.id, project.repoPath],
+    );
     const evidence = {
       target: { remote: "origin", remoteBranch: "reviewed-workspace" },
       error: null,

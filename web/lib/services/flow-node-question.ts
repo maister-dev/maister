@@ -42,7 +42,10 @@ import {
   createHitlRequest,
   emitHitlDecisionOpened,
 } from "@/lib/runs/hitl-create";
-import { notifyNodeQuestionChanged } from "@/lib/runs/peek-wake";
+import {
+  notifyNodeQuestionChanged,
+  subscribeFlowQuestionPromptChanges,
+} from "@/lib/runs/peek-wake";
 import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 
@@ -79,7 +82,6 @@ type PendingPrompt = Readonly<{
 }>;
 
 const PROMPT_ACCEPTANCE_TIMEOUT_MS = 8_000;
-const PROMPT_ACCEPTANCE_RECHECK_MS = 250;
 
 export function nodeQuestionReceipt(question: HitlRequest): Receipt {
   const state = question.supersededAt
@@ -149,44 +151,78 @@ async function waitForFlowQuestionPrompt(
   request: FlowQuestionRequest,
   pending: PendingPrompt,
 ): Promise<Receipt> {
-  const deadline = performance.now() + PROMPT_ACCEPTANCE_TIMEOUT_MS;
+  request.signal?.throwIfAborted();
   const { runId, commandId, incarnationId } = pending;
+  const deadline = AbortSignal.timeout(PROMPT_ACCEPTANCE_TIMEOUT_MS);
+  const stop = request.signal
+    ? AbortSignal.any([deadline, request.signal])
+    : deadline;
+  const stopped = Promise.withResolvers<null>();
+  let wake = Promise.withResolvers<void>();
+  let listenerLost = false;
+  const onStop = (): void => {
+    stopped.resolve(null);
+    wake.resolve();
+  };
 
   log.debug(
     { runId, commandId, incarnationId },
     "waiting for node prompt acceptance",
   );
-  for (;;) {
-    request.signal?.throwIfAborted();
-    const remaining = deadline - performance.now();
-    const stop = new AbortController();
-    const signal = request.signal
-      ? AbortSignal.any([request.signal, stop.signal])
-      : stop.signal;
-    // Subscribe before rereading. A timed reread also sees commits on another Web process.
-    const wake =
-      remaining > 0
-        ? runEventWakeBus.wait(
-            runId,
-            Math.min(remaining, PROMPT_ACCEPTANCE_RECHECK_MS),
-            signal,
-          )
-        : null;
+  stop.addEventListener("abort", onStop, { once: true });
+  if (stop.aborted) onStop();
+  const subscription = subscribeFlowQuestionPromptChanges(
+    runId,
+    {
+      execution_commands: commandId,
+      run_session_incarnations: incarnationId,
+      project_tokens: request.tokenId,
+    },
+    () => wake.resolve(),
+    () => {
+      listenerLost = true;
+      wake.resolve();
+    },
+  ).catch((error: unknown) => {
+    if (!isMaisterError(error) || error.code !== "EXECUTOR_UNAVAILABLE")
+      throw error;
+    listenerLost = true;
 
-    try {
+    return null;
+  });
+  let release: (() => Promise<void>) | null = null;
+
+  try {
+    release = await Promise.race([subscription, stopped.promise]);
+    for (;;) {
+      // Listen first so a commit during this read cannot leave the waiter asleep.
+      const changed = wake.promise;
+      const finalCheck = deadline.aborted || listenerLost;
       const result = await writeFlowNodeQuestion(db, request, pending);
 
       if (result.state !== "prompt_pending") return result;
-      if (!wake) break;
-      // The transaction has ended before waiting for acceptance or lifecycle projection.
-      await wake;
-    } finally {
-      stop.abort();
+      request.signal?.throwIfAborted();
+      if (finalCheck) break;
+      await changed;
+      wake = Promise.withResolvers<void>();
+    }
+  } finally {
+    stop.removeEventListener("abort", onStop);
+    if (release || stop.aborted) {
+      // The subscription may complete after a cancellation during LISTEN startup.
+      const close = release
+        ? release()
+        : subscription.then((close) => close?.());
+      const cleanup = close.catch((error: unknown) =>
+        log.warn({ runId, err: error }, "node prompt listener cleanup failed"),
+      );
+
+      if (release) await cleanup;
     }
   }
 
   log.warn(
-    { runId, commandId, incarnationId },
+    { runId, commandId, incarnationId, listenerLost },
     "node prompt acceptance did not become durable",
   );
   throw new MaisterError(

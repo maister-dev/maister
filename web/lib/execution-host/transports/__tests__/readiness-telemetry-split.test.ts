@@ -70,10 +70,10 @@ describe("readiness is decoupled from stream telemetry", () => {
 
     await Promise.all([
       createLocalDirectTransport({
-        endpoint: "http://127.0.0.1:17771",
+        endpoint: { url: "http://127.0.0.1:17771", hostKey: "secondary-a" },
       }).health(),
       createLocalDirectTransport({
-        endpoint: "http://127.0.0.1:17772",
+        endpoint: { url: "http://127.0.0.1:17772", hostKey: "secondary-b" },
       }).health(),
     ]);
     expect(urls).toEqual([

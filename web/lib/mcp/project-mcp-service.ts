@@ -103,10 +103,11 @@ function db(injected?: ProjectMcpDb): ProjectMcpDb {
 async function withCachedReadiness(
   material: ProjectMcpMaterial,
   refId: string,
+  projectId: string,
 ): Promise<ProjectMcpMaterial> {
   const readiness = evaluateMcpReadiness(
     material,
-    await loadMcpReadinessContext([material], { refId }),
+    await loadMcpReadinessContext([material], { refId, projectId }, projectId),
   );
 
   return {
@@ -191,6 +192,7 @@ export async function createProjectMcp(
   const material = await withCachedReadiness(
     buildProjectMcpMaterial(draft),
     draft.id,
+    projectId,
   );
   const agentsJson = JSON.stringify(material.supportedAgents);
   const materialJson = JSON.stringify(material);
@@ -273,6 +275,7 @@ export async function updateProjectMcp(
   const material = await withCachedReadiness(
     buildProjectMcpMaterial(nextDraft),
     current.capability_ref_id,
+    projectId,
   );
   const agentsJson = JSON.stringify(material.supportedAgents);
   const materialJson = JSON.stringify(material);

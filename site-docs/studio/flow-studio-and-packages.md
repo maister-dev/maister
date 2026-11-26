@@ -113,7 +113,9 @@ In a local package, open **Skills** or **MCPs** and select **Add from catalog**.
 
 In an MCP preview, **Compatible runner adapters** lists the adapters that support the reviewed transport. MAIster checks runner readiness, host approval and credentials at launch. When a descriptor requires unsupported configuration, Studio shows the declared names it can display, such as HTTP headers, URL variables or environment variables. Secret values stay outside the package. The preview also flags any update that writes explicit resource defaults into an older package manifest.
 
-Self-hosted Studio searches the approved Anthropic and Vercel skill repositories and the official MCP Registry. To use a different set of public repositories, set `MAISTER_STUDIO_CATALOG_REPOS` on Web to a JSON array, for example `[{"id":"anthropic-skills","repo":"anthropics/skills","kind":"skill"}]`. The array replaces the built-in repository list. For a repository of Registry-format MCP descriptors, use `"kind":"mcp"`. A skills.sh link must resolve to a skill in an approved repository. Host installation is described in [Execution hosts](/operations/execution-hosts).
+Skill search includes public GitHub skills listed on skills.sh. You can search by name or paste a skills.sh link. Studio shows the files from the exact Git commit before importing. This works on a self-hosted instance without a Vercel account or a repository list. Studio uses the endpoint from the Skills CLI, so it shows source availability when skills.sh is unavailable or rate-limited.
+
+MCP search uses the official MCP Registry. For additional GitHub sources, set `MAISTER_STUDIO_CATALOG_REPOS` on Web to a JSON array, for example `[{"id":"anthropic-skills","repo":"anthropics/skills","kind":"skill"}]`. This replaces the built-in GitHub sources. Use `"kind":"mcp"` for repositories that publish Registry-format MCP descriptors. See [Execution hosts](/operations/execution-hosts) for MCP installation.
 
 ## Choose which sessions receive package resources
 

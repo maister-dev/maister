@@ -120,3 +120,31 @@ it("IT-CAT-01 retries a transient catalog response through a fresh pinned dispat
   unavailable.assertNoPendingInterceptors();
   recovered.assertNoPendingInterceptors();
 });
+
+it("IT-CAT-01 cancels an upstream request and stops retrying it", async () => {
+  const controller = new AbortController();
+  const cancelled = new Error("Search replaced");
+  const wire = new MockAgent();
+
+  wire.disableNetConnect();
+  wire
+    .get(catalog.origin)
+    .intercept({ path: catalog.pathname })
+    .reply(() => {
+      setImmediate(() => controller.abort(cancelled));
+
+      return { statusCode: 503, data: "unavailable" };
+    })
+    .delay(1000);
+  vi.mocked(resolveAllowedDestination).mockResolvedValue({
+    ok: true,
+    addresses,
+  });
+  vi.mocked(pinnedDispatcher).mockReturnValueOnce(wire);
+
+  await expect(jsonFromCatalog(catalog, controller.signal)).rejects.toBe(
+    cancelled,
+  );
+  expect(pinnedDispatcher).toHaveBeenCalledExactlyOnceWith(addresses);
+  wire.assertNoPendingInterceptors();
+});

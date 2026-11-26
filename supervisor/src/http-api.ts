@@ -3016,7 +3016,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             { stepId: request.stepId },
           );
           const workspaceInputs = await verifyWorkspaceSessionInputs(
-            hostState, request.executionWorkspaceId, runtimeRoot, request.stepId,
+            hostState,
+            request.executionWorkspaceId,
+            runtimeRoot,
+            request.stepId,
+            request.addressedPackageSkills,
           );
           const workspace: WorkspaceResolution = workspaceInputs === undefined
             ? resolvedWorkspace

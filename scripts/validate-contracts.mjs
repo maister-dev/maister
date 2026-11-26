@@ -20,6 +20,7 @@ const OPENAPI_FILES = [
   "docs/api/supervisor.openapi.yaml",
   "docs/api/external/stand-connector.openapi.yaml",
   "docs/api/external/github-catalog.openapi.yaml",
+  "docs/api/external/skills-sh-search.openapi.yaml",
   "docs/api/external/mcp-registry.openapi.yaml",
   "docs/api/external/npm-registry.openapi.yaml",
 ];

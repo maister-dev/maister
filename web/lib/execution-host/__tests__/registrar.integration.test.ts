@@ -30,22 +30,21 @@ import {
   mintAssignment,
   releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
-import { createExecutionHosts } from "@/lib/execution-host/client";
 import { listCommandsForRun } from "@/lib/execution-host/commands";
 import {
+  ensureAdditionalExecutionHost,
   ensureLocalExecutionHost,
   resetRegistrarStateForTests,
 } from "@/lib/execution-host/registrar";
 import {
   hostForAssignment,
+  hostForSelection,
   localHost,
   primeResolverForTests,
   resetResolverForTests,
 } from "@/lib/execution-host/resolver";
-import {
-  checkAssignedHostDiagnostics,
-  registerRemoteHost,
-} from "@/lib/execution-host/remote-direct";
+import { configuredAdditionalExecutionEndpoints } from "@/lib/execution-host/selected-endpoint";
+import { transportForExecutionHost } from "@/lib/execution-host/default-transport";
 import { resetRuntimeEventConsumersForTests } from "@/lib/execution-host/events/consumer";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { assertCapabilityGuardEvidence } from "@/lib/flows/enforcement-evidence";
@@ -187,21 +186,6 @@ afterEach(() => {
 });
 
 describe("registrar (real supervisor)", () => {
-  it("requires an explicit shared-workspace topology before starting remote placements", async () => {
-    vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", "supervisor-remote");
-    vi.stubEnv("MAISTER_EXECUTION_HOST_SHARED_WORKSPACE", undefined);
-    vi.stubEnv("MAISTER_EXECUTION_HOST_ENDPOINTS", "{}");
-
-    try {
-      await expect(localHost({ db })).rejects.toMatchObject({
-        code: "CONFIG",
-        details: { reason: "remote_shared_workspace_required" },
-      });
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
   it("G1: first boot → one row, readiness ready, protocolVersion 1", async () => {
     const result = await ensureLocalExecutionHost({ db });
 
@@ -859,46 +843,59 @@ describe("registrar (real supervisor)", () => {
 it("publishes a pinned remote supervisor outage and re-observes a restart on the same host", async () => {
   const hostKey = "registrar-remote-readiness";
   let remote = await startRealSupervisor({
-    env: { MAISTER_EXECUTION_HOST_KEY: hostKey },
+    env: {
+      MAISTER_EXECUTION_HOST_KEY: hostKey,
+      MAISTER_WORKSPACE_DIRECTORIES: '{"qualification":"/tmp"}',
+    },
   });
 
   try {
-    vi.stubEnv(
-      "MAISTER_EXECUTION_HOST_ENDPOINTS",
-      JSON.stringify({ [hostKey]: remote.url }),
-    );
-    const ready = await registerRemoteHost(db, hostKey);
+    const endpoint = {
+      hostKey,
+      url: remote.url,
+      displayName: "Readiness peer",
+    };
+    const ready = await ensureAdditionalExecutionHost(endpoint, { db });
 
-    expect(ready.readiness).toBe("ready");
+    expect(ready).toMatchObject({ status: "registered" });
+    if (ready.status !== "registered")
+      throw new Error("Peer was not registered");
+    expect(ready.host.readiness).toBe("ready");
     await remote.stop();
-    await expect(registerRemoteHost(db, hostKey)).rejects.toMatchObject({
-      code: "EXECUTOR_UNAVAILABLE",
-      details: { reason: "execution_host_unavailable" },
+    await expect(
+      ensureAdditionalExecutionHost(endpoint, { db }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "network",
     });
-    expect(await remoteReadiness(ready.id)).toMatchObject({
+    const outage = await remoteReadiness(ready.host.id);
+
+    expect(outage).toMatchObject({
       readiness: "unavailable",
       readinessReason: "network",
-      lastSeenAt: ready.lastSeenAt,
+      lastSeenAt: ready.host.lastSeenAt,
     });
-    const stale = new Date(0);
+    if (!outage) throw new Error("Peer outage was not recorded");
+    const nextObservation = () => new Date(outage.updatedAt.getTime() + 31_000);
+    await expect(
+      ensureAdditionalExecutionHost(endpoint, { db, now: nextObservation }),
+    ).resolves.toMatchObject({ status: "unavailable", reason: "network" });
+    const refreshed = await remoteReadiness(ready.host.id);
 
-    await db
-      .update(fullSchema.executionHosts)
-      .set({ updatedAt: stale })
-      .where(eq(fullSchema.executionHosts.id, ready.id));
-    await expect(registerRemoteHost(db, hostKey)).rejects.toMatchObject({
-      code: "EXECUTOR_UNAVAILABLE",
-    });
-    const refreshed = await remoteReadiness(ready.id);
-
-    expect(refreshed?.updatedAt.getTime()).toBeGreaterThan(stale.getTime());
-    expect(refreshed?.lastSeenAt).toEqual(ready.lastSeenAt);
+    expect(refreshed?.updatedAt.getTime()).toBe(nextObservation().getTime());
+    expect(refreshed?.lastSeenAt).toEqual(ready.host.lastSeenAt);
     remote = await startRealSupervisor(remote.options);
-    const restored = await registerRemoteHost(db, hostKey);
+    const restored = await ensureAdditionalExecutionHost(
+      { ...endpoint, url: remote.url },
+      { db, now: nextObservation },
+    );
 
-    expect(restored.id).toBe(ready.id);
-    expect(restored.lastBootId).not.toBe(ready.lastBootId);
-    expect(await remoteReadiness(ready.id)).toMatchObject({
+    expect(restored).toMatchObject({ status: "registered", restarted: true });
+    if (restored.status !== "registered")
+      throw new Error("Peer did not re-register");
+    expect(restored.host.id).toBe(ready.host.id);
+    expect(restored.host.lastBootId).not.toBe(ready.host.lastBootId);
+    expect(await remoteReadiness(ready.host.id)).toMatchObject({
       readiness: "ready",
       readinessReason: null,
     });
@@ -911,19 +908,35 @@ it("publishes a pinned remote supervisor outage and re-observes a restart on the
 it("refuses missing smoke evidence on the selected and retained remote supervisor", async () => {
   const hostKey = "registrar-remote-smoke";
   const remote = await startRealSupervisor({
-    env: { MAISTER_EXECUTION_HOST_KEY: hostKey },
+    env: {
+      MAISTER_EXECUTION_HOST_KEY: hostKey,
+      MAISTER_WORKSPACE_DIRECTORIES: '{"qualification":"/tmp"}',
+    },
   });
 
   try {
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://127.0.0.1:1");
     vi.stubEnv(
-      "MAISTER_EXECUTION_HOST_ENDPOINTS",
-      JSON.stringify({ [hostKey]: remote.url }),
+      "MAISTER_SELECTED_EXECUTION_HOST_KEY",
+      "registrar-default-smoke",
     );
-    vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", hostKey);
-    vi.stubEnv("MAISTER_EXECUTION_HOST_SHARED_WORKSPACE", "1");
+    vi.stubEnv(
+      "MAISTER_ADDITIONAL_EXECUTION_HOSTS",
+      JSON.stringify([{ hostKey, url: remote.url, displayName: "Smoke peer" }]),
+    );
+    const registered = await ensureAdditionalExecutionHost(
+      configuredAdditionalExecutionEndpoints()[0],
+      { db },
+    );
+    if (registered.status !== "registered")
+      throw new Error("Peer was not registered");
     const local = createFakeExecutionHost();
-    const placement = await localHost({ db, transport: local.transport });
-    const observed = await checkAssignedHostDiagnostics(placement);
+    const placement = await hostForSelection(db, registered.host.id);
+    const diagnostics = transportForExecutionHost(
+      placement,
+      local.transport,
+    ).diagnostics;
+    const observed = await diagnostics();
 
     if (observed.kind !== "ready") throw new Error(observed.message);
     local.setDiagnostics({
@@ -954,8 +967,7 @@ it("refuses missing smoke evidence on the selected and retained remote superviso
       assertCapabilityGuardEvidence({
         agent: "claude",
         permissionPolicy: "default",
-        checkDiagnostics: () =>
-          checkAssignedHostDiagnostics(placement, local.transport),
+        checkDiagnostics: diagnostics,
       }),
     ).rejects.toMatchObject({
       code: "EXECUTOR_UNAVAILABLE",
@@ -974,7 +986,6 @@ it("refuses missing smoke evidence on the selected and retained remote superviso
       }),
     );
 
-    vi.stubEnv("MAISTER_EXECUTION_HOST_PREFERRED_KEY", undefined);
     const bound = await createExecutionHosts({
       db,
       transport: local.transport,

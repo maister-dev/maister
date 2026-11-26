@@ -8,7 +8,7 @@ import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino, { type Logger } from "pino";
 
 import { getLatestAssignment } from "./assignments";
-import { getHostById } from "./hosts";
+import { findActiveLocalHost, getHostById } from "./hosts";
 import { ensureAdditionalExecutionDataPlane, ensureLocalExecutionDataPlane } from "./event-plane";
 import { ensureAdditionalExecutionHost, ensureLocalExecutionHost } from "./registrar";
 import { configuredAdditionalExecutionEndpoints, configuredExecutionEndpointForHost, configuredSelectedExecutionEndpoint } from "./selected-endpoint";

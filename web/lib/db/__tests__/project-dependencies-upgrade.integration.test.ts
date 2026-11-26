@@ -85,8 +85,8 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
     "UPDATE project_package_attachments SET package_name='tools' WHERE id='bound'",
   );
   const historical = () =>
-    pool.query(`SELECT to_jsonb(r) AS run, to_jsonb(f) AS flow, to_jsonb(fr) AS revision,
-      to_jsonb(a) AS attachment, to_jsonb(i) AS install
+    pool.query(`SELECT to_jsonb(r) - 'project_agent_profile' AS run, to_jsonb(f) AS flow, to_jsonb(fr) AS revision,
+      to_jsonb(a) - 'scope_revision' AS attachment, to_jsonb(i) AS install
       FROM runs r JOIN flows f ON f.id=r.flow_id JOIN flow_revisions fr ON fr.id=r.flow_revision_id
       JOIN package_installs i ON i.id=f.package_install_id JOIN project_package_attachments a ON a.package_install_id=i.id
       WHERE r.id='historical'`);
@@ -125,6 +125,11 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
   await apply();
   expect((await revisions()).rows).toEqual(before);
   expect((await historical()).rows).toEqual(receiptsBefore);
+  expect(
+    (await pool.query(`SELECT r.project_agent_profile, a.scope_revision
+      FROM runs r JOIN project_package_attachments a ON a.project_id = r.project_id
+      WHERE r.id = 'historical' AND a.id = 'bound'`)).rows,
+  ).toEqual([{ project_agent_profile: null, scope_revision: 1 }]);
   expect(
     (
       await pool.query(

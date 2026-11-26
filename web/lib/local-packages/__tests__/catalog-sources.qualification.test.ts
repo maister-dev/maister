@@ -1,9 +1,55 @@
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import {
   resolveCatalogSource,
   searchCatalog,
 } from "@/lib/local-packages/catalog-sources";
+
+afterEach(() => vi.unstubAllEnvs());
+
+it("qualifies the global skills.sh search and pinned Git preview without configured repositories", async () => {
+  vi.stubEnv("MAISTER_STUDIO_CATALOG_REPOS", "[]");
+  vi.stubEnv("AUTH_SECRET", "local-catalog-qualification");
+  const query = await searchCatalog({ kind: "skill", q: "find-skills" });
+  const item = query.results.find(
+    (skill) =>
+      skill.sourceId === "skills.sh" &&
+      skill.publisher === "vercel-labs/skills" &&
+      skill.name === "find-skills",
+  );
+
+  expect(item).toBeDefined();
+  const preview = await resolveCatalogSource({
+    kind: "skill",
+    sourceId: "skills.sh",
+    selector: item!.resultId,
+  });
+
+  expect(preview.pin).toMatch(/^[a-f0-9]{40}$/);
+  expect(preview.sourceUrl).toBe(
+    `https://github.com/vercel-labs/skills/tree/${preview.pin}/skills/find-skills`,
+  );
+  expect(preview.files["SKILL.md"]).toMatch(/\bname: find-skills\b/);
+  const exact = await searchCatalog({
+    kind: "skill",
+    q: "https://skills.sh/vercel-labs/skills/find-skills",
+    scope: "skills.sh",
+  });
+
+  expect(exact.results).toEqual([
+    expect.objectContaining({
+      canonicalSkillId: preview.selector,
+      sourceId: "skills.sh",
+    }),
+  ]);
+  const updated = await resolveCatalogSource({
+    kind: "skill",
+    sourceId: "skills.sh",
+    selector: preview.selector,
+  });
+
+  expect(updated).toEqual(preview);
+});
 
 it("resolves the released Anthropic frontend design skill and an official Registry HTTP record", async () => {
   const skills = await searchCatalog({

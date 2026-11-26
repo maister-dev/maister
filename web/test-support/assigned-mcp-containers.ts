@@ -3,7 +3,9 @@ import type { McpDistribution } from "../../runtime/mcp-distribution";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer, type Socket } from "node:net";
+import { connect as connectTls } from "node:tls";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -19,11 +21,55 @@ async function docker(...args: string[]): Promise<string> {
   ).stdout.trim();
 }
 
+/** Present the production client's loopback endpoint through the lab's private mTLS edge. */
+async function startSupervisorTunnel(
+  port: number,
+  credentials: Readonly<{ cert: Buffer; key: Buffer }>,
+): Promise<Readonly<{ url: string; close: () => Promise<void> }>> {
+  const connections = new Set<Socket>();
+  const server = createServer((incoming) => {
+    const upstream = connectTls({
+      host: "127.0.0.1",
+      port,
+      ...credentials,
+      ca: credentials.cert,
+    });
+
+    connections.add(incoming);
+    incoming.on("error", () => upstream.destroy());
+    upstream.on("error", () => incoming.destroy());
+    incoming.on("close", () => {
+      connections.delete(incoming);
+      upstream.destroy();
+    });
+    upstream.on("close", () => incoming.destroy());
+    incoming.pipe(upstream).pipe(incoming);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+
+  if (!address || typeof address === "string")
+    throw new Error("The qualification tunnel has no loopback port");
+
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => {
+      for (const connection of connections) connection.destroy();
+
+      return new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    },
+  };
+}
+
 /** Supervisor/ACP traffic stays private. The opt-in fixed public probe runs before the supervisor starts. */
 export async function withAssignedMcpHosts(
   qualify: (lab: {
-    certFile: string;
-    keyFile: string;
     descriptor: McpDistribution;
     setOnline: (online: boolean) => Promise<void>;
     counts: () => Promise<{
@@ -152,9 +198,13 @@ export async function withAssignedMcpHosts(
     const artifactDigest = descriptor.artifactDigest;
     const name = (key: string) => id + "-" + key;
 
+    const [cert, keyPem] = await Promise.all([
+      readFile(join(certs, "ca.pem")),
+      readFile(join(certs, "key")),
+    ]);
+    const tunnels = new Map<string, () => Promise<void>>();
+
     await qualify({
-      certFile: join(certs, "ca.pem"),
-      keyFile: join(certs, "key"),
       descriptor,
       setOnline: async (online) => {
         await api(online ? "online" : "offline");
@@ -185,7 +235,9 @@ export async function withAssignedMcpHosts(
           "-v",
           join(certs, "ca.pem") + ":/ca.pem:ro",
           "-e",
-          "MAISTER_WORKLOAD_API_BASE_URL=https://qual-web",
+          "MAISTER_API_BASE_URL=https://qual-web",
+          "-e",
+          'MAISTER_WORKSPACE_DIRECTORIES={"qualification":"/state/work"}',
           "-e",
           "NODE_EXTRA_CA_CERTS=/ca.pem",
           "-e",
@@ -236,7 +288,10 @@ export async function withAssignedMcpHosts(
         )
           .split(":")
           .at(-1);
-        const url = "https://127.0.0.1:" + port;
+        const edgePort = Number(port);
+
+        if (!Number.isInteger(edgePort) || edgePort < 1)
+          throw new Error("The qualification edge did not publish a TCP port");
 
         for (let i = 0; i < 100; i++) {
           try {
@@ -263,10 +318,26 @@ export async function withAssignedMcpHosts(
         }
         await docker("exec", name(key), "mkdir", "-p", "/state/work");
 
-        return { url, publicReceipt };
+        const tunnel = await startSupervisorTunnel(edgePort, {
+          cert,
+          key: keyPem,
+        });
+
+        tunnels.set(key, tunnel.close);
+        clean.push(async () => {
+          if (tunnels.delete(key)) await tunnel.close();
+        });
+
+        return { url: tunnel.url, publicReceipt };
       },
       stop: async (key) => {
         await docker("stop", "-t", "4", name(key));
+        const close = tunnels.get(key);
+
+        if (close) {
+          await close();
+          tunnels.delete(key);
+        }
       },
       receipt: async (key) =>
         JSON.parse(

@@ -56,7 +56,7 @@ const packageRow = z.object({
   revision: z.string(),
   shareSkills: z.boolean(),
   skills: z.array(z.string()),
-  bundleIds: z.array(z.string()),
+  bundleIds: z.array(z.string()).default([]),
 });
 const packageSourceRow = z.object({
   pin: packageRow,
@@ -67,6 +67,7 @@ const packageSourceRow = z.object({
   packageStatus: z.string(),
   manifestDigest: z.string(),
   attachmentId: z.string(),
+  attachedInstallId: z.string(),
 });
 
 export type PackageDeliveryInput = Readonly<{
@@ -135,9 +136,8 @@ async function readPackageDeliverySource(
            (i.manifest->'spec'->'delivery'->>'version'='1') AS versioned,
            COALESCE((i.manifest->'spec'->'delivery'->>'shareSkills')::boolean, true) AS "shareSkills",
            COALESCE(i.manifest->'inventory'->'skills','[]'::jsonb) AS skills,
-           i.installed_path AS root,COALESCE(i.manifest->'spec'->'capabilities','[]'::jsonb) AS declarations,
-           ARRAY(SELECT b.id FROM capability_imports b WHERE b.project_id=a.project_id
-                  AND b.package_install_id=i.id AND b.package_status='Installed' ORDER BY b.id) AS "bundleIds"
+           a.package_install_id AS "attachedInstallId",
+           i.installed_path AS root,COALESCE(i.manifest->'spec'->'capabilities','[]'::jsonb) AS declarations
       ${projectPackagePins(input)}
   `);
 
@@ -146,8 +146,16 @@ async function readPackageDeliverySource(
     packageSourceRow.parse({ ...row, pin: row }),
   );
   const { rows: bundleRows } = await db.execute(sql`
-    SELECT id,installed_path AS root,package_install_id AS "installId",resolved_revision AS revision,capability_ref_id AS name
-      FROM capability_imports WHERE project_id=${input.projectId} AND package_status='Installed' ORDER BY id`);
+    SELECT b.id,b.installed_path AS root,b.package_install_id AS "installId",b.resolved_revision AS revision,b.capability_ref_id AS name
+      FROM capability_imports b
+      JOIN project_ready_capability_imports(${input.projectId}) ready ON ready.id=b.id
+      WHERE ready.catalog_enabled ORDER BY b.id`);
+  const bundles = bundleRows.map((row) => bundleRow.parse(row));
+
+  for (const { pin } of packages)
+    pin.bundleIds = bundles
+      .filter((bundle) => bundle.installId === pin.installId)
+      .map((bundle) => bundle.id);
   const nodes = inputNodes.parse(input.flowManifest).nodes;
   const assignments: PackageDeliverySource["assignments"] = [];
 
@@ -198,7 +206,7 @@ async function readPackageDeliverySource(
 
   return {
     packages,
-    bundles: bundleRows.map((row) => bundleRow.parse(row)),
+    bundles,
     scopes,
     targets,
     nodes,
@@ -321,7 +329,12 @@ async function capturePackageDeliveryFiles(
         (b) => b.installId === pkg.installId && b.name === declaration.id,
       );
 
-      if (!bundle) {
+      if (
+        !bundle &&
+        row.attachedInstallId !== pkg.installId &&
+        row.packageStatus === "Installed" &&
+        ["trusted", "trusted_by_policy"].includes(row.trustStatus)
+      ) {
         const id = "pin:" + pkg.installId + ":" + declaration.id;
 
         bundle = {
@@ -334,7 +347,7 @@ async function capturePackageDeliveryFiles(
         bundles.push(bundle);
         pkg.bundleIds.push(id);
       }
-      pkg.bundlePaths[bundle.id] = declaration.path;
+      if (bundle) pkg.bundlePaths[bundle.id] = declaration.path;
     }
   }
   for (const b of bundles) {

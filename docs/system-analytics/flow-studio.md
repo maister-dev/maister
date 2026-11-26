@@ -186,7 +186,15 @@ sequenceDiagram
 
 ### Catalog authoring
 
-Search approved sources as the editor types and discard superseded replies, including after clear. Choosing a result opens an exact-revision preview. Apply writes the selected tree, notices or MCP descriptor into the locked draft. Authors choose package skill sharing (initially on), individual MCP sharing (initially off) and package-agent skill/MCP references. A check at cut rejects dangling references. [Run inventory and examples](capabilities.md#project-run-capability-inventory)
+Search approved sources as the editor types and cancel superseded requests,
+including their outbound reads. The editor renders current-query results as
+each provider responds and deduplicates matching verified GitHub identities.
+A provider that is still pending, rate limited or unavailable leaves results
+from other providers selectable. Choosing a result opens an exact-revision
+preview. Apply writes the selected tree, notices or MCP descriptor into the
+locked draft. Authors choose package skill sharing (initially on), individual
+MCP sharing (initially off) and package-agent skill/MCP references. A check at
+cut rejects dangling references. See the [Run inventory and examples](capabilities.md#project-run-capability-inventory).
 
 The `catalogOwner` route guard requires a signed-in installation member and an
 active draft, with `editSettings` for a project-owned draft. Before requesting
@@ -197,7 +205,7 @@ owns apply, replay and recovery.
 
 | Boundary | Checks and observable outcome |
 | --- | --- |
-| Source approval | `searchCatalog` consults configured repositories and the official MCP Registry. `resolveCatalogSource` rejects an unapproved source or wrong source kind before fetch. A `skills.sh` link resolves through its approved repository. Search distinguishes an empty result from rate-limited and unavailable sources. |
+| Source approval | `searchCatalog` consults skills.sh, configured repositories and the official MCP Registry. A skills.sh result carries a signed selection of the public GitHub listing. The preview verifies the selection against a declared `SKILL.md` name in the pinned tree. A pasted link or retained origin resolves directly by exact listing identity. Text-search ranking does not determine whether that identity exists. An unconfirmed identity reports `catalog_identity_unavailable`. Configured repository IDs remain scoped to their GitHub source. Search distinguishes an empty result from rate-limited and unavailable sources. |
 | Outbound metadata | `jsonFromCatalog` requires HTTPS and an approved origin, resolves public addresses and pins connections, rejects redirects, and caps each JSON response at 4 MiB. |
 | Pinned bundle | `resolveCatalogSource` validates the exact commit and each Git blob hash and length. Before reading blobs it rejects unsafe path segments, Unicode/case collisions and unsupported file types. Limits are the lesser of the configured import budgets and 200 files, 512 KiB per file and 2 MiB total. The preview retains UTF-8 companion files and notices. |
 | Review and execution | `reviewMcp` validates declared transport and npm publisher/version metadata for the supported formats. The preview returns the reviewed pin and, for npm stdio, the SHA-256 `artifactDigest` used for host approval. Search is read-only and preview and apply persist declarative data. The assigned Supervisor independently prepares approved distributions at dispatch. |
@@ -218,20 +226,18 @@ shows a localized notice. See the [trust decision](../decisions/adr-221.md) and 
 - **CAT-01:** The catalog routes must return a pinned, reviewable import only after the listed authorization, source, network and content checks pass, as verified by `IT-CAT-01`.
 - **CAT-02:** A second project attaching the Studio cut must receive the reviewed and edited companion bytes and MCP declaration, as verified by `E2E-CAT-02`.
 
-The following bullets are copied verbatim from SDD §7.1 (RFC-2119 spirit, each
-testable):
+The following requirements preserve the authored Flow contract from SDD §7.1.
 
 1. A draft save MUST run `validateGraphManifest`+`compileManifest` BEFORE the `draft_version` CAS write; an invalid manifest MUST throw `CONFIG` and MUST NOT mutate the draft row.
 2. A stale `expectedDraftVersion` MUST fail with `CONFLICT` (409) and MUST NOT write.
 3. Editing an installed flow MUST record its `source_flow_ref_id` so publish→bridge targets the SAME `flows` lineage; a net-new authored flow MUST mint a fresh `flow_ref_id`.
 4. Publishing an authored `flow` MUST bridge it into a `flows` row + `flow_revisions` row via `installAuthoredFlowPackageBridge`, `trustStatus=trusted_by_policy`, `exec_trust=untrusted`.
-5. `setup.sh` MUST NOT run on publish/bridge; it runs ONLY after an explicit `exec_trust` flip, via `runRevisionSetup` (physically separate, sentinel once-only).
-6. An MCP stdio `command` MUST NOT be spawned for a revision whose `exec_trust≠trusted`.
-7. Launch resolves the effective revision via `resolveEffectiveFlowRevision`. **(Stage-1)** BOTH `pinned` and `latest` resolve `flows.enabled_revision_id` (never a draft); authored "latest" auto-follow is realized by publish→bridge repointing the pointer (T-B2). **(Phase 2 — deferred)** `latest` → newest PUBLISHED revision, authored-wins on tie.
-8. Launch MUST snapshot the resolved set into `runs.resolved_capability_set`; the runner MUST read the snapshot, never the live catalog; an edit/publish during a run MUST NOT mutate that run.
-9. The editor MUST be read-write only for users with `manageCatalog`; the run-scoped view stays read-only (`readBoard`).
-10. No engine bump; no new `runs.status`; presentation stays additive/runner-ignored.
-11. The editor edit-lock assert MUST run on the tx handle after `loadCapability` and the `ARCHIVED` immutability check (immutability dominates the lock) and BEFORE the `draft_version` CAS: a present `sessionId` MUST hold a live lock owned by the same user (else `CONFLICT` `edit_lock_not_held`), an absent `sessionId` MUST be refused only on a foreign live lock, archive MUST apply the foreign-live refusal only AFTER its already-`ARCHIVED` idempotent early return, and all create paths MUST stay lock-free. (Implemented, ADR-149)
+5. Revision setup and stdio MCP commands MUST require `exec_trust=trusted`. Publish/bridge MUST NOT run `setup.sh`. After an explicit trust change, the separate `runRevisionSetup` path runs `setup.sh` once using its sentinel.
+6. Launch resolves the effective revision via `resolveEffectiveFlowRevision`. **(Stage-1)** BOTH `pinned` and `latest` resolve `flows.enabled_revision_id` (never a draft); authored "latest" auto-follow is realized by publish→bridge repointing the pointer (T-B2). **(Phase 2 — deferred)** `latest` → newest PUBLISHED revision, authored-wins on tie.
+7. Launch MUST snapshot the resolved set into `runs.resolved_capability_set`; the runner MUST read the snapshot, never the live catalog; an edit/publish during a run MUST NOT mutate that run.
+8. The editor MUST be read-write only for users with `manageCatalog`; the run-scoped view stays read-only (`readBoard`).
+9. No engine bump; no new `runs.status`; presentation stays additive/runner-ignored.
+10. The editor edit-lock assert MUST run on the tx handle after `loadCapability` and the `ARCHIVED` immutability check (immutability dominates the lock) and BEFORE the `draft_version` CAS: a present `sessionId` MUST hold a live lock owned by the same user (else `CONFLICT` `edit_lock_not_held`), an absent `sessionId` MUST be refused only on a foreign live lock, archive MUST apply the foreign-live refusal only AFTER its already-`ARCHIVED` idempotent early return, and all create paths MUST stay lock-free. (Implemented, ADR-149)
 
 ## Edge cases
 

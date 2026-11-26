@@ -277,7 +277,7 @@ skills directly. The current authoring and cut validator rejects
 `settings.skills` and `settings.enforcement.skills`. The install and adoption
 readers retain the original bytes and compat behavior of previously
 published versions, including when rolling back. See
-[ADR-218](decisions/adr-218.md).
+[ADR-222](decisions/adr-222.md).
 
 **Per-class `enforcement` intent.** Each of the six capability classes —
 `mcps`, `tools`, `restrictions`, `permissionMode`, `workspaceAccess`,

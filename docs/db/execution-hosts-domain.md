@@ -372,8 +372,7 @@ See the [storage contract](../database-schema.md#flow-waits-publication-and-auto
 
 ## Package and agent delivery
 
-Migration `0371` expands `execution_hosts_kind_check` to
-`local_direct|remote_direct` and adds `mcp.prepare` to the allowed
-`execution_commands.kind` values. A current assignment and a verified host
+Migration `0404` adds `mcp.prepare` to `execution_commands.kind` alongside
+the existing Stage C commands. A current assignment and a verified host
 receipt identify each preparation effect. Installation bytes remain on the
 execution host. See the [migration sequence](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions).

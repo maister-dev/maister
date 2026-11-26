@@ -266,10 +266,10 @@ A registered standalone import has a [project dependency declaration](projects-d
 
 ## Package and agent delivery
 
-Migration `0369` adds `project_package_attachments.scope_revision`, an integer
+Migration `0402` adds `project_package_attachments.scope_revision`, an integer
 starting at `1`. `project_package_mcp_scope_overrides` stores one sparse row
 per primary key `(attachment_id, ref_id)`. The attachment FK cascades. A
-required `scope` is checked against `package|project`. Migration `0375`
+required `scope` is checked against `package|project`. Migration `0408`
 requires `ref_id` to be a safe path segment of 1–128 characters. The service
 validates that the ref belongs to the attached release. Removing an
 override restores the release default. See the

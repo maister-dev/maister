@@ -100,12 +100,6 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
-      "lib/execution-host/remote-tls.ts",
-      "manager-flow-state",
-      "Read the web manager's TLS identity and CA from the operator-configured credential files.",
-      [["readTlsCredential", "node:fs.readFileSync", "read"]],
-    ),
-    ...classified(
       "lib/local-packages/sync.ts",
       "repository-worktree",
       "Validate the merged draft declarations before advancing the upstream package revision.",
@@ -1875,6 +1869,8 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["collect", "node:fs/promises.readFile", "read"],
         ["captureWorkspaceFlowAssets", "node:fs/promises.realpath", "stat"],
         ["collectRoot", "node:fs/promises.lstat", "stat"],
+        ["captureWorkspaceBundles", "node:fs/promises.realpath", "stat"],
+        ["collectPackageMember", "node:fs/promises.realpath", "stat"],
       ],
     ),
     ...classified(
@@ -3319,9 +3315,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
-  ...wrappers("lib/execution-host/remote-tls.ts", "manager-flow-state", [
-    ["assignedTlsDispatcher", false],
-  ]),
   ...wrappers("../runtime/package-skill-tree.ts", "repository-worktree", [
     ["confinedPackageSkillPath", true],
     ["packageSkillSourceDigest", true],
@@ -3746,6 +3739,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["reconcileSkippedSessionCrashes", false],
   ]),
   ...wrappers("lib/execution-host/workspace-input-capture.ts", "manager-flow-state", [
+    ["captureAddressedAgentPackages", false],
     ["captureWorkspaceBundles", false],
     ["captureWorkspaceFlowAssets", true],
   ]),

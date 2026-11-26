@@ -1,8 +1,12 @@
-import type { McpDistribution, McpPreparationReceipt } from "../../runtime/mcp-distribution";
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
 import type { ClaudeNativePermissions } from "../../runtime/claude-native-permissions";
+import type { McpDistribution, McpPreparationReceipt } from "../../runtime/mcp-distribution";
+import type {
+  AddressedPackageSkill,
+  PackageSkillView,
+} from "../../runtime/package-skill-tree";
 import type { WorkspaceCheckpointRequest, WorkspaceRestoreRequest, WorkspaceRetainedRequest, WorkspacePublicationTarget, WorkspaceReviewFingerprint, WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
 import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type { WorkspacePullRequestQuery, WorkspacePullRequestStatus } from "../../runtime/workspace-prepare";
@@ -158,7 +162,8 @@ export type SupervisorRunnerInput = {
 // run dir, context mounts) derives from the adopted handle; only the
 // `workspace.adopt` payload built in `execution-host/adoption.ts` carries one.
 export type CreateSessionInput = {
-  packageSkillView?: import("../../runtime/package-skill-tree").PackageSkillView;
+  packageSkillView?: PackageSkillView;
+  addressedPackageSkills?: readonly AddressedPackageSkill[];
   stepId: string;
   nodeAttemptId?: string;
   // M42 (ADR-114): the logical Flow session this ACP process serves — stamped
@@ -1565,11 +1570,7 @@ async function request<T>(spec: WireRequest): Promise<WireResponse<T>> {
     try {
       res = spec.longLived
         ? await fetchLongLivedSupervisor(url, init, spec.ctx)
-        : await fetchSupervisor(
-            url,
-            { ...init, cache: "no-store" },
-            spec.timeoutMs ?? ADMIN_READ_TIMEOUT_MS,
-          );
+        : await fetchSupervisor(url, { ...init, cache: "no-store" });
     } catch (err) {
       throw networkErrorToMaister(err, spec.ctx);
     }

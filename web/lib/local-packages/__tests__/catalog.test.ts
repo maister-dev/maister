@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 
+import { CatalogError } from "@/lib/local-packages/catalog-client";
 import { fetchRegistryPage } from "@/lib/local-packages/catalog-registry";
 import {
   searchCatalog,
@@ -60,11 +61,255 @@ const read: CatalogClient = async (url) => {
 let draft = "";
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   if (draft) await rm(path.dirname(draft), { recursive: true, force: true });
   draft = "";
 });
 
 describe("reviewed Studio import", () => {
+  it("IT-CAT-01 discovers a public skills.sh listing without a repository configuration and reviews pinned Git files", async () => {
+    vi.stubEnv("MAISTER_STUDIO_CATALOG_REPOS", "[]");
+    vi.stubEnv("AUTH_SECRET", "fixture-catalog-signing-key");
+    const repo = "public-publisher/checkout-skills";
+    const id = `${repo}/design`;
+    const reads: URL[] = [];
+    const catalog: CatalogClient = async (url) => {
+      reads.push(url);
+      if (url.hostname === "skills.sh") {
+        if (url.pathname.startsWith("/api/download/")) {
+          if (url.pathname !== `/api/download/${id}`)
+            throw new CatalogError(404, "No cached snapshot");
+
+          return {
+            files: [{ path: "SKILL.md", contents: skill }],
+            hash: "a".repeat(64),
+          };
+        }
+
+        expect(url.pathname).toBe("/api/search");
+
+        return {
+          skills: [
+            { id, source: repo, name: "design" },
+            { id: `${id}-foreign`, source: "other/publisher", name: "foreign" },
+            {
+              id: "example.com/design",
+              source: "example.com",
+              name: "website",
+            },
+          ],
+        };
+      }
+      expect(url.pathname).toContain(`/repos/${repo}/`);
+      if (url.pathname.includes("/git/trees/"))
+        return {
+          truncated: false,
+          tree: [
+            ...tree.map((entry) => ({
+              ...entry,
+              path: entry.path.replace(
+                /^skills\/design\//,
+                "library/workflow/",
+              ),
+            })),
+            blob(
+              "library/design/SKILL.md",
+              skill.replace("name: design", "name: other"),
+            ),
+          ],
+        };
+
+      return read(url);
+    };
+    const query = await searchCatalog(
+      { kind: "skill", q: "checkout journey" },
+      catalog,
+    );
+
+    expect(query.results).toMatchObject([
+      {
+        sourceId: "skills.sh",
+        publisher: repo,
+        name: "design",
+        canonicalSkillId: id,
+      },
+    ]);
+    expect(reads[0].searchParams.get("q")).toBe("checkout journey");
+    expect(reads).toHaveLength(1);
+    const selector = query.results[0].resultId;
+    const resolve = (selection: string) =>
+      resolveCatalogSource(
+        { kind: "skill", sourceId: "skills.sh", selector: selection },
+        catalog,
+      );
+
+    await expect(resolve(`a${selector}`)).rejects.toMatchObject({
+      status: 422,
+    });
+    expect(reads).toHaveLength(1);
+    const pinned = await resolve(selector);
+
+    expect(pinned).toMatchObject({
+      selector: id,
+      pin: sha,
+      sourceUrl: `https://github.com/${repo}/tree/${sha}/library/workflow`,
+      files: { "SKILL.md": skill, "companion.md": "follow this path" },
+    });
+    expect(reads.filter((url) => url.hostname === "skills.sh")).toHaveLength(1);
+    await expect(resolve(pinned.selector)).resolves.toEqual(pinned);
+    expect(
+      reads
+        .filter((url) => url.hostname === "skills.sh")
+        .map((url) => url.pathname),
+    ).toEqual(["/api/search", `/api/download/${id}`]);
+    await expect(resolve(`${repo}/missing`)).rejects.toMatchObject({
+      status: 503,
+      details: { reason: "catalog_identity_unavailable" },
+    });
+    const fromLink = await searchCatalog(
+      { kind: "skill", q: `https://skills.sh/${id}` },
+      catalog,
+    );
+
+    expect(fromLink.results).toEqual(query.results);
+  });
+
+  it("IT-CAT-01 refuses ambiguous declarations and keeps a root skill confined to its manifest and notices", async () => {
+    const repo = "public-publisher/root-skill";
+    const id = `${repo}/design`;
+    const root = blob("SKILL.md", skill);
+    const unrelated = blob(".github/readme.txt", "repository metadata");
+    const resolve = (entryList: typeof tree) =>
+      resolveCatalogSource(
+        { kind: "skill", sourceId: "skills.sh", selector: id },
+        async (url) => {
+          if (url.pathname === `/api/download/${id}`)
+            return {
+              files: [{ path: "SKILL.md", contents: skill }],
+              hash: "a".repeat(64),
+            };
+          if (url.pathname.includes("/git/trees/"))
+            return { truncated: false, tree: entryList };
+
+          return read(url);
+        },
+      );
+
+    await expect(resolve([root, unrelated, ...tree])).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(
+      resolve([
+        blob(
+          "skills/design/SKILL.md",
+          skill.replace("name: design", "name: other"),
+        ),
+      ]),
+    ).rejects.toMatchObject({ status: 404 });
+    const pinned = await resolve([root, unrelated, tree[2]]);
+
+    expect(pinned.sourceUrl).toBe(`https://github.com/${repo}/tree/${sha}`);
+    expect(pinned.files).toEqual({
+      "SKILL.md": skill,
+      LICENSE: "license terms",
+    });
+  });
+
+  it("IT-CAT-01 scopes live requests and exposes verified shared identities across sources", async () => {
+    vi.stubEnv("AUTH_SECRET", "fixture-catalog-signing-key");
+    const repo = "public-publisher/checkout-skills";
+    const id = `${repo}/design`;
+
+    vi.stubEnv(
+      "MAISTER_STUDIO_CATALOG_REPOS",
+      JSON.stringify([
+        { id: "published-design", repo, kind: "skill" },
+        {
+          id: "other-design",
+          repo: "separate-publisher/design",
+          kind: "skill",
+        },
+      ]),
+    );
+    const controller = new AbortController();
+    const readGlobal = vi.fn<CatalogClient>(async (url) => {
+      expect(url.hostname).toBe("skills.sh");
+
+      return { skills: [{ id, source: repo, name: "design" }] };
+    });
+    const global = await searchCatalog(
+      { kind: "skill", q: "design", scope: "skills.sh" },
+      readGlobal,
+      controller.signal,
+    );
+
+    expect(readGlobal).toHaveBeenCalledExactlyOnceWith(
+      expect.any(URL),
+      controller.signal,
+    );
+    expect(global.results).toEqual([
+      expect.objectContaining({ canonicalSkillId: id, sourceId: "skills.sh" }),
+    ]);
+
+    const configured = await searchCatalog(
+      { kind: "skill", q: "design", scope: "repositories" },
+      read,
+    );
+
+    expect(configured.results).toEqual([
+      expect.objectContaining({
+        sourceId: "published-design",
+        canonicalSkillId: id,
+      }),
+      expect.objectContaining({
+        sourceId: "other-design",
+        canonicalSkillId: "separate-publisher/design/design",
+      }),
+    ]);
+    const ambiguous = await searchCatalog(
+      { kind: "skill", q: "design", scope: "repositories" },
+      async (url) =>
+        url.pathname.includes(`/repos/${repo}/git/trees/`)
+          ? {
+              truncated: false,
+              tree: [
+                ...tree,
+                { ...tree[0], path: "skills/design-alt/SKILL.md" },
+              ],
+            }
+          : read(url),
+    );
+
+    expect(
+      ambiguous.results
+        .filter((item) => item.sourceId === "published-design")
+        .map(({ resultId, canonicalSkillId }) => ({
+          resultId,
+          canonicalSkillId,
+        })),
+    ).toEqual([
+      { resultId: "skills/design", canonicalSkillId: undefined },
+      { resultId: "skills/design-alt", canonicalSkillId: undefined },
+    ]);
+    await expect(
+      searchCatalog(
+        { kind: "skill", q: `https://skills.sh/${id}`, scope: "skills.sh" },
+        async () => {
+          throw new CatalogError(404, "No cached snapshot");
+        },
+      ),
+    ).resolves.toMatchObject({
+      results: [],
+      sources: [
+        {
+          sourceId: "skills.sh",
+          state: "unavailable",
+          reason: "catalog_identity_unavailable",
+        },
+      ],
+    });
+  });
+
   it("IT-CAT-01 resolves approved repository items and their exact companion bytes", async () => {
     const result = await searchCatalog({ kind: "skill", q: "design" }, read);
     const found = result.results.find((r) => r.sourceId === "anthropic-skills");

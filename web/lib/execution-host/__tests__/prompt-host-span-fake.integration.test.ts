@@ -892,6 +892,9 @@ describe("host-span settlement on the fake host", () => {
 
     try {
       await owner.query("BEGIN");
+      const { rows: [ownerBackend] } = await owner.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
       await owner.query("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [
         lagging.runId,
       ]);
@@ -899,9 +902,10 @@ describe("host-span settlement on the fake host", () => {
         db,
         runId: lagging.runId,
       });
-      // The confirming writer is parked behind the owner's run: on the run
-      // itself, or on the foreign-key re-check its second write of the command
-      // row runs while it already holds that row.
+      void confirmation.catch(() => undefined);
+
+      // Observe the exact blocker. The command must remain available while
+      // the confirming transaction waits behind this Run owner.
       await expect
         .poll(
           async () =>
@@ -909,12 +913,17 @@ describe("host-span settlement on the fake host", () => {
               await database.pool.query<{ n: number }>(
                 `SELECT count(*)::int AS n FROM pg_stat_activity
                   WHERE datname = current_database() AND wait_event_type = 'Lock'
-                    AND (query ILIKE '%for key share%' OR query ILIKE 'update "execution_commands"%')`,
+                    AND $1 = ANY(pg_blocking_pids(pid))`,
+                [ownerBackend.pid],
               )
             ).rows[0].n,
           { timeout: 10_000 },
         )
         .toBe(1);
+      await owner.query(
+        "SELECT id FROM execution_commands WHERE id = $1 FOR UPDATE NOWAIT",
+        [handle.commandId],
+      );
       await owner.query(
         "UPDATE execution_commands SET updated_at = clock_timestamp() WHERE id = $1",
         [handle.commandId],

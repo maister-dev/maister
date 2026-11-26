@@ -1323,9 +1323,9 @@ The assigned workload connects directly to selected HTTP MCP endpoints.
 the current assignment fence and returns a host receipt. A later session
 start verifies the local cache before running the selected executable.
 An operator probe uses the probed supervisor's own runtime and credentials.
-On remote assignments, the supervisor launches its bundled MAIster facade
-against the configured Web origin with a scoped execution token. Local
-assignments use the local facade command.
+On addressed assignments, the supervisor resolves its own MAIster facade
+and connects to the configured Web origin with a scoped execution token.
+Legacy adopted workspaces use the local facade command.
 
 [API contract](api/supervisor.openapi.yaml) ·
 [Placement and qualification](system-analytics/execution-hosts.md#mcp-placement-implemented) ·

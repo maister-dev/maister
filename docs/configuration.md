@@ -1858,7 +1858,11 @@ The per-file `config.worktree` limit is 1 MiB. See [operational integrity](syste
 
 ## Studio catalog sources
 
-The web process reads approved GitHub repositories from `MAISTER_STUDIO_CATALOG_REPOS`, a JSON array of `{id,repo,kind}` entries. The built-in list contains Anthropic skills and Vercel agent skills. An explicit array replaces that list. Set `kind` to `skill` for repositories publishing `skills/<directory>/SKILL.md` or `mcp` for versioned Registry-format `server.json` descriptors. The independent official MCP Registry connector uses its public HTTPS API. The web process needs outbound TLS to api.github.com, registry.modelcontextprotocol.io and, for npm metadata, registry.npmjs.org. Sources carry no credentials. Preview and apply share the local-package storage volume, including its sibling `.maister-catalog` journal directory. Restrict that directory to the web service account and back it up with the drafts. A release carries the upstream identity and license information in `catalog-origins/`.
+Web searches skills.sh using the unauthenticated HTTPS endpoint used by the Skills CLI. It resolves GitHub-backed listings to pinned Git files. The official MCP Registry has its own public HTTPS connector. Both searches use their built-in sources regardless of `MAISTER_STUDIO_CATALOG_REPOS`.
+
+The optional `MAISTER_STUDIO_CATALOG_REPOS` is a JSON array of `{id,repo,kind}` entries. The built-in GitHub list contains Anthropic skills and Vercel agent skills. An explicit array replaces that list. Set `kind` to `skill` for repositories publishing `skills/<directory>/SKILL.md` or `mcp` for versioned Registry-format `server.json` descriptors.
+
+Web needs outbound TLS to skills.sh, api.github.com, registry.modelcontextprotocol.io and, for npm metadata, registry.npmjs.org. Preview and apply share the local-package storage volume, including its sibling `.maister-catalog` journal directory. Restrict that directory to the web service account and back it up with the drafts. A release carries the upstream identity and license information in `catalog-origins/`.
 
 GitHub's unauthenticated REST allowance is shared by the egress IP. Search
 reuses a short-lived tree cache and preview reads each distinct blob required
@@ -1867,26 +1871,23 @@ See [GitHub REST API rate limits](https://docs.github.com/en/rest/using-the-rest
 
 ### Assigned supervisor MCPs
 
-Set `MAISTER_EXECUTION_HOST_KEY` on each supervisor. On web,
-`MAISTER_EXECUTION_HOST_ENDPOINTS` maps these pinned keys to operator-managed
-HTTPS origins or loopback ports of authenticated tunnels. For HTTPS configure
-`MAISTER_EXECUTION_HOST_TLS_CA_FILE`, `MAISTER_EXECUTION_HOST_TLS_CERT_FILE`
-and `MAISTER_EXECUTION_HOST_TLS_KEY_FILE` on web. Require client certificates
-at the supervisor ingress and restart Web after rotation. Keep the supervisor
-API private to the control plane. For new default placements, set
-`MAISTER_EXECUTION_HOST_PREFERRED_KEY` and `MAISTER_EXECUTION_HOST_SHARED_WORKSPACE=1`
-on Web after provisioning the shared storage. Web still allocates Git worktrees.
-Mount repositories, checkout Git directories, worktrees, local package drafts
-and declared context mount paths with identical absolute paths and realpath
-targets on Web and the supervisor. Give the service accounts the access
-required to adopt and use those paths and list the worktree and directory roots
-in `MAISTER_WORKSPACE_ROOTS`. Keep the original supervisor and workspace for an
-interactive checkpoint. Initial private librarian placement remains local.
+Configure the primary trusted endpoint with `MAISTER_SUPERVISOR_URL` and
+pin its stable `host.hostKey` from `GET /health` in
+`MAISTER_SELECTED_EXECUTION_HOST_KEY`. Register an additional trusted endpoint
+through `MAISTER_ADDITIONAL_EXECUTION_HOSTS`. Control eligibility with
+`MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS` for the primary endpoint and
+`projectIds` for each additional endpoint. The board lists eligible hosts.
+Protect the listener at the network boundary. A selected supervisor uses
+`MAISTER_WORKSPACE_REPOSITORIES` and its own Git credentials to prepare
+host-owned workspaces. The legacy default can still adopt local worktrees.
+See the [selected supervisor deployment](deployment.md#selected-supervisor-local-pilot).
 
-For each remote supervisor, set `MAISTER_WORKLOAD_API_BASE_URL` to the Web API
-origin reachable by its platform facade. Local assignments use the local
-facade command and `MAISTER_API_BASE_URL`. The image builds the facade into
-`mcp/dist/main.js`. For reviewed, self-contained npm stdio releases, approve
+Set the same reachable `MAISTER_API_BASE_URL` on Web and each supervisor that
+runs the addressed MAIster MCP facade. Its executable is resolved on that
+supervisor. The image includes `mcp/dist/main.js`. Checkpoint continuation
+requires the original supervisor and workspace.
+
+For reviewed, self-contained npm stdio releases, approve
 the descriptor SHA-256 shown in the Studio preview in `MAISTER_MCP_ALLOWED_DIGESTS`.
 An approval refusal reports the same value in `details.artifactDigest`. The host fetches
 the exact npm tarball, verifies its SHA-512, manifest publisher and executable,
@@ -1896,18 +1897,10 @@ cache outside project workspaces. Bind MCP credentials using `env:MAISTER_MCP_SE
 on the selected server. The supervisor excludes this namespace and ambient MAIster access
 tokens from ACP child environments. HTTP MCPs connect directly from the workload.
 The production Compose profile `remote-supervisor` reads `supervisor/.env`.
-It runs the production image with a read-only root, persists state and the MCP
-cache in the `supervisor_state` volume, and publishes port `7777` on loopback.
-Configure private ingress or an authenticated tunnel on that host. Add the
-operator-managed shared storage in a Compose override. For example, if all
-required paths are under `/srv/maister-shared` on Web and on the Docker host:
-
-```yaml
-services:
-  mcp-supervisor:
-    volumes:
-      - /srv/maister-shared:/srv/maister-shared
-```
+It runs with a read-only root, persists state and the MCP cache in the
+`supervisor_state` volume, and publishes port `7777` on loopback. Use private
+ingress or an authenticated tunnel and give each supervisor its own managed
+workspace root and Git access.
 
 The profile runs as UID/GID `1001:1001`. Its `supervisor_state` volume stays
 private to that supervisor. A cold install reclaims a bounded number of old

@@ -137,9 +137,6 @@ export function librarianFacadeServer(
 
   return {
     name: LIBRARIAN_MCP_SERVER,
-    ...(launch.command === "maister:host-facade"
-      ? { platformOrigin: "maister_facade" as const }
-      : {}),
     transport: "stdio",
     command: launch.command,
     args: launch.args,

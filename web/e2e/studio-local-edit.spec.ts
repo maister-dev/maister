@@ -1,3 +1,5 @@
+import type { SearchResponse } from "@/lib/local-packages/catalog-contract";
+
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -912,15 +914,23 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
   const base = "/api/studio/local-packages/" + id;
   const oldSearch = Promise.withResolvers<void>();
   const oldSearchFinished = Promise.withResolvers<void>();
+  const releaseRepositories = Promise.withResolvers<void>();
+  const repositoryPage = Promise.withResolvers<SearchResponse>();
   const oldPreview = Promise.withResolvers<void>();
   const oldPreviewFinished = Promise.withResolvers<void>();
 
   // Delay browser delivery while the production API performs search and review.
   await page.route("**/catalog/search?**", async (route) => {
-    const old = new URL(route.request().url()).searchParams.get("q") === "old";
+    const params = new URL(route.request().url()).searchParams;
+    const scope = params.get("scope");
+    const old = params.get("q") === "old" && scope !== "skills.sh";
     const response = await route.fetch();
 
     if (old) await oldSearch.promise;
+    if (params.get("q") === "design" && scope === "repositories") {
+      repositoryPage.resolve(await response.json());
+      await releaseRepositories.promise;
+    }
     await route.fulfill({ response });
     if (old) oldSearchFinished.resolve();
   });
@@ -941,11 +951,15 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
     const results = panel.getByRole("listbox", { name: "Catalog results" });
 
     if (kind === "skills") {
-      const requested = page.waitForRequest(
-        (r) =>
-          r.url().includes("/catalog/search?") &&
-          new URL(r.url()).searchParams.get("q") === "old",
-      );
+      const requested = page.waitForRequest((r) => {
+        const url = new URL(r.url());
+
+        return (
+          url.pathname.endsWith("/catalog/search") &&
+          url.searchParams.get("q") === "old" &&
+          url.searchParams.get("scope") !== "skills.sh"
+        );
+      });
 
       await search.fill("old");
       await requested;
@@ -955,7 +969,7 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
       );
       await search.fill("intermediate");
       await results
-        .getByRole("option", { name: "intermediate · fixture" })
+        .getByRole("option", { name: "intermediate · fixture/catalog-skills" })
         .waitFor();
       await search.fill("");
       oldSearch.resolve();
@@ -963,8 +977,11 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
       await expect(results).toHaveCount(0);
 
       await search.fill("unavailable");
+      await expect(
+        panel.getByRole("status").filter({ hasText: "skills.sh:" }),
+      ).toHaveText("skills.sh: Source rate limit reached");
       await results
-        .getByRole("option", { name: "unavailable · fixture" })
+        .getByRole("option", { name: "unavailable · fixture/catalog-skills" })
         .click();
       await expect(panel.getByRole("alert")).toHaveText(
         "The catalog item or draft is unavailable.",
@@ -981,7 +998,7 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
 
       await search.fill("old-preview");
       await results
-        .getByRole("option", { name: "old-preview · fixture" })
+        .getByRole("option", { name: "old-preview · fixture/catalog-skills" })
         .click();
       await requestedPreview;
     } else {
@@ -1002,16 +1019,44 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
       );
     }
     await search.fill("design");
-    await results
-      .getByRole("option", {
-        name:
-          kind === "skills"
-            ? "design · fixture"
-            : "com.example/design · com.example",
-        exact: true,
-      })
-      .click();
     const preview = page.getByTestId("catalog-preview");
+
+    if (kind === "skills") {
+      const indexedSkill = results.getByRole("option", {
+        name: "design · catalog-author/checkout-skills",
+        exact: true,
+      });
+      const distinctSkill = results.getByRole("option", {
+        name: "design · fixture/catalog-skills",
+        exact: true,
+      });
+
+      try {
+        await expect(indexedSkill).toBeVisible();
+        await expect(distinctSkill).toHaveCount(0);
+        await indexedSkill.click();
+        await expect(preview).toContainText("companion.md");
+      } finally {
+        releaseRepositories.resolve();
+      }
+      await expect(distinctSkill).toBeVisible();
+      expect((await repositoryPage.promise).results).toContainEqual(
+        expect.objectContaining({
+          sourceId: "indexed-fixture-skills",
+          resultId: "skills/library/design-workflow",
+          canonicalSkillId: "catalog-author/checkout-skills/design",
+        }),
+      );
+      await expect(results.getByRole("option")).toHaveCount(2);
+      await expect(indexedSkill).toHaveAttribute("aria-selected", "true");
+    } else {
+      await results
+        .getByRole("option", {
+          name: "com.example/design · com.example",
+          exact: true,
+        })
+        .click();
+    }
 
     await expect(preview).toContainText(
       kind === "skills" ? "companion.md" : "mcps/design.yaml",
@@ -1058,6 +1103,10 @@ test("E2E-CAT-02 discards stale catalog replies and delivers the edited skill an
       oldPreview.resolve();
       await oldPreviewFinished.promise;
       await expect(preview).toContainText("capability/skills/design");
+      await expect(preview.getByRole("link")).toHaveAttribute(
+        "href",
+        `https://github.com/catalog-author/checkout-skills/tree/${"a".repeat(40)}/skills/library/design-workflow`,
+      );
       await expect(preview.getByText("Compatible runner adapters")).toHaveCount(
         0,
       );

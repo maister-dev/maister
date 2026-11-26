@@ -4,6 +4,62 @@ import { isAbsolute, join, relative, sep } from "node:path";
 
 import { MaisterError } from "./maister-error";
 
+export const ADDRESSED_PACKAGE_SKILL_SLUG =
+  /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/;
+
+export type AddressedPackageSkill = Readonly<{
+  slug: string;
+  treeDigest: string;
+}>;
+
+type DigestEntry =
+  readonly ["directory", string] | readonly ["file", string, string];
+
+function updateDigest(
+  digest: ReturnType<typeof createHash>,
+  entry: DigestEntry,
+): void {
+  digest.update(JSON.stringify(entry));
+}
+
+/** A captured Git tree has no empty directories. Rebuild its walk from sealed file hashes. */
+export function packageSkillManifestDigest(
+  files: readonly Readonly<{ path: string; sha256: string }>[],
+): string {
+  const entries = new Map<string, DigestEntry>([["", ["directory", ""]]]);
+
+  for (const { path, sha256 } of files) {
+    const parts = path.split("/");
+    const name = join(...parts);
+
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const directory = join(...parts.slice(0, depth));
+
+      entries.set(directory, ["directory", directory]);
+    }
+    entries.set(name, ["file", name, sha256]);
+  }
+  const byTreeOrder = (
+    [, left]: DigestEntry,
+    [, right]: DigestEntry,
+  ): number => {
+    const a = left.split(sep);
+    const b = right.split(sep);
+
+    for (let depth = 0; depth < Math.min(a.length, b.length); depth += 1) {
+      if (a[depth] !== b[depth]) return a[depth] < b[depth] ? -1 : 1;
+    }
+
+    return a.length - b.length;
+  };
+  const digest = createHash("sha256");
+
+  for (const entry of [...entries.values()].sort(byTreeOrder))
+    updateDigest(digest, entry);
+
+  return digest.digest("hex");
+}
+
 export async function confinedPackageSkillPath(
   root: string,
   file: string,
@@ -35,20 +91,18 @@ async function digestTree(
           "Package skill companion contains a directory cycle",
         );
       ancestors.add(full);
-      digest.update(JSON.stringify(["directory", relativeName]));
+      updateDigest(digest, ["directory", relativeName]);
       for (const name of (await readdir(full)).sort())
         await visit(join(relativeName, name));
       ancestors.delete(full);
     } else if (stat.isFile()) {
-      digest.update(
-        JSON.stringify([
-          "file",
-          relativeName,
-          createHash("sha256")
-            .update(await readFile(full))
-            .digest("hex"),
-        ]),
-      );
+      updateDigest(digest, [
+        "file",
+        relativeName,
+        createHash("sha256")
+          .update(await readFile(full))
+          .digest("hex"),
+      ]);
     } else
       throw new MaisterError(
         "CONFIG",

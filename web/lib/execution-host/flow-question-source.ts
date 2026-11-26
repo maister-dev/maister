@@ -11,7 +11,11 @@ import pino from "pino";
 
 import { nodePermissionSourceSchema } from "./flow-permission-source";
 import { getHostById } from "./hosts";
-import { registerRemoteHost } from "./remote-direct";
+import { hostForSelection } from "./resolver";
+import {
+  configuredAdditionalExecutionEndpoints,
+  configuredSelectedExecutionEndpoint,
+} from "./selected-endpoint";
 
 import {
   hitlRequests,
@@ -290,6 +294,18 @@ export async function loadCurrentFlowNodeQuestionSession(
 
 /** Current accepted answers for the correlated Run. Callers order them by first acceptance. */
 function eligibleFlowQuestionAnswers() {
+  const primary = configuredSelectedExecutionEndpoint();
+  const peerKeys = configuredAdditionalExecutionEndpoints().map(
+    ({ hostKey }) => hostKey,
+  );
+  const currentPrimary = primary
+    ? sql`AND host.host_key=${primary.hostKey}`
+    : sql``;
+  const configuredHost = sql`(
+    (host.transport->>'role' IS DISTINCT FROM 'secondary' ${currentPrimary})
+    OR (host.transport->>'role'='secondary' AND host.host_key=ANY(${sql.param(peerKeys)}::text[]))
+  )`;
+
   return sql`SELECT q.step_id,q.flow_answer_accepted_at,q.id,prior.execution_host_id,
         host.readiness='ready' AS host_ready FROM hitl_requests q
     JOIN node_attempts n ON n.id=q.flow_node_attempt_id AND n.run_id=q.run_id
@@ -297,7 +313,7 @@ function eligibleFlowQuestionAnswers() {
     JOIN execution_assignments prior ON prior.id=n.action_resume->>'sourceAssignmentId' AND prior.run_id=q.run_id
       AND prior.state='released' AND prior.released_reason='checkpointed'
     JOIN execution_hosts host ON host.id=prior.execution_host_id AND host.retired_at IS NULL
-      AND host.readiness_reason IS DISTINCT FROM 'identity_changed'
+      AND host.readiness_reason IS DISTINCT FROM 'identity_changed' AND ${configuredHost}
     JOIN execution_commands checkpoint ON checkpoint.id=n.action_resume->>'checkpointCommandId'
       AND checkpoint.kind='session.checkpoint' AND checkpoint.state='succeeded' AND checkpoint.run_id=prior.run_id
       AND checkpoint.execution_assignment_id=prior.id AND checkpoint.assignment_epoch=prior.epoch
@@ -358,9 +374,16 @@ export async function loadFlowQuestionCheckpointHost(
 export async function refreshFlowQuestionCheckpointHosts(
   db: Db,
 ): Promise<void> {
-  const { rows } = await db.execute<{ host_key: string }>(sql`
-    SELECT remote.host_key FROM execution_hosts remote
-    WHERE remote.kind='remote_direct' AND remote.retired_at IS NULL
+  const primary = configuredSelectedExecutionEndpoint();
+
+  if (!primary) return;
+  const keys = [
+    primary.hostKey,
+    ...configuredAdditionalExecutionEndpoints().map(({ hostKey }) => hostKey),
+  ];
+  const { rows } = await db.execute<{ id: string; host_key: string }>(sql`
+    SELECT remote.id, remote.host_key FROM execution_hosts remote
+    WHERE remote.host_key = ANY(${sql.param(keys)}::text[]) AND remote.retired_at IS NULL
       AND remote.updated_at<clock_timestamp()-interval '10 seconds'
       AND EXISTS (SELECT 1 FROM runs WHERE runs.status='NeedsInputIdle'
         AND EXISTS (${eligibleFlowQuestionAnswers()} AND host.id=remote.id))
@@ -368,9 +391,9 @@ export async function refreshFlowQuestionCheckpointHosts(
   `);
 
   await Promise.all(
-    rows.map(async ({ host_key: hostKey }) => {
+    rows.map(async ({ id, host_key: hostKey }) => {
       try {
-        await registerRemoteHost(db, hostKey);
+        await hostForSelection(db, id);
       } catch (error) {
         if (isMaisterError(error) && error.code === "EXECUTOR_UNAVAILABLE") {
           log.debug(
