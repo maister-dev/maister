@@ -1013,6 +1013,18 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   test-only tmpfs setting completed all seven cases, including D1 and D3,
   with one suite worker and independent PostgreSQL clones.
 
+  On source `beb65a9c9`, a fresh Linux arm64 production build passed G1,
+  G2 and the legacy S5.3 split-user Chrome scenarios independently. The
+  test used the same locked Linux dependency image as the earlier witness,
+  with exact source and generated Next.js output mounted from temporary
+  storage because Docker's writable filesystem was full. The G2 original
+  terminal event `91637ef6-e05c-5fc7-afb8-9c3cdb536499` applied once after
+  reconnect. Coordinated restore recovered both supervisor identities,
+  their original command evidence and the dirty Review diff. On the same
+  source, 18 owning integration and migration cases and the 148-test
+  supervisor A/B lane passed. The local master journal was an unchanged
+  prefix through 0368, with the candidate finishing at 0389.
+
 ### Proposed commit checkpoints
 
 | Tasks | Reviewable commit intent | Release decision |
