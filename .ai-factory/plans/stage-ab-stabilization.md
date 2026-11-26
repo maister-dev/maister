@@ -908,6 +908,15 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   original bytes with attachment disposition. The supervisor uses the
   deterministic resumable ACP fixture.
 
+  Stage C requalification used production source `83aeeab69` with Linux arm64,
+  Node 24.22.2 and Chrome 158.0.8127.38. The same test passed live permission,
+  Web restart, epochs 1 and 2, independent cancellation, supervisor restart
+  and downloading the original active-content bytes. RED stopped at the
+  obsolete workbench Stop locator after the header action moved. GREEN at
+  `d4e8a6c0c` used the accessible Stop control and retained the lifecycle
+  and transport assertions. The local witness is
+  `/private/tmp/maister-stage-c-83ae.CRTrzXl4/chrome-s53-header-retry.log`.
+
   The browser smoke now drives the board Launch dialog, receives the exact
   canonical permission event on a live-only SSE subscription, and observes
   the Run move to NeedsInput without a reload. It clicks Allow after a

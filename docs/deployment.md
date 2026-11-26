@@ -753,10 +753,11 @@ or database credentials.
 
 ### Selected supervisor local pilot
 
-The local Chrome fixture qualifies one pinned endpoint for independent project
-Flows through Review on a disposable Web instance with one project. It starts
-Web and the selected supervisor under separate Linux service identities. Keep
-the endpoint private to the control plane.
+The local Chrome fixture qualifies pinned checkout, project checks, Review,
+publication, archive, cancellation and checkpoint recovery on one selected
+supervisor. It starts production Web and the supervisor under separate Linux
+service identities on a disposable instance. Keep the endpoint private to
+the control plane.
 
 1. Start the supervisor using `deploy/maister-supervisor.service` and its own
    `supervisor/.env`. Set `MAISTER_RUNTIME_ROOT` and
@@ -775,8 +776,8 @@ the endpoint private to the control plane.
    runtime directories and still displayed the sealed result and diff.
 
 The PostgreSQL-only Compose files provide the database for these
-service units. Use the [Stage C acceptance plan](../.ai-factory/plans/feature-stage-c-selected-supervisor.md)
-to track the remaining lifecycle and multi-host rollout evidence.
+service units. The [Stage C acceptance plan](../.ai-factory/plans/feature-stage-c-selected-supervisor.md)
+records local qualification and the gates for a deployed instance.
 
 #### Local two-supervisor pilot
 

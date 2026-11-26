@@ -384,7 +384,7 @@ describe("C-02 workspace ownership", () => {
     });
   });
 
-  it("upgrades a populated launch preparation through 0376 without rewriting the old identity", async () => {
+  it("upgrades a populated launch preparation through 0383 without rewriting the old identity", async () => {
     const preparation = {
       version: 2,
       kind: "agent",
@@ -570,7 +570,7 @@ describe("C-02 workspace ownership", () => {
       archived_commit=$2,preservation_outcome='snapshot_created',removal_kind='archive' WHERE id=$1`, [workspaceId, sha])).rowCount).toBe(1);
   });
 
-  it("preserves queued capture and recorded Stop owners through 0384 and 0385", async () => {
+  it("preserves queued capture and recorded Stop owners through 0391 and 0392", async () => {
     await database.db.transaction(async (tx) => {
       await applyMainMigration(tx, "0391_stage_c_retained_workspace_sync");
       await applyMainMigration(tx, "0392_stage_c_addressed_retention");
@@ -622,7 +622,7 @@ describe("C-02 workspace ownership", () => {
     )).rejects.toMatchObject({ constraint: "addressed_stop_immutable" });
   });
 
-  it("preserves populated legacy Agent preparation bytes through 0386", async () => {
+  it("preserves populated legacy Agent preparation bytes through 0393", async () => {
     const retained = async () => (await database.pool.query(
       "SELECT to_jsonb(task_launch_intents) AS document FROM task_launch_intents WHERE id=$1",
       [retainedIntentId],
@@ -635,7 +635,7 @@ describe("C-02 workspace ownership", () => {
     expect(await retained()).toEqual(before);
   });
 
-  it("preserves host ownership through 0387 and refuses singleton writers while a peer is retained", async () => {
+  it("preserves host ownership through 0394 and refuses singleton writers while a peer is retained", async () => {
     const readHistory = async () => (await database.pool.query(
       `SELECT h.id, h.host_key, h.transport, a.id AS assignment_id, a.run_id
        FROM execution_hosts h LEFT JOIN execution_assignments a ON a.execution_host_id=h.id ORDER BY h.id,a.id`,

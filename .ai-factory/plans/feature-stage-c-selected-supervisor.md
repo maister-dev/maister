@@ -173,7 +173,7 @@ Base revision `22df665aa1e4a560965d49a6af248ad37ac71ff3`. The existing [operatio
 | Board Flow launch RED | Ran the existing `launchFlowThroughHttp` path in the same production fixture with a seeded Flow containing a CLI build node. Authentication and I1 passed. The board's `GET /api/runs/launch-options` returned 409 `CONFLICT` because the Web Git subprocess could not read its current working directory. No launch was accepted and no build ran. Restored the fixture after capturing the failing result. |
 | Ownership inventory regression | The base failed the existing exported-wrapper invariant because `inspectDeliveryBase` was absent. Added it to the repository-worktree inventory. The unchanged nine-case suite passed on Node 24.15.0 and 26.13.1 after the correction. |
 
-The ownership decision is recorded in [ADR-219](../../docs/decisions/adr-219.md). The [designed protocol](../../docs/system-analytics/execution-hosts.md#selected-supervisor-stage-c-designed) records host negotiation, operations, refusals and paired storage constraints. The [v1 schema profile](../../docs/api/stage-c-workspace.schema.yaml) and [examples](../../docs/api/stage-c-workspace-examples.yaml) are verified by `pnpm validate:contracts`. The harness covers 28 operations, strict requests, typed refusals, original acceptance and exact terminal readback, target-bound replay, settings CAS and host event identity. `pnpm validate:docs:all` checks the design links and the unchanged current ERD. Deployment effect, admission and real acceptor parity are tested with each implementation task.
+The ownership decision is recorded in [ADR-219](../../docs/decisions/adr-219.md). The [implemented protocol](../../docs/system-analytics/execution-hosts.md#selected-supervisor-stage-c-implemented) records host negotiation, operations, refusals and paired storage constraints. The [v1 schema profile](../../docs/api/stage-c-workspace.schema.yaml) and [examples](../../docs/api/stage-c-workspace-examples.yaml) are verified by `pnpm validate:contracts`. The harness covers 31 operations, strict requests, typed refusals, original acceptance and exact terminal readback, target-bound replay, settings CAS and host event identity. `pnpm validate:docs:all` checks links and the current ERD. Deployment effect, admission and real acceptor parity are tested with each implementation task.
 
 ### API and event contracts
 
@@ -904,7 +904,21 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   assignment epoch over the attention stream in EN and RU. The two pinned
   Next.js runs reached Review on the chosen host.
 
-- [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.
+- [x] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.
+
+  **Final G1 receipt.** The production Web built from `83aeeab69` passed
+  `--chrome --addressed-build` on Linux arm64, Node 24.22.2 and Chrome
+  158.0.8127.38, with Web UID 1001 and supervisor UID 1002. The selected
+  supervisor completed private Git checkouts at two pinned revisions, the
+  fixture ACP edit and real Next.js checks. Web verified EACCES on the host
+  storage and displayed the sealed diff and result. Chrome verified reviewed
+  publication, archive, retention GC, Stop with retired process group 1282,
+  and checkpoint-based fresh rework. The preparation suite exercised dropped
+  ACK recovery on the matching workspace protocol. The companion S5.3 smoke
+  on the same build confirmed live HITL, recovery through epochs 1 and 2, and
+  the independent cancellation after updating the header locator in `d4e8a6c0c`.
+  Local logs are `chrome-g1-exact.log` and `chrome-s53-header-retry.log` under
+  `/private/tmp/maister-stage-c-83ae.CRTrzXl4`.
 
   The exact archived image and Chrome fixture at `7b588d409` repeated the
   two pinned Next builds and retained the original patch. Image digest
@@ -1017,6 +1031,25 @@ and its real HTTP command outcomes are qualified in T04–T05H.
 
 - [ ] **T14 · Pilot / G2 (after T12–13).** Qualify the two-host matrix below and reconcile actual wire/schema versions, admin guide, metrics, test topology, deployment and error taxonomy. Validate migration/journal against latest master and reject rollback to a singleton writer while a second host owns work. Document shutdown/drain and coordinated restore. Release the pilot only for configurations matching its evidence. **Checkpoint 4:** two-host placement and recovery.
 
+  **Final G2 browser receipt.** `83aeeab69` passed
+  `--chrome --addressed-two-host` on the same Linux build as G1. Web, A and
+  B used UIDs 1001, 1002 and 1003. A and B used private SQLite and Git stores
+  and separate network namespaces. B accepted the pinned Next.js build as
+  PID 183 in group 176. Web observed zero copies of terminal event
+  `adbcc41f-c69a-5289-b6ef-d5ee20b728d8` while B was offline and one after
+  reconnect. A independently reached Review and recorded no workload
+  receipt for B's Run. A fresh PostgreSQL restore and both host store
+  snapshots recovered the same host keys, new boot IDs and the unchanged
+  dirty Review diff. `chrome-g2-exact.log` holds the correlated evidence.
+  The same product source passed 29 ownership, migration, preparation
+  recovery, capacity and peer integration cases with the corrected fixture
+  in `132b1b52d`, and all 148 Supervisor A/B cases. The native Darwin arm64
+  isolation lane at `d4e8a6c0c` applied all 56 cases across eight suites on
+  Node 24.15.0, with successful fixture cleanup. Its fresh production Web
+  build ID was `lGBWWhRUkcbjzhISrw_Br` and the invocation was
+  `68ea6b7c-363d-425c-b47a-39d28093682d`. See
+  `/private/tmp/maister-ab-isolation-NUY2eD/vitest.json`.
+
   The C-15 Chrome fixture passed against the capacity-phase production build
   `sha256:431a4e1ff1055b8688be48f31c752059e22445a76909ff595d2bdc6b4c5aefb6`
   (Linux arm64, Node 24.22.2, Chrome 158.0.8127.38). Web ran as UID 1001,
@@ -1112,6 +1145,14 @@ package suites and typechecks, `pnpm validate:contracts` and
 and ERD checks. G1/G2 run the production build and matching Chrome topology.
 G2 also reruns G1 and the affected A/B durability/deferred-release lanes.
 An unexecuted required local check keeps that local checkpoint open.
+
+### Failure-class regression coverage
+
+| Failure class | Primary regression and result |
+| --- | --- |
+| Cross-host and cross-project substitution | `selected-host-pair.integration.test.ts`, “C-13/C-14 isolate transport and retain a slot through partition, restart and drain,” checks refusal by a wrong peer and per-host delivery and ACK isolation. The project settings integration “C-11 checks project authority and performs one composite-revision update” covers a stale write and an ineligible host. |
+| Ambiguous retry and lost ACK | `workspace-prepare-recovery.integration.test.ts`, “C-06/C-08 applies one checkout and the owning host's requirement result,” loses the accepted response and refuses the first application, then recovers one handle and command outcome. The supervisor workspace integration “C-10 prepares one retained resolver conflict across an interrupted host receipt” recovers the mutation by its original command. |
+| Deferred release and destructive cleanup | `selected-host-pair.integration.test.ts` retains the capacity slot until the exact owning process proves retirement. `stage-c-workspace-ownership.integration.test.ts`, “upgrades a retained archive claim and requires its exact applied preservation before release,” rejects release with a substituted preservation command or before the original evidence is applied. The production G1 smoke observes actual process-group retirement and retention GC. |
 
 ### Release and physical-host evidence
 

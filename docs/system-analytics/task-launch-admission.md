@@ -384,7 +384,7 @@ No historic assessment/run receipt is rewritten. Writer floor fences v2 and inte
 | Request drift or uncertain response | Reject drift before writes. Replay the exact request with the same key, or read its receipt. A different payload under the same key conflicts. |
 | Scheduling or external API | These use their existing request shapes. The browser disables Schedule until one-run choices are removed. |
 
-## Requested execution host Stage C (Designed)
+## Requested execution host Stage C (Implemented)
 
 Operator-managed descriptors define which host IDs each project may use.
 A project admin with `editSettings` reads and updates its default through

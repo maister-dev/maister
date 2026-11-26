@@ -653,7 +653,7 @@ row is already `Done` with a deadline, which is what
 the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
 [`run-results.md`](run-results.md) and [`workspaces.md`](workspaces.md).
 
-## Host-owned disposal Stage C (Designed)
+## Host-owned disposal Stage C (Implemented)
 
 Acquire the current workspace operation claim before disposal. Use the
 retained host, handle and generation after assignment release. A preserved

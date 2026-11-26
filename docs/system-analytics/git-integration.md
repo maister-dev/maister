@@ -435,7 +435,7 @@ promotion is unchanged. The full state machine and crash windows live in
 Status: **Implemented (ADR-141)** — `ai_rebase_merge` in `web/lib/runs/promote.ts`
 delegating to the shared sync resolver core (`web/lib/runs/sync-target.ts`).
 
-## Git and terminal operations on the selected host Stage C (Designed)
+## Git and terminal operations on the selected host Stage C (Implemented)
 
 Retain the selected workspace owner after execution assignment release.
 Web authorizes the operation and claims the existing lifecycle fence

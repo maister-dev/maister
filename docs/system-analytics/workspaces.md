@@ -526,7 +526,7 @@ flowchart LR
     Pruned -- yes --> PrunedInd[pruned indication]
 ```
 
-## Host-owned workspaces Stage C (Designed)
+## Host-owned workspaces Stage C (Implemented)
 
 [ADR-219](../decisions/adr-219.md) separates the project source, host-local
 materialization, logical Run workspace and physical incarnation. Web first

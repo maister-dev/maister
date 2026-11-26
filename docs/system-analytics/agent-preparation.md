@@ -159,7 +159,7 @@ proves that condition; missing evidence is not that proof. Missing-baseline,
 qualification-source rejection and cleanup failures remain separate subsequent
 data. Retry is explicit after remediation; no historical diagnosis is invented.
 
-## Addressed preparation Stage C (Designed)
+## Addressed preparation Stage C (Implemented)
 
 Commit the real Run, assignment and existing preparation claim before the
 host request. The claim binds repository and workspace mode, pinned source,

@@ -269,7 +269,7 @@ followed by host confirmation before compaction. Existing cascade FKs must not
 remove protected commands or import proofs. No in-place migration amendment is
 permitted; guarded forward corrections and a real run-delete race enforce this.
 
-## Stage C workspace ownership migration (Designed, ADR-219)
+## Stage C workspace ownership migration (Implemented, ADR-219)
 
 PostgreSQL migration `0379_stage_c_workspace_ownership` adds host ownership
 to `workspaces` and permits absent path columns on addressed rows. The

@@ -107,7 +107,7 @@ Generate SQL, journal, snapshot and schema together. Validate fresh and populate
 
 Already checkedAt does not establish actual dispatch or frozen input. Hold incomplete pre-dispatch v1 work; protect existing live sessions and refuse unrecoverable later prompts. Preserve active source references and all immutable assessment publication/content. Forward fix or separately authorized matched restore is the rollback policy; no down migration deletes live evidence.
 
-## Selected host admission snapshot (Designed, ADR-219)
+## Selected host admission snapshot (Implemented, ADR-219)
 
 Stage C adds a nullable versioned selection to the intent. Historical
 receipts retain their original format. A new addressed intent persists

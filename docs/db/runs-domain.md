@@ -840,7 +840,7 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `workspaces.worktree_path` UNIQUE — preserves uniqueness for legacy local
   paths. Migration `0377` permits null on host-owned rows and scopes the
   unique live Supervisor handle to its execution host. See
-  [execution host storage](execution-hosts-domain.md#stage-c-workspace-ownership-migration-designed-adr-219).
+  [execution host storage](execution-hosts-domain.md#stage-c-workspace-ownership-migration-implemented-adr-219).
 - **(ADR-140, migration 0105, Implemented)** `workspaces_pr_state_scan_idx` partial index
   on `(project_id) WHERE pr_url IS NOT NULL AND (pr_state IS NULL OR pr_state =
   'open')` — the `pr_state_scan` candidate query (open / never-checked PRs per

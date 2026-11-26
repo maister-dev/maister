@@ -272,7 +272,7 @@ and delete acknowledgements lost across the restart converge through receipt
 recovery and the durable outbox, a late availability neither resurrects nor
 poisons, and an accepted-but-effectless delete is redelivered to completion.
 
-## Addressed workspace content Stage C (Designed)
+## Addressed workspace content Stage C (Implemented)
 
 Resolve diff, log and command output references under the Run's saved
 workspace owner. Bind each sealed object to its source command and

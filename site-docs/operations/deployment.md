@@ -51,9 +51,11 @@ only the web port; keep port `7777` private.
 
 ## Upgrades
 
-Pin the source revision or image tag. Back up Postgres and runtime state before
-an upgrade, install with the frozen lockfile, run both migration lineages, and
-run `pnpm --filter maister-web build`. Restart the supervisor before the web
+Pin the source revision or image tag. Before an upgrade, let active Runs
+finish and stop both services. Capture Postgres, the supervisor's durable
+state, its runtime data and retained worktrees as one backup set. Install
+with the frozen lockfile, run both migration lineages, and run
+`pnpm --filter maister-web build`. Start the supervisor before the web
 service. On each execution host, check the deployed facade with
 `pnpm --filter @maister/mcp verify:stdio-contract`. Confirm adapter readiness and
 launch a non-critical smoke Run before restoring normal traffic.

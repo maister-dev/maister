@@ -1019,7 +1019,7 @@ soft at 203 s, hard at ~251 s, one stall, nine `producer-pause-exceeded`
 checkpoints — and, once nine producers waited at hard, a supervisor pegged at
 100% CPU by the capacity cascade of EDGE-EVT-14, fixed on the same branch.
 
-## Addressed host streams Stage C (Designed)
+## Addressed host streams Stage C (Implemented)
 
 Use the existing host key and stream identity as the consumer scope for
 each configured endpoint. ACK the verified host after committing contiguous

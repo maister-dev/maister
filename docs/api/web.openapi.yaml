@@ -10833,6 +10833,14 @@ paths:
                     worktreePath: /repos/my-app/.maister/my-app/runs/abc/worktree
                     branch: maister/task-42-attempt-1
                     ownerUserId: 8f1c2e34-...
+                addressed:
+                  summary: Claim recorded for a supervisor-owned checkout
+                  value:
+                    worktreePath: null
+                    branch: maister/task-42-attempt-1
+                    ownerUserId: 3d14cf7f-058a-4445-9232-bcf858ff9301
+                    executionHostId: 2270d4a6-fae1-4918-88ee-1abe352538b6
+                    workspaceHandle: ws_d2610411cca146be8251349f8a49ed8c
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -10847,7 +10855,10 @@ paths:
             One of (`MaisterErrorBody`):
             - run is not `NeedsInput`, or the current node is not a `human_review`
               node offering the `takeover` decision (`PRECONDITION`);
-            - a concurrent claim won the CAS first (`CONFLICT`).
+            - the addressed checkout has no active assignment or verified HEAD
+              (`PRECONDITION`);
+            - a concurrent claim won the CAS first or the assignment or node
+              changed during the HEAD read (`CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

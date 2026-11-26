@@ -905,7 +905,7 @@ Failure classification is explicit and shared by consumers:
 
 Preserve `MaisterError`/`SupervisorError` conventions. Add a strict reason union and new codes only if existing codes cannot express an actionable domain distinction. Update code-to-HTTP and EN/RU error presentation together; never branch on message text. Document bounded safe diagnostics with request IDs/operation kind/status/cause code, not the prohibited request body.
 
-## Selected supervisor Stage C (Designed)
+## Selected supervisor Stage C (Implemented)
 
 [ADR-219](../decisions/adr-219.md) defines the ownership split. Web commits
 the Run, addressed assignment, preparation claim and command together.
