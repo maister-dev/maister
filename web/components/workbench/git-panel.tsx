@@ -504,11 +504,11 @@ export function WorkbenchGitPanel({
           <GitPublishSection {...sectionProps} runId={runId} />
         </>
       ) : null}
+      {sectionProps && usable && (!addressed || sectionProps.state.pr) ? (
+        <GitPrSection {...sectionProps} />
+      ) : null}
       {sectionProps && usable && !addressed ? (
-        <>
-          <GitPrSection {...sectionProps} />
-          <GitCommandsSection state={sectionProps.state} />
-        </>
+        <GitCommandsSection state={sectionProps.state} />
       ) : null}
       {sectionProps && usable ? (
         <GitUpdateSection

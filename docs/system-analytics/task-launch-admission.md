@@ -465,7 +465,8 @@ preparation and materialization before first dispatch.
 Task and Flow previews expose authorized choices. Bind the settings token
 to the actor, project, task and target revision, current input/settings
 digests, default preference revision, eligibility revision and effective host.
-A new acceptance using a stale token refreshes preview before any write.
+The server refuses a stale token with `launch_settings_changed` before any
+write. Refresh the preview before retrying.
 Check current `launchRun`, eligibility and source authority at acceptance and
 again before dispatch.
 

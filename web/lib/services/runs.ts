@@ -1228,6 +1228,15 @@ async function* executeFlowLaunch(
       await checkFlowRequirements(manifest.requirements, project.repoPath);
 
     const compiled = compileManifest(manifest);
+    const unsupportedNode = hostPreparesWorkspace
+      ? manifest.nodes.find((node) => node.type === "consensus")
+      : undefined;
+    if (unsupportedNode)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Consensus requires a manager-local workspace. Choose the local execution host or remove the consensus node.",
+        { details: { reason: "workspace_protocol_unsupported", nodeId: unsupportedNode.id } },
+      );
 
     const flowPublicationGrant =
       accepted?.settings.version === 2

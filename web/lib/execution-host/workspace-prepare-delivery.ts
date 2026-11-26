@@ -373,9 +373,14 @@ export async function recoverWorkspacePreparation(
       : await transport.getWorkspaceCommandReceipt(command.id);
   if (retained && retained.phase !== "accepted") return false;
 
-  if (command.kind === "workspace.run" && retained?.phase === "accepted") {
+  if (
+    (command.kind === "workspace.run" || command.kind === "workspace.publish" ||
+      command.kind === "workspace.restore") &&
+    retained?.phase === "accepted"
+  ) {
     // Delivery is already witnessed. Reconcile the same receipt at a bounded
-    // cadence without charging new admission attempts or repeating the workload.
+    // cadence without charging new admission attempts. The owner observes the
+    // original workload group, publication lease, or restore checkpoint.
     const [retry] = await db
       .update(executionCommands)
       .set({ nextAttemptAt: new Date(at.getTime() + 30_000), updatedAt: at })

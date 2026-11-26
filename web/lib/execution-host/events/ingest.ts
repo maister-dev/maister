@@ -179,7 +179,11 @@ export async function normalizeRuntimeEnvelope(db: Db, executionHostId: string, 
   const { payload } = parsed;
   if (payload.owner.kind === "workspaceOperation") {
     const command = await retainedWorkspaceProvenance(db, executionHostId, payload.commandId, payload.owner, payload.operationId);
-    if (!command) throw new MaisterError("ACP_PROTOCOL", "Workspace operation event has no matching retained owner");
+    if (!command) throw new MaisterError(
+      "ACP_PROTOCOL",
+      "Workspace operation event has no matching retained owner",
+      { details: { reason: "workspace_event_owner_unverified" } },
+    );
 
     return { ...parsed, ...command, hostSessionId: null };
   }
@@ -1664,18 +1668,23 @@ export async function ingestRuntimeEventBatch(input: {
           ...input,
           envelopes: input.envelopes.slice(0, index),
         });
+      const ownerUnverified = error instanceof MaisterError &&
+        error.details?.reason === "workspace_event_owner_unverified";
+      if (!(error instanceof ZodError) && !ownerUnverified) throw error;
+      const reason = ownerUnverified ? "workspace_event_owner_unverified" : "event_schema_invalid";
       await recordIngestFailure(input.db, {
         executionHostId: input.executionHostId,
         envelope: raw,
         error,
         now,
+        reason,
       });
       throw new MaisterError(
         "ACP_PROTOCOL",
-        "runtime event envelope is invalid",
+        ownerUnverified ? "runtime event retained owner is unverified" : "runtime event envelope is invalid",
         {
           cause: error,
-          details: { reason: "event_schema_invalid" },
+          details: { reason },
         },
       );
     }

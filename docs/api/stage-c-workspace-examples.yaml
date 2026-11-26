@@ -694,7 +694,7 @@ operationCases:
     refusal:
       status: 409
       body:
-        code: FENCED
+        code: EXECUTOR_UNAVAILABLE
         message: The operation was refused.
         details:
           reason: host_identity_mismatch
@@ -718,11 +718,11 @@ operationCases:
   stageCTaskHostOptions:
     request: null
     response: &a41
-      executionHosts:
-        - id: host-b
-          label: Host B
-          availability: ready
-      defaultExecutionHostId: host-b
+      executionHostOptions:
+        hosts:
+          - id: host-b
+            displayName: Host B
+        defaultExecutionHostId: host-b
     refusal:
       status: 404
       body:
@@ -746,17 +746,18 @@ operationCases:
     request: &a42
       executionHostId: host-b
     response: &a43
-      requestedHostId: host-b
-      effectiveHostId: host-b
-      provenance: explicit
-      assignment: null
+      executionHostSelection:
+        requestedExecutionHostId: host-b
+        effectiveExecutionHostId: host-b
+        provenance: explicit
+        eligibilityRevision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     refusal:
       status: 409
       body:
         code: CONFLICT
         message: The operation was refused.
         details:
-          reason: selection_changed
+          reason: launch_request_key_conflict
       newEffects: 0
     invalidRequest:
       executionHostId: host-b
@@ -787,12 +788,17 @@ operationCases:
   stageCReadIntent:
     request: null
     response:
-      requestedHostId: host-b
-      effectiveHostId: host-b
-      provenance: explicit
-      assignment:
-        hostId: host-b
-        epoch: 4
+      executionHostSelection:
+        requestedExecutionHostId: host-b
+        effectiveExecutionHostId: host-b
+        provenance: explicit
+        eligibilityRevision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      executionHostPlacement:
+        savedDisplayName: Host B
+        actual:
+          executionHostId: host-b
+          displayName: Host B
+          assignmentEpoch: 4
     refusal:
       status: 404
       body:
@@ -804,17 +810,18 @@ operationCases:
   stageCReplaceIntent:
     request: &a45 {}
     response: &a46
-      requestedHostId: null
-      effectiveHostId: host-b
-      provenance: projectDefault
-      assignment: null
+      executionHostSelection:
+        requestedExecutionHostId: null
+        effectiveExecutionHostId: host-b
+        provenance: projectDefault
+        eligibilityRevision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     refusal:
       status: 409
       body:
         code: CONFLICT
         message: The operation was refused.
         details:
-          reason: preview_stale
+          reason: launch_settings_changed
       newEffects: 0
     invalidRequest:
       hostUrl: http://localhost:9999
@@ -1001,14 +1008,14 @@ requestRefusals:
   malformed:
     status: 400
     body:
-      code: INVALID_REQUEST
+      code: PRECONDITION
       message: The command does not match the declared input.
       details: { reason: invalid_request }
     newEffects: 0
   oversized:
     status: 413
     body:
-      code: INVALID_REQUEST
+      code: PRECONDITION
       message: The command exceeds the input limit.
       details: { reason: request_too_large }
     newEffects: 0

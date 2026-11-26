@@ -212,7 +212,7 @@ definitions:
   HostKey: { type: string, minLength: 8, maxLength: 64, pattern: "^[A-Za-z0-9_-]+$" }
   GitObjectId: { type: string, minLength: 1, maxLength: 64, pattern: "^([a-f0-9]{40}|[a-f0-9]{64})$" }
   Digest: { type: string, minLength: 1, maxLength: 64, pattern: "^[a-f0-9]{64}$" }
-  WorkspaceHandle: { type: string, minLength: 1, maxLength: 64, pattern: "^ws_([a-f0-9]{32}|[a-f0-9-]{36})$" }
+  WorkspaceHandle: { type: string, minLength: 1, maxLength: 64, pattern: "^ws_[a-f0-9]{32}$" }
   Positive: { type: integer, minimum: 1, maximum: 9007199254740991 }
   Uuid:
     {
@@ -231,7 +231,7 @@ definitions:
       hostKey: { $ref: "#/definitions/HostKey" }
       runId: &a3 { $ref: "#/definitions/OpaqueId" }
       assignmentId: &a2 { $ref: "#/definitions/Uuid" }
-      assignmentEpoch: &a1 { $ref: "#/definitions/Positive" }
+      assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
   WorkspaceOperationOwner:
     type: object
     additionalProperties: false
@@ -241,7 +241,7 @@ definitions:
         enum: [ workspaceOperation ]
       hostKey: { $ref: "#/definitions/HostKey" }
       workspaceHandle: &a5 { $ref: "#/definitions/WorkspaceHandle" }
-      workspaceGeneration: *a1
+      workspaceGeneration: &a1 { $ref: "#/definitions/Positive" }
       claimId: *a2
       fence: *a1
   ProjectHostPreference:
@@ -271,54 +271,68 @@ definitions:
   HostChoice:
     type: object
     additionalProperties: false
-    required: [ id, label, availability ]
+    required: [id, displayName]
     properties:
       id: *a3
-      label: { type: string, minLength: 1, maxLength: 128 }
-      availability:
-        enum: [ ready, waiting, draining, unavailable ]
+      displayName: { type: string, minLength: 1 }
   HostOptionsPatch:
     type: object
     additionalProperties: false
-    required: [ executionHosts, defaultExecutionHostId ]
+    required: [executionHostOptions]
     properties:
-      executionHosts:
-        type: array
-        maxItems: 64
-        items: { $ref: "#/definitions/HostChoice" }
-      defaultExecutionHostId:
-        anyOf:
-          - *a3
-          - { type: "null" }
+      executionHostOptions:
+        type: object
+        additionalProperties: false
+        required: [hosts, defaultExecutionHostId]
+        properties:
+          hosts:
+            type: array
+            items: { $ref: "#/definitions/HostChoice" }
+          defaultExecutionHostId:
+            anyOf:
+              - *a3
+              - { type: "null" }
   HostSelectionPatch:
     type: object
     additionalProperties: false
-    required: []
     properties:
       executionHostId: *a3
   HostSelectionReceipt:
     type: object
     additionalProperties: false
-    required: [ requestedHostId, effectiveHostId, provenance, assignment ]
+    required: [executionHostSelection]
     properties:
-      requestedHostId:
-        anyOf:
-          - *a3
-          - { type: "null" }
-      effectiveHostId: *a3
-      provenance:
-        enum: [ explicit, projectDefault, instanceDefault, sharedRoot ]
-      assignment:
-        anyOf:
-          - { $ref: "#/definitions/ObservedHostAssignment" }
-          - { type: "null" }
+      executionHostSelection:
+        type: object
+        additionalProperties: false
+        required: [requestedExecutionHostId, effectiveExecutionHostId, provenance, eligibilityRevision]
+        properties:
+          requestedExecutionHostId:
+            anyOf:
+              - *a3
+              - { type: "null" }
+          effectiveExecutionHostId: *a3
+          provenance:
+            enum: [explicit, projectDefault, instanceDefault, sharedRoot]
+          eligibilityRevision: { $ref: "#/definitions/Digest" }
+      executionHostPlacement:
+        type: object
+        additionalProperties: false
+        required: [savedDisplayName, actual]
+        properties:
+          savedDisplayName: { type: [string, "null"] }
+          actual:
+            anyOf:
+              - { $ref: "#/definitions/ObservedHostAssignment" }
+              - { type: "null" }
   ObservedHostAssignment:
     type: object
     additionalProperties: false
-    required: [ hostId, epoch ]
+    required: [executionHostId, displayName, assignmentEpoch]
     properties:
-      hostId: *a3
-      epoch: *a1
+      executionHostId: *a3
+      displayName: { type: string, minLength: 1 }
+      assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
   CapabilityPatch:
     type: object
     additionalProperties: false
@@ -560,7 +574,9 @@ definitions:
       inputDigest: *a6
       templateContext:
         description: Optional assignment-bound context for a templated CLI or check. Its sealed JSON records version 1, declarationId and values without env. The host resolves the template from its retained declaration using its own permitted environment.
-        allOf: [{ $ref: "#/definitions/InputObject" }]
+        allOf:
+          - { $ref: "#/definitions/InputObject" }
+          - properties: { objectId: { format: uuid } }
   WorkspaceWorkloadDeclarations:
     description: Optional sealed workload-declarations.json input. The Flow reservation freezes node actions, command-check gates and requirement probes from the admitted revision. The supervisor uses a declaration only when the request selects its exact generation plus ID and workload. Maximum encoded size is 262144 bytes.
     type: array
@@ -664,7 +680,7 @@ definitions:
         additionalProperties: false
         required: [commandId, action]
         properties:
-          commandId: *a3
+          commandId: { type: string, format: uuid }
           action: { enum: [verify, abort] }
       publish:
         description: Optional lease for the Run's dedicated branch at the same approved remote.
@@ -971,15 +987,15 @@ definitions:
             retained_disposition_required,
             target_ref_changed,
             publication_provider_unavailable,
+            publication_refused,
             sync_conflict,
             non_fast_forward,
             head_changed,
             workspace_writer_active,
-            selection_changed,
+            launch_request_key_conflict,
             host_ineligible,
-            preview_stale,
+            launch_settings_changed,
             settings_revision_mismatch,
-            authentication_required,
             insufficient_project_role
           ]
   Refusal:

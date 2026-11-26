@@ -1388,18 +1388,13 @@ async function assertAddressedRequirement({
       ).map(({ executionHostId }) => executionHostId),
     ).not.toContain(host.id);
     supervisor = await supervisor.restart();
-    expect((await inspectProcessGroup(group)).state).toBe("active");
-    expect(await recoverAt(30)).toMatchObject({ errors: [], redelivered: 1 });
-    // The replay observes an active group while the fixture retains the release marker.
-    await new Promise<void>((resolve) => setTimeout(resolve, 400));
-    expect(
-      await transport.getWorkspaceCommandReceipt!(crashWork.id),
-    ).toMatchObject({ phase: "accepted" });
-    await writeFile(releasePath, "release");
     await vi.waitFor(async () =>
       expect((await inspectProcessGroup(group)).state).toBe("retired"),
     );
-    expect(await recoverAt(60)).toMatchObject({ errors: [], redelivered: 1 });
+    expect(
+      await transport.getWorkspaceCommandReceipt!(crashWork.id),
+    ).toMatchObject({ phase: "accepted" });
+    expect(await recoverAt(30)).toMatchObject({ errors: [], redelivered: 1 });
     await vi.waitFor(async () => {
       expect(
         await transport.getWorkspaceCommandReceipt!(crashWork.id),

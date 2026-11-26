@@ -147,6 +147,12 @@ describe("launch destination", () => {
       select.value = "host-b";
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    await clickButton("launch.scheduleRun");
+    expect(document.body.textContent).toContain("launch.scheduleDefaultHost");
+    expect(request.mock.calls.at(-1)?.[0]).not.toContain("executionHostId=");
+    await clickButton("launch.returnToLaunch");
+    const restored = document.querySelector<HTMLSelectElement>('select:has(option[value="host-b"])');
+    expect(restored?.value).toBe("host-b");
     await clickButton("launch.createRun");
     const submitted = request.mock.calls.find(([url]) => url === "/api/task-launch-intents")?.[1];
     expect(JSON.parse(String(submitted?.body))).toMatchObject({

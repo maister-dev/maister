@@ -28,6 +28,7 @@ export function GitPrSection({
   actionButton,
 }: GitSectionProps): ReactElement {
   const t = useTranslations("workbenchGit");
+  const addressed = state.workspaceStatus !== undefined;
   // Pre-filled from the server's defaults in the read this section mounted
   // with; the operator's edits stand across refreshes.
   const [prTitle, setPrTitle] = useState(() => state.prDefaults?.title ?? "");
@@ -101,7 +102,7 @@ export function GitPrSection({
 
   return (
     <Section id="pr" title={t("section.pr")}>
-      {state.publicBranch !== null ? (
+      {!addressed && state.publicBranch !== null ? (
         <>
           <label className="flex flex-col gap-1">
             <span className={fieldLabel}>{t("pr.title")}</span>
@@ -185,14 +186,14 @@ export function GitPrSection({
             </p>
           ) : null}
         </>
-      ) : (
+      ) : !addressed ? (
         <p
           className="m-0 font-mono text-[10px] text-mute"
           data-testid="git-panel-pr-unpublished"
         >
           {t("pr.publishFirst")}
         </p>
-      )}
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {state.pr
           ? actionButton({

@@ -7,6 +7,7 @@ import {
   isWorkspaceCancelTarget,
   isWorkspaceOperationOwner,
   isWorkspaceSourceRef,
+  isWorkspaceSyncConflictPolicyValid,
   WORKSPACE_SYNC_CONFLICT_MAX_BYTES,
   WORKSPACE_SYNC_CONFLICT_MAX_PATHS,
   WORKSPACE_SYNC_CONFLICT_MAX_PATH_LENGTH,
@@ -81,7 +82,7 @@ export const RetainedWorkspaceSyncSchema = RetainedWorkspacePublishFields.omit({
     flowConflictWaitId: z.string().uuid().optional(),
   }).strict().optional(),
   resolverProbeId: z.string().uuid().optional(),
-});
+}).refine(isWorkspaceSyncConflictPolicyValid);
 const WorkspaceSyncPublicationSchema = RetainedWorkspaceSyncSchema.shape.publish.unwrap().extend({
   observedTarget: gitObject,
 });

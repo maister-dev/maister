@@ -237,6 +237,15 @@ export type WorkspaceSyncRequest = Readonly<{
   }>;
 }>;
 
+export function isWorkspaceSyncConflictPolicyValid(
+  { onConflict, resolver, strategy }: Pick<
+    WorkspaceSyncRequest["payload"], "onConflict" | "resolver" | "strategy"
+  >,
+): boolean {
+  return (!onConflict || !resolver) &&
+    (strategy !== "fastForward" || (!resolver && onConflict !== "prepareResolver"));
+}
+
 export type WorkspaceSyncResult = Readonly<{
   generation: number;
   head: string;

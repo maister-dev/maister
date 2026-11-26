@@ -45,6 +45,8 @@ function reportSpawnFailure(error) {
 
 process.on("disconnect", () => {
   if (!authorized) process.exit(125);
+  if (process.env.MAISTER_WORKLOAD_EXIT_ON_DISCONNECT === "1")
+    process.kill(-process.pid, "SIGKILL");
 });
 
 /** @type {readonly ("SIGTERM" | "SIGINT")[]} */

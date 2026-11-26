@@ -1175,21 +1175,48 @@ export async function runReviewHuman(
   // M30 (ADR-082): stamp the run-branch tip at THIS review visit — the base
   // for the `since-last-review` diff scope. Best-effort (non-git fixtures /
   // missing workspace / detached states leave it NULL and the scope degrades).
-  const reviewTipSha = loaded.workspace?.worktreePath
-    ? await headCommit({
-        worktreePath: requireProjectFlowRun(loaded).workspace.worktreePath,
-      }).catch(() => null)
+  const addressedWorkspace = loaded.workspace?.ownershipKind === "host_owned"
+    ? loaded.workspace : null;
+  const addressedStatus = addressedWorkspace
+    ? await import("@/lib/execution-host/workspace-preparation")
+        .then(({ readAddressedWorkspaceStatus }) =>
+          readAddressedWorkspaceStatus(ctx.db, addressedWorkspace),
+        )
+        .catch((error: unknown) => {
+          log.warn(
+            {
+              runId: loaded.run.id,
+              nodeId: node.id,
+              errorType: error instanceof Error ? error.name : typeof error,
+            },
+            "review: selected supervisor could not confirm checkout status",
+          );
+          return null;
+        })
     : null;
+  const reviewTipSha = addressedStatus?.workspace.observedCommit ??
+    (loaded.workspace?.worktreePath
+      ? await headCommit({ worktreePath: loaded.workspace.worktreePath }).catch(() => null)
+      : null);
 
   // C3 (execution-policy dirtyResolve): when pausing at a review gate, a policy
   // of commit/proceed auto-resolves a dirty worktree AT creation (no interactive
   // prompt) and records it on the HITL row; `ask` (supervised default) keeps the
   // banner; `discard` is NEVER automatic. Best-effort (git error → interactive).
-  const dirtyResolution = await autoResolveDirtyAtReview({
-    worktreePath: loaded.workspace?.worktreePath ?? null,
-    policy: dirtyResolveFromSnapshot(loaded.run.executionPolicy ?? null),
-    nodeId: node.id,
-  });
+  const dirtyPolicy = dirtyResolveFromSnapshot(loaded.run.executionPolicy ?? null);
+  const dirtyResolution = addressedWorkspace
+    ? addressedStatus?.workingTree === "dirty" && dirtyPolicy === "proceed"
+      ? "proceed" : null
+    : await autoResolveDirtyAtReview({
+        worktreePath: loaded.workspace?.worktreePath ?? null,
+        policy: dirtyPolicy,
+        nodeId: node.id,
+      });
+  if (addressedStatus?.workingTree === "dirty" && dirtyPolicy === "commit")
+    log.warn(
+      { runId: loaded.run.id, nodeId: node.id, dirtyPolicy },
+      "review: selected checkout requires an interactive decision for uncommitted changes",
+    );
 
   if (dirtyResolution) {
     logExecPolicyAction({
@@ -1227,7 +1254,7 @@ export async function runReviewHuman(
     const ensureDecisionRequests = async (tx: Db): Promise<void> => {
       await createPlanReviewDecisionRequests({
         db: tx,
-        projectId: requireProjectFlowRun(loaded).run.projectId,
+        projectId: requireRepositoryFlowRun(loaded).run.projectId,
         runId: loaded.run.id,
         nodeId: node.id,
         parentHitlRequestId: existingPlanReviewParent.id,
@@ -1307,7 +1334,7 @@ export async function runReviewHuman(
     if (planReview) {
       await createPlanReviewDecisionRequests({
         db: tx,
-        projectId: requireProjectFlowRun(loaded).run.projectId,
+        projectId: requireRepositoryFlowRun(loaded).run.projectId,
         runId: loaded.run.id,
         nodeId: node.id,
         parentHitlRequestId: hitlRequestId,
@@ -1946,7 +1973,7 @@ async function executeNodeAction(
         );
       const publication = await publishFlowBranch({
         db: ctx.db,
-        loaded: requireProjectFlowRun(loaded),
+        loaded: requireRepositoryFlowRun(loaded),
         client: execution.client,
         driver: ctx.flowDriverClaim,
         nodeAttemptId: ctx.nodeAttemptId,
@@ -4092,7 +4119,7 @@ export async function runGraph(
                       ? issueOrchestratorRunToken
                       : issueNativeNodeRunToken
                   )({
-                    projectId: requireProjectFlowRun(loaded).run.projectId,
+                    projectId: requireRepositoryFlowRun(loaded).run.projectId,
                     runId,
                     nodeAttemptId,
                     db,

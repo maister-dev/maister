@@ -36,6 +36,7 @@ import {
   isWorkspaceOperationOwner,
   isWorkspaceRetainedOperation,
   isWorkspaceSourceRef,
+  isWorkspaceSyncConflictPolicyValid,
   WORKSPACE_CANCEL_OPERATION,
   WORKSPACE_CHECKPOINT_OPERATION,
   WORKSPACE_LOG_MAX_PAGE_SIZE,
@@ -261,9 +262,7 @@ const syncSchema = publishSchema.extend({
     onConflict: z.enum(["report", "prepareResolver"]).optional(),
     publish: publishSchema.shape.payload.shape.expected.omit({ head: true, remoteId: true }).optional(),
     resolver: z.object({ commandId: z.string().uuid(), action: z.enum(["verify", "abort"]) }).strict().optional(),
-  }).strict().refine(({ onConflict, resolver, strategy }) =>
-    (!onConflict || !resolver) &&
-    (strategy !== "fastForward" || (!resolver && onConflict !== "prepareResolver"))),
+  }).strict().refine(isWorkspaceSyncConflictPolicyValid),
 });
 const releaseSchema = publishSchema.extend({
   command: publishSchema.shape.command.extend({ kind: z.literal("workspace.release") }),
@@ -451,11 +450,34 @@ export function registerWorkspacePreparation(args: {
       outcome = { result };
       phase = "completed";
     } catch (error) {
-      if (isSupervisorError(error)) {
-        const reason = error.details?.reason;
+      if (
+        error instanceof WorkspaceGitEffectUnconfirmed &&
+        (binding.operationId === WORKSPACE_PUBLISH_OPERATION ||
+          binding.operationId === WORKSPACE_RESTORE_OPERATION) &&
+        binding.target.kind === "workspace" &&
+        state.getWorkspaceExecutionState(binding.target.handle)?.operationClaimId === row.commandId
+      ) {
+        logger.warn(
+          { commandId: row.commandId, runId: row.runId },
+          "workspace operation awaiting same-command reconciliation",
+        );
+
+        return;
+      }
+      const processReceipt = state.getReceipt(row.commandId)?.body as
+        { workspaceProcessRetired?: unknown } | undefined;
+      const workloadStopped = request.command.kind === "workspace.run" &&
+        processReceipt?.workspaceProcessRetired === true;
+      if (isSupervisorError(error) || workloadStopped) {
+        const failure = isSupervisorError(error) ? error : new SupervisorError(
+          "EXECUTOR_UNAVAILABLE",
+          "The workload ended, but its output could not be recorded",
+          { cause: error, details: { reason: "required_output_incomplete" } },
+        );
+        const reason = failure.details?.reason;
         outcome = {
           refusal: refusal(
-            error.code,
+            failure.code,
             typeof reason === "string" ? reason : "workspace_rejected",
             "Workspace preparation was refused",
           ),
@@ -484,8 +506,11 @@ export function registerWorkspacePreparation(args: {
       outcomeSha256,
     };
     let payload: WorkspaceTerminalPayload;
-    const retained = binding.operationId === WORKSPACE_PUBLISH_OPERATION || binding.operationId === WORKSPACE_SYNC_OPERATION ||
-      binding.operationId === WORKSPACE_PRESERVE_OPERATION || binding.operationId === WORKSPACE_RELEASE_OPERATION;
+    const retained =
+      binding.operationId === WORKSPACE_PUBLISH_OPERATION ||
+      binding.operationId === WORKSPACE_SYNC_OPERATION ||
+      binding.operationId === WORKSPACE_PRESERVE_OPERATION ||
+      binding.operationId === WORKSPACE_RELEASE_OPERATION;
     if (retained && request.owner.kind === "workspaceOperation") {
       payload = { ...identity, ...binding, owner: request.owner };
     } else if (!retained && request.owner.kind === "assignment") {
@@ -493,6 +518,10 @@ export function registerWorkspacePreparation(args: {
     } else {
       throw new SupervisorError("ACP_PROTOCOL", "Workspace command owner and target disagree");
     }
+    const processEvidence = request.command.kind === "workspace.run"
+      ? state.getReceipt(row.commandId)?.body as
+          { workspaceProcess?: unknown; workspaceProcessRetired?: unknown } | undefined
+      : undefined;
     state.putReceiptWithRuntimeEvent(
       {
         ...row,
@@ -505,15 +534,10 @@ export function registerWorkspacePreparation(args: {
           ...(request.owner.kind === "workspaceOperation" ? { workspaceOwner: request.owner } : {}),
           ...("quiescenceId" in request.payload ? { archiveQuiescenceId: request.payload.quiescenceId } : {}),
           ...("dispositionId" in request.payload ? { archiveDispositionId: request.payload.dispositionId } : {}),
-          ...(request.command.kind === "workspace.run"
+          ...(processEvidence
             ? {
-                workspaceProcess: (
-                  state.getReceipt(row.commandId)?.body as
-                    | {
-                        workspaceProcess?: unknown;
-                      }
-                    | undefined
-                )?.workspaceProcess,
+                workspaceProcess: processEvidence.workspaceProcess,
+                workspaceProcessRetired: processEvidence.workspaceProcessRetired,
               }
             : {}),
         },
@@ -733,7 +757,7 @@ export function registerWorkspacePreparation(args: {
     const handle = workspaceHandle.safeParse(req.params.id);
     const parsed = pullRequestQuery.safeParse(req.query);
     if (!handle.success || !parsed.success)
-      return reply.status(400).send(refusal("INVALID_REQUEST", "invalid_request", "PR read requires the recorded repository, number and base"));
+      return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "PR read requires the recorded repository, number and base"));
     const { generation, remoteId } = parsed.data;
     const owned = loadPreparedWorkspace(state, handle.data, generation);
     if (!owned) return reply.status(404).send(missingWorkspace);
@@ -1034,7 +1058,7 @@ export function registerWorkspacePreparation(args: {
         try {
           return await restoreOwnedWorkspace({ state, handle: handle.data, assertOwner }, parsed.data);
         } catch (cause) {
-          if (!replayingClaim) throw cause;
+          if (!replayingClaim || cause instanceof WorkspaceGitEffectUnconfirmed) throw cause;
           // Once a restore may have reached Git, refusal cannot release its writer fence.
           throw new WorkspaceGitEffectUnconfirmed("Retained restore could not prove its exact resulting tree", { cause });
         }
@@ -1073,6 +1097,8 @@ export function registerWorkspacePreparation(args: {
             ? await openRetainedWorkspacePullRequest(input, request, assertOwner, logger)
             : await publishOwnedWorkspace(input, request);
         } catch (cause) {
+          if (isSupervisorError(cause) && cause.details?.reason === "publication_refused")
+            throw cause;
           if (!replaying || cause instanceof WorkspaceGitEffectUnconfirmed) throw cause;
           throw new WorkspaceGitEffectUnconfirmed("Retained publication verification could not finish", { cause });
         }
@@ -1182,6 +1208,7 @@ export function registerWorkspacePreparation(args: {
         workspacePhase,
         workspaceTarget: _workspaceTarget,
         workspaceProcess: _workspaceProcess,
+        workspaceProcessRetired: _workspaceProcessRetired,
         workspaceOwner: _workspaceOwner,
         archiveDispositionId: _archiveDispositionId,
         archiveQuiescenceId: _archiveQuiescenceId,

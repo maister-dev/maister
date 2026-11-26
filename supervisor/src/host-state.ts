@@ -520,6 +520,7 @@ export type HostState = {
   recordWorkspaceInput(id: string, generation: number, digest: string, mode: WorkspacePrepareInput["mode"]): void;
   recordWorkspaceMaterialization(id: string, generation: number, digest: string): void;
   recordWorkspaceWorkloadProcess(commandId: string, group: number, physicalKey: string): boolean;
+  recordWorkspaceWorkloadRetirement(commandId: string, group: number): void;
   claimWorkspaceGitOperation(input: Readonly<{
     commandId: string;
     runId: string;
@@ -2561,6 +2562,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               SELECT 1 FROM command_receipts active
               WHERE active.command_id <> command_receipts.command_id AND active.kind='workspace.run'
                 AND json_extract(active.body_json, '$.workspaceProcess.physicalKey')=?
+                AND json_extract(active.body_json, '$.workspaceProcessRetired') IS NOT 1
                 AND json_extract(active.body_json, '$.result.quiescence') IS NOT 'proved'
             )
             AND NOT EXISTS (
@@ -2572,6 +2574,18 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         `).run(JSON.stringify(process), commandId, physicalKey);
 
         return updated.changes === 1;
+      });
+    },
+    recordWorkspaceWorkloadRetirement(commandId, group) {
+      storage.write(() => {
+        const updated = db.prepare(`
+          UPDATE command_receipts SET body_json=json_set(body_json, '$.workspaceProcessRetired', json('true'))
+          WHERE command_id=? AND kind='workspace.run' AND phase='accepted'
+            AND json_extract(body_json, '$.workspaceProcess.group')=?
+        `).run(commandId, group);
+
+        if (updated.changes !== 1)
+          throw new HostRuntimeEventError("command_invariant_conflict", "Workload retirement lost its recorded group");
       });
     },
     claimWorkspaceGitOperation(input) {
@@ -2605,6 +2619,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           AND NOT EXISTS (
             SELECT 1 FROM command_receipts workload WHERE workload.kind='workspace.run'
               AND json_extract(workload.body_json, '$.workspaceProcess.physicalKey')=?
+              AND json_extract(workload.body_json, '$.workspaceProcessRetired') IS NOT 1
               AND json_extract(workload.body_json, '$.result.quiescence') IS NOT 'proved'
           )
       `).run(input.commandId, input.retainedFence ?? null, input.handle, input.generation, input.commandId,

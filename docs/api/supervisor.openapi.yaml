@@ -4873,6 +4873,33 @@ components:
         - unknown_workspace
         - workspace_released
         - workspace_rejected
+        - source_ref_unapproved
+        - source_commit_unavailable
+        - invalid_request
+        - request_too_large
+        - stale_assignment_epoch
+        - stale_workspace_generation
+        - workspace_preparation_pending
+        - workspace_input_changed
+        - read_only_process_unavailable
+        - workspace_diff_range_invalid
+        - workspace_diff_too_large
+        - workspace_log_cursor_invalid
+        - workspace_log_too_large
+        - workspace_template_context_invalid
+        - workspace_setup_unavailable
+        - workspace_checkpoint_unknown
+        - workspace_writer_active
+        - target_ref_changed
+        - publication_provider_unavailable
+        - publication_refused
+        - sync_conflict
+        - non_fast_forward
+        - head_changed
+        - stale_workspace_claim
+        - retained_disposition_required
+        - tool_not_declared
+        - workspace_protocol_unsupported
         - workspace_in_use
         - invalid_librarian_workspace
         - legacy_field

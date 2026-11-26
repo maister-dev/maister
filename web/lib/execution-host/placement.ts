@@ -82,11 +82,11 @@ export async function mintPlacement(
 
 // ADR-166 D9 lazy assignment: a command issuer meeting a run that was NEVER
 // placed (pre-ADR-166 row, no assignment history) mints epoch 1 on the local
-// host. Deterministic because exactly one non-retired local host can exist.
+// default host. ADR-219 keeps this bridge for legacy, never-placed Runs.
 // A run WITH history and no active assignment is a placement bug, not a legacy
 // row: its re-entry must mint inside its own claim, so the issuer is refused.
 // The re-check runs under the run row's lock — a concurrent issuer that minted
-// first is reused, never superseded. MUST be deleted in Stage C (ADR-166).
+// first is reused. Addressed launches commit their assignment before delivery.
 export async function ensureAssignment(
   db: Db,
   runId: string,

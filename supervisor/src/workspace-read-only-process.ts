@@ -19,7 +19,9 @@ function protectionUnavailable(cause?: unknown): SupervisorError {
 
 /** The process inherits kernel write restrictions for the checkout and its Git worktree metadata. */
 export async function protectWorkspaceProcess(
-  workspace: WorkspaceResolution,
+  workspace: Pick<
+    WorkspaceResolution, "ownershipKind" | "readOnlyCheckout" | "cwd" | "contextMounts"
+  >,
   launch: NativeLaunch,
 ): Promise<NativeLaunch> {
   if (workspace.ownershipKind !== "host_owned") return launch;

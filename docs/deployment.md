@@ -759,6 +759,11 @@ supervisor. It starts production Web and the supervisor under separate Linux
 service identities on a disposable instance. Keep the endpoint private to
 the control plane.
 
+For an endpoint beyond loopback, use a private network or VPN and restrict
+ingress to the Web tier. The stable key is visible in `/health` and validates
+routing identity. Protect the entire supervisor listener, including the
+legacy session and runtime-object routes, at the network boundary.
+
 1. Start the supervisor using `deploy/maister-supervisor.service` and its own
    `supervisor/.env`. Set `MAISTER_RUNTIME_ROOT` and
    `MAISTER_EXECUTION_HOST_STATE_DIR` to private durable directories. For an
@@ -797,6 +802,12 @@ Existing work stays with its owner. If the host becomes unreachable, restore
 the configured endpoint with the original SQLite and workspace bytes to
 reconcile delayed receipts. A new key requires operator review and cannot
 take over retained work from the old key.
+
+If the original host is permanently lost, keep its assignments and writer
+claims held and preserve the command evidence. Record the affected Runs and
+inspect the corresponding Git refs with the repository owner. Restoring the
+original host and its durable state is the supported path to reconcile those
+assignments. A replacement can accept new work under its own key.
 
 Take backups during a maintenance window after both hosts have drained and
 Web and supervisors have stopped writing. Capture PostgreSQL and each host's

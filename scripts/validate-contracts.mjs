@@ -611,10 +611,10 @@ const STAGE_C_REQUIRED_OPERATIONS = [
   "stageCReadProjectHostSettings", "stageCUpdateProjectHostSettings",
 ].sort();
 const STAGE_C_REFUSALS = {
-  invalid_request: [400, "INVALID_REQUEST"],
-  request_too_large: [413, "INVALID_REQUEST"],
+  invalid_request: [400, "PRECONDITION"],
+  request_too_large: [413, "PRECONDITION"],
   workspace_protocol_unsupported: [503, "EXECUTOR_UNAVAILABLE"],
-  host_identity_mismatch: [409, "FENCED"],
+  host_identity_mismatch: [409, "EXECUTOR_UNAVAILABLE"],
   stale_assignment_epoch: [409, "FENCED"],
   stale_workspace_generation: [409, "FENCED"],
   stale_workspace_claim: [409, "FENCED"],
@@ -629,11 +629,10 @@ const STAGE_C_REFUSALS = {
   publication_provider_unavailable: [409, "PRECONDITION"],
   head_changed: [409, "CONFLICT"],
   workspace_writer_active: [409, "PRECONDITION"],
-  selection_changed: [409, "CONFLICT"],
+  launch_request_key_conflict: [409, "CONFLICT"],
   host_ineligible: [409, "PRECONDITION"],
-  preview_stale: [409, "CONFLICT"],
+  launch_settings_changed: [409, "CONFLICT"],
   settings_revision_mismatch: [409, "CONFLICT"],
-  authentication_required: [401, "UNAUTHENTICATED"],
   insufficient_project_role: [403, "UNAUTHORIZED"],
 };
 
@@ -693,7 +692,7 @@ export function validateStageCWorkspaceExamples(
     } else {
       const wrongSurface = (isWeb ? supervisor : web).paths?.[path]?.[method.toLowerCase()];
       const expectedSchema = `stage-c-workspace.schema.yaml#/definitions/${request ?? response}`;
-      if (wrongSurface || (!isWeb && !path.startsWith("/v1/")) ||
+      if (wrongSurface || (isWeb && !existing) || (!isWeb && !path.startsWith("/v1/")) ||
           (existing && (existing.operationId !== id ||
             existing["x-stage-c-schema"] !== expectedSchema ||
             !existing.responses?.[String(status)]))) {

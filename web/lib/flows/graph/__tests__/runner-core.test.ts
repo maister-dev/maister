@@ -93,7 +93,13 @@ describe("loadRun — per-session set (M42)", () => {
         },
       ],
       [getTableName(projectsTable)]: [{ slug: "demo" }],
-      [getTableName(workspacesTable)]: [{ runId: "run-1", removedAt: null }],
+      [getTableName(workspacesTable)]: [{
+        runId: "run-1",
+        ownershipKind: "legacy_path",
+        worktreePath: "/repos/demo/.maister/run-1",
+        parentRepoPath: "/repos/demo",
+        removedAt: null,
+      }],
       [getTableName(runSessionsTable)]: runSessionRows,
     };
 

@@ -38,6 +38,7 @@ import {
   readRetainedWorkspaceInput,
 } from "./workspace-input-materialization";
 import { executeWorkspaceWorkloadProcess } from "./workspace-workload-process";
+import { protectWorkspaceProcess } from "./workspace-read-only-process";
 import { sealWorkspaceOutput } from "./workspace-output-object";
 import { copyPreparedFlowAssets, runFlowSetup } from "./workspace-flow-setup";
 
@@ -296,6 +297,11 @@ export async function runWorkspaceWorkload(
     request,
     declaration.command,
   );
+  const launch = await protectWorkspaceProcess({
+    ownershipKind: "host_owned",
+    cwd: workspace.realPath,
+    readOnlyCheckout: retained.preparationMode === "readOnlyCheckout" ? true : undefined,
+  }, { binary: "bash", arguments: ["-c", command] });
   assertOwner();
   let processGroup: number | undefined;
   let outputDirectory: string | undefined;
@@ -318,10 +324,10 @@ export async function runWorkspaceWorkload(
     Awaited<ReturnType<typeof readDeclaredResult>> | undefined;
   let canRemoveOutput = true;
 
-  const execute = (cwd: string, flowInstallPath?: string) =>
-    executeWorkspaceWorkloadProcess({
+  const execute = async (cwd: string, flowInstallPath?: string) => {
+    const completed = await executeWorkspaceWorkloadProcess({
       cwd,
-      command,
+      launch,
       timeoutMs: declaration.timeoutMs,
       signal: input.signal,
       outputFile,
@@ -349,6 +355,11 @@ export async function runWorkspaceWorkload(
         canRemoveOutput = false;
       },
     });
+    if (completed.retired && processGroup !== undefined)
+      state.recordWorkspaceWorkloadRetirement(request.command.id, processGroup);
+
+    return completed;
+  };
   try {
     if (isSetup && setupSource) {
       const setup = await runFlowSetup(setupSource, (cwd) => execute(cwd, cwd), assertOwner);
@@ -464,10 +475,12 @@ export async function recoverWorkspaceWorkload(
   receipt: CommandReceiptRow,
   generation: number,
 ): Promise<WorkspaceWorkloadResult | null> {
-  const witness = (receipt.body as { workspaceProcess?: unknown })
-    .workspaceProcess;
+  const { workspaceProcess: witness, workspaceProcessRetired } = receipt.body as {
+    workspaceProcess?: unknown;
+    workspaceProcessRetired?: boolean;
+  };
   let quiescence: WorkspaceWorkloadResult["quiescence"] = "proved";
-  if (witness !== undefined) {
+  if (witness !== undefined && workspaceProcessRetired !== true) {
     const process = persistedProcess.safeParse(witness);
     const current = readHostProcessContext();
 

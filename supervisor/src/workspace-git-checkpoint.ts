@@ -358,7 +358,7 @@ export async function restoreOwnedWorkspace(
       ? (await captureOwnedTree(owned)) === baseTree
       : await matchesRewoundTree(owned, base, tree));
   input.assertOwner();
-  if (owned.replayingClaim) return (await restored()) ? result : null;
+  if (owned.replayingClaim && await restored()) return result;
 
   try {
     await executeWorkspaceGit([...git, "reset", "--hard", base]);

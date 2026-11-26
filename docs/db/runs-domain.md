@@ -254,8 +254,16 @@ erDiagram
         text run_id FK
         text project_id FK
         text branch
-        text worktree_path UK "globally unique"
-        text parent_repo_path
+        text worktree_path UK "nullable for host_owned"
+        text parent_repo_path "nullable for host_owned"
+        text ownership_kind "legacy_path|host_owned"
+        text execution_host_id FK "addressed workspace owner"
+        text execution_workspace_id "opaque handle scoped to its host"
+        text preparation_assignment_id FK "owner bound to Run and host"
+        integer workspace_generation
+        integer workspace_materialization_generation
+        text workspace_input_digest
+        text root_workspace_id FK "shared root on the same host"
         timestamp created_at
         timestamp removed_at
         timestamp scheduled_removal_at "GC prune deadline"

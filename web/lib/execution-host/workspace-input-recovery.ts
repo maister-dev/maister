@@ -22,6 +22,19 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
+type SweepPosition = Readonly<{ createdAt: string; workspaceId: string }>;
+const capturePositions = new WeakMap<Db, SweepPosition>();
+const preflightPositions = new WeakMap<Db, SweepPosition>();
+
+function workspaceRecoveryOrder(after: SweepPosition | undefined) {
+  const order = [asc(workspaces.createdAt), asc(workspaces.id)];
+  if (!after) return order;
+
+  // Sort rows after the last inspected position first, then wrap to the start.
+  return [sql`(${workspaces.createdAt}, ${workspaces.id}) <=
+    (${after.createdAt}::timestamptz, ${after.workspaceId}::text)`, ...order];
+}
+
 export async function recoverWorkspaceInputCaptures(
   db: Db,
   transport: ExecutionHostTransport,
@@ -32,6 +45,7 @@ export async function recoverWorkspaceInputCaptures(
     .select({
       runId: workspaces.runId,
       workspaceId: workspaces.id,
+      createdAt: sql<string>`${workspaces.createdAt}::text`,
       assignmentId: executionAssignments.id,
     })
     .from(workspaces)
@@ -65,8 +79,10 @@ export async function recoverWorkspaceInputCaptures(
         AND command.kind = 'workspace.materialize')`,
       ),
     )
-    .orderBy(asc(workspaces.createdAt), asc(workspaces.id))
+    .orderBy(...workspaceRecoveryOrder(onlyRunId ? undefined : capturePositions.get(db)))
     .limit(16);
+  const last = ready.at(-1);
+  if (!onlyRunId && last) capturePositions.set(db, last);
   const hosts = createExecutionHosts({ db, transport });
 
   for (const entry of ready) {
@@ -122,6 +138,8 @@ export async function recoverWorkspacePreflight(
   const candidates = await db
     .select({
       runId: runs.id,
+      workspaceId: workspaces.id,
+      createdAt: sql<string>`${workspaces.createdAt}::text`,
       assignmentId: executionAssignments.id,
       declarationId: declaration,
     })
@@ -159,8 +177,10 @@ export async function recoverWorkspacePreflight(
       )`,
       ),
     )
-    .orderBy(asc(workspaces.createdAt), asc(workspaces.id))
+    .orderBy(...workspaceRecoveryOrder(onlyRunId ? undefined : preflightPositions.get(db)))
     .limit(16);
+  const last = candidates.at(-1);
+  if (!onlyRunId && last) preflightPositions.set(db, last);
 
   for (const { runId, assignmentId, declarationId } of candidates) {
     try {

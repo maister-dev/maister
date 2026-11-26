@@ -112,8 +112,8 @@ export function GitUpdateSection({
       strategy,
       push: !addressed && push,
       // D9: the resolver's Review→Running CAS exists only in Review.
-      agent: !addressed && inReview && resolver,
-      ...(!addressed && inReview && resolver && runnerId ? { runnerId } : {}),
+      agent: inReview && resolver,
+      ...(inReview && resolver && runnerId ? { runnerId } : {}),
     });
   }
 
@@ -202,7 +202,7 @@ export function GitUpdateSection({
           {t("update.push")}
         </label>
       ) : null}
-      {!addressed && state.runStatus === "Review" ? (
+      {state.runStatus === "Review" ? (
         <>
           <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
             <input

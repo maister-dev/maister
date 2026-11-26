@@ -35,6 +35,11 @@ button carries its localized reason as a tooltip. The server routes stay the
 authority (`requireProjectAction("promoteRun")` for mutations,
 `recoverRun` for `git-state` and reattach).
 
+On a selected supervisor, the panel displays the retained checkout's status
+and available actions. During Review, Update can start the conflict resolver
+on that supervisor. A recorded PR can be finalized from eligible parked
+states with confirmation.
+
 ## Navigation
 
 - **Entry:** the run detail's lifecycle actions (the entry that used to open

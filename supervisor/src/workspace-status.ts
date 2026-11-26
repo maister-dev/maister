@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 
 import { SupervisorError } from "./types";
-import { executeWorkspaceGit } from "./workspace-source";
+import { executeWorkspaceGit, executeWorkspaceGitBytes } from "./workspace-source";
 
 export async function observePreparedGitHead(workspace: WorkspaceRow): Promise<{
   commit: string;
@@ -90,7 +90,7 @@ export async function inspectWorkspace(
       };
 
     const head = await observePreparedGitHead(workspace);
-    const status = await executeWorkspaceGit([
+    const dirty = await executeWorkspaceGitBytes([
       "--no-optional-locks",
       "-C",
       workspace.realPath,
@@ -99,7 +99,17 @@ export async function inspectWorkspace(
       "--untracked-files=normal",
       "--ignore-submodules=none",
       "-z",
-    ]);
+    ]).then((status) => status.byteLength > 0).catch((error: unknown) => {
+      // A complete porcelain record proves dirty even if Git exceeded its
+      // output budget before it could return the rest of the change list.
+      if (
+        error instanceof Error &&
+        "code" in error && error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" &&
+        "stdout" in error && Buffer.isBuffer(error.stdout) &&
+        error.stdout.indexOf(0) > 3
+      ) return true;
+      throw error;
+    });
     const verified = await observePreparedGitHead(workspace);
     if (head.commit !== verified.commit || head.ref !== verified.ref)
       throw new SupervisorError(
@@ -117,7 +127,7 @@ export async function inspectWorkspace(
 
     return {
       workspace: { ...record, observedCommit: head.commit },
-      workingTree: status ? "dirty" : "clean",
+      workingTree: dirty ? "dirty" : "clean",
       headState: head.ref === "HEAD" ? "detached" : "branch",
     };
   } catch {

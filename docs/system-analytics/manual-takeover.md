@@ -87,8 +87,12 @@ sequenceDiagram
     W-->>U: 200 worktreePath / branch / ownerUserId
 ```
 
-The claim returns checkout context only; it creates **no** branch, worktree, PR,
-or supervisor deferred (no agent spawns — the human works locally). A lost CAS
+The claim returns context for the existing checkout. A selected-host claim
+shows the supervisor and its opaque workspace handle. Use the approved access
+path to that supervisor. An operator with access to its private state store
+can match the handle to the retained, unreleased workspace and provide access
+under the host's repository policy. Return uses that same checkout and expects
+clean committed changes. A lost CAS
 (concurrent claim) returns 409 `CONFLICT`; a wrong run state or non-`human_review`
 node returns 409 `PRECONDITION`.
 

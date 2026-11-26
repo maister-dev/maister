@@ -1100,6 +1100,9 @@ Web/host restarts, and use the existing retirement fence after reconciliation.
 | `POST /v1/workspaces/{id}/commands` | Assignment owner and workspace generation. Payload discriminant `setup`, `cli`, `check` or `requirementProbe` selects a strict operation declaration from the frozen input. | 202. Completion contains exit code/signal, cancellation state, structured check validity and output references. An undeclared operation refuses before spawn. |
 | `POST /v1/workspaces/{id}/commands/{commandId}/cancel` | New command ID, owner, generation and target command from URL. | 202. Terminal cancellation records stopped or uncertain ownership and sealed partial output where available. A replay returns the original receipt. |
 | `GET /v1/workspaces/{id}`, `GET /v1/workspaces/{id}/status`, `GET /v1/workspaces/{id}/diff`, `GET /v1/workspaces/{id}/log` | Verified host and bound generation plus any bounded revision/range. The status projection includes observed HEAD. | 200 with metadata or sealed object reference. Refuse missing/wrong owner without supplying its content. Keep the existing `POST /workspaces/{id}/head` for the fenced ADR-216 wait witness. |
+| `GET /v1/workspaces/{id}/review-fingerprint` | Exact generation and reviewed base. | 200 with the Git review fingerprint and bounded checkout witness. |
+| `GET /v1/workspaces/{id}/publication-target` | Exact generation, approved remote ID and target ref. | 200 with the current target commit or null for an absent ref. |
+| `GET /v1/workspaces/{id}/pull-request` | Exact generation, recorded provider PR identity and base ref. | 200 with the provider state and observed head. A changed base or unverifiable provider state refuses. |
 | `POST /v1/workspaces/{id}/checkpoint`, `POST /v1/workspaces/{id}/restore` | `workspace.checkpoint` or `workspace.restore` on the current generation. Restore names a checkpoint bound to that physical workspace. | 202. Terminal receipt supplies the captured or restored Git tree witness. A stale generation refuses. ACP continues on the existing session checkpoint API. |
 | `POST /v1/workspaces/{id}/sync`, `POST /v1/workspaces/{id}/publication` | Typed Git operation, verified workspace owner, expected workspace HEAD, canonical target ref and prior target SHA. | 202 for asynchronous effects. Terminal receipt includes the prior and observed target. Ref divergence requires review before retry. |
 | `POST /v1/workspaces/{id}/preserve`, `DELETE /v1/workspaces/{id}` | Current workspace-operation owner and expected generation. Release also requires the recorded disposition and quiescence proof. | 202 for the addressed lifecycle operation. Terminal receipt supplies a preserved commit/reference or exact release witness. Unknown ownership or incomplete preservation keeps the workspace. |
@@ -1185,8 +1188,9 @@ current assignment, including a checkpoint inherited from an earlier
 epoch on that workspace. Rewind restores the snapshot. Fresh attempt resets
 to its parent, removes unignored changes and verifies the resulting parent
 tree. Frozen inputs live under the host's run directory, outside the Git
-checkout. Restore retries recheck retained evidence without repeating a
-settled mutation.
+checkout. Restore retries check the retained output first. An interrupted
+restore can resume the same checkpoint under the original writer claim.
+A settled command returns its saved receipt.
 
 A retained publication command binds the registered host, workspace handle,
 generation, claim ID and monotonic publication fence. PostgreSQL 0389 binds
@@ -1194,9 +1198,13 @@ the command to its historical assignment and a held promotion or workbench
 claim. It prevents claim replacement and workspace removal while the outcome
 is unresolved. The supervisor verifies the configured repository, clean HEAD
 and remote target. It persists the SQLite 22 writer fence before issuing a
-fast-forward push with an exact expected target lease. A replay after a lost
-terminal write verifies the remote SHA and emits a receipt without pushing
-again. An unresolved effect holds the writer fence for reconciliation. Web
+fast-forward push with an exact expected target lease. On replay, the
+supervisor reads the remote first. It settles an observed candidate from
+that readback and retries the original candidate only while the original
+lease still holds. A definitive Git ref rejection with the original lease
+still observed returns `publication_refused` and releases the writer fence.
+An unconfirmed publication remains accepted for same-command reconciliation.
+Web
 accepts the terminal event after assignment release only when the immutable
 manager command, retained owner, host receipt, and verified target agree.
 The normal Web promotion route uses this flow for manual branch delivery.
@@ -1259,8 +1267,9 @@ accepts its input fields. IDs use the existing bounded host key, Run ID
 and UUID validators. A commit is a complete lowercase Git object ID for
 the repository's hash algorithm. Fully qualified branch refs must pass
 `git check-ref-format` under the approved source/target policy. CLI defaults
-to 300 seconds with a 3,600-second ceiling, 30-second termination grace and
-4 MiB captured-output bound. Requirement probes keep their 10-second and 1 MiB
+to 300 seconds with a 3,600-second ceiling and a 4 MiB captured-output bound.
+Timeout and cancellation signal the owned workload group with SIGKILL.
+Requirement probes keep their 10-second and 1 MiB
 bounds. The host applies and advertises effective limits. Use the existing
 runtime process-group observation after workload child close. Allow a bounded
 one-second grace for descendants to retire before returning an uncertain
@@ -1293,7 +1302,8 @@ against the existing fence yields 409 `FENCED` (`stale_assignment_epoch`).
 | Refusal | Status and reason | Durable effect |
 |---|---|---|
 | Invalid shape, identifier or input bound | 400 invalid request or 413 request too large | Zero accepted commands |
-| Wrong endpoint owner, stale epoch or generation | 409 `FENCED` with `host_identity_mismatch`, `stale_assignment_epoch` or `stale_workspace_generation` | Zero effects on the requested resource |
+| Wrong endpoint owner | 409 `EXECUTOR_UNAVAILABLE`, `host_identity_mismatch` | Zero effects on the requested resource |
+| Stale epoch or generation | 409 `FENCED`, `stale_assignment_epoch` or `stale_workspace_generation` | Zero effects on the requested resource |
 | Incompatible protocol | 503 `EXECUTOR_UNAVAILABLE`, `workspace_protocol_unsupported` | Zero accepted commands |
 | Missing or inaccessible handle/receipt/object | Existing 404 semantics for that resource | Zero disclosure |
 | Unavailable pinned SHA, unapproved ref or declared tool, unsafe target | 409 `PRECONDITION`, `source_commit_unavailable`, `source_ref_unapproved`, `tool_not_declared` or `workspace_rejected` | Pre-acceptance refusal has zero effects. A failed accepted checkout retains its original command and no ready handle |
@@ -1354,7 +1364,7 @@ corresponding executable surfaces.
   commit in the same transaction as the acknowledgement. Enforced by: the
   ledger ack takes a transaction; test L2.
 - **E-EH-08** — `POST /sessions` and every `/sessions/{id}/*` route MUST
-  accept only `executionWorkspaceId`; `POST /v1/workspaces/adopt` is the only
+  accept only `executionWorkspaceId`; `POST /workspaces/adopt` is the only
   route accepting a path and MUST validate it per the kind matrix. Enforced
   by: Zod strict schemas; tests W5, Z1–Z3, T1. (Strict since the T5.1 flip;
   the transitional bare-body acceptance is gone.)

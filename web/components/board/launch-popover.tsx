@@ -802,6 +802,7 @@ function LaunchPopoverContent({
   >({});
   const [flowId, setFlowId] = useState("");
   const [executionHostId, setExecutionHostId] = useState<string>();
+  const previewHostId = scheduleMode ? undefined : executionHostId;
   const [flowRunnerDraft, setFlowRunnerDraft] =
     useState<FlowRunnerDraft | null>(null);
   const draftKey = flowRunnerDraft ? JSON.stringify(flowRunnerDraft) : "";
@@ -1002,7 +1003,7 @@ function LaunchPopoverContent({
       launchPreviewMatches(previewSelection, {
         flowId,
         runnerId,
-        executionHostId,
+        executionHostId: previewHostId,
         packageVersions: packagePreview,
         draftKey,
       })
@@ -1013,7 +1014,7 @@ function LaunchPopoverContent({
     const query = new URLSearchParams({ taskId });
 
     if (flowId) query.set("flowId", flowId);
-    if (executionHostId) query.set("executionHostId", executionHostId);
+    if (previewHostId) query.set("executionHostId", previewHostId);
     if (packagePreview) query.set("packageVersions", packagePreview);
 
     const request = flowRunnerDraft
@@ -1023,7 +1024,7 @@ function LaunchPopoverContent({
           body: JSON.stringify({
             taskId,
             flowId,
-            ...(executionHostId ? { executionHostId } : {}),
+            ...(previewHostId ? { executionHostId: previewHostId } : {}),
             ...(packagePreview
               ? { packageVersions: JSON.parse(packagePreview) }
               : {}),
@@ -1065,7 +1066,7 @@ function LaunchPopoverContent({
         setPreviewSelection({
           flowId,
           runnerId: resolvedRunnerId,
-          executionHostId,
+          executionHostId: previewHostId,
           packageVersions: packagePreview,
           draftKey,
         });
@@ -1081,7 +1082,7 @@ function LaunchPopoverContent({
     previewSelection,
     flowId,
     runnerId,
-    executionHostId,
+    previewHostId,
     packagePreview,
     draftKey,
     flowRunnerDraft,
@@ -1207,7 +1208,7 @@ function LaunchPopoverContent({
     !launchPreviewMatches(previewSelection, {
       flowId,
       runnerId,
-      executionHostId,
+      executionHostId: previewHostId,
       packageVersions: packagePreview,
       draftKey,
     });
@@ -2752,6 +2753,11 @@ function LaunchPopoverContent({
 
                     {scheduleMode ? (
                       <div className="grid gap-3 rounded-[8px] border border-amber-line bg-amber-soft p-3 md:grid-cols-2">
+                        {hostOptions.length > 1 ? (
+                          <p className="font-mono text-[11px] text-ink-2 md:col-span-2">
+                            {t("scheduleDefaultHost")}
+                          </p>
+                        ) : null}
                         <label className="flex flex-col gap-1">
                           <span className={fieldLabelClass}>
                             {t("scheduleWhen")}
@@ -2845,7 +2851,6 @@ function LaunchPopoverContent({
                           if (scheduleMode) {
                             void scheduleLaunch();
                           } else {
-                            setExecutionHostId(undefined);
                             setScheduleMode(true);
                           }
                         }}
@@ -2859,15 +2864,23 @@ function LaunchPopoverContent({
                       <Button
                         className={clsx(
                           "bg-amber font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
-                          createDisabled && "opacity-60",
+                          !scheduleMode && createDisabled && "opacity-60",
                         )}
-                        isDisabled={createDisabled}
+                        isDisabled={scheduleMode ? busy || pending : createDisabled}
                         size="sm"
                         type="button"
                         variant="primary"
-                        onClick={() => void launch()}
+                        onClick={() => {
+                          if (scheduleMode) {
+                            setOptionsError(false);
+                            setScheduleMode(false);
+                          } else {
+                            void launch();
+                          }
+                        }}
                       >
-                        {busy || pending ? t("creating") : t("createRun")}
+                        {scheduleMode ? t("returnToLaunch") :
+                          busy || pending ? t("creating") : t("createRun")}
                       </Button>
                     </div>
                   </fieldset>

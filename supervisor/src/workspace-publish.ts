@@ -51,6 +51,7 @@ type PublicationTargetInput = Pick<
 function publicationRefused(
   reason:
     | "workspace_rejected"
+    | "publication_refused"
     | "source_ref_unapproved"
     | "target_ref_changed"
     | "head_changed"
@@ -58,7 +59,7 @@ function publicationRefused(
   message: string,
 ): SupervisorError {
   return new SupervisorError(
-    reason === "target_ref_changed" || reason === "head_changed"
+    reason === "target_ref_changed" || reason === "head_changed" || reason === "publication_refused"
       ? "CONFLICT"
       : "PRECONDITION",
     message,
@@ -227,55 +228,54 @@ export async function publishOwnedWorkspace(
       "Publication requires the retained owned Git checkout",
     );
 
-  const observed = await observeWorkspaceTarget(
-    source,
-    expected.targetRef,
-    git,
-  );
+  const observed = await observeWorkspaceTarget(source, expected.targetRef, git);
   const candidateRef = `refs/maister/retained-publish/${handle}/${generation}/${command.id}`;
-  if (replaying) {
-    const candidate = integration ? await commitAt(git, candidateRef) : expected.head;
-    if (candidate && observed === candidate)
-      return observedPublication(request, observed);
-    throw new WorkspaceGitEffectUnconfirmed(
-      "The retained publication could not prove its resulting remote ref",
-    );
-  }
-  if (observed !== expected.priorTarget)
-    throw publicationRefused(
-      "target_ref_changed",
-      "The approved target changed before publication",
-    );
-  const checkout = await inspectWorkspace(state, handle, generation);
-  if (checkout?.workspace.observedCommit !== expected.head)
-    throw publicationRefused(
-      "head_changed",
-      "The retained checkout is no longer at its approved HEAD",
-    );
-  if (checkout.workingTree !== "clean")
-    throw publicationRefused(
-      "workspace_rejected",
-      "The retained checkout contains unpublished changes",
-    );
   let candidate = expected.head;
-  if (integration) {
-    const target = expected.priorTarget;
-    if (!target)
-      throw publicationRefused("target_ref_changed", "Integration requires an existing exact target");
-    const targetRef = candidateRef + "-target";
-    await executeWorkspaceGit([
-      ...git, "fetch", "--no-tags", "--no-write-fetch-head", "--",
-      source, `+${expected.targetRef}:${targetRef}`,
-    ]);
-    if (await commitAt(git, targetRef) !== target)
-      throw publicationRefused("target_ref_changed", "The reviewed target advanced before integration");
-    candidate = await commitAt(git, candidateRef) ?? await makeSyncCandidate(
-      input.runtimeRoot, git,
-      integration === "merge" ? target : expected.head,
-      integration === "merge" ? expected.head : target,
-      integration,
-    );
-    await executeWorkspaceGit([...git, "update-ref", candidateRef, candidate]);
+  if (replaying) {
+    const recorded = integration ? await commitAt(git, candidateRef) : expected.head;
+
+    if (!recorded)
+      throw new WorkspaceGitEffectUnconfirmed("The publication has no recorded candidate");
+    if (observed === recorded) return observedPublication(request, recorded);
+    if (observed !== expected.priorTarget)
+      throw new WorkspaceGitEffectUnconfirmed("The remote ref diverged from the approved lease");
+    candidate = recorded;
+  } else {
+    if (observed !== expected.priorTarget)
+      throw publicationRefused(
+        "target_ref_changed",
+        "The approved target changed before publication",
+      );
+    const checkout = await inspectWorkspace(state, handle, generation);
+    if (checkout?.workspace.observedCommit !== expected.head)
+      throw publicationRefused(
+        "head_changed",
+        "The retained checkout is no longer at its approved HEAD",
+      );
+    if (checkout.workingTree !== "clean")
+      throw publicationRefused(
+        "workspace_rejected",
+        "The retained checkout contains unpublished changes",
+      );
+    if (integration) {
+      const target = expected.priorTarget;
+      if (!target)
+        throw publicationRefused("target_ref_changed", "Integration requires an existing exact target");
+      const targetRef = candidateRef + "-target";
+      await executeWorkspaceGit([
+        ...git, "fetch", "--no-tags", "--no-write-fetch-head", "--",
+        source, `+${expected.targetRef}:${targetRef}`,
+      ]);
+      if (await commitAt(git, targetRef) !== target)
+        throw publicationRefused("target_ref_changed", "The reviewed target advanced before integration");
+      candidate = await commitAt(git, candidateRef) ?? await makeSyncCandidate(
+        input.runtimeRoot, git,
+        integration === "merge" ? target : expected.head,
+        integration === "merge" ? expected.head : target,
+        integration,
+      );
+      await executeWorkspaceGit([...git, "update-ref", candidateRef, candidate]);
+    }
   }
   if (expected.priorTarget !== null) {
     try {
@@ -321,6 +321,7 @@ export async function publishOwnedWorkspace(
     await executeWorkspaceGit([
       ...git,
       "push",
+      "--porcelain",
       "--no-follow-tags",
       "--recurse-submodules=no",
       `--force-with-lease=${expected.targetRef}:${expected.priorTarget ?? ""}`,
@@ -329,27 +330,23 @@ export async function publishOwnedWorkspace(
       `${candidate}:${expected.targetRef}`,
     ]);
   } catch (cause) {
-    // The connection can end after Git advances the remote ref.
-    try {
-      const confirmed = await observeWorkspaceTarget(
-        source,
-        expected.targetRef,
-        git,
-      );
-      if (confirmed === candidate)
-        return observedPublication(request, confirmed);
-    } catch (readError) {
-      throw new WorkspaceGitEffectUnconfirmed(
-        "Git push and target verification both failed",
-        {
-          cause: new AggregateError([cause, readError]),
-        },
-      );
-    }
-    throw new WorkspaceGitEffectUnconfirmed(
-      "Git push outcome could not be reconciled",
-      { cause },
-    );
+    // A lost response might have landed. Require both a definitive Git
+    // rejection of this ref and a readback of the original lease to release.
+    const confirmed = await observeWorkspaceTarget(source, expected.targetRef, git).catch((readError: unknown) => {
+      throw new WorkspaceGitEffectUnconfirmed("Git push and target verification both failed", {
+        cause: new AggregateError([cause, readError]),
+      });
+    });
+    if (confirmed === candidate) return observedPublication(request, confirmed);
+    const { stdout } = cause as { stdout?: unknown };
+    const rejected = Buffer.isBuffer(stdout) && stdout.toString("utf8").split("\n").some((line) => {
+      const [flag, refs, summary] = line.split("\t");
+      return flag === "!" && refs === `${candidate}:${expected.targetRef}` &&
+        /^\[(?:remote )?rejected\] /u.test(summary ?? "");
+    });
+    if (confirmed === expected.priorTarget && rejected)
+      throw publicationRefused("publication_refused", "The approved remote rejected the publication");
+    throw new WorkspaceGitEffectUnconfirmed("Git push outcome could not be reconciled", { cause });
   }
   const confirmed = await observeWorkspaceTarget(
     source,

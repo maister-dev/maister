@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient } from "@/lib/execution-host/client";
-import type { LoadedProjectRun } from "@/lib/flows/graph/runner-core";
+import type { LoadedRepositoryRun } from "@/lib/flows/graph/runner-core";
 import type { PrResult } from "@/lib/runs/pr-adapter";
 
 import { createHash } from "node:crypto";
@@ -52,7 +52,7 @@ const log = pino({
 type Publication = typeof runPublications.$inferSelect;
 type PublishInput = {
   db: Db;
-  loaded: LoadedProjectRun;
+  loaded: LoadedRepositoryRun;
   client: BoundClient;
   driver: FlowDriverClaim;
   nodeAttemptId: string;

@@ -46,7 +46,7 @@ const log = pino({
 const CRASH_REPAIR_TAG = "0378_reconcile_skipped_session_crashes";
 const CRASH_REPAIR_MARKER = `${CRASH_REPAIR_TAG}:post-cutover`;
 
-// Run after the old Web writers have stopped. Migration 0369 can otherwise
+// Run after the old Web writers have stopped. Migration 0378 can otherwise
 // miss an event whose legacy lifecycle cursor advances during deployment.
 export async function reconcileSkippedSessionCrashes(db: Db): Promise<number> {
   const count = await db.transaction(async (tx) => {

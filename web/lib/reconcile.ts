@@ -878,6 +878,8 @@ type CandidateRow = {
   taskId: string | null;
   // null = no workspaces row (M34 agent runs with workspace none/repo_read).
   worktreePath: string | null;
+  workspaceOwnership: typeof workspaces.$inferSelect.ownershipKind | null;
+  workspaceRemovedAt: Date | null;
   // null = a project-less run (the Studio local-package AI assistant). Such a
   // run has no parent repo, so there is no worktree to lose either.
   projectId: string | null;
@@ -940,23 +942,24 @@ async function checkWorkspaceHandles(args: {
       executionWorkspaceId: string;
     }>;
 
-    for (const row of rows) {
-      const record = await args.hosts
-        .local()
-        .getWorkspace(row.executionWorkspaceId);
+    await runWithConcurrency(rows, PER_PASS_CONCURRENCY, async (row) => {
+      try {
+        const { admin } = await args.hosts.executionFor(row.runId, { assignmentId: row.id });
+        const record = await admin.getWorkspace(row.executionWorkspaceId);
 
-      if (record === null) {
+        if (record !== null) return;
         lost += 1;
         log.warn(
-          {
-            runId: row.runId,
-            assignmentId: row.id,
-            executionWorkspaceId: row.executionWorkspaceId,
-          },
+          { runId: row.runId, assignmentId: row.id, executionWorkspaceId: row.executionWorkspaceId },
           "workspace-handle-lost",
         );
+      } catch (error) {
+        log.warn(
+          { runId: row.runId, assignmentId: row.id, errorType: error instanceof Error ? error.name : typeof error },
+          "reconcile: owning host workspace inventory unavailable",
+        );
       }
-    }
+    });
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },
@@ -1354,6 +1357,8 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       parentRunId: string | null;
       taskId: string | null;
       worktreePath: string | null;
+      workspaceOwnership: CandidateRow["workspaceOwnership"];
+      workspaceRemovedAt: Date | null;
     }> = await db
       .select({
         runId: runs.id,
@@ -1369,6 +1374,8 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         parentRunId: runs.parentRunId,
         taskId: runs.taskId,
         worktreePath: workspaces.worktreePath,
+        workspaceOwnership: workspaces.ownershipKind,
+        workspaceRemovedAt: workspaces.removedAt,
       })
       .from(runs)
       // M34: agent runs with workspace=none/repo_read have no workspaces row —
@@ -1410,6 +1417,8 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         parentRunId: runs.parentRunId,
         taskId: runs.taskId,
         worktreePath: workspaces.worktreePath,
+        workspaceOwnership: workspaces.ownershipKind,
+        workspaceRemovedAt: workspaces.removedAt,
       })
       .from(runs)
       .leftJoin(workspaces, eq(workspaces.runId, runs.id))
@@ -1478,6 +1487,8 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
     parentRunId: string | null;
     taskId: string | null;
     worktreePath: string | null;
+      workspaceOwnership: CandidateRow["workspaceOwnership"];
+      workspaceRemovedAt: Date | null;
   }> = await db
     .select({
       runId: runs.id,
@@ -1494,6 +1505,8 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       parentRunId: runs.parentRunId,
       taskId: runs.taskId,
       worktreePath: workspaces.worktreePath,
+        workspaceOwnership: workspaces.ownershipKind,
+        workspaceRemovedAt: workspaces.removedAt,
     })
     .from(runs)
     .leftJoin(workspaces, eq(workspaces.runId, runs.id))
@@ -1814,13 +1827,13 @@ export async function runReconcileSweep(
     );
   }
 
-  // listSessions ONCE up front. On throw → skip the whole tick (never crash on
-  // transient supervisor unavailability).
-  let liveByRunStep: Map<string, SupervisorSessionRecord>;
+  // The default inventory is used by legacy recovery and orphan cleanup.
+  // Addressed candidates independently observe their persisted assignment.
+  const liveByRunStep = new Map<string, SupervisorSessionRecord>();
+  let defaultInventoryAvailable = false;
   // One live session per run — the in-flight guard's index.
   let cutoverSessionsStopped = 0;
   let orphanSessionsReaped = 0;
-  let handlesLost = 0;
 
   try {
     const records = await hosts.local().listSessions();
@@ -1870,9 +1883,6 @@ export async function runReconcileSweep(
         await client.deleteSession(record.sessionId);
       },
     });
-    handlesLost = await checkWorkspaceHandles({ db, hosts });
-
-    liveByRunStep = new Map();
     for (const rec of records) {
       if (rec.status !== "live") continue;
       // Per-(run, step) index of positive live observations. The in-flight
@@ -1881,22 +1891,18 @@ export async function runReconcileSweep(
       // live session of this supervisor, de-duplicated per (run, step).
       liveByRunStep.set(runStepKey(rec.runId, rec.stepId), rec);
     }
+    defaultInventoryAvailable = true;
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },
-      "reconcile sweep: listSessions failed — skipping whole tick",
+      "reconcile sweep: default inventory unavailable; continuing with addressed candidates",
     );
-
-    return {
-      ...ZERO_SUMMARY,
-      staleClaimsCleared,
-      cutoverSessionsStopped,
-      orphanSessionsReaped,
-      handlesLost,
-    };
   }
 
-  const candidates = await loadCandidates(db);
+  const handlesLost = await checkWorkspaceHandles({ db, hosts });
+  const candidates = (await loadCandidates(db)).filter(
+    (candidate) => defaultInventoryAvailable || candidate.workspaceOwnership === "host_owned",
+  );
 
   log.info({ candidates: candidates.length }, "reconcile sweep start");
 
@@ -1913,7 +1919,7 @@ export async function runReconcileSweep(
   // One listWorktrees call per distinct repoPath → Set of worktree paths.
   const worktreesByRepo = new Map<string, Set<string>>();
 
-  for (const repoPath of new Set(candidates.map((c) => c.repoPath))) {
+  for (const repoPath of new Set(candidates.filter((c) => c.workspaceOwnership !== "host_owned").map((c) => c.repoPath))) {
     // Project-less candidates carry a null repoPath (no parent repo) — there is
     // no worktree list to fetch for them.
     if (repoPath == null) continue;
@@ -1995,7 +2001,18 @@ export async function runReconcileSweep(
     let scopedRecords: SupervisorSessionRecord[];
 
     try {
-      scopedRecords = await hosts.local().listSessionsForRun(cand.runId);
+      if (cand.workspaceOwnership === "host_owned") {
+        if (!cand.assignmentId) {
+          skipped += 1;
+          log.warn({ runId: cand.runId }, "reconcile: addressed workspace has no active assignment");
+
+          return;
+        }
+        const client = await hosts.forAssignment({ id: cand.assignmentId });
+        scopedRecords = await client.sessionsForRun();
+      } else {
+        scopedRecords = await hosts.local().listSessionsForRun(cand.runId);
+      }
     } catch (error) {
       skipped += 1;
       log.warn(
@@ -2008,17 +2025,15 @@ export async function runReconcileSweep(
 
       return;
     }
-    // M34: a null worktreePath is the no-workspace agent shape (none/
-    // repo_read) — there is no worktree to lose. A project-less assistant run
-    // (project_id NULL) likewise has no managed worktree by design, so its null
-    // path must NOT read as `worktree-gone` (which would crash even a LIVE chat,
-    // since that check precedes the live-session skip). Project-BOUND flow/scratch
-    // runs always carry a workspace row; a null there still reads as gone.
+    // Addressed workspaces have no manager-local path. Only a durable removal
+    // or a missing legacy checkout means the workspace is gone.
     const worktreeExists =
-      cand.worktreePath == null
-        ? cand.runKind === "agent" || cand.projectId == null
-        : cand.repoPath != null &&
-          (worktreesByRepo.get(cand.repoPath)?.has(cand.worktreePath) ?? false);
+      cand.workspaceOwnership === "host_owned"
+        ? cand.workspaceRemovedAt === null
+        : cand.worktreePath == null
+          ? cand.runKind === "agent" || cand.projectId == null
+          : cand.repoPath != null &&
+            (worktreesByRepo.get(cand.repoPath)?.has(cand.worktreePath) ?? false);
     const live = cand.acpSessionId
       ? scopedRecords.find(
           (record) =>

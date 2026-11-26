@@ -142,6 +142,11 @@ and the ledger is what makes it answerable later.
 Reachable without any misconfiguration: `execution_events.run_id` cascades on
 delete, so deleting a run with events in flight lands in the same place.
 
+An addressed workspace operation whose retained command cannot prove its owner
+is quarantined as `workspace_event_owner_unverified`. It holds that sequence
+until the original host and command ownership can be reconciled. A failed
+database read during ownership lookup remains a service failure.
+
 ## An event PostgreSQL cannot store
 
 `execution_events.payload` is `jsonb`, and `jsonb` cannot represent `U+0000` or

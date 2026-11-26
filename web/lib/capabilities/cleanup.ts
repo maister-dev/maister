@@ -194,6 +194,7 @@ export async function runCapabilitiesCleanupSweep(opts?: {
     .innerJoin(runs, eq(runs.id, workspaces.runId))
     .where(
       and(
+        eq(workspaces.ownershipKind, "legacy_path"),
         isNull(workspaces.removedAt),
         inArray(runs.status, ["Abandoned", "Done", "Failed", "Crashed"]),
       ),

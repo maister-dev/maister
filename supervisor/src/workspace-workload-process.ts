@@ -56,7 +56,7 @@ async function workloadGroupRetired(group: number): Promise<boolean> {
 export async function executeWorkspaceWorkloadProcess(
   input: Readonly<{
     cwd: string;
-    command: string;
+    launch: Readonly<{ binary: string; arguments: string[] }>;
     timeoutMs: number;
     signal: AbortSignal;
     register: (group: number) => void;
@@ -67,7 +67,10 @@ export async function executeWorkspaceWorkloadProcess(
   input.signal.throwIfAborted();
   const child = spawn(process.execPath, [SESSION_PROCESS_GATE_PATH], {
     cwd: input.cwd,
-    env: sessionGateEnvironment(),
+    env: {
+      ...sessionGateEnvironment(),
+      MAISTER_WORKLOAD_EXIT_ON_DISCONNECT: "1",
+    },
     stdio: ["ignore", "pipe", "pipe", "ipc"],
     detached: true,
   });
@@ -147,8 +150,8 @@ export async function executeWorkspaceWorkloadProcess(
       child.send(
         {
           kind: "execute",
-          binary: "bash",
-          arguments: ["-c", input.command],
+          binary: input.launch.binary,
+          arguments: input.launch.arguments,
           environment: {
             ...selectWorkloadEnvironment(),
             ...(input.outputFile

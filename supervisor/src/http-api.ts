@@ -1885,7 +1885,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     };
   }
 
-  app.setErrorHandler((err, _req, reply) => {
+  app.setErrorHandler((err, req, reply) => {
+    if (
+      err instanceof Error && "code" in err &&
+      err.code === "FST_ERR_CTP_BODY_TOO_LARGE" && req.url.startsWith("/v1/")
+    ) {
+      return reply.status(413).send({
+        code: "PRECONDITION",
+        message: "The addressed request exceeds the body limit",
+        details: { reason: "request_too_large" },
+      });
+    }
     hostState.reportRuntimeStorageFailure(err);
     if (!hostState.runtimeStorageAvailable()) {
       reply.status(503).send({

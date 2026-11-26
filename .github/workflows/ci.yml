@@ -441,3 +441,8 @@ jobs:
         env:
           MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
         run: pnpm exec tsx --import ./scripts/_register-shim.mjs scripts/smoke-production-split-users.ts maister-ab:ci
+      - name: Qualify addressed execution with two supervisors
+        working-directory: web
+        env:
+          MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
+        run: pnpm exec tsx --import ./scripts/_register-shim.mjs scripts/smoke-production-split-users.ts maister-ab:ci --addressed-two-host

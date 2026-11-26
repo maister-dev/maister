@@ -4,6 +4,7 @@
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { rename, rm } from "node:fs/promises";
 
@@ -87,6 +88,15 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
         ? { workspaceProtocol: [1] }
         : {}),
     }),
+    resolveWorkspaceRevision: async (repositoryId: string, ref: string, pinnedCommit?: string) => {
+      if (!workspacePreparation.advertised)
+        return actual.resolveWorkspaceRevision(repositoryId, ref, pinnedCommit);
+      const [repository] = await testDatabase.db.select({ path: schemaModule.projects.repoPath })
+        .from(schemaModule.projects).where(eq(schemaModule.projects.id, repositoryId));
+      if (!repository) throw new Error("Unexpected repository in addressed launch fixture");
+      const commit = execFileSync("git", ["-C", repository.path, "rev-parse", "--verify", ref], { encoding: "utf8" }).trim();
+      return { repositoryId, ref, commit, ...(pinnedCommit ? { pinnedCommit } : {}) };
+    },
   };
 });
 
@@ -758,6 +768,8 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
     vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://127.0.0.1:1");
 
     try {
+      const selected = await localHost({ db: testDatabase.db, force: true });
+      expect(selected.capabilities.workspaceProtocol).toContain(1);
       const { receipt } = await acceptQualifiedEngineFixture(
         { taskId },
         { authorize: async () => {} },
@@ -824,22 +836,34 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
         await dispatchBoundTaskLaunchIntent(testDatabase.db, receipt.intentId);
         const [intent] = await testDatabase.db.select({ state: schemaModule.taskLaunchIntents.state, reason: schemaModule.taskLaunchIntents.reason })
           .from(schemaModule.taskLaunchIntents).where(eq(schemaModule.taskLaunchIntents.id, receipt.intentId));
-        expect(intent).toEqual({ state: "run_bound", reason: null });
+        // The fixture's delivery endpoint is offline. A bound launch stays
+        // with the same owner and can retry when that endpoint recovers.
+        expect(intent).toEqual({ state: "run_bound", reason: "network" });
       } finally {
         await rename(parkedRepository, project.repoPath);
       }
       await expect(prepareTaskLaunchIntent(testDatabase.db, receipt.intentId))
         .resolves.toMatchObject({ runId: run.id });
       expect(await runsForTask(taskId)).toHaveLength(1);
-      expect(await listCommandsForRun(db as never, run.id)).toEqual(commands);
+      expect(await listCommandsForRun(db as never, run.id)).toEqual([
+        expect.objectContaining({
+          id: commands[0].id,
+          kind: "workspace.prepare",
+          executionAssignmentId: assignment?.id,
+          executionHostId: assignment?.executionHostId,
+          payload: commands[0].payload,
+        }),
+      ]);
 
       const aborted = await seedLaunchableTask();
       await testDatabase.pool.query(`
+        CREATE SEQUENCE abort_addressed_preparation_attempted;
         CREATE FUNCTION abort_addressed_preparation_fixture() RETURNS trigger
         LANGUAGE plpgsql AS $$ BEGIN
           IF NEW.kind = 'workspace.prepare' AND EXISTS (
             SELECT 1 FROM runs WHERE id = NEW.run_id AND task_id = '${aborted.taskId}'
           ) THEN
+            PERFORM nextval('abort_addressed_preparation_attempted');
             RAISE EXCEPTION 'injected preparation reservation rollback' USING ERRCODE='40001';
           END IF;
           RETURN NEW;
@@ -849,13 +873,18 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
         EXECUTE FUNCTION abort_addressed_preparation_fixture();
       `);
       try {
-        await expect(
-          launchRun({ taskId: aborted.taskId }, { authorize: async () => {} }, testDatabase.db),
-        ).rejects.toMatchObject({ code: "CRASH", details: { sqlState: "40001" } });
+        const { receipt: abortReceipt } = await acceptQualifiedEngineFixture(
+          { taskId: aborted.taskId }, { authorize: async () => {} }, testDatabase.db,
+        );
+        await expect(prepareTaskLaunchIntent(testDatabase.db, abortReceipt.intentId))
+          .resolves.toMatchObject({ state: "held", reason: "launch_preparation_failed", runId: null });
+        const fault = await testDatabase.pool.query("SELECT is_called FROM abort_addressed_preparation_attempted");
+        expect(fault.rows).toEqual([{ is_called: true }]);
         expect(await runsForTask(aborted.taskId)).toEqual([]);
       } finally {
         await testDatabase.pool.query("DROP TRIGGER abort_addressed_preparation_fixture ON execution_commands");
         await testDatabase.pool.query("DROP FUNCTION abort_addressed_preparation_fixture()");
+        await testDatabase.pool.query("DROP SEQUENCE abort_addressed_preparation_attempted");
       }
     } finally {
       scheduling.real = false;

@@ -37,6 +37,7 @@ import {
   WORKSPACE_INPUT_MAX_FILES,
 } from "../../runtime/workspace-input-policy";
 import { workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
+import { WORKSPACE_CONTEXT_INPUT } from "../../runtime/workspace-context-input";
 import {
   WORKSPACE_FLOW_PERSONAS_FILE,
   WORKSPACE_FLOW_PERSONAS_MAX_BYTES,
@@ -48,7 +49,7 @@ import { SupervisorError } from "./types";
 import {
   loadWorkspaceContextMounts,
   materializeWorkspaceContextInputs,
-  readWorkspaceContextInputs,
+  parseWorkspaceContextInputs,
 } from "./workspace-context-inputs";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -387,7 +388,9 @@ export async function verifyWorkspaceSessionInputs(
     const contextMounts = await loadWorkspaceContextMounts({
       runDir,
       manifestDigest: retained.materializationDigest,
-      contexts: await readWorkspaceContextInputs(directory, manifest.files),
+      contexts: parseWorkspaceContextInputs(await readRetainedWorkspaceInput(
+        directory, retained.materializationDigest, WORKSPACE_CONTEXT_INPUT, 64 * 1024,
+      )),
       stepId,
     });
 
@@ -577,7 +580,9 @@ export async function materializeWorkspaceInputs(args: {
       runDir,
       runtimeRoot: canonicalRoot,
       manifestDigest,
-      contexts: await readWorkspaceContextInputs(destination, manifest.files),
+      contexts: parseWorkspaceContextInputs(await readRetainedWorkspaceInput(
+        destination, manifestDigest, WORKSPACE_CONTEXT_INPUT, 64 * 1024,
+      )),
       sources,
       assertOwner,
     });

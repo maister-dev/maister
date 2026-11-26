@@ -257,8 +257,9 @@ The board is a horizontally scrollable set of columns:
 - **Automations tab** (`?tab=automations`, Implemented, ADR-139) replaces the visible
   Schedules tab. It aggregates one-time task launch intents, existing recurring
   task schedules, and effective agent bindings without merging their mutation
-  owners. The launch popover offers a Schedule run mode which stores an intent,
-  not a Run. `?tab=schedules` remains a compatibility alias; new links use
+  owners. Schedule run stores a launch intent and uses the project's default
+  supervisor. Returning to immediate launch restores the supervisor selected
+  for that draft. `?tab=schedules` remains a compatibility alias. New links use
   `automations`. Details are in
   [`project-automations.md`](project-automations.md).
 

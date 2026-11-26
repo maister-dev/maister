@@ -975,5 +975,15 @@ and grants no delivery authority.
 | `addressed_stop_owner_changed` | The Run no longer has the addressed workspace and assignment that can accept this Stop. |
 | `addressed_stop_child_active` | A dependent child still owns work. Stop the child through its current owner before releasing the parent. |
 | `workspace_input_changed` | The supervisor refuses to spawn when verification of the retained manifest, its files or the authorized context checkout fails. |
+| `invalid_request` | An addressed route refuses a malformed request with HTTP 400 and `PRECONDITION`. |
+| `request_too_large` | The supervisor refuses a body above its route limit with HTTP 413 and `PRECONDITION`. |
+| `source_ref_unapproved`, `source_commit_unavailable` | The requested Git source/ref is outside the configured profile, or the source cannot prove the requested commit. |
+| `stale_workspace_generation`, `stale_workspace_claim` | The command names a workspace generation or retained claim that is no longer current. |
+| `target_ref_changed`, `head_changed` | The remote lease or local checkout changed after observation. Refresh the reviewed evidence. |
+| `sync_conflict` | The retained sync could not complete under the requested conflict policy. |
+| `publication_refused` | Git definitively rejected the exact target update and readback still showed the original lease. |
+| `retained_disposition_required` | A lifecycle operation lacks retained checkout or disposition evidence. |
+| `tool_not_declared`, `workspace_protocol_unsupported` | No sealed declaration authorizes the workload, or the workspace owner cannot perform the requested operation. |
+| `review_source_required`, `review_source_changed` | Promotion needs a current reviewed checkout witness. Refresh the diff before retrying. |
 | `addressed_native_settings_unavailable` | The addressed Flow node needs an adapter settings file. The current supervisor capability preparation stops before creating an ACP session. |
 | `workspace_context_authority_required` | Web refuses a context declaration whose launching user or current agent attachment lacks authority. A removed project membership retains the existing `launch_authority_revoked` reason. |

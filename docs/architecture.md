@@ -74,8 +74,8 @@ C4Context
 
 MAIster ships as two long-running Node processes plus a Postgres
 instance on ONE host. Repository/worktree/Git operations remain local and
-shared under ADR-023, so a different host for the supervisor is not supported
-in the current target. Stage B makes a separate, narrower cut: for a
+shared under ADR-023 for legacy execution. The Stage C pilot uses selected
+supervisors with private local workspaces. For a
 `canonical_events_v1` run, Postgres is the durable owner of execution events,
 read models, browser replay, prompt results, and runtime-object metadata. The
 supervisor retains ACP processes and private runtime files, exposing their
@@ -421,10 +421,10 @@ stateDiagram-v2
 
 ## Deployment
 
-Current deployment runs `web` and `supervisor` on ONE host and uses Docker
+The default deployment runs `web` and `supervisor` on one host and uses Docker
 Compose only for Postgres. `compose.yml` defines the local Postgres service;
 `compose.production.yml` is the hardened production overlay. The shared
-host filesystem is REQUIRED (ADR-023; documented as a Stage-A limitation by
+host filesystem is required for legacy workspaces (ADR-023; documented as a Stage-A limitation by
 ADR-166): both processes resolve `.maister/` from the same
 `MAISTER_RUNTIME_ROOT`, the supervisor keeps its execution-host state under
 `<runtimeRoot>/.maister/execution-host/`, and its `MAISTER_WORKSPACE_ROOTS`
@@ -454,11 +454,11 @@ The supervisor is addressed as a registered execution host
 (`execution_hosts`, `kind='local_direct'`); `MAISTER_SUPERVISOR_URL` is
 transport configuration read at call time by the local-direct transport,
 never stored. The HTTP+SSE wire is described in
-[`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml); a supervisor on
-a different host is NOT supported in the current target because repository and
-worktree ownership remains local (Stage C). This is separate from Stage B's
-completed runtime-data cut: web does not read the supervisor's outbox, logs,
-or runtime-object files (ADR-167).
+[`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml). Stage C lets the
+owning supervisor prepare and operate addressed workspaces in the [selected
+supervisor pilot](deployment.md#selected-supervisor-local-pilot). The two-supervisor
+fixture is locally qualified. The physical two-host gate remains open.
+Stage B uses the host outbox and opaque APIs for runtime data (ADR-167).
 
 ## Typed Plan-review artifact boundary (Implemented — ADR-137)
 

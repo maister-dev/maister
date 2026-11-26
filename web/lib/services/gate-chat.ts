@@ -370,7 +370,7 @@ async function claimExpiredGateChatRecovery(args: {
       .limit(1);
     const workspace = workspaceRows[0];
 
-    if (!workspace || workspace.removedAt !== null) {
+    if (!workspace?.worktreePath || workspace.removedAt !== null) {
       throw new MaisterError(
         "CHECKPOINT",
         `gate-chat recovery cannot restore workspace for run ${args.candidate.runId}`,
@@ -844,6 +844,13 @@ export async function sendGateChatTurn(args: {
     throw new MaisterError(
       "PRECONDITION",
       `workspace missing/removed for run ${args.runId}`,
+    );
+  }
+  if (!workspace.worktreePath) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "Gate chat requires a workspace with local checkpoint support",
+      { details: { reason: "workspace_protocol_unsupported" } },
     );
   }
 

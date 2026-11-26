@@ -1,11 +1,13 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { once } from "node:events";
 import {
   chmod,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
+  rm,
   stat,
   symlink,
   writeFile,
@@ -28,6 +30,7 @@ import type {
 import { installLocalPullRequestProvider, localPullRequestUrl } from "../../test/fixtures/local-pr-provider";
 
 import { HOST_STATE_FILE } from "../host-state";
+import { SESSION_PROCESS_GATE_PATH, sessionGateEnvironment } from "../session-process-ownership";
 
 import {
   bootHost,
@@ -446,6 +449,7 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     },
   );
   expect(check.status).toBe(202);
+  await check.body?.cancel();
   const checked = await vi.waitFor(async () => {
     const result = await addressedRequest(
       host,
@@ -466,7 +470,11 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
         outputState: "sealed",
       },
     });
+    expect(body).not.toHaveProperty("workspaceProcessRetired");
     return body.result;
+  });
+  expect(host.hostState.getReceipt(checkCommandId)?.body).toMatchObject({
+    workspaceProcessRetired: true,
   });
   const checkOutput = await addressedRequest(
     host,
@@ -807,7 +815,7 @@ it("C-09 restores a retained Git checkpoint once without replacing later work on
   git(repository, "commit", "-m", "base");
   const commit = git(repository, "rev-parse", "HEAD");
   vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repository }));
-  const host = await bootHost({ runtimeRoot: root });
+  let host = await bootHost({ runtimeRoot: root });
   hosts.push(host);
   const prepared = await prepareAndRead(host, {
     mode: "ownWorktree", repositoryId: "fixture", commit, inputDigest: "b".repeat(64),
@@ -848,6 +856,22 @@ it("C-09 restores a retained Git checkpoint once without replacing later work on
     payload: { generation, checkpointId },
   };
   const restorePath = `/v1/workspaces/${handle}/restore`;
+  const lock = join(git(checkout.realPath, "rev-parse", "--absolute-git-dir"), "index.lock");
+  await writeFile(lock, "", { flag: "wx" });
+  const accepted = await addressedRequest(host, restorePath, restore);
+  expect(accepted.status).toBe(202);
+  await accepted.body?.cancel();
+  await vi.waitFor(() => {
+    expect(host.hostState.getWorkspaceExecutionState(handle)?.operationClaimId).toBe(restoreId);
+  }, { timeout: 5_000 });
+  await host.stop();
+  hosts.splice(hosts.indexOf(host), 1);
+  expect(await readFile(file, "utf8")).toBe("changed after checkpoint\n");
+  await rm(lock);
+  host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const interrupted = await addressedRequest(host, `/v1/commands/${restoreId}`);
+  expect(await interrupted.json()).toMatchObject({ phase: "accepted" });
   expect((await addressedRequest(host, restorePath, restore)).status).toBe(202);
   await vi.waitFor(async () => {
     const response = await addressedRequest(host, `/v1/commands/${restoreId}`);
@@ -1088,13 +1112,21 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
     receipt,
   );
   expect(await readFile(path, "utf8")).toBe("dirty first workspace\n");
-  const dirty = await inspect(rebooted);
-  expect(dirty.status).toBe(200);
-  expect(await dirty.json()).toEqual({
-    workspace: receipt.result.workspace,
-    workingTree: "dirty",
-    headState: "detached",
-  });
+  const untracked = Array.from({ length: 370 }, (_, index) =>
+    join(workspace.realPath, `.untracked-${index}-${"x".repeat(180)}`),
+  );
+  try {
+    await Promise.all(untracked.map((file) => writeFile(file, "")));
+    const dirty = await inspect(rebooted);
+    expect(dirty.status).toBe(200);
+    expect(await dirty.json()).toEqual({
+      workspace: receipt.result.workspace,
+      workingTree: "dirty",
+      headState: "detached",
+    });
+  } finally {
+    await Promise.all(untracked.map((file) => rm(file, { force: true })));
+  }
   const stale = await addressedRequest(
     rebooted,
     `${workspaceQuery}/status?generation=2`,
@@ -1323,7 +1355,105 @@ async function waitForWorkspaceReceipt(host: BootedHost, id: string): Promise<un
   );
 }
 
-it.each([undefined, "merge", "rebase"] as const)("C-10 publishes one retained ref and reconciles its exact receipt after restart (%s)", async (integration) => {
+it("rejects an oversized addressed body before command admission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-request-limit-"));
+  roots.push(root);
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const id = randomUUID();
+  const response = await host.app.inject({
+    method: "POST", url: "/v1/workspaces/prepare",
+    headers: { [EXECUTION_HOST_KEY_HEADER]: host.hostState.hostKey, "content-type": "application/json" },
+    payload: JSON.stringify({ command: { id }, pad: "x".repeat(2 * 1024 * 1024) }),
+  });
+  expect(response.statusCode).toBe(413);
+  expect(response.json()).toMatchObject({
+    code: "PRECONDITION", details: { reason: "request_too_large" },
+  });
+  expect(host.hostState.getReceipt(id)).toBeNull();
+});
+
+it("retires the authorized workload group when its supervisor disconnects", async () => {
+  const gate = spawn(process.execPath, [SESSION_PROCESS_GATE_PATH], {
+    env: { ...sessionGateEnvironment(), MAISTER_WORKLOAD_EXIT_ON_DISCONNECT: "1" },
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+    detached: true,
+  });
+  const stopped = once(gate, "exit");
+  try {
+    expect((await once(gate, "message"))[0]).toMatchObject({ kind: "ready" });
+    const started = once(gate, "message");
+    gate.send({ kind: "execute", binary: "/bin/sleep", arguments: ["30"], environment: {} });
+    expect((await started)[0]).toMatchObject({ kind: "execution_started" });
+    gate.disconnect();
+    expect(await stopped).toEqual([null, "SIGKILL"]);
+  } finally {
+    if (gate.connected) gate.disconnect();
+    if (gate.pid !== undefined && gate.exitCode === null && gate.signalCode === null)
+      process.kill(-gate.pid, "SIGKILL");
+  }
+});
+
+it("applies native read-only protection to an addressed workload", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-read-only-workload-"));
+  roots.push(root);
+  const repository = join(root, "source");
+  git(root, "init", "-b", "main", repository);
+  await writeFile(join(repository, "input.txt"), "approved\n");
+  git(repository, "add", "input.txt");
+  git(repository, "commit", "-m", "fixture");
+  vi.stubEnv("MAISTER_WORKSPACE_REPOSITORIES", JSON.stringify({ fixture: repository }));
+  const host = await bootHost({ runtimeRoot: root });
+  hosts.push(host);
+  const inputDigest = "b".repeat(64);
+  const prepared = await prepareAndRead(host, {
+    mode: "readOnlyCheckout",
+    repositoryId: "fixture",
+    commit: git(repository, "rev-parse", "HEAD"),
+    inputDigest,
+  });
+  if (prepared.phase !== "completed") throw new Error("read-only checkout was not prepared");
+  const { handle, generation } = prepared.result.workspace;
+  const workspace = host.hostState.getWorkspace(handle);
+  if (!workspace) throw new Error("read-only fixture workspace disappeared");
+  const workload = await sealInput(host, prepared.owner, "capability_instructions",
+    JSON.stringify([{
+      id: "read-check", workload: "check",
+      command: "test \"$(cat input.txt)\" = approved && if (printf changed > input.txt); then exit 73; fi",
+      timeoutMs: 10_000,
+    }]));
+  const manifest = await sealInput(host, prepared.owner, "capability_profile", JSON.stringify({
+    version: 1,
+    workspaceInputDigest: inputDigest,
+    files: [{ path: "workload-declarations.json", ...workload }],
+  }));
+  const command = { id: randomUUID(), kind: "workspace.materialize", issuedAt: new Date().toISOString() };
+  const materialize = await addressedRequest(host, `/v1/workspaces/${handle}/materialization`, {
+    workspaceProtocol: 1, owner: prepared.owner, command,
+    payload: { generation, manifestDigest: manifest.sha256, objects: [manifest, workload] },
+  });
+  expect(materialize.status).toBe(202);
+  await materialize.body?.cancel();
+  expect(await waitForWorkspaceReceipt(host, command.id)).toMatchObject({ phase: "completed" });
+
+  const run = { id: randomUUID(), kind: "workspace.run", issuedAt: new Date().toISOString() };
+  const submitted = await addressedRequest(host, `/v1/workspaces/${handle}/commands`, {
+    workspaceProtocol: 1, owner: prepared.owner, command: run,
+    payload: { generation, inputGeneration: 1, inputDigest: manifest.sha256, declarationId: "read-check", workload: "check" },
+  });
+  expect(submitted.status).toBe(202);
+  await submitted.body?.cancel();
+  const result = await waitForWorkspaceReceipt(host, run.id);
+  expect(await readFile(join(workspace.realPath, "input.txt"), "utf8")).toBe("approved\n");
+  if (process.platform === "darwin" || process.env.MAISTER_TEST_ADDRESSED_READ_ONLY === "1") {
+    expect(result).toMatchObject({ phase: "completed", result: { exitCode: 0, quiescence: "proved" } });
+  } else {
+    expect(result).not.toMatchObject({ phase: "completed", result: { exitCode: 73 } });
+  }
+}, 30_000);
+
+it.each(["push", "merge", "rebase", "remote rejection"] as const)("C-10 publishes one retained ref and reconciles its exact receipt after restart (%s)", async (scenario) => {
+  const integration = scenario === "merge" || scenario === "rebase" ? scenario : undefined;
   const root = await mkdtemp(join(tmpdir(), "stage-c-retained-publish-"));
   roots.push(root);
   const remote = join(root, "approved.git");
@@ -1362,6 +1492,29 @@ it.each([undefined, "merge", "rebase"] as const)("C-10 publishes one retained re
     payload: { generation, expected: { head, remoteId: "fixture", targetRef: "refs/heads/main", priorTarget }, publication: "promote", ...(integration ? { integration } : {}) },
   };
   const route = `/v1/workspaces/${handle}/publication`;
+  if (scenario === "remote rejection") {
+    const hook = join(remote, "hooks", "pre-receive");
+    await writeFile(hook, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    try {
+      const accepted = await addressedRequest(host, route, command);
+      expect(accepted.status).toBe(202);
+      await accepted.body?.cancel();
+      await vi.waitFor(async () => {
+        const response = await addressedRequest(host, `/v1/commands/${command.command.id}`);
+        expect(await response.json()).toMatchObject({
+          phase: "rejected",
+          refusal: { details: { reason: "publication_refused" } },
+        });
+      }, { timeout: 10_000 });
+      expect(git(remote, "rev-parse", "refs/heads/main")).toBe(priorTarget);
+      expect(host.hostState.getWorkspaceExecutionState(handle)?.operationClaimId).toBeNull();
+    } finally {
+      await rm(hook);
+    }
+    command.command.id = randomUUID();
+    command.owner.claimId = randomUUID();
+    command.owner.fence += 1;
+  }
   vi.spyOn(host.hostState, "putReceiptWithRuntimeEvent").mockImplementationOnce(() => {
     throw new Error("fixture interrupted after the Git push and before the terminal SQLite commit");
   });
@@ -1401,7 +1554,7 @@ it.each([undefined, "merge", "rebase"] as const)("C-10 publishes one retained re
   }, { timeout: 5_000 });
   const stale = {
     ...command, command: { ...command.command, id: randomUUID() },
-    owner: { ...command.owner, claimId: randomUUID(), fence: 2 },
+    owner: { ...command.owner, claimId: randomUUID(), fence: command.owner.fence + 1 },
   };
   expect((await addressedRequest(restarted, route, stale)).status).toBe(202);
   await vi.waitFor(async () => {
@@ -1453,8 +1606,13 @@ it("C-10 opens one provider PR from the approved retained checkout after a lost 
     throw new Error("fixture stopped after the provider accepted the PR");
   });
   const route = `/v1/workspaces/${handle}/publication`;
-  expect((await addressedRequest(host, route, request)).status).toBe(202);
-  await vi.waitFor(async () => expect(await readFile(providerRecord, "utf8")).toBe("created\n"));
+  const accepted = await addressedRequest(host, route, request);
+  expect(accepted.status).toBe(202);
+  await accepted.body?.cancel();
+  await vi.waitFor(async () => expect(await readFile(providerRecord, "utf8")).toBe("created\n"), { timeout: 10_000 }).catch(async (cause: unknown) => {
+    const receipt = await addressedRequest(host, `/v1/commands/${request.command.id}`);
+    throw new Error(`Provider creation was not observed. Command receipt: ${await receipt.text()}`, { cause });
+  });
   await host.stop();
   hosts.splice(hosts.indexOf(host), 1);
   await writeFile(join(seed, "feature.txt"), "new base while offline\n");

@@ -5,7 +5,6 @@ import {
   chmod,
   lstat,
   mkdir,
-  readFile,
   readdir,
   realpath,
 } from "node:fs/promises";
@@ -14,7 +13,6 @@ import { join, relative } from "node:path";
 import { z } from "zod";
 
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
-import { WORKSPACE_CONTEXT_INPUT } from "../../runtime/workspace-context-input";
 import { workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
 
 import { prepareGitWorktree } from "./prepare-owned-workspace";
@@ -51,22 +49,13 @@ function rejectContext(reason: string): SupervisorError {
   });
 }
 
-export async function readWorkspaceContextInputs(
-  directory: string,
-  declaredFiles: readonly { path: string }[],
-): Promise<readonly WorkspaceContextInput[]> {
-  if (!declaredFiles.some(({ path }) => path === WORKSPACE_CONTEXT_INPUT))
-    return [];
-  const file = join(directory, WORKSPACE_CONTEXT_INPUT);
-  const stat = await lstat(file);
-  if (!stat.isFile() || stat.size > 64 * 1024)
-    throw rejectContext(
-      "The sealed context declaration exceeds its byte budget",
-    );
-  const content = await readFile(file, "utf8");
+export function parseWorkspaceContextInputs(
+  bytes: Buffer | null,
+): readonly WorkspaceContextInput[] {
+  if (bytes === null) return [];
   let input: unknown;
   try {
-    input = JSON.parse(content);
+    input = JSON.parse(bytes.toString("utf8"));
   } catch {
     throw rejectContext("The sealed context declaration is invalid JSON");
   }

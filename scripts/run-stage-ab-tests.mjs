@@ -59,6 +59,14 @@ export const laneSuites = {
     // Append harness controls so existing two-shard assignments stay stable.
     "test-support/__tests__/supervisor-fault-proxy.integration.test.ts",
     "test-support/__tests__/execution-ab-reaper.integration.test.ts",
+    // Stage C owning seams belong to the mandatory lane, independent of PR labels.
+    "lib/db/__tests__/stage-c-workspace-ownership.integration.test.ts",
+    ...["registrar", "launch-paths", "workspace-prepare-recovery", "inherited-workspace", "selected-host-pair"]
+      .map((name) => `lib/execution-host/__tests__/${name}.integration.test.ts`),
+    "lib/agents/__tests__/launch-worktree-modes.integration.test.ts",
+    "lib/scratch-runs/__tests__/scratch-placement.integration.test.ts",
+    "lib/tasks/__tests__/launch-intent.integration.test.ts",
+    "app/api/projects/[slug]/settings/execution-host/__tests__/route.integration.test.ts",
   ],
   // AT-16: one real production web (fresh `next build`, `server.ts`) under a
   // kernel isolation driver against a real supervisor — runs alone because

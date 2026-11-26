@@ -6,6 +6,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { workbenchClaimHoldsTree } from "@/lib/runs/lifecycle-claim";
 import { reviveWorktreeForWorkspace } from "@/lib/runs/revive-worktree";
 import { markReopenFromDone } from "@/lib/runs/state-transitions";
 import { publishedTarget } from "@/lib/workbench-git/publication";
@@ -36,6 +37,18 @@ export type ReopenEligibilityWorkspace = {
   prState: string | null;
   prHasConflicts: boolean | null;
 };
+
+function assertAddressedReopenEligible(
+  workspace: typeof schemaModule.workspaces.$inferSelect,
+): void {
+  if (workspace.ownershipKind !== "host_owned") return;
+  if (workspace.removedAt || workspace.archivedAt || workbenchClaimHoldsTree(workspace))
+    throw new MaisterError(
+      "PRECONDITION",
+      "Reopening requires the original selected supervisor checkout to be retained and available",
+      { details: { reason: "retained_disposition_required" } },
+    );
+}
 
 export type ReopenActor = {
   type: "user" | "agent" | "system";
@@ -130,18 +143,7 @@ export async function reopenRun(args: {
   }
 
   const [ws] = await db
-    .select({
-      id: workspaces.id,
-      prState: workspaces.prState,
-      prHasConflicts: workspaces.prHasConflicts,
-      removedAt: workspaces.removedAt,
-      worktreePath: workspaces.worktreePath,
-      parentRepoPath: workspaces.parentRepoPath,
-      branch: workspaces.branch,
-      publishedBranch: workspaces.publishedBranch,
-      publishedRemote: workspaces.publishedRemote,
-      archivedBranch: workspaces.archivedBranch,
-    })
+    .select()
     .from(workspaces)
     .where(eq(workspaces.runId, runId));
 
@@ -150,6 +152,11 @@ export async function reopenRun(args: {
   }
 
   assertReopenEligible(run, ws);
+  assertAddressedReopenEligible(ws);
+  if (ws.ownershipKind === "host_owned") {
+    const { readAddressedWorkspaceStatus } = await import("@/lib/execution-host/workspace-preparation");
+    await readAddressedWorkspaceStatus(db, ws);
+  }
 
   // GC'd-worktree revival (git side effect) runs BEFORE the DB state flip so a
   // git failure leaves the run untouched at Done. ADR-181 D10: the revival is
@@ -182,10 +189,7 @@ export async function reopenRun(args: {
       // hand-written WHERE would have to re-encode it, and `pr_state` is nullable so
       // an `eq()` predicate would silently never match on the conflicted-only case.
       const [live] = await tx
-        .select({
-          prState: workspaces.prState,
-          prHasConflicts: workspaces.prHasConflicts,
-        })
+        .select()
         .from(workspaces)
         .where(eq(workspaces.id, ws.id))
         .for("update");
@@ -198,6 +202,13 @@ export async function reopenRun(args: {
       }
 
       assertReopenEligible(run, live);
+      assertAddressedReopenEligible(live);
+      if (ws.ownershipKind === "host_owned" &&
+          (live.ownershipKind !== "host_owned" ||
+            live.executionHostId !== ws.executionHostId ||
+            live.executionWorkspaceId !== ws.executionWorkspaceId ||
+            live.workspaceGeneration !== ws.workspaceGeneration))
+        throw new MaisterError("CONFLICT", "The retained workspace changed while reopening");
 
       const cas = await markReopenFromDone(runId, { db: tx });
 

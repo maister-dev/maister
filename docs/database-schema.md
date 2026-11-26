@@ -234,6 +234,18 @@ for each index before dispatch. Its command admission guard admits only the
 next declared index on the Pending Run and refuses session commands while a
 requirement is outstanding.
 
+Migrations `0379` and `0388` add `workspaces.ownership_kind`, the host and
+opaque handle, preparation assignment, generation, input digest and root
+workspace reference. The preparation assignment must match the Run and host.
+The same-host root foreign key binds a shared child to its retained root
+workspace. Legacy rows keep their manager-local paths, while addressed rows
+have null `worktree_path` and `parent_repo_path`. Partial unique indexes
+`workspaces_active_host_handle_uq` and `workspaces_active_host_run_uq` enforce
+one active row per host and handle, and per addressed Run, respectively.
+Migration `0382` adds `workspace_materialization_generation` and the unique
+materialization-command index keyed by assignment. Migration `0393` adds
+`flow_setup_revision_id` to the sealed input capture for deferred host setup.
+
 ## `users`
 
 (Introduced with the auth layer — migration `0004_petite_gamora.sql`.)
@@ -5468,7 +5480,7 @@ Created via Drizzle:
 | `webhook_deliveries`        | `webhook_deliveries_due_idx`                     | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'`                               | **(ADR-077 Implemented)** Ordered drain-pass claim scan                                                                                                                          |
 | `webhook_deliveries`        | `webhook_deliveries_subscription_log_idx`        | `(subscription_id, created_at DESC)`                                                 | **(ADR-077 Implemented)** Deliveries-drawer log UI                                                                                                                               |
 | `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx`         | `(delivery_id)`                                                                      | **(ADR-077 Implemented)** Attempt history for a delivery                                                                                                                         |
-| `execution_hosts`           | `execution_hosts_local_active_uq`                | `(kind)` UNIQUE WHERE `kind='local_direct' AND retired_at IS NULL AND coalesce(transport->>'role', 'default')='default'` | **(Migration 0387)** At most one live legacy default (E-EH-01). |
+| `execution_hosts`           | `execution_hosts_local_active_uq`                | `(kind)` UNIQUE WHERE `kind='local_direct' AND retired_at IS NULL AND coalesce(transport->>'role', 'default')='default'` | **(Migration 0396)** At most one live legacy default (E-EH-01). |
 | `execution_assignments`     | `execution_assignments_run_active_uq`            | `(runId)` UNIQUE WHERE `state='active'`                                              | **(ADR-166, Implemented)** At most one active assignment per run (E-EH-02).                                                                                                      |
 | `execution_assignments`     | `execution_assignments_host_state_idx`           | `(executionHostId, state)`                                                           | **(ADR-166, Implemented)** Registrar "does the old host still own active work" scan.                                                                                             |
 | `execution_commands`        | `execution_commands_open_idx`                    | `(state, nextAttemptAt)` PARTIAL WHERE `state IN ('queued','delivering','accepted')` | **(ADR-166, Implemented)** Recovery pass + deliverer due scan (`loadOpenCommands` mirrors the predicate).                                                                        |

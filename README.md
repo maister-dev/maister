@@ -50,10 +50,11 @@ multiple private repositories and coding agents on its own infrastructure.
 | `docs/`        | Engineering contracts, architecture, APIs, and operating details        |
 | `.ai-factory/` | Plans, adversarial reviews, ADR context, and the design record          |
 
-The web tier and supervisor run as separate Node processes on the same host and
-communicate over HTTP and server-sent events. PostgreSQL is the durable control
-plane store; run workspaces use Git worktrees. External ACP adapters remain the
-agent runtimes.
+The web tier and supervisor run as separate Node processes and communicate
+over HTTP and server-sent events. The default deployment runs both on one host.
+The selected-supervisor pilot uses host-owned Git worktrees and private
+endpoints. PostgreSQL stores durable control plane state. External ACP adapters
+remain the agent runtimes. [Deployment guide](docs/deployment.md#selected-supervisor-local-pilot)
 
 ## Quick start
 

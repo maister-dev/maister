@@ -2542,6 +2542,8 @@
     "executionHost": "Supervisor",
     "executionHostDefault": "Use default supervisor",
     "executionHostDefaultNamed": "Default · {name}",
+    "scheduleDefaultHost": "Scheduled runs use the project's default supervisor.",
+    "returnToLaunch": "Back to launch",
     "pinnedModel": "Pinned model: {model}",
     "flowRunners": "Flow runners",
     "runnerSlotResolved": "{role}: {runner}",

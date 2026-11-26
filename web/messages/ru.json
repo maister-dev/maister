@@ -2542,6 +2542,8 @@
     "executionHost": "Супервизор",
     "executionHostDefault": "Использовать супервизор по умолчанию",
     "executionHostDefaultNamed": "По умолчанию · {name}",
+    "scheduleDefaultHost": "Запуск по расписанию использует супервизор проекта по умолчанию.",
+    "returnToLaunch": "Вернуться к запуску",
     "pinnedModel": "Зафиксированная модель: {model}",
     "flowRunners": "Раннеры Flow",
     "runnerSlotResolved": "{role}: {runner}",

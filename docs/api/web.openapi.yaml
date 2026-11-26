@@ -2488,6 +2488,75 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/settings/execution-host:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: stageCReadProjectHostSettings
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/ProjectHostSettings
+      summary: Read the default supervisor preference for a project
+      description: Requires current project settings authority. The response includes a composite ETag for saving the preference.
+      responses:
+        "200":
+          description: Current preference and revisions.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: &stageCProjectHostSettings
+                type: object
+                additionalProperties: false
+                required: [defaultExecutionHostId, preferenceRevision, eligibilityRevision]
+                properties:
+                  defaultExecutionHostId: { type: string, nullable: true }
+                  preferenceRevision: { type: integer, minimum: 1 }
+                  eligibilityRevision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Project not found or no longer visible. }
+    patch:
+      operationId: stageCUpdateProjectHostSettings
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/ProjectHostPreference
+      summary: Update the default supervisor preference for a project
+      description: Requires current settings authority and a same-origin request. Null inherits the instance default.
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [defaultExecutionHostId]
+              properties:
+                defaultExecutionHostId: { type: string, nullable: true, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+      responses:
+        "200":
+          description: Stored preference and refreshed revision.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: *stageCProjectHostSettings
+        "400": { description: Invalid preference body. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Project not found or no longer visible. }
+        "409":
+          description: Stale or malformed settings revision, or an ineligible host. No settings were changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/projects/{slug}/settings/runner:
     patch:
       tags: [projects]
