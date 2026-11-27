@@ -55,7 +55,7 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | EDGE-ATN-06 | revocation reaches an open stream | T8.7 | IT-ATN-15 | Implemented |
 | EDGE-ATN-07 | work invalidation covers transitions and node progress | T8.8 | IT-ATN-16 | Implemented |
 | EDGE-ATN-08 | render cursor on the first connect | T5.5 (ADR-171 D7 follow-up) | IT-ATN-17 plus E2E-ATN-17 | Implemented |
-| EDGE-ATN-09 | empty company scope stays project-only through the memo | T4.3, T4.4, T5.7 (memo key: optimize_diagnostics_i18n Task 12) | IT-EDGE-ATN-09 | Planned |
+| EDGE-ATN-09 | empty company scope stays project-only through the memo | T4.3, T4.4, T5.7 (memo key: optimize_diagnostics_i18n Task 12) | IT-EDGE-ATN-09 | Implemented |
 | EDGE-ATN-01 | absent cursor row | T5.3, T5.8 | UT-EDGE-ATN-01 plus IT-ATN-03 | Implemented |
 | EDGE-ATN-02 | current-visibility filter, no rewind | T4.2 | IT-EDGE-ATN-02 | Implemented |
 | EDGE-ATN-03 | cursor POST clamp and PRECONDITION | T5.3 | IT-EDGE-ATN-03 | Implemented |

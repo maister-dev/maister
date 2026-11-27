@@ -97,7 +97,7 @@ Expanded mode, top to bottom:
    "Configure in Settings" cue; for non-admins it is information-only (the
    `title` is the keyboard/SR fallback — non-admin chips are not focusable).
    Readiness renders from the supervisor's diagnostics snapshot, so a host
-   change can take up to the snapshot TTL to appear (Designed — see
+   change can take up to the snapshot TTL to appear (Implemented — see
    [host diagnostics](../../system-analytics/host-diagnostics.md)).
    The platform status pill below this region links to
    `/admin/execution-host` for an admin; it reuses the layout's cached health

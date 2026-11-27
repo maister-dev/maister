@@ -1,6 +1,6 @@
 # Client messages
 
-> **Status: Designed** — ADR-225
+> **Status: Implemented** — ADR-225
 > ([record](../decisions/adr-225.md)). Per-route scoping is (Phase 2: revisit
 > with the UI regrouping; see ADR-225).
 
@@ -35,7 +35,7 @@ inputs and has no lifecycle.
 
 ## Process flows
 
-### Document render (Designed)
+### Document render (Implemented)
 
 The root layout picks the client paths out of the request catalog once per
 render.
@@ -56,7 +56,7 @@ sequenceDiagram
     N-->>B: HTML + Flight with the picked subtree only
 ```
 
-### Router refresh (Designed)
+### Router refresh (Implemented)
 
 An attention tick re-renders the server tree; the root provider props are sent
 again, so the pruning applies to every refresh.
@@ -71,7 +71,7 @@ sequenceDiagram
     L-->>B: Flight payload with the picked subtree only
 ```
 
-### Adding a client namespace (Designed)
+### Adding a client namespace (Implemented)
 
 The repository test turns an incomplete or stale list into a failing test.
 

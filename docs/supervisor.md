@@ -479,7 +479,7 @@ exit code, and a bounded stderr tail only. They must not include env values,
 provider tokens, generated config bodies, raw ACP frames, or any MCP `env` /
 `headers` map — neither its values nor its key names.
 
-#### Diagnostics snapshot _(Designed — ADR-224)_
+#### Diagnostics snapshot _(Implemented — ADR-224)_
 
 The route serves one in-memory snapshot per process instead of probing the
 host on every request:
@@ -1311,8 +1311,7 @@ existing permanent command tombstone and cannot reactivate that command. The
 existing private state directory and Node 24 runtime provide storage and gating;
 no new service, mount, environment variable or port is required.
 
-The file carries a `PRAGMA user_version` (currently 22; version 23 is
-Designed and adds the index below)
+The file carries a `PRAGMA user_version` (currently 23)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at
@@ -1330,12 +1329,16 @@ retires the idle old row or refuses registration while the old row still owns
 non-terminal runs; fences restart at the first command; handles are
 re-adopted lazily. Cross-host ACP resume is out of scope.
 
-**Version 23 (Designed, IDX-12)** adds `session_process_run_idx` on
+**Version 23 (Implemented, IDX-12)** adds `session_process_run_idx` on
 `session_process_obligations (run_id, registered_at, command_id)`. The existing
 partial index excludes released rows, so it cannot serve
 `sessionProcessesForRun`, which reads every obligation of a run on each run
 command. A fresh store creates the index with its schema; an older store gains it
-in one `BEGIN IMMEDIATE` step that also sets `user_version = 23`.
+in one `BEGIN IMMEDIATE` step that also sets `user_version = 23`. The step is
+one-way for the binary: once a store carries `user_version = 23`, a supervisor
+built for version 22 or older refuses it at open with `stream_corrupt` (`host
+state schema is newer than this supervisor`). The same holds for every earlier
+version bump; there is no downgrade path for the state directory.
 
 Version 10 adds nullable request-schema, host-key, accepted-sequence and terminal
 stream/sequence receipt bindings. New admissions hash the same JCS request v2

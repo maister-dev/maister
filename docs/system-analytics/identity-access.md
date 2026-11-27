@@ -387,7 +387,7 @@ flowchart TD
     Cascade --> Done["200 ok"]
 ```
 
-## Per-render memoization (Designed)
+## Per-render memoization (Implemented)
 
 Server reads that every authenticated page repeats are memoized for one React
 Server Components render with React `cache`. The memo scope is the render's

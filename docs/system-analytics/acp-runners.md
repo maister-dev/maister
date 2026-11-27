@@ -337,7 +337,7 @@ The admin settings page fetches supervisor diagnostics, then runs
 stored runner readiness and the only path that materializes default runners.
 When diagnostics are unavailable it is a no-op (last-known
 readiness is preserved, not clobbered to `NotReady`).
-The page always requests a fresh compute (`refresh=1`, Designed — ADR-224);
+The page always requests a fresh compute (`refresh=1`, Implemented — ADR-224);
 the snapshot rules are in [host diagnostics](host-diagnostics.md).
 
 ```mermaid

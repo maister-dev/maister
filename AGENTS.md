@@ -205,6 +205,8 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `site-docs/AGENTS.md` | Public-doc authoring boundary; excludes internal `docs/` |
 | `supervisor/src/main.ts` | Supervisor daemon entrypoint (Fastify on `:7777`) |
 | `supervisor/src/http-api.ts` | Six HTTP routes + SSE bridge |
+| `supervisor/src/diagnostics-cache.ts` | Pure in-memory TTL/SWR/singleflight policy for `GET /diagnostics` (ADR-224) |
+| `web/i18n/client-namespaces.ts` | Minimal covering root client i18n namespace list enforced by AST scanner (ADR-225) |
 | `supervisor/src/spawn.ts` | `child_process.spawn` dispatcher (claude-agent-acp / codex-acp) |
 | `supervisor/package.json` | `@maister/supervisor`; scripts: `dev`, `start`, `test:unit`, `test:integration` |
 | `pnpm-workspace.yaml` | Monorepo: `web` + `supervisor` + `site` + `site-docs` |
@@ -234,6 +236,8 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Task qualification design | `docs/system-analytics/task-qualification.md` | Incoming requests and admission contracts |
 | Task launch admission | `docs/system-analytics/task-launch-admission.md` | Explicit manual authority and qualified automation |
 | Agent preparation | `docs/system-analytics/agent-preparation.md` | Fenced checkout, baseline, handoff and cleanup |
+| Host diagnostics | `docs/system-analytics/host-diagnostics.md` | Supervisor `GET /diagnostics` snapshot policy and web freshness classes |
+| Client messages | `docs/system-analytics/client-messages.md` | Root `NextIntlClientProvider` message pruning and scanner contract |
 | System Analytics | `docs/system-analytics/` | Domain flows for projects, runs, HITL, executors, Flow DSL, and test database infrastructure |
 | Screens Reference | `docs/screens/README.md` | User-facing screens and shared chrome |
 | API Contracts | `docs/api/` | Web/supervisor OpenAPI and SSE AsyncAPI contracts |

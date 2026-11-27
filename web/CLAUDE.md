@@ -121,7 +121,7 @@ authorization on the cached `session.user.role`.
 - Server Components use `getTranslations()` from `next-intl/server`.
   Client Components use `useTranslations()`.
 - The root `NextIntlClientProvider` ships only `CLIENT_NAMESPACES`
-  (`i18n/client-namespaces.ts`, Designed — ADR-225). A new client
+  (`i18n/client-namespaces.ts`, Implemented — ADR-225). A new client
   `useTranslations("ns")` requires `ns` in `CLIENT_NAMESPACES`; enforced by
   `lib/__tests__/i18n-client-namespaces.test.ts`. Client code never calls
   `useMessages()` or a root/non-literal `useTranslations`, and imports both

@@ -541,7 +541,7 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
 
 ### Phase 5: Close-out (mandatory docs checkpoint)
 
-- [ ] **Task 17: As-built reconciliation, metrics, gates, adversarial review** (depends on 9, 11, 12, 13, 16)
+- [x] **Task 17: As-built reconciliation, metrics, gates, adversarial review** (depends on 9, 11, 12, 13, 16)
   - Flip ADR-224/225, `host-diagnostics.md`, `client-messages.md`, the `identity-access.md` section, the `database-schema.md` rows, the `docs/db/*` sections and the `supervisor.md` sections from `(Designed)` → `(Implemented)`. Reconcile every deviation (for example, the IDX-04 fallback or a corrected client namespace list) back into the spec.
   - Run a **traceability check:** every requirement ID in the matrix below has its test(s) and every test title carries its ID. Grep both directions; no orphan IDs, no orphan tests.
   - Record the **Validation** sections in ADR-224/225:
@@ -597,3 +597,5 @@ No new env vars, config files, sidecars, ports or mounts are added, so Dockerfil
   - `workspaces.promoted_at` (attention-stream scan);
   - the unbounded Observatory `selectTaskGroups` scan (ADR-059 caveat);
   - `session_process_obligations` released-row retention (there is no deletion path).
+- **`run` namespace split (deferred 2026-11-28, review of this branch):** 17 client components call `useTranslations("run")`, so the whole `run` namespace (38 KB EN, about 14% of the picked payload) ships in every document. Converting them to dotted subkeys needs no per-route provider, but the repo has no compile-time message keys, so the conversion is only verifiable in the browser. Land it where the E2E lane runs, ideally behind a static key-coverage guard.
+- **i18n E2E route coverage (deferred 2026-11-28):** `web/e2e/i18n-client-messages.spec.ts` visits 14 routes. The admin, agents and evaluation surfaces behind most remaining `CLIENT_NAMESPACES` entries are never rendered, so a scanner miss there would ship silently.

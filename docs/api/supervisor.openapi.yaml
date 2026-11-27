@@ -1296,7 +1296,7 @@ paths:
         cannot initialize its first-run writable state is reported as
         `available: false` with an adapter-specific `error`, not as a raw 500.
 
-        (Designed — ADR-224) The body is served from one in-memory snapshot per
+        (Implemented — ADR-224) The body is served from one in-memory snapshot per
         supervisor process. A snapshot younger than 30 seconds is returned as
         is; one younger than five minutes is returned while exactly one
         background recompute starts; otherwise the request awaits a compute.
@@ -3648,7 +3648,7 @@ components:
           type: string
           format: date-time
           description: |
-            Probe start time of the returned snapshot (Designed — ADR-224). A
+            Probe start time of the returned snapshot (Implemented — ADR-224). A
             cached snapshot keeps the time its compute started, not the time
             of this response.
         adapters:

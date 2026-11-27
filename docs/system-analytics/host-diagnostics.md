@@ -1,6 +1,6 @@
 # Host diagnostics
 
-> **Status: Designed** — ADR-224
+> **Status: Implemented** — ADR-224
 > ([record](../decisions/adr-224.md)).
 
 ## Purpose
@@ -55,7 +55,7 @@ stateDiagram-v2
 
 ## Process flows
 
-### Cold request (Designed)
+### Cold request (Implemented)
 
 With no snapshot, the first request starts a compute and waits for it.
 
@@ -73,7 +73,7 @@ sequenceDiagram
     R-->>W: 200 body
 ```
 
-### Coalesced burst (Designed)
+### Coalesced burst (Implemented)
 
 Concurrent non-forced requests join the in-flight compute instead of probing
 again.
@@ -93,7 +93,7 @@ sequenceDiagram
     C-->>B: snapshot n
 ```
 
-### Stale-while-revalidate (Designed)
+### Stale-while-revalidate (Implemented)
 
 A snapshot past its TTL but inside the stale window is served at once while one
 background compute refreshes it.
@@ -110,7 +110,7 @@ sequenceDiagram
     Note over C: stored, so the next request is a fresh hit
 ```
 
-### Forced refresh racing an older compute (Designed)
+### Forced refresh racing an older compute (Implemented)
 
 A forced request never accepts a compute that started before it arrived, and a
 late older result never replaces a newer snapshot.
@@ -132,7 +132,7 @@ sequenceDiagram
     C-->>S: generation 1 body
 ```
 
-### Smoke-cache rewrite (Designed)
+### Smoke-cache rewrite (Implemented)
 
 The smoke script rewrites the cache file; the next request sees a new source
 version and recomputes even inside the TTL.
@@ -151,7 +151,7 @@ sequenceDiagram
     C-->>W: snapshot with new smoke evidence
 ```
 
-### Compute failure (Designed)
+### Compute failure (Implemented)
 
 A failure reaches every waiter and leaves the stored snapshot unchanged.
 

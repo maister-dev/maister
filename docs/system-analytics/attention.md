@@ -162,14 +162,14 @@ sequenceDiagram
   `decisions` count report every other visible project's HITL, so
   `DecisionsScope` is now an alias of that source's own scope type — the two
   cannot drift apart again (`IT-ATN-05`).
-- **One computation per render, keyed by meaning (Designed).**
+- **One computation per render, keyed by meaning (Implemented).**
   `getDecisionsQueue` is memoized per render on a normalized key
   (`decisionsCacheKey`): an absent and an empty scope share one key, company ids
   are sorted and de-duplicated, and `companyIds: []` (project-only) keeps a key
   distinct from an absent `companyIds` (every company). The layout counter,
   Desk and Inbox therefore read one computation instead of two, and an explicit
   `client` bypasses the memo. Rules: [identity and access, per-render
-  memoization](identity-access.md#per-render-memoization-designed).
+  memoization](identity-access.md#per-render-memoization-implemented).
 - **The stream's frame is wider than any consumer.** `AttentionTickEvent`
   carries both counters and the moved `projectIds` because ADR-171 D3 fixes that
   shape, but the client hook returns only `tick`, `shellTick`, `changed`,
@@ -326,7 +326,7 @@ clients that support this projection.
 - **EDGE-ATN-05:** A project VIEWER MUST receive an empty decision queue for a project full of decisions: they can read the board and can perform none of the four actions the queue asks for, so an entry would be a badge over an action that answers 403. A global admin, who acts everywhere by role, MUST still receive them.
 - **EDGE-ATN-07:** A project VIEWER, whose `decisions` count is always zero, MUST still be told that `/work` moved. The counter poll cannot serve them — nothing they see moves a number — so the changed-project scan reads the UNION `ATTENTION_PLANE_EVENT_KINDS` plus `node_attempts` of in-flight runs; borrowing the `updates` taxonomy left their page stale while the connection reported Live.
 - **EDGE-ATN-06:** Revocation MUST reach a stream that is already open. Demoting a connected admin ends the see-every-project bypass on the next poll, and an account that stops being active closes the stream with `attention.stream_timeout` / `access_revoked` — neither is bounded by the quiet cap while events keep arriving.
-- **EDGE-ATN-09:** `getDecisionsQueue(userId, role, { companyIds: [] })` MUST stay project-only through the memoized reader: it MUST NOT return company decisions that the same reader without `companyIds` returns (Designed).
+- **EDGE-ATN-09:** `getDecisionsQueue(userId, role, { companyIds: [] })` MUST stay project-only through the memoized reader: it MUST NOT return company decisions that the same reader without `companyIds` returns (Implemented).
 - **EDGE-ATN-08:** The first connection after a render MUST carry the render's cursor and its `decisions`/`updates` counts, and the stream MUST send no tick to a reader whose render is current. A count that moved, or a row the scan sees past the cursor, MUST still tick. A baseline that does not parse MUST be ignored rather than trusted (ADR-171 D7).
 - **EDGE-PERF-04:** Mounting `useAttentionStream` while `document.visibilityState === "hidden"` opens 0 sockets; hiding an active tab closes its `EventSource` and cancels reconnect timers without incrementing backoff while deferring `AttentionLiveRefresh` `router.refresh()`; returning to `"visible"` reconnects with the last ADR-171 D7 cursor and counters (`decisions`, `updates`, `reviews`, `reviewVersion`), triggers K13 `reviewResync` when a review is watched, and flushes any deferred refresh (Implemented).
 

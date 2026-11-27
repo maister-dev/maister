@@ -263,8 +263,8 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-221](#adr-221-reviewed-public-catalog-imports-and-host-approved-npm-mcps) | Reviewed public catalog imports and host-approved npm MCPs | Implemented | 2026-11-26 |
 | [ADR-222](#adr-222-package-capability-delivery) | Package capability delivery | Implemented | 2026-11-24 |
 | [ADR-223](#adr-223-prepare-package-mcps-on-the-assigned-supervisor) | Prepare package MCPs on the assigned supervisor | Implemented | 2026-11-24 |
-| [ADR-224](#adr-224-supervisor-diagnostics-snapshot-cache) | Supervisor diagnostics snapshot cache | Designed | 2026-11-25 |
-| [ADR-225](#adr-225-root-client-message-pruning) | Root client-message pruning | Designed | 2026-11-25 |
+| [ADR-224](#adr-224-supervisor-diagnostics-snapshot-cache) | Supervisor diagnostics snapshot cache | Implemented | 2026-11-25 |
+| [ADR-225](#adr-225-root-client-message-pruning) | Root client-message pruning | Implemented | 2026-11-25 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2560,7 +2560,7 @@ Full record: [`decisions/adr-223.md`](decisions/adr-223.md)
 
 ### ADR-224: Supervisor diagnostics snapshot cache
 
-**Status:** Designed
+**Status:** Implemented
 **Date:** 2026-11-25
 
 Full record: [`decisions/adr-224.md`](decisions/adr-224.md)
@@ -2569,7 +2569,7 @@ Full record: [`decisions/adr-224.md`](decisions/adr-224.md)
 
 ### ADR-225: Root client-message pruning
 
-**Status:** Designed
+**Status:** Implemented
 **Date:** 2026-11-25
 
 Full record: [`decisions/adr-225.md`](decisions/adr-225.md)
