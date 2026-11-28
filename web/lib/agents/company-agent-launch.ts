@@ -397,7 +397,10 @@ async function insertCompanyAgentRun(
     throw retryRefusal("retry_runner_changed");
 
   await assertReadOnlySessionEvidence({
-    checkDiagnostics: () => transportForExecutionHost(host, hosts.transport).diagnostics(),
+    checkDiagnostics: () =>
+      transportForExecutionHost(host, hosts.transport).diagnostics({
+        refresh: true,
+      }),
     adapterId: resolution.runnerSnapshot.adapter,
     runnerId: resolution.runnerId,
     workspace: definition.workspace,

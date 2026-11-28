@@ -1131,6 +1131,7 @@ table domain_events {
     (run_id, occurred_at) [name: 'domain_events_m43_cutover_run_occurred_idx']
     (task_id, occurred_at) [name: 'domain_events_m43_cutover_task_occurred_idx']
     (run_id, occurred_at, id) [name: 'domain_events_run_terminal_idx']
+    (project_id, occurred_at, id) [name: 'domain_events_project_occurred_idx']
   }
 }
 
@@ -2394,6 +2395,7 @@ table librarian_messages {
     (conversation_id, seq) [name: 'librarian_messages_seq_uq', unique]
     (conversation_id, client_message_id) [name: 'librarian_messages_client_id_uq', unique]
     body_tsv [name: 'librarian_messages_body_tsv_idx']
+    (segment_id, seq) [name: 'librarian_messages_segment_seq_idx']
 
 
   }
@@ -2498,6 +2500,7 @@ table librarian_turns {
     conversation_id [name: 'librarian_turns_one_active_uq', unique]
     segment_id [name: 'librarian_turns_one_summary_uq', unique]
     (conversation_id, status) [name: 'librarian_turns_conversation_status_idx']
+    segment_id [name: 'librarian_turns_segment_knowledge_idx']
 
 
 
@@ -3761,6 +3764,10 @@ table runs {
     task_id [name: 'runs_auto_task_uq', unique]
     ended_at [name: 'runs_ended_at_idx']
     execution_assignment_id [name: 'runs_execution_assignment_idx']
+    (project_id, started_at, id) [name: 'runs_project_started_idx']
+    (started_at, id) [name: 'runs_started_id_idx']
+    (run_kind, id) [name: 'runs_continuation_active_idx']
+    id [name: 'runs_host_restart_recovery_idx']
   }
 }
 
@@ -4912,6 +4919,8 @@ table webhook_deliveries {
     (push_subscription_id, event_id) [name: 'webhook_deliveries_push_event_uq', unique]
     next_attempt_at [name: 'webhook_deliveries_due_idx']
     (subscription_id, created_at) [name: 'webhook_deliveries_subscription_log_idx']
+    event_id [name: 'webhook_deliveries_event_idx']
+    (updated_at, id) [name: 'webhook_deliveries_settled_updated_idx']
   }
 }
 
@@ -4946,6 +4955,7 @@ table webhook_events {
   indexes {
     created_at [name: 'webhook_events_pending_fanout_idx']
     (project_id, occurred_at) [name: 'webhook_events_needs_input_attention_idx']
+    fanout_at [name: 'webhook_events_fanout_prune_idx']
   }
 }
 
@@ -5087,6 +5097,7 @@ table workspaces {
 
 
     project_id [name: 'workspaces_pr_state_scan_idx']
+    (run_id, created_at, id) [name: 'workspaces_run_created_idx']
   }
 }
 

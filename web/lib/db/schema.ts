@@ -2944,6 +2944,28 @@ export const runs = pgTable(
     idxExecutionAssignment: index("runs_execution_assignment_idx").on(
       t.executionAssignmentId,
     ),
+    // Migration 0410 (docs/database-schema.md §Hot-path query plan contract):
+    // IDX-02..IDX-05 — Observatory run groups, /runs ledger ordering, Flow &
+    // agent continuation candidate scans, and host-restart recovery.
+    idxProjectStarted: index("runs_project_started_idx").on(
+      t.projectId,
+      t.startedAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
+    ),
+    idxStartedId: index("runs_started_id_idx").on(
+      t.startedAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
+    ),
+    idxContinuationActive: index("runs_continuation_active_idx")
+      .on(t.runKind, t.id)
+      .where(
+        sql`${t.status} IN ('Running', 'NeedsInput', 'NeedsInputIdle', 'WaitingOnChildren')`,
+      ),
+    idxHostRestartRecovery: index("runs_host_restart_recovery_idx")
+      .on(t.id)
+      .where(
+        sql`${t.status} = 'Crashed' AND ${t.runKind} = 'flow' AND ${t.parentRunId} IS NULL AND ${t.agentKind} IS NULL`,
+      ),
   }),
 );
 
@@ -6333,6 +6355,13 @@ export const workspaces = pgTable(
       .where(
         sql`${t.prUrl} is not null and (${t.prState} is null or ${t.prState} = 'open')`,
       ),
+    // IDX-01 (migration 0410): latest-workspace lateral, getRunDetail join, and
+    // runs ON DELETE CASCADE.
+    runCreatedIdx: index("workspaces_run_created_idx").on(
+      t.runId,
+      t.createdAt.desc().nullsFirst(),
+      t.id,
+    ),
   }),
 );
 
@@ -9963,6 +9992,10 @@ export const webhookEvents = pgTable(
     idxNeedsInputAttention: index("webhook_events_needs_input_attention_idx")
       .on(t.projectId, t.occurredAt)
       .where(sql`${t.type} = 'run.needs_input'`),
+    // IDX-09 (migration 0410): bounded prune pass over fanned-out events.
+    idxFanoutPrune: index("webhook_events_fanout_prune_idx")
+      .on(t.fanoutAt)
+      .where(sql`${t.fanoutAt} IS NOT NULL`),
   }),
 );
 export type WebhookEvent = typeof webhookEvents.$inferSelect;
@@ -10052,6 +10085,12 @@ export const webhookDeliveries = pgTable(
       t.subscriptionId,
       t.createdAt.desc(),
     ),
+    // IDX-07 & IDX-08 (migration 0410): prune NOT EXISTS / cascade probe and
+    // settled-delivery scans (attention stream, activity feed).
+    idxEvent: index("webhook_deliveries_event_idx").on(t.eventId),
+    idxSettledUpdated: index("webhook_deliveries_settled_updated_idx")
+      .on(t.updatedAt.desc().nullsFirst(), t.id.desc().nullsFirst())
+      .where(sql`${t.status} IN ('delivered', 'dead')`),
   }),
 );
 export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
@@ -10565,6 +10604,15 @@ export const domainEvents = pgTable(
       .where(
         sql`${t.kind} IN ('run.done', 'run.failed', 'run.crashed', 'run.abandoned')`,
       ),
+    // IDX-06 (migration 0410): activity feed, Observatory budget summary, and
+    // attention-stream scan.
+    projectOccurredIdx: index("domain_events_project_occurred_idx")
+      .on(
+        t.projectId,
+        t.occurredAt.desc().nullsFirst(),
+        t.id.desc().nullsFirst(),
+      )
+      .where(sql`${t.projectId} IS NOT NULL`),
   }),
 );
 export type DomainEventRow = Omit<
@@ -10919,6 +10967,11 @@ export const librarianMessages = pgTable(
       "gin",
       t.bodyTsv,
     ),
+    // IDX-10 (migration 0410): segment message retrieval in retrieveLibrarianContext.
+    idxSegmentSeq: index("librarian_messages_segment_seq_idx").on(
+      t.segmentId,
+      t.seq,
+    ),
     authorKindCheck: check(
       "librarian_messages_author_kind_check",
       sql`${t.authorKind} IN ('owner', 'librarian', 'update', 'system')`,
@@ -10989,6 +11042,10 @@ export const librarianTurns = pgTable(
       t.conversationId,
       t.status,
     ),
+    // IDX-11 (migration 0410): segment knowledge-turn retrieval in retrieveLibrarianContext.
+    idxSegmentKnowledge: index("librarian_turns_segment_knowledge_idx")
+      .on(t.segmentId)
+      .where(sql`${t.knowledgeAccess} IS NOT NULL`),
     variantCheck: check(
       "librarian_turns_variant_check",
       sql`${t.variant} IN ('owner_message', 'explain', 'summary')`,

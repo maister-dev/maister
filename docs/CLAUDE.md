@@ -275,7 +275,7 @@ Before any docs PR merges, the diff MUST pass:
 
 | Artifact | Validator | How |
 | -------- | --------- | --- |
-| Mermaid blocks | `pnpm validate:docs` (repo root) | Parses every changed `docs/**/*.md` block via `mermaid.parse()` AND fails blocks over 50,000 chars (renderer `maxTextSize`); exits non-zero on any error. Use `pnpm validate:docs:all` to check the entire `docs/` tree regardless of git status. The Claude Code Stop hook in `.claude/settings.json` runs this gate automatically before the agent finishes a turn. |
+| Mermaid blocks | `pnpm validate:docs` (repo root) | Parses every changed `docs/**/*.md` block via `mermaid.parse()` AND fails blocks over 50,000 chars (renderer `maxTextSize`); exits non-zero on any error. Use `pnpm validate:docs:all` to check the entire `docs/` tree regardless of git status. |
 | ADR anchors | `pnpm validate:docs` | Every `decisions.md#adr-NNN` link must resolve to a real `### ADR-NNN:` header. |
 | Relative links | `pnpm validate:docs` (`validate:docs:links[:all]`) | Every relative markdown link in changed `docs/**/*.md` must resolve to an existing file/dir. |
 | Canonical indexes | `pnpm validate:docs` | Every `.md` under `system-analytics/`, `db/`, `screens/`, `plans/` must be linked from that directory's README (the canonical index). |
@@ -283,10 +283,12 @@ Before any docs PR merges, the diff MUST pass:
 | OpenAPI 3.0.3 | `npx @redocly/cli lint <file>` or [editor.swagger.io](https://editor.swagger.io) | Zero errors; warnings reviewed. |
 | AsyncAPI 2.6.0 | `npx @asyncapi/cli validate <file>` | Zero errors. |
 
-CI exists (`.github/workflows/ci.yml`: lint/typecheck/unit lane plus a
-label-gated integration lane); the docs gates above also run locally and
-through the Claude Code Stop hook. Wiring `validate:docs` into CI is an
-open follow-up.
+CI (`.github/workflows/ci.yml`) runs `pnpm validate:docs:all` and `pnpm
+validate:contracts` before its lint/typecheck/unit lane, plus a label-gated
+integration lane. Gate docs work on `validate:docs:all`, not `validate:docs`:
+besides checking the entire tree regardless of git status, it runs the
+requirement-coverage groups (for example `--group m51`), so a change can pass
+`validate:docs` and still fail CI.
 
 ## Adding a new artifact
 

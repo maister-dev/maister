@@ -1456,8 +1456,11 @@ set `must_change_password = true`, forcing the user through `/change-password`
 on next sign-in.
 
 **DB-authoritative authorization.** `lib/authz.ts` re-reads the live `users.role`
-and `users.account_status` from the database on every check (`getSessionUser` →
-`requireGlobalRole` / `requireProjectRole`); the cached JWT role is **never**
+and `users.account_status` from the database on every request (`getSessionUser` →
+`requireGlobalRole` / `requireProjectRole`; the row is read once per server
+render and again on every call outside one — see
+[per-render memoization](system-analytics/identity-access.md#per-render-memoization-implemented));
+the cached JWT role is **never**
 trusted for an authorization decision. A demoted, disabled, or deleted user
 loses authority on their next request, not at JWT expiry.
 

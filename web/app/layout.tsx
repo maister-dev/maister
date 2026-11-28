@@ -1,12 +1,14 @@
 import "@/styles/globals.css";
 import { Metadata, Viewport } from "next";
 import { NextIntlClientProvider } from "next-intl";
-import { getLocale } from "next-intl/server";
+import { getLocale, getMessages } from "next-intl/server";
 import clsx from "clsx";
 import { cookies } from "next/headers";
 
 import { Providers } from "./providers";
 
+import { CLIENT_NAMESPACES } from "@/i18n/client-namespaces";
+import { pickMessages } from "@/i18n/pick-messages";
 import { siteConfig } from "@/config/site";
 import { fontMono, fontSans } from "@/config/fonts";
 
@@ -30,9 +32,16 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const locale = await getLocale();
-  const cookieStore = await cookies();
+  const [locale, messages, cookieStore] = await Promise.all([
+    getLocale(),
+    getMessages(),
+    cookies(),
+  ]);
 
+  const clientMessages = pickMessages(
+    messages as Record<string, unknown>,
+    CLIENT_NAMESPACES,
+  );
   const theme = cookieStore.get("theme")?.value === "dark" ? "dark" : "light";
 
   return (
@@ -44,7 +53,7 @@ export default async function RootLayout({
     >
       <head />
       <body className="min-h-screen bg-paper-warm font-sans text-body antialiased">
-        <NextIntlClientProvider>
+        <NextIntlClientProvider messages={clientMessages}>
           <Providers initialTheme={theme}>{children}</Providers>
         </NextIntlClientProvider>
       </body>

@@ -131,7 +131,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 22;
+export const HOST_STATE_SCHEMA_VERSION = 23;
 
 /** Native retirement survives registry loss. Released identities share the receipt tombstone's permanent retention and cannot reactivate. */
 export type SessionProcessObligation = Readonly<{
@@ -693,6 +693,14 @@ CREATE INDEX IF NOT EXISTS runtime_objects_corrupt_path_idx
   ON runtime_objects (private_path) WHERE state = 'corrupt';
 `;
 
+// IDX-12: `sessionProcessesForRun` reads all phases (including released) for one
+// run ordered by (registered_at, command_id), so the partial pending index
+// cannot serve it. Shared by the fresh schema and MIGRATE_V22_TO_V23.
+const SESSION_PROCESS_RUN_INDEX = `
+CREATE INDEX IF NOT EXISTS session_process_run_idx
+  ON session_process_obligations(run_id, registered_at, command_id);
+`;
+
 const SESSION_PROCESS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS session_process_obligations (
   command_id TEXT PRIMARY KEY,
@@ -718,6 +726,7 @@ CREATE INDEX IF NOT EXISTS session_process_pending_run_idx
   ON session_process_obligations(run_id, registered_at) WHERE phase <> 'released';
 CREATE UNIQUE INDEX IF NOT EXISTS session_process_active_group_uq
   ON session_process_obligations(process_group) WHERE phase = 'registered';
+${SESSION_PROCESS_RUN_INDEX}
 `;
 
 const SESSION_PROCESS_COLUMNS = `command_id AS commandId, run_id AS runId,
@@ -1179,6 +1188,13 @@ PRAGMA user_version = 17;
 COMMIT;
 `;
 
+const MIGRATE_V22_TO_V23 = `
+BEGIN IMMEDIATE;
+${SESSION_PROCESS_RUN_INDEX}
+PRAGMA user_version = 23;
+COMMIT;
+`;
+
 function applySchema(
   db: DatabaseSync,
   userVersion: number,
@@ -1235,6 +1251,7 @@ function applySchema(
     db.exec(`BEGIN IMMEDIATE; ${WORKSPACE_CANCEL_FENCE_SCHEMA} PRAGMA user_version = 21; COMMIT;`);
   if (userVersion < 22)
     db.exec(`BEGIN IMMEDIATE; ${WORKSPACE_PUBLICATION_FENCE_SCHEMA} PRAGMA user_version = 22; COMMIT;`);
+  if (userVersion < 23) db.exec(MIGRATE_V22_TO_V23);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {

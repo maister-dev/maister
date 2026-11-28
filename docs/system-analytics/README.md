@@ -70,6 +70,8 @@ One row per file — this table is the **canonical index** of the folder
 | Home navigation | [`home-navigation.md`](home-navigation.md) | Home information architecture (ADR-172): `/` renders the Desk, the portfolio moves to `/projects`, the rail re-cut and total route classifier, and the non-admin default landing route. |
 | HITL | [`hitl.md`](hitl.md) | Human input loop (permission + form + human-review). |
 | Identity and access | [`identity-access.md`](identity-access.md) | Users, Auth.js sessions, RBAC gates, account settings. |
+| Host diagnostics | [`host-diagnostics.md`](host-diagnostics.md) | Implemented: supervisor diagnostics snapshot, singleflight, forced refresh and web freshness classes (ADR-224). |
+| Client messages | [`client-messages.md`](client-messages.md) | Implemented: root client i18n message pruning and the client namespace list contract (ADR-225). |
 | Instance configuration | [`instance-config.md`](instance-config.md) | Read-only host roots, host-tool status, admin `/settings` page. |
 | Librarian authority | [`librarian-authority.md`](librarian-authority.md) | Librarian delegated authority (ADR-186, Designed): per-turn owner-bound `librarian` tokens, live per-request RBAC, `LIBRARIAN_TOKEN_SCOPES` / `LIBRARIAN_READ_SCOPES`, visibility-filtered reads, audit attribution, the human-only boundary, and the MCP-only session profile. |
 | Librarian conversation | [`librarian-conversation.md`](librarian-conversation.md) | Librarian conversation and runtime (ADR-185, Designed): one durable conversation per user, turn queue and ledger, context snapshots and the resume epoch, the project-less `run_kind='librarian'` run, the librarian pool and budgets, stop/deadline/restart recovery, enablement, and the owner stream. |

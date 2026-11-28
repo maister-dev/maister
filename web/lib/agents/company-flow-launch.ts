@@ -387,7 +387,9 @@ async function insertCompanyFlowRun(
     });
     await assertReadOnlySessionEvidence({
       checkDiagnostics: () =>
-        transportForExecutionHost(host, hosts.transport).diagnostics(),
+        transportForExecutionHost(host, hosts.transport).diagnostics({
+          refresh: true,
+        }),
       adapterId: session.runnerSnapshot.adapter,
       runnerId: session.runnerId,
       workspace: "none",

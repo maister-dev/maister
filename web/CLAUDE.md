@@ -104,8 +104,10 @@ The `projectId` passed to project-scoped functions must always be a
 server-derived value (from a DB row), never a body field.
 
 **DB-authoritative:** `getSessionUser()` re-reads the live `users` row
-(role + `mustChangePassword` + existence) from the DB on every call — the
-JWT supplies only the user `id`. A demoted/deleted user therefore loses
+(role + `mustChangePassword` + existence) from the DB on every server request —
+once per render (React `cache`, MEMO-04 in
+`docs/system-analytics/identity-access.md`) and on every call outside a render.
+The JWT supplies only the user `id`. A demoted/deleted user therefore loses
 authority on their next request, not at the 30-day JWT expiry. Never branch
 authorization on the cached `session.user.role`.
 
@@ -118,6 +120,13 @@ authorization on the cached `session.user.role`.
 - No URL-prefix routing. Locale is purely cookie-driven.
 - Server Components use `getTranslations()` from `next-intl/server`.
   Client Components use `useTranslations()`.
+- The root `NextIntlClientProvider` ships only `CLIENT_NAMESPACES`
+  (`i18n/client-namespaces.ts`, Implemented — ADR-225). A new client
+  `useTranslations("ns")` requires `ns` in `CLIENT_NAMESPACES`; enforced by
+  `lib/__tests__/i18n-client-namespaces.test.ts`. Client code never calls
+  `useMessages()` or a root/non-literal `useTranslations`, and imports both
+  hooks and the provider from `next-intl` directly. Contract:
+  `docs/system-analytics/client-messages.md`.
 
 ### Route groups
 

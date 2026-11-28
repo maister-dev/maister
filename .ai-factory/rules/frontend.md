@@ -21,6 +21,7 @@
 - SSE consumption: open one `EventSource` per run-detail page. Reconnect with `lastEventId`. Tear down on unmount.
 - Render git-tracked file content and run diffs through the ADR-066 stack: server-rendered **Shiki** for read-only file views, **`@git-diff-view/react`** (split/inline, per-file `+`/`−`) for diffs, **CodeMirror 6** for authored-Flow editing. Plain `<pre>` is no longer the workbench default — reserve it for incidental non-highlighted text.
 - Branch the UI on `MaisterError.code`, never on `err.message`. The error code is the contract.
+- A new client `useTranslations("ns")` requires `ns` in `CLIENT_NAMESPACES` (`web/i18n/client-namespaces.ts`); enforced by `web/lib/__tests__/i18n-client-namespaces.test.ts`. Never call `useMessages()` or a root/non-literal `useTranslations` from client code (ADR-225).
 - ESLint warnings count: do not commit code that adds new warnings. `no-console`, `react/jsx-sort-props`, `import/order`, `padding-line-between-statements`, `unused-imports/no-unused-imports`, and `react/self-closing-comp` are enforced auto-fixable rules.
 - Do not ship `console.log` in committed code. Add a server-side logger boundary when needed; the frontend should surface errors via toasts/UI, not the console.
 - API keys and tokens are server-only. Never read from `process.env` inside a Client Component or pass them as props from a Server Component to a Client Component.

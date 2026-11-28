@@ -9,20 +9,38 @@
 // queue test over one population proves almost nothing about the union.
 
 import { randomUUID } from "node:crypto";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 
+import { sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
+import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
+import { reserveCompanyAgentRun } from "@/lib/agents/company-agent-launch";
+import { parseAgentDefinition } from "@/lib/agents/definition";
+import { buildOperationalContract } from "@/lib/agents/launch-contract";
+import { createCompanyGrants } from "@/lib/company/grants";
 import * as fullSchema from "@/lib/db/schema";
+import { createExecutionHosts } from "@/lib/execution-host";
+import {
+  installPackageRevision,
+  trustPackageRevision,
+} from "@/lib/packages/attach";
 import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { createSpecialistAssignment } from "@/lib/specialist-assignments/store";
+import { createFakeExecutionHost } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { prepareCompanySpecialistAssignment } from "@/test-support/specialist-assignment-seed";
 
 // FIXME(any): drizzle-orm dual peer-dep variants — the fixture-insert cast every
 // other board/portfolio integration test uses.
@@ -471,5 +489,210 @@ describe("IT-ATN-14 a project viewer gets no decisions they cannot resolve", () 
     const admin = await getDecisionsQueue(fx.stranger, "admin");
 
     expect(admin.items.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IT-EDGE-ATN-09 / MEMO-02 — `companyIds: []` MUST stay project-only through
+// the memoized reader and MUST NOT be widened to company decisions.
+// ---------------------------------------------------------------------------
+describe("IT-EDGE-ATN-09 empty company scope stays project-only through the memo", () => {
+  it("excludes company decisions when companyIds: [] is passed while including them when omitted", async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), "edge-atn-09-home-"));
+    const adminId = randomUUID();
+    const companyHitlId = randomUUID();
+
+    vi.stubEnv("HOME", tempHome);
+    try {
+      await pool.query(
+        `INSERT INTO users (id, email, role, account_status) VALUES ($1, $2, 'admin', 'active')`,
+        [adminId, `edge-atn-09-admin-${adminId}@test.local`],
+      );
+      await pool.query(
+        `UPDATE users SET account_status = 'active' WHERE id = $1`,
+        [fx.member],
+      );
+      const prepared = await prepareCompanySpecialistAssignment(db as never, {
+        administratorId: adminId,
+        requesterId: fx.member,
+        version: "rah/edge-atn-09",
+      });
+
+      if (prepared.owner.kind !== "company") {
+        throw new Error("expected company specialist owner");
+      }
+      const companyOwner = prepared.owner;
+      const source = join(tempHome, "specialist-pkg");
+
+      await cp(resolve("test-fixtures/rah-native"), source, {
+        recursive: true,
+        filter: (p) => !p.split(sep).includes(".git"),
+      });
+      const specialistMd =
+        "---\nname: Operations observer\ndescription: Diagnose authorized stand state\nkind: operational\ncompletion: {contract: operational_v1}\nspecialist:\n  responsibilities: [Inspect authorized stand state]\n  targetClasses: [stand]\nmode: session\nworkspace: none\ntriggers: [manual, cron, domain_event]\nrisk_tier: read_only\n---\nInspect the authorized target.\n";
+
+      await writeFile(
+        join(source, "maister-agents/evidence-researcher.md"),
+        specialistMd,
+      );
+      const installed = await installPackageRevision({
+        source,
+        version: "rah/edge-atn-09-specialist",
+        db: db as never,
+      });
+
+      await trustPackageRevision({
+        packageInstallId: installed.id,
+        db: db as never,
+      });
+      const [pin] = (
+        await db.execute(
+          sql`SELECT installed_path, resolved_revision FROM package_installs WHERE id = ${installed.id}`,
+        )
+      ).rows as { installed_path: string; resolved_revision: string }[];
+      const definition = parseAgentDefinition(
+        prepared.responsibleAgentId,
+        await readFile(
+          join(pin!.installed_path, "maister-agents/evidence-researcher.md"),
+          "utf8",
+        ),
+      );
+      const definitionSha256 = agentDefinitionSha256(definition);
+
+      await createCompanyGrants(db as never, adminId, {
+        principalKind: "user",
+        principalId: adminId,
+        actions: ["specialists:manage", "specialists:read"],
+        idempotencyKey: randomUUID(),
+      });
+      await createCompanyGrants(db as never, adminId, {
+        principalKind: "user",
+        principalId: fx.member,
+        actions: ["assignments:answer"],
+        idempotencyKey: randomUUID(),
+      });
+
+      const binding = await createCompanySpecialistBinding(
+        db as never,
+        adminId,
+        prepared.responsibleAgentId,
+        {
+          owner: companyOwner,
+          packageInstallId: installed.id,
+          packageRevision: pin!.resolved_revision,
+          definitionSha256,
+          enabled: true,
+          configuration: {},
+          grantActions: ["assignments:read"],
+          runnerId: fx.runner,
+          idempotencyKey: randomUUID(),
+        },
+      );
+      const contract = buildOperationalContract({
+        agentId: prepared.responsibleAgentId,
+        parsed: definition,
+        packageInstallId: installed.id,
+        packageName: installed.name,
+        versionLabel: "rah/edge-atn-09-specialist",
+        resolvedRevision: pin!.resolved_revision,
+        execTrust: "trusted",
+      } as never);
+      const assignment = await createSpecialistAssignment(
+        db as never,
+        fx.member,
+        {
+          ...prepared,
+          specialistBindingId: binding.specialist.bindingId,
+          objectiveInput: {
+            ...prepared.objectiveInput,
+            expectedResult: {
+              schemaRef: contract.schemaRef,
+              schemaVersion: contract.schemaVersion,
+              sha256: contract.sha256,
+              required: true,
+            },
+          },
+          standingDefinition: {
+            ...prepared.standingDefinition,
+            packageInstallId: installed.id,
+            packageRevision: pin!.resolved_revision,
+            definitionSha256,
+            definition,
+          },
+        },
+      );
+      const fakeHost = createFakeExecutionHost();
+      const hosts = createExecutionHosts({
+        db: db as never,
+        transport: {
+          ...fakeHost.transport,
+          capabilities: async () => ({
+            dataPlaneVersion: "execution-host-data-plane.v1",
+            eventStream: true,
+            asyncPrompt: true,
+            runtimeObjects: true,
+            limits: {
+              maxEventBytes: 1_048_576,
+              maxObjectBytes: 26_214_400,
+              maxReplayBatch: 500,
+            },
+          }),
+        },
+      });
+      const reservation = await reserveCompanyAgentRun(
+        db as never,
+        fx.member,
+        {
+          companyId: companyOwner.companyId,
+          assignmentId: assignment.id,
+          assignmentRevision: assignment.revision,
+          inputRevision: assignment.inputRevision,
+          bindingId: binding.specialist.bindingId,
+          bindingRevision: binding.specialist.configRevision,
+          triggerSource: "manual",
+        },
+        hosts,
+      );
+
+      await pool.query(`UPDATE runs SET status = 'NeedsInput' WHERE id = $1`, [
+        reservation.runId,
+      ]);
+      await db.insert(schema.hitlRequests).values({
+        id: companyHitlId,
+        runId: reservation.runId,
+        stepId: "company-step",
+        kind: "permission",
+        prompt: "approve company operation?",
+        criticality: "high",
+        createdAt: new Date("2026-09-09T09:00:00.000Z"),
+      });
+
+      const fullQueue = await getDecisionsQueue(fx.member, "member");
+      const projectOnlyQueue = await getDecisionsQueue(fx.member, "member", {
+        companyIds: [],
+      });
+
+      // Positive control: the member sees BOTH the company decision and project decisions.
+      expect(fullQueue.items.map((item) => item.runId)).toContain(
+        reservation.runId,
+      );
+      expect(fullQueue.items.map((item) => item.projectId)).toContain(
+        fx.project,
+      );
+
+      // EDGE-ATN-09: `companyIds: []` keeps project decisions and excludes company decisions.
+      expect(projectOnlyQueue.items.map((item) => item.runId)).not.toContain(
+        reservation.runId,
+      );
+      expect(projectOnlyQueue.items.map((item) => item.projectId)).toContain(
+        fx.project,
+      );
+      expect(
+        projectOnlyQueue.items.every((item) => item.projectId !== null),
+      ).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(tempHome, { recursive: true, force: true });
+    }
   });
 });

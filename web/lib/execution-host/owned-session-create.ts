@@ -737,7 +737,7 @@ async function createOwnedSessionFromIntent(
         logger,
         send: async () => {
           await assertReadOnlySessionCreateEvidence(envelope.payload, () =>
-            transport.diagnostics(),
+            transport.diagnostics({ refresh: true }),
           );
 
           return transport.createSession(envelope, {

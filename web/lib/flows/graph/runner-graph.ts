@@ -3994,7 +3994,7 @@ export async function runGraph(
             agent: nodeExecutor.agent,
             permissionPolicy: nodeRunnerSnapshot.permissionPolicy,
             checkDiagnostics: async () =>
-              (await ensureExecution()).admin.diagnostics(),
+              (await ensureExecution()).admin.diagnostics({ refresh: true }),
           });
         } catch (err) {
           const e = isMaisterError(err)
@@ -4166,7 +4166,8 @@ export async function runGraph(
             catalog,
             db,
             log2,
-            async () => (await ensureExecution()).admin.diagnostics(),
+            async () =>
+              (await ensureExecution()).admin.diagnostics({ refresh: true }),
           );
           if (isCompanyFlowRun(loaded))
             await witnessCompanyFlowMaterialization(db, runId);

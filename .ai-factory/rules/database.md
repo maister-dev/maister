@@ -28,7 +28,7 @@
   - Latest run → `Done` (merged) → task → `Done` (terminal).
   - Latest run → `Failed | Abandoned` → task → `Backlog` (retry-eligible; next Launch spawns attempt N+1).
   - Explicit "Discard task" action → task → `Abandoned` (terminal).
-- Indexes on hot paths include `runs.status`, `runs.project_id`, `runs.task_id`, `tasks.project_id`, `tasks.status`, `workspaces.run_id`, `node_attempts.run_id`, `hitl_requests.run_id`, `projects.slug` (unique), `projects.repo_path` (unique).
+- Indexes on hot paths include `runs.status`, `runs.project_id`, `runs.task_id`, `tasks.project_id`, `tasks.status`, `node_attempts.run_id`, `hitl_requests.run_id`, `projects.slug` (unique), `projects.repo_path` (unique). `workspaces.run_id` is served by `workspaces_run_created_idx` (migration `0410`); before it no index led with `run_id`. The reader → index contract lives in `docs/database-schema.md` §Hot-path query plan contract.
 - Never store secrets or API keys in the database. They live in `.env` server-side.
 - The Postgres connection string is read from `DB_URL` only. Do not split it into separate vars or hardcode hosts.
 - Indexes go in migrations, not in ad-hoc `CREATE INDEX` statements. Index any column used in `WHERE`, `ORDER BY`, or join conditions on the hot paths.

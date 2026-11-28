@@ -1945,7 +1945,7 @@ async function launchAgentRunWithAdmission(
   const placementTransport = transportForExecutionHost(placementHost);
 
   await assertReadOnlySessionEvidence({
-    checkDiagnostics: () => placementTransport.diagnostics(),
+    checkDiagnostics: () => placementTransport.diagnostics({ refresh: true }),
     adapterId: resolution.runnerSnapshot.adapter,
     runnerId: resolution.runnerId,
     workspace,

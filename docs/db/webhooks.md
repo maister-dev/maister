@@ -120,6 +120,8 @@ erDiagram
 | ----- | ----- | --------- | ------- |
 | `webhook_events` | `webhook_events_pending_fanout_idx` | `WHERE fanout_at IS NULL` | Fanout-pass claim — only unprocessed outbox events. |
 | `webhook_deliveries` | `webhook_deliveries_due_idx` | `WHERE status = 'pending'` | Drain-pass claim — due deliveries only. |
+| `webhook_events` | `webhook_events_fanout_prune_idx` (migration `0410`, Implemented) | `WHERE fanout_at IS NOT NULL` | Settled-event prune pass (IDX-09). |
+| `webhook_deliveries` | `webhook_deliveries_settled_updated_idx` (migration `0410`, Implemented) | `WHERE status IN ('delivered','dead')` | Attention-stream scan and activity-feed deliveries (IDX-08). |
 
 ## Regular indexes
 
@@ -129,6 +131,9 @@ erDiagram
 | `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` + partial predicate above | Ordered fanout scan. |
 | `webhook_deliveries` | `webhook_deliveries_due_idx` | `(next_attempt_at)` + partial predicate above | Ordered drain scan. |
 | `webhook_deliveries` | `webhook_deliveries_subscription_log_idx` | `(subscription_id, created_at DESC)` | Deliveries-drawer log UI. |
+| `webhook_deliveries` | `webhook_deliveries_event_idx` (migration `0410`, Implemented) | `(event_id)` | Prune-pass `NOT EXISTS` probe and the event delete cascade (IDX-07). |
+| `webhook_events` | `webhook_events_fanout_prune_idx` (migration `0410`, Implemented) | `(fanout_at)` + partial predicate above | Bounded prune scan (IDX-09). |
+| `webhook_deliveries` | `webhook_deliveries_settled_updated_idx` (migration `0410`, Implemented) | `(updated_at DESC, id DESC)` + partial predicate above | Newest settled deliveries first (IDX-08). |
 | `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx` | `(delivery_id)` | Attempt history for a delivery. |
 
 ## Cascade chain

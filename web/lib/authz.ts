@@ -4,6 +4,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { AccountStatus, GlobalRole, ProjectRole } from "@/lib/db/schema";
 import type { CompanyAction, ConfirmationClass } from "@/lib/company/types";
 
+import { cache } from "react";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
@@ -115,6 +116,7 @@ export function projectRolesForActions(
 }
 
 async function loadUser(id: string) {
+  log.debug({ userId: id }, "[authz] loadUser");
   const rows = await db()
     .select({
       id: users.id,
@@ -129,6 +131,13 @@ async function loadUser(id: string) {
 
   return rows[0] ?? null;
 }
+
+/**
+ * Per-render memoized user lookup (MEMO-04). Shared with the Auth.js `jwt`
+ * callback so `users` is queried at most once per RSC render, while every call
+ * outside a render (route handlers, server actions) hits Postgres directly.
+ */
+export const loadUserCached = cache(loadUser);
 
 export function hasActiveGlobalRole(
   user: Pick<SessionUser, "accountStatus" | "mustChangePassword" | "role">,
@@ -156,30 +165,32 @@ export async function hasActiveGlobalRoleById(
  * the database so a demoted/deleted user loses authority immediately rather
  * than at JWT expiry. Returns null when unauthenticated OR the user is gone.
  */
-export async function getSessionUser(): Promise<SessionUser | null> {
-  const { auth } = await import("@/auth");
-  const session = await auth();
-  const id = session?.user?.id;
+export const getSessionUser = cache(
+  async function getSessionUser(): Promise<SessionUser | null> {
+    const { auth } = await import("@/auth");
+    const session = await auth();
+    const id = session?.user?.id;
 
-  if (!id) return null;
+    if (!id) return null;
 
-  const row = await loadUser(id);
+    const row = await loadUserCached(id);
 
-  if (!row) {
-    log.warn({ userId: id }, "session references a missing user — denying");
+    if (!row) {
+      log.warn({ userId: id }, "session references a missing user — denying");
 
-    return null;
-  }
+      return null;
+    }
 
-  return {
-    id: row.id,
-    role: row.role,
-    accountStatus: row.accountStatus,
-    mustChangePassword: row.mustChangePassword,
-    email: row.email,
-    name: row.name,
-  };
-}
+    return {
+      id: row.id,
+      role: row.role,
+      accountStatus: row.accountStatus,
+      mustChangePassword: row.mustChangePassword,
+      email: row.email,
+      name: row.name,
+    };
+  },
+);
 
 export async function requireSession(): Promise<SessionUser> {
   const user = await getSessionUser();

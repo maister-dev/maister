@@ -274,8 +274,14 @@ export interface BoundClient {
 // per-session event stream (which feeds `commandSignals`), receipts, handles.
 export interface HostAdminClient {
   health(opts?: { timeoutMs?: number }): Promise<HostHealth>;
+  /**
+   * Host adapter diagnostics (ADR-224, docs/system-analytics/host-diagnostics.md).
+   * Pass `{ refresh: true }` only from fresh-class callers (readiness reconcile,
+   * admin runner routes, launch evidence); snapshot-class callers omit it.
+   */
   diagnostics(opts?: {
     timeoutMs?: number;
+    refresh?: boolean;
   }): Promise<SupervisorDiagnosticsStatus>;
   // ADR-179: host env-var PRESENCE by name — MCP readiness' only consumer.
   // Accepts ANY number of names; the transport dedupes, chunks by the route's
@@ -708,7 +714,7 @@ export function createExecutionHosts(
       },
       async createSession(payload, opts) {
         await assertReadOnlySessionCreateEvidence(payload, () =>
-          transport.diagnostics(),
+          transport.diagnostics({ refresh: true }),
         );
         const sessionName =
           opts?.sessionName ?? payload.sessionName ?? "default";

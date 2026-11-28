@@ -67,6 +67,7 @@ indexes for the read models that query it:
 | `domain_events_m43_cutover_run_occurred_idx` | `(run_id, occurred_at)` | `kind = 'run.failed'` and the M43 cut-over `reason`/`source` | cut-over history by run |
 | `domain_events_m43_cutover_task_occurred_idx` | `(task_id, occurred_at)` | the same, `task_id IS NOT NULL` | stale C2 claims by task |
 | `domain_events_run_terminal_idx` (migration `0181`, Implemented) | `(run_id, occurred_at DESC, id DESC)` | `kind IN ('run.done', 'run.failed', 'run.crashed', 'run.abandoned')` | the run terminal-cause read (`loadRunTerminalCause`) — the newest terminal event of a run, kind-matched to its status |
+| `domain_events_project_occurred_idx` (migration `0410`, Implemented) | `(project_id, occurred_at DESC, id DESC)` | `project_id IS NOT NULL` | the activity feed, the Observatory budget summary and the attention-stream scan (IDX-06) |
 
 ## Cursor and claim model
 
