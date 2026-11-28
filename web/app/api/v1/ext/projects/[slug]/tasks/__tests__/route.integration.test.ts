@@ -905,6 +905,11 @@ describe("GET /api/v1/ext/projects/[slug]/tasks", () => {
 
     expect(Array.isArray(body.tasks)).toBe(true);
     expect(body.tasks.length).toBeGreaterThanOrEqual(1);
+    expect(body.tasks.find((task: { id: string }) => task.id === taskId)?.displayStatus).toEqual({
+      key: "ready",
+      label: "Ready",
+      tone: "success",
+    });
 
     // Verify no leaked fields
     for (const task of body.tasks) {

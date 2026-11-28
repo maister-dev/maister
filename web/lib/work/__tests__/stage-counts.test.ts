@@ -28,6 +28,8 @@ function row(stage: WorkStage, index: number): WorkTableRow {
     projectSlug: "myapp",
     projectName: "MyApp",
     stage,
+    displayStatus: { key: "in_progress", label: "In progress", tone: "accent" },
+    nextAction: "watch",
     blocked: false,
     clarificationPending: false,
     promotedKind: null,

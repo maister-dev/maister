@@ -14,7 +14,11 @@ import type { WorkStage } from "@/lib/work/stage";
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
+}));
 
 import { WorkRowsTable } from "@/components/work/work-rows-table";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
@@ -39,6 +43,8 @@ function row(over: Partial<WorkTableRow> = {}): WorkTableRow {
     projectSlug: "myapp",
     projectName: "MyApp",
     stage: "Executing",
+    displayStatus: { key: "in_progress", label: "In progress", tone: "accent" },
+    nextAction: "watch",
     blocked: false,
     clarificationPending: false,
     promotedKind: null,
@@ -165,14 +171,14 @@ describe("T-D10 the next action is an affordance, and `none` is an em dash", () 
   it("renders an em dash for a stage with no next action", () => {
     // `Promoted` and `Abandoned` map to `none`. A sentence there ("Nothing")
     // reads as a thing to do.
-    const html = render([row({ stage: "Promoted" })], "none");
+    const html = render([row({ stage: "Promoted", nextAction: "none" })], "none");
 
     expect(html).not.toContain("w:nextAction.none");
     expect(html).toContain("—");
   });
 
   it("renders the affordance for a stage that has one", () => {
-    const html = render([row({ stage: "Review" })], "none");
+    const html = render([row({ stage: "Review", nextAction: "review" })], "none");
 
     expect(html).toContain("w:nextAction.review");
   });

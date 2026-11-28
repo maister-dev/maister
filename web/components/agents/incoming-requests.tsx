@@ -82,7 +82,9 @@ export async function IncomingRequests({
               </Link>
               <TaskStatusChip status={item.displayStatus.key} />
               <p className="text-sm text-mute">
-                {t(`decision.${item.qualification.decision ?? "unassessed"}`)} ·{" "}
+                {t("assessmentOutcome", {
+                  outcome: t(`decision.${item.qualification.decision ?? "unassessed"}`),
+                })} ·{" "}
                 {t(`freshness.${item.qualification.freshness}`)}
               </p>
               {item.qualification.candidate ? (

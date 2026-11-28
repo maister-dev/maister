@@ -6405,10 +6405,11 @@
     "sub": "Все задачи, которые вам видны, из всех проектов — одним сравнимым списком.",
     "rowCount": "строк: $count",
     "filters": {
+      "workflow": "Этап работы",
       "project": "Проект",
       "allProjects": "Все проекты",
-      "stage": "Этап",
-      "allStages": "Все этапы",
+      "stage": "Статус",
+      "allStages": "Все статусы",
       "group": "Группировка",
       "apply": "Применить",
       "reset": "Сбросить"
@@ -6416,7 +6417,7 @@
     "group": {
       "none": "Без группировки",
       "project": "По проекту",
-      "stage": "По этапу",
+      "stage": "Этап работы",
       "mine": "Ждут меня",
       "mineHeading": "Ждут вас",
       "othersHeading": "Всё остальное"
@@ -6425,7 +6426,7 @@
       "key": "Задача",
       "title": "Название",
       "project": "Проект",
-      "stage": "Этап",
+      "stage": "Статус",
       "readiness": "Готовность",
       "waitingOn": "Ждёт",
       "blockers": "Заблокирована",
@@ -7219,6 +7220,7 @@
     }
   },
   "taskQualification": {
+    "assessmentOutcome": "Оценка: {outcome}",
     "incoming": "Входящие задачи",
     "incomingTask": "Входящая задача",
     "admitToBacklog": "Допустить в бэклог",

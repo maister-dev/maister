@@ -481,7 +481,7 @@ export async function getTaskDetail(
     .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(runCostRollups, eq(runCostRollups.runId, runs.id))
     .where(and(eq(runs.taskId, taskId), eq(runs.runKind, "flow")))
-    .orderBy(desc(runs.startedAt))
+    .orderBy(desc(runs.startedAt), desc(runs.id))
     .limit(10)) as Array<{
     id: string;
     status: string;

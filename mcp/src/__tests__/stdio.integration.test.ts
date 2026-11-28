@@ -20,6 +20,8 @@ type CapturedRequest = {
   body: Record<string, unknown>;
 };
 
+const displayStatus = { key: "incoming", label: "Incoming", tone: "neutral" } as const;
+
 describe("MCP stdio wire contract", () => {
   let api: Server;
   let baseUrl: string;
@@ -65,6 +67,12 @@ describe("MCP stdio wire contract", () => {
           ? JSON.parse(Buffer.concat(chunks).toString("utf8"))
           : {},
       });
+      if (req.url === "/api/v1/ext/projects/wire-project/tasks/status-task") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ id: "status-task", status: "Backlog", displayStatus }));
+
+        return;
+      }
       if (req.url?.startsWith("/api/v1/ext/task-launch-intents")) {
         const refused = requests.at(-1)?.body.taskId === "unqualified-task";
 
@@ -971,6 +979,21 @@ describe("MCP stdio wire contract", () => {
       authorization: "Bearer mai_wire_test",
       body: verdict,
     });
+  });
+
+  it("passes the server-owned task status and raw state through MCP", async () => {
+    const result = await client.callTool({
+      name: "task_get",
+      arguments: { slug: "wire-project", taskId: "status-task" },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify({ id: "status-task", status: "Backlog", displayStatus }),
+      },
+    ]);
   });
 
   it("rejects a call without credentials before reaching REST", async () => {

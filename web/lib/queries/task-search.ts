@@ -1,8 +1,10 @@
 import "server-only";
 
+import type { TaskDisplayStatus } from "@/lib/tasks/task-display-status";
 import type { GlobalRole } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
+import { getTaskDisplayStatuses, requireTaskDisplayStatus } from "@/lib/tasks/task-display-status-queries";
 import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -22,6 +24,7 @@ export const TASK_SEARCH_PAGE_SIZE = 25;
 export const TASK_SEARCH_QUERY_MAX = 200;
 
 export interface TaskSearchHit {
+  displayStatus: TaskDisplayStatus;
   taskId: string;
   key: string;
   number: number;
@@ -162,6 +165,7 @@ export async function searchVisibleTasks(
 
   const page = rows.slice(0, TASK_SEARCH_PAGE_SIZE);
   const truncated = rows.length > TASK_SEARCH_PAGE_SIZE;
+  const statuses = await getTaskDisplayStatuses(page.map((row) => row.taskId), client);
   const needle = q.toLowerCase();
   const hits: TaskSearchHit[] = page.map((row) => {
     const key = `${row.taskKey}-${row.number}`;
@@ -178,6 +182,7 @@ export async function searchVisibleTasks(
     if (row.prompt.toLowerCase().includes(needle)) matchedIn.push("prompt");
 
     return {
+      displayStatus: requireTaskDisplayStatus(statuses, row.taskId),
       taskId: row.taskId,
       key,
       number: row.number,

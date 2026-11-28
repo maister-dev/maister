@@ -56,6 +56,7 @@ export default async function WorkPage({
     // Row labels come from the shared builder the Desk also calls, so a new
     // column cannot reach one surface and miss the other.
     ...buildWorkRowsLabels(t, tStage),
+    workflowFilter: t("filters.workflow"),
     rowCount: t("rowCount"),
     filters: {
       project: t("filters.project"),

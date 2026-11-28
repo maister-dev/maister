@@ -74,7 +74,7 @@ const installationReadDescriptions: Readonly<Record<string, string>> = {
   task_list:
     "List compact task summaries in one authorized active project. Follow nextCursor with cursor and the same limit to read the next page.",
   task_get:
-    "Read a compact task summary (id, projectId, slug, number, title, status) in one authorized active project.",
+    "Read a compact task summary (id, projectId, slug, number, title, status, displayStatus) in one authorized active project.",
   run_get:
     "Read compact run metadata (id, projectId, slug, status, runKind, taskId, startedAt, endedAt) in one authorized active project.",
   run_activity:
@@ -395,7 +395,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     },
   },
   task_list: {
-    description: "List tasks in a project",
+    description: "List tasks in a project. Use displayStatus for human-facing status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -406,7 +406,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   task_find_by_source: {
     description:
-      "Find the task bound to an external source identity (kind + instance + externalId) in a project, across every task status. Returns {task: null} when the identity is unbound — look up before creating an imported task.",
+      "Find the task bound to an external source identity (kind + instance + externalId) in a project, across every task status. Use displayStatus for human-facing status. Returns {task: null} when the identity is unbound — look up before creating an imported task.",
     inputSchema: {
       type: "object",
       properties: {
@@ -433,7 +433,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     },
   },
   task_get: {
-    description: "Get a single task by ID",
+    description: "Get a single task by ID. Use displayStatus for human-facing status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1525,7 +1525,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   task_search: {
     description:
-      "Search tasks by title, prompt or key (`KEY-12`) across the owner's visible projects, 25 per page, newest first. `truncated: true` means more matches exist — pass `nextCursor` as `cursor` or narrow `q`; never treat a truncated page as the complete answer.",
+      "Search tasks by title, prompt or key (`KEY-12`) across the owner's visible projects, 25 per page, newest first. Use displayStatus for human-facing status. `truncated: true` means more matches exist — pass `nextCursor` as `cursor` or narrow `q`; never treat a truncated page as the complete answer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1537,12 +1537,12 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   work_list: {
     description:
-      "The owner's cross-project work table: every task in the owner's visible projects with its derived work stage, blocked flag, latest run, readiness and who it waits on.",
+      "The owner's cross-project work table: every task in the owner's visible projects with shared displayStatus, workflow stage, blocked flag, latest run, readiness and who it waits on.",
     inputSchema: { type: "object", properties: {} },
   },
   decisions_list: {
     description:
-      "The owner's own decision queue (HITL questions, promotable, crashed and triage-flagged work). Read-only: a human-only decision is answered by the owner in the UI, never through this tool.",
+      "The owner's own decision queue (HITL questions, promotable, crashed and triage-flagged work). Task-linked items include displayStatus for the current authorized task. Read-only: a human-only decision is answered by the owner in the UI, never through this tool.",
     inputSchema: {
       type: "object",
       properties: {

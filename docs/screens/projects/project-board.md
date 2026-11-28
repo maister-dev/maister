@@ -90,11 +90,13 @@ Operational agent actions retain their own operational launch contract.
 
 ## Layout & Regions
 
-The board is a horizontally scrollable set of columns:
+The board groups task cards by the [shared task status](../../system-analytics/tasks.md#human-facing-task-status-designed).
+The Incoming tab shows the full count and lists those requests separately.
+Each task in the ordinary board appears in one status column.
 
 - **Backlog cards** show a compact top metadata bar (`KEY-N`, flow tag, full
   edit action), then a full-width title row, run count, description, relation
-  blockers, decomposition children, triage state, and the launch control.
+  blockers, decomposition children, and the launch control for live tasks.
   **Card text is read-only.** The title is a plain link to the task page and the
   description is presentation only; neither carries an inline edit affordance,
   because the full card editor already edits both and is the better surface for

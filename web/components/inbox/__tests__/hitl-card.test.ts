@@ -78,6 +78,26 @@ describe("HitlCard — collapsed tier", () => {
     expect(html).toContain("run.criticality.critical");
   });
 
+  it("uses the current task status while retaining the event's node label", () => {
+    const html = render({
+      displayStatus: { key: "done", label: "Done", tone: "success" },
+    });
+
+    expect(html).toContain('data-task-status="done"');
+    expect(html).toContain('data-tone="success"');
+    expect(html).toContain("taskDisplayStatus.done");
+    expect(html).toContain("review");
+    expect(html).not.toContain("workStage.WaitingOnHuman");
+  });
+
+  it("keeps taskless requests actionable without a task status chip", () => {
+    const html = render({ taskRef: null, taskTitle: null });
+
+    expect(html).not.toContain("data-task-status");
+    expect(html).toContain("workStage.WaitingOnHuman");
+    expect(html).toContain("Allow");
+  });
+
   it("renders the stage chip label (node id)", () => {
     expect(render()).toContain("review");
   });

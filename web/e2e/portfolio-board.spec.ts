@@ -60,10 +60,10 @@ test("E2E-NAV-03 portfolio and project board expose seeded acceptance work", asy
   await expect(
     board.getByRole("link", { name: "Acceptance backlog launch", exact: true }),
   ).toBeVisible();
-  await expect(board.locator('[data-stage="backlog"]')).toContainText(
+  await expect(board.locator('[data-stage="ready"]')).toContainText(
     "Acceptance backlog launch",
   );
-  await expect(board.locator('[data-stage="production"]')).toContainText(
+  await expect(board.locator('[data-stage="waiting_on_human"]')).toContainText(
     "Acceptance review pending",
   );
 

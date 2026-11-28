@@ -9,7 +9,7 @@ list, whether or not it has ever launched a run.
 
 - When I own work across several repositories, I want one table of everything in
   flight, so I can see load and blockage without opening each board.
-- When I am asked "where is X", I want to filter to it and read one stage value,
+- When I am asked "where is X", I want to filter to it and read one status value,
   so I can answer without reconstructing run history.
 - When a set of filters is useful repeatedly, I want to save and re-open it, so I
   do not rebuild it every morning.
@@ -69,7 +69,7 @@ a prop defaulting to **off**, and `/work` does not pass it (`REQ-D12`, ADR-174 D
 Turning it on here — and deciding what a backlog or settled row expands into, which
 the Desk never has to answer — is a later increment.
 
-Columns: `KEY-N` · title · project · stage (with the progress spine) · readiness ·
+Columns: `KEY-N` · title · project · task status with flow progress · readiness ·
 waiting-on (with age) · blockers (`KEY-N` chips) · tokens · last activity ·
 next action.
 
@@ -80,14 +80,11 @@ distinct from the responsive rule above, which only *hides* it below a 770px
 table with the cell still in the DOM; the two conditions are independent and
 compose.
 
-**The run-status column is removed** (`REQ-D8`, Implemented), and its distinction moves
-into the stage chip. This also closes a pre-existing drift: this document specified a
-compact "run dot" while the code shipped the raw `runStatus` enum as text.
-`STAGE_BY_RUN_STATUS` is many-to-one, so `NeedsInput` / `NeedsInputIdle` /
-`HumanWorking` — a live session, a checkpoint, a manual takeover — collapse into one
-chip, as do `Running` / `WaitingOnChildren`; the chip carries that refinement in its
-accessible name instead. A chip given no run status renders exactly as before, which
-is what keeps `decision-card.tsx` and `hitl-card.tsx` unchanged.
+The task status column uses the shared
+[task display status](../system-analytics/tasks.md#human-facing-task-status-designed).
+The status filter uses `?status=<key>`. Existing `?stage=<WorkStage>` links
+keep their workflow selection. Flow progress appears beside the status when
+available.
 
 **Waiting-on resolves to a person, not a role.** The flow DSL has no role
 concept to read one from, so the column answers with what the data actually
@@ -96,12 +93,9 @@ the reader (or the reader holds the takeover claim), the assignee's label when i
 is someone else, and `anyone` when the request is open and unassigned. An age
 rides alongside it.
 
-**Next action** is a pure function of the stage — on `/work` the table names the
-action and links to the surface that owns it, and never performs one. It stays a pure
-function of the stage wherever the rows render; a `none` action renders an em dash
-rather than a sentence (`REQ-D10`, Implemented). The Desk's expansion panel is the one
-place an action can be taken from a row, and it adds no mutation path of its own —
-every action posts to the route `/inbox` already uses (`REQ-D14`, `REQ-D18`).
+**Next action** links to the owner of the action. A configured task can link
+to launch without a triage verdict when the manual launch checks permit it.
+The Desk expansion uses the existing Inbox action routes.
 
 Grouping is `nothing | project | stage | waiting on me`. Stage groups follow the
 declared lifecycle order and project groups are alphabetical, so the same query

@@ -6405,10 +6405,11 @@
     "sub": "Every task you can see, across every project, in one comparable list.",
     "rowCount": "$count rows",
     "filters": {
+      "workflow": "Workflow stage",
       "project": "Project",
       "allProjects": "All projects",
-      "stage": "Stage",
-      "allStages": "All stages",
+      "stage": "Status",
+      "allStages": "All statuses",
       "group": "Group by",
       "apply": "Apply",
       "reset": "Reset"
@@ -6416,7 +6417,7 @@
     "group": {
       "none": "Nothing",
       "project": "Project",
-      "stage": "Stage",
+      "stage": "Workflow stage",
       "mine": "Waiting on me",
       "mineHeading": "Waiting on you",
       "othersHeading": "Everything else"
@@ -6425,7 +6426,7 @@
       "key": "Task",
       "title": "Title",
       "project": "Project",
-      "stage": "Stage",
+      "stage": "Status",
       "readiness": "Readiness",
       "waitingOn": "Waiting on",
       "blockers": "Blocked by",
@@ -7219,6 +7220,7 @@
     }
   },
   "taskQualification": {
+    "assessmentOutcome": "Assessment: {outcome}",
     "incoming": "Incoming requests",
     "incomingTask": "Incoming request",
     "admitToBacklog": "Add to backlog",

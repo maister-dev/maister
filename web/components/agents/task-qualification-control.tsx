@@ -96,7 +96,9 @@ export function TaskQualificationControl({
       <h2 className="font-semibold">{t("title")}</h2>
       <p className="text-sm">
         {t(`mode.${summary.mode}`)} ·{" "}
-        {t(`decision.${summary.decision ?? "unassessed"}`)} ·{" "}
+        {t("assessmentOutcome", {
+          outcome: t(`decision.${summary.decision ?? "unassessed"}`),
+        })} ·{" "}
         {t(`freshness.${summary.freshness}`)}
       </p>
       <p className="text-xs text-mute">

@@ -14,7 +14,7 @@ Project viewers see safe metadata/statuses. Members need `readRepoFiles` for pro
 
 ## Navigation
 
-Enter from the project Incoming tab. Request rows link to task details, where the original source prompt, assessment evidence and local clarification are separate. URL incoming_state/page survives navigation and reload. Assessment bodies require editTask plus readRepoFiles.
+Enter from the project Incoming tab. Its count includes all authorized Incoming requests across filters and pages. Each row uses the [shared Incoming status](../../system-analytics/tasks.md#human-facing-task-status-designed). Request rows link to task details, where the original source prompt, assessment evidence and local clarification are separate. URL incoming_state/page survives navigation and reload. Assessment bodies require editTask plus readRepoFiles.
 
 ## Layout & regions
 

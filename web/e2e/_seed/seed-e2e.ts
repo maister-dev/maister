@@ -8053,6 +8053,9 @@ type WorkTableFixtureRecord = {
   betaName: string;
   alphaKeyRef: string;
   alphaExecutingKeyRef: string;
+  alphaIncomingKeyRef: string;
+  alphaNullTriageKeyRef: string;
+  alphaAbandonedKeyRef: string;
   betaKeyRef: string;
   member: UserFixture;
 };
@@ -8190,6 +8193,24 @@ async function seedWorkTableFixture(
     "Work alpha executing task",
     true,
   );
+  const alphaIncoming = await seedTask(alpha, "Work alpha incoming request", false);
+  const alphaNullTriage = await seedTask(alpha, "Work alpha configured request", false);
+  const alphaAbandoned = await seedTask(alpha, "Work alpha abandoned request", false);
+
+  await pool.query(
+    `UPDATE tasks SET qualification_mode='required', triage_status='flagged',
+     triage_flag_origin='explicit' WHERE project_id=$1 AND number=$2`,
+    [alpha.projectId, alphaIncoming],
+  );
+  await pool.query(
+    "UPDATE tasks SET triage_status=NULL WHERE project_id=$1 AND number=$2",
+    [alpha.projectId, alphaNullTriage],
+  );
+  await pool.query(
+    `UPDATE tasks SET status='Abandoned', triage_status='flagged',
+     triage_flag_origin='explicit', queue_paused=true WHERE project_id=$1 AND number=$2`,
+    [alpha.projectId, alphaAbandoned],
+  );
   const betaReady = await seedTask(beta, "Work beta ready task", false);
 
   return {
@@ -8199,6 +8220,9 @@ async function seedWorkTableFixture(
     betaName: "MAIster E2E Work Beta",
     alphaKeyRef: `${alphaKey}-${alphaReady}`,
     alphaExecutingKeyRef: `${alphaKey}-${alphaExecuting}`,
+    alphaIncomingKeyRef: `${alphaKey}-${alphaIncoming}`,
+    alphaNullTriageKeyRef: `${alphaKey}-${alphaNullTriage}`,
+    alphaAbandonedKeyRef: `${alphaKey}-${alphaAbandoned}`,
     betaKeyRef: `${betaKey}-${betaReady}`,
     member,
   };

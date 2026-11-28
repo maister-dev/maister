@@ -1,7 +1,6 @@
 import type { ActivityRowLabels } from "@/components/activity/activity-row-list";
-import type { NowTilesLabels } from "@/components/attention/now-tiles";
 import type { WorkRowsLabels } from "@/components/work/work-rows-table";
-import type { WorkInFlightStage } from "@/lib/work/stage";
+import type { TaskDisplayStatusKey } from "@/lib/tasks/task-display-status";
 import type { ActivityFeedRow } from "@/lib/queries/activity-feed";
 import type { DecisionItem } from "@/lib/queries/decisions";
 import type { WorkTableRow } from "@/lib/queries/work-table";
@@ -31,7 +30,6 @@ import {
 } from "@/lib/queries/autonomous-completion";
 import { getOpenWaitLabels } from "@/lib/waits/attention";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
-import { countWorkInFlightByStage } from "@/lib/work/stage-counts";
 import { getActivityCursor } from "@/lib/queries/activity-cursor";
 import {
   decisionQueueReadsRepoFiles,
@@ -42,8 +40,9 @@ import { getWorkTable } from "@/lib/queries/work-table";
 import {
   groupWorkTableRows,
   normalizeDeskStageFilter,
+  normalizeWorkTableFilters,
 } from "@/lib/work/work-table-view";
-import { isWorkInFlight, WORK_IN_FLIGHT_STAGES } from "@/lib/work/stage";
+import { isWorkInFlight } from "@/lib/work/stage";
 import { requireActiveSession } from "@/lib/authz";
 import { runReviewHref } from "@/lib/runs/run-query-state";
 import { splitAtCursor } from "@/lib/activity/activity-view";
@@ -86,7 +85,7 @@ export default async function DeskPage({
   searchParams: SearchParams;
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [params, t, tInbox, tPortfolio, tStage, tWork, tActivity, locale] =
+  const [params, t, tInbox, tPortfolio, tStage, tWork, tActivity, locale, tStatus] =
     await Promise.all([
       searchParams,
       getTranslations("desk"),
@@ -96,6 +95,7 @@ export default async function DeskPage({
       getTranslations("work"),
       getTranslations("activityFeed"),
       getLocale(),
+      getTranslations("taskDisplayStatus"),
     ]);
 
   // ADR-169 D8/ATN-05: `getDecisionsQueue` is the ONE canonical queue, and it is
@@ -116,17 +116,24 @@ export default async function DeskPage({
   );
   const hasProjects = portfolio.projects.length > 0;
   const inFlight = table.rows.filter((row) => isWorkInFlight(row.stage));
-  // REQ-D2: counted over EVERY in-flight row, before the filter and before the
-  // slice. A strip counted later would answer "what is on this page" while
-  // claiming to answer "what is in flight".
-  const stageCounts = countWorkInFlightByStage(inFlight);
-  const activeStage = normalizeDeskStageFilter(params);
-  // REQ-D3: the filter narrows BEFORE the slice, so `?stage=Crashed` shows the
-  // first 12 crashed rows rather than the crashed rows among the first 12.
-  const visible =
-    activeStage === null
-      ? inFlight
-      : inFlight.filter((row) => row.stage === activeStage);
+  const statusCounts = new Map<TaskDisplayStatusKey, number>([
+    ["queued", 0],
+    ["in_progress", 0],
+    ["waiting_on_human", 0],
+    ["in_review", 0],
+    ["crashed", 0],
+  ]);
+
+  for (const { displayStatus: { key } } of inFlight) {
+    statusCounts.set(key, (statusCounts.get(key) ?? 0) + 1);
+  }
+
+  const activeStatus = normalizeWorkTableFilters(params).status ?? null;
+  const activeStage = activeStatus ? null : normalizeDeskStageFilter(params);
+  const activeFilterLabel = activeStatus ? tStatus(activeStatus) : activeStage ? `${tWork("filters.workflow")} · ${tStage(activeStage)}` : null;
+  const visible = inFlight.filter((row) =>
+    activeStatus ? row.displayStatus.key === activeStatus : activeStage === null || row.stage === activeStage,
+  );
   const shownRows = visible.slice(0, DESK_WORK_ROWS);
   const [reviewRefusals, waitConditions, tAutonomy, tWait, engineDecisions] =
     await Promise.all([
@@ -195,14 +202,6 @@ export default async function DeskPage({
     cursor,
   );
 
-  // The strip reads the SAME `workStage` namespace the row chips read, so a
-  // tile and the rows it filters to can never name their stage differently.
-  const nowLabels: NowTilesLabels = {
-    heading: t("nowLabel"),
-    names: Object.fromEntries(
-      WORK_IN_FLIGHT_STAGES.map((stage) => [stage, tStage(stage)]),
-    ) as Record<WorkInFlightStage, string>,
-  };
   const workLabels: WorkRowsLabels = buildWorkRowsLabels(tWork, tStage);
 
   return (
@@ -219,11 +218,17 @@ export default async function DeskPage({
       </header>
 
       <NowTiles
-        activeStage={activeStage}
-        counts={stageCounts}
-        labels={nowLabels}
+        activeStatus={activeStatus}
+        counts={statusCounts}
+        heading={t("nowLabel")}
         locale={locale}
       />
+
+      {activeStage ? (
+        <p className="text-sm text-mute" data-testid="desk-workflow-filter">
+          {activeFilterLabel}
+        </p>
+      ) : null}
 
       {hasProjects ? null : (
         <div className="flex flex-col gap-5" data-testid="desk-empty">
@@ -262,17 +267,17 @@ export default async function DeskPage({
         {visible.length === 0 ? (
           <DeskEmpty
             clear={
-              activeStage === null
+              activeFilterLabel === null
                 ? undefined
                 : { href: "/", label: t("workClearFilter") }
             }
             testid={
-              activeStage === null ? "desk-work-empty" : "desk-work-filtered"
+              activeFilterLabel === null ? "desk-work-empty" : "desk-work-filtered"
             }
             text={
-              activeStage === null
+              activeFilterLabel === null
                 ? t("workEmpty")
-                : t("workEmptyFiltered").replace("$stage", tStage(activeStage))
+                : t("workEmptyFiltered").replace("$stage", activeFilterLabel)
             }
           />
         ) : (

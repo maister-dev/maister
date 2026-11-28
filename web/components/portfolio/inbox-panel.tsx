@@ -7,6 +7,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { TaskStatusChip } from "@/components/tasks/task-status-chip";
+
 export interface InboxPanelLabels {
   title: string;
   ariaLabel: string;
@@ -109,6 +111,9 @@ export function InboxPanel({
               <span className="min-w-0 flex-1 truncate text-ink-2">
                 {item.taskTitle}
               </span>
+              {"displayStatus" in item && item.displayStatus ? (
+                <TaskStatusChip status={item.displayStatus.key} />
+              ) : null}
               {"incidentId" in item ? null : (
                 <span className="flex-none text-[10px] uppercase tracking-[0.06em] text-mute">
                   {labels.eventKind[item.eventKind] ?? item.eventKind}

@@ -17,6 +17,8 @@ revision and a resolved set of runners and capabilities.
 
 ![Kanban board with backlog tasks and active work](/assets/screens/en/project-board.png)
 
+Board columns group tasks by their current status. Task detail, Work, Desk and Inbox use the same label for the task. The Incoming tab counts requests that still need admission to the board, including requests hidden by the active filter.
+
 Use the board to answer four questions:
 
 - What is waiting in the backlog or scheduler queue?

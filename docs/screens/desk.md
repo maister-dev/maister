@@ -51,11 +51,10 @@ One column at **every** width, top to bottom (`REQ-D21`, ADR-174 D1) — **(Impl
 1. **Header** — eyebrow and title. No digest sentence, no period, no window
    selector: the Desk answers "what is true now", and a windowed number answers a
    different question (ADR-174 D3).
-2. **Now strip** — five tiles, one per `WORK_IN_FLIGHT_STAGES` member
-   (`Queued`, `Executing`, `WaitingOnHuman`, `Review`, `Crashed`), in that order.
-   All five render at zero; tiles that appear and disappear destroy the fixed
-   positions a reader scans by. Activating a tile filters the table **in place**
-   via `?stage=<WorkStage>` and does not navigate away.
+2. **Now strip** — counts by [task status](../system-analytics/tasks.md#human-facing-task-status-designed)
+   over the authorized work-in-flight rows. The five usual in-flight statuses
+   remain visible at zero. A tile filters in place with `?status=<key>`.
+   Existing `?stage=<WorkStage>` links still select by workflow stage.
 3. **Work in flight** — the spine of the page (ADR-174 D1). A row expands into its
    own decision panel; every other region is either a summary of this one or a
    different kind of fact about it.

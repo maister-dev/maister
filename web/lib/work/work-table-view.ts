@@ -11,6 +11,7 @@
 import type { WorkTableRow } from "@/lib/queries/work-table";
 import type { WorkInFlightStage, WorkStage } from "@/lib/work/stage";
 
+import { TASK_DISPLAY_STATUS, type TaskDisplayStatusKey } from "@/lib/tasks/task-display-status";
 import { WORK_IN_FLIGHT_STAGES, WORK_STAGES } from "@/lib/work/stage";
 
 export const WORK_GROUP_BYS = ["none", "project", "stage", "mine"] as const;
@@ -20,6 +21,7 @@ export type WorkGroupBy = (typeof WORK_GROUP_BYS)[number];
 export interface WorkTableFilters {
   projectSlug: string | null;
   stage: WorkStage | null;
+  status?: TaskDisplayStatusKey | null;
   groupBy: WorkGroupBy;
 }
 
@@ -59,10 +61,15 @@ export function normalizeWorkTableFilters(
   params: Record<string, string | string[] | undefined>,
 ): WorkTableFilters {
   const projectSlug = firstParam(params.project)?.trim();
+  const statusParam = firstParam(params.status);
+  const status = oneOf(statusParam, Object.keys(TASK_DISPLAY_STATUS) as TaskDisplayStatusKey[]);
 
   return {
     projectSlug: projectSlug ? projectSlug : null,
-    stage: oneOf(firstParam(params.stage), WORK_STAGES),
+    stage: status
+      ? null
+      : oneOf(statusParam, WORK_STAGES) ?? oneOf(firstParam(params.stage), WORK_STAGES),
+    ...(status ? { status } : {}),
     groupBy: oneOf(firstParam(params.group), WORK_GROUP_BYS) ?? "none",
   };
 }
@@ -88,7 +95,8 @@ export function workTableFiltersToQuery(filters: WorkTableFilters): string {
   const params = new URLSearchParams();
 
   if (filters.projectSlug) params.set("project", filters.projectSlug);
-  if (filters.stage) params.set("stage", filters.stage);
+  if (filters.status) params.set("status", filters.status);
+  else if (filters.stage) params.set("stage", filters.stage);
   if (filters.groupBy !== "none") params.set("group", filters.groupBy);
 
   return params.toString();
@@ -102,7 +110,8 @@ export function filterWorkTableRows(
     (row) =>
       (filters.projectSlug === null ||
         row.projectSlug === filters.projectSlug) &&
-      (filters.stage === null || row.stage === filters.stage),
+      (filters.stage === null || row.stage === filters.stage) &&
+      (!filters.status || row.displayStatus.key === filters.status),
   );
 }
 

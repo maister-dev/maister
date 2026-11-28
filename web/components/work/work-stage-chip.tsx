@@ -112,7 +112,7 @@ export function workStageLabel(
   return labels[stage];
 }
 
-function refinementOf(
+export function workRunRefinement(
   runStatus: RunStatusValue | null | undefined,
 ): StageRefinement | null {
   return runStatus !== null &&
@@ -138,7 +138,7 @@ export function WorkStageChip({
     progress !== null && progress.total > 0
       ? `${label} ${progress.done}/${progress.total}`
       : label;
-  const refinement = refinementOf(runStatus);
+  const refinement = workRunRefinement(runStatus);
   // The refinement joins the ACCESSIBLE name too, not just the painted text —
   // an icon-only chip is exactly where losing it would be invisible.
   const named =

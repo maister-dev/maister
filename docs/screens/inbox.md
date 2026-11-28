@@ -93,10 +93,10 @@ sections **and** section 5 is also empty. Gating it on `decisions` alone would
 hide unread mentions behind an "all clear" message — `updates` is a separate
 population precisely so that one cannot mask the other.
 
-Every card in sections 1–4 wears a [`WorkStageChip`](../system-analytics/work-stages.md)
-(`WaitingOnHuman` · `Review` · `Crashed` · `Held`). This is the page where the
-chip earns its place: with four populations side by side it varies, which is
-what makes them comparable at a glance.
+A card with an authorized task link shows the task's current
+[display status](../system-analytics/tasks.md#human-facing-task-status-designed).
+Its section, originating node, and run link describe the attention event.
+Taskless decisions retain their operational labels.
 
 ### The HITL card
 
@@ -178,8 +178,7 @@ personal librarian, before any run exists. It reuses the `HitlCard` shell and
 its project grouping; there is no run, so there is no stage-progress, branch or
 `View run`.
 
-- **Collapsed:** requester · task title · `KEY-N` · the kind's
-  [`WorkStageChip`](../system-analytics/work-stages.md) · a **Blocking** chip
+- **Collapsed:** requester · task title · `KEY-N` · the shared task status · a **Blocking** chip
   when the question holds launch · age · the question (1–2 lines) · the reason.
   A `yes_no` or `choice` question is answerable inline with its buttons; a
   `text` question shows a Respond affordance · **View task**.

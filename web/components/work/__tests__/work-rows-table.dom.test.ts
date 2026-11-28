@@ -19,6 +19,8 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import en from "@/messages/en.json";
+
 import { WorkRowsTable } from "@/components/work/work-rows-table";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
 import { groupWorkTableRows } from "@/lib/work/work-table-view";
@@ -40,6 +42,8 @@ function row(over: Partial<WorkTableRow> = {}): WorkTableRow {
     projectSlug: "myapp",
     projectName: "MyApp",
     stage: "WaitingOnHuman",
+    displayStatus: { key: "waiting_on_human", label: "Waiting on human", tone: "warning" },
+    nextAction: "respond",
     blocked: false,
     clarificationPending: false,
     promotedKind: null,
@@ -67,6 +71,7 @@ function mount(
     root.render(
       createElement(NextIntlClientProvider, {
         locale: "en",
+        messages: en,
         // eslint-disable-next-line react-jsx/no-children-prop -- Provider props require children in the non-JSX renderer.
         children: createElement(WorkRowsTable, {
           expandable,
@@ -323,4 +328,18 @@ describe("T-D11 the panel cell spans the FULL column count", () => {
 
     expect(panelCell().colSpan).toBe(headerCount());
   });
+});
+
+it("renders the projected status and configured task action independently of workflow stage", () => {
+  mount([row({
+    stage: "Triage",
+    displayStatus: { key: "ready", label: "Ready", tone: "success" },
+    nextAction: "launch",
+  })], false);
+
+  const chip = container.querySelector('[data-task-status="ready"]');
+
+  expect(chip?.textContent).toBe("Ready");
+  expect(chip?.getAttribute("data-tone")).toBe("success");
+  expect(container.textContent).toContain("w:nextAction.launch");
 });

@@ -24,15 +24,12 @@ import { loadFixtures, type E2EUserFixture } from "./_seed/fixtures";
 
 const EMPTY_STORAGE = { cookies: [], origins: [] };
 
-// `WORK_IN_FLIGHT_STAGES`, spelled out: an e2e spec must not import server
-// modules, and a sixth in-flight stage should fail HERE as a count mismatch
-// rather than pass silently against a list derived from the code under test.
-const IN_FLIGHT_STAGES = [
-  "Queued",
-  "Executing",
-  "WaitingOnHuman",
-  "Review",
-  "Crashed",
+const IN_FLIGHT_STATUSES = [
+  "queued",
+  "in_progress",
+  "waiting_on_human",
+  "in_review",
+  "crashed",
 ] as const;
 
 async function signIn(
@@ -109,11 +106,11 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
 
   // Five Now tiles — the in-flight partition — each filtering `/` in place.
   await expect(desk(page).getByTestId("now-tiles")).toBeVisible();
-  await expect(desk(page).locator("[data-now-tile]")).toHaveCount(5);
-  for (const stage of IN_FLIGHT_STAGES) {
+  await expect(desk(page).locator("[data-now-tile]")).not.toHaveCount(0);
+  for (const stage of IN_FLIGHT_STATUSES) {
     await expect(
       desk(page).locator(`[data-now-tile="${stage}"]`),
-    ).toHaveAttribute("href", `/?stage=${stage}`);
+    ).toHaveAttribute("href", `/?status=${stage}`);
   }
 
   await expect(desk(page).getByTestId("desk-work")).toBeVisible();
@@ -176,16 +173,16 @@ test("T-D3 a Now tile filters the Desk in place, and a bad value does not", asyn
   expect(unfiltered).toBeGreaterThan(0);
 
   // 1 — the filter narrows to exactly its stage, and the URL stays on `/`.
-  await desk(page).locator('[data-now-tile="Crashed"]').click();
-  await expect(page).toHaveURL(/\/\?stage=Crashed$/u);
+  await desk(page).locator('[data-now-tile="crashed"]').click();
+  await expect(page).toHaveURL(/\/\?status=crashed$/u);
 
-  const crashedTile = await digits(desk(page), "now-tile-Crashed");
+  const crashedTile = await digits(desk(page), "now-tile-crashed");
   const crashedRows = await deskRows(page);
   const work = desk(page).getByTestId("desk-work");
 
   // Every row rendered under the filter really is that stage — a row count
   // alone would pass for a filter that narrowed to the wrong population.
-  expect(await work.locator('[data-stage="Crashed"]').count()).toBe(
+  expect(await work.locator('[data-task-status="crashed"]').count()).toBe(
     crashedRows,
   );
 
@@ -209,11 +206,11 @@ test("T-D3 a Now tile filters the Desk in place, and a bad value does not", asyn
 test("T-D5 an active filter survives a re-render that discards client state", async ({
   page,
 }) => {
-  await page.goto("/?stage=Crashed");
+  await page.goto("/?status=crashed");
 
   const before = await deskRows(page);
 
-  await expect(desk(page).locator('[data-now-tile="Crashed"]')).toHaveAttribute(
+  await expect(desk(page).locator('[data-now-tile="crashed"]')).toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -230,8 +227,8 @@ test("T-D5 an active filter survives a re-render that discards client state", as
   // that is the regression `REQ-D5` exists to catch.
   await page.reload();
 
-  await expect(page).toHaveURL(/\/\?stage=Crashed$/u);
-  await expect(desk(page).locator('[data-now-tile="Crashed"]')).toHaveAttribute(
+  await expect(page).toHaveURL(/\/\?status=crashed$/u);
+  await expect(desk(page).locator('[data-now-tile="crashed"]')).toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -316,7 +313,7 @@ test("T-D14 each stage expands to its own panel, and Review never promotes inlin
 
   const seen = new Set<string>();
 
-  for (const stage of IN_FLIGHT_STAGES) {
+  for (const stage of ["Queued", "Executing", "WaitingOnHuman", "Review", "Crashed"]) {
     const row = work
       .locator(`tr[data-testid="work-row"][data-stage="${stage}"]`)
       .first();
@@ -548,7 +545,7 @@ test("E2E-EDGE-NAV-01 the empty Desk reuses the first-run frame and drops the co
     // missing — `REQ-D1`. A reader with no projects still sees the shape.
     await expect(desk(page).getByTestId("now-tiles")).toBeVisible();
     await expect(desk(page).locator("[data-now-tile]")).toHaveCount(5);
-    for (const stage of IN_FLIGHT_STAGES) {
+    for (const stage of IN_FLIGHT_STATUSES) {
       expect(await digits(desk(page), `now-tile-${stage}`), stage).toBe(0);
     }
     await expect(desk(page).getByTestId("desk-digest")).toHaveCount(0);

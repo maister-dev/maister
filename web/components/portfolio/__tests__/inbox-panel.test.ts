@@ -4,6 +4,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
+}));
+
 // Client component using useRouter — mock the app-router hook for static render.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
@@ -29,6 +33,7 @@ function item(over: Partial<LegacyInboxItemView> = {}): LegacyInboxItemView {
     projectName: "MAIster",
     taskNumber: 7,
     taskTitle: "Fix the parser",
+    displayStatus: { key: "ready", label: "Ready", tone: "success" },
     keyRef: "MAI-7",
     eventKind: "comment_added",
     read: false,

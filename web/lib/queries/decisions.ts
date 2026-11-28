@@ -14,6 +14,7 @@ import "server-only";
  * prevent.
  */
 
+import type { TaskDisplayStatus } from "@/lib/tasks/task-display-status";
 import type { GlobalRole } from "@/lib/db/schema";
 import type { ClassifiedPromotable } from "@/lib/ext-activity/promotable";
 import type {
@@ -25,6 +26,7 @@ import type { RecipientClarification } from "@/lib/queries/recipient-clarificati
 import type { WorkStage } from "@/lib/work/stage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
+import { getTaskDisplayStatuses, requireTaskDisplayStatus } from "@/lib/tasks/task-display-status-queries";
 import { inArray } from "drizzle-orm";
 import { cache } from "react";
 import pino from "pino";
@@ -90,6 +92,7 @@ export interface DecisionBase extends DecisionOrderKey {
    * exactly one of these four stages, and every surface must name it the same.
    */
   stage: WorkStage;
+  displayStatus?: TaskDisplayStatus;
   projectId: string;
   projectSlug: string;
   projectName: string;
@@ -542,7 +545,23 @@ async function assembleDecisionsQueue(
     "decisions queue",
   );
 
-  return { items, count: items.length };
+  const visibleProjects = new Set(projectIds);
+  const taskIdsWithStatus = new Set(items.flatMap((item) =>
+    item.taskId && item.projectId && visibleProjects.has(item.projectId) ? [item.taskId] : [],
+  ));
+  const statuses = await getTaskDisplayStatuses([...taskIdsWithStatus], client);
+  const enriched = items.map((item): DecisionItem => {
+    if (!item.taskId || !taskIdsWithStatus.has(item.taskId) ||
+        !item.projectId || !visibleProjects.has(item.projectId)) return item;
+
+    const displayStatus = requireTaskDisplayStatus(statuses, item.taskId);
+
+    return item.kind === "hitl"
+      ? { ...item, displayStatus, hitl: { ...item.hitl, displayStatus } }
+      : { ...item, displayStatus };
+  });
+
+  return { items: enriched, count: enriched.length };
 }
 
 /**

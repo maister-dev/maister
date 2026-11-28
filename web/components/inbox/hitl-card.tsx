@@ -20,6 +20,7 @@ import clsx from "clsx";
 
 import { Chip, HitlPanel } from "@/components/inbox/hitl-panel";
 import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
+import { TaskStatusChip } from "@/components/tasks/task-status-chip";
 import { WorkStageChip } from "@/components/work/work-stage-chip";
 
 // A request whose run session carries no recorded adapter keeps its card and
@@ -145,17 +146,17 @@ export function HitlCard({
           </span>
 
           <span className="mt-1 flex flex-wrap items-center gap-2 text-mute">
-            {/* ADR-170: the same stage vocabulary the /work table and the three
-                decision sections use. On THIS page it varies — WaitingOnHuman
-                beside Review, Crashed and Held — which is what makes the four
-                populations comparable at a glance. */}
-            <WorkStageChip
-              blocked={false}
-              labels={buildWorkStageLabels(tStage)}
-              progress={null}
-              promotedKind={null}
-              stage="WaitingOnHuman"
-            />
+            {item.displayStatus ? (
+              <TaskStatusChip status={item.displayStatus.key} />
+            ) : (
+              <WorkStageChip
+                blocked={false}
+                labels={buildWorkStageLabels(tStage)}
+                progress={null}
+                promotedKind={null}
+                stage="WaitingOnHuman"
+              />
+            )}
             <Chip className="border-line bg-ivory text-ink-2">
               {StageIcon ? <StageIcon className="h-3 w-3" /> : null}
               {item.stage.label}

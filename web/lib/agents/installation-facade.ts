@@ -5,6 +5,7 @@ import type { InstallationRunAuthority } from "./installation-authority";
 import type { Db } from "@/lib/execution-host/db";
 import type { TokenActor } from "@/lib/tokens/verify";
 
+import { getTaskDisplayStatuses, requireTaskDisplayStatus } from "@/lib/tasks/task-display-status-queries";
 import { createHash } from "node:crypto";
 
 import { sql } from "drizzle-orm";
@@ -258,6 +259,9 @@ export async function readInstallationResource(
       await captureInstallationProjects(tx, context.runId, [...projectIds]);
     }
     const last = page.at(-1);
+    const statuses = resource === "tasks"
+      ? await getTaskDisplayStatuses(page.map(({ id }) => id), tx)
+      : null;
 
     log.debug(
       {
@@ -273,7 +277,9 @@ export async function readInstallationResource(
       items:
         resource === "observatory"
           ? page.map(({ id: _id, ...row }) => row)
-          : page,
+          : statuses
+            ? page.map((row) => ({ ...row, displayStatus: requireTaskDisplayStatus(statuses, row.id) }))
+            : page,
       nextCursor:
         last && rows.length > query.limit
           ? signCursorPayload(namespace, { scope, after: last.id })

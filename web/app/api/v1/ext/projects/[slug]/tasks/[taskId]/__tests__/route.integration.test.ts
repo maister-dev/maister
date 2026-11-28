@@ -244,6 +244,7 @@ describe("GET /api/v1/ext/projects/[slug]/tasks/[taskId]", () => {
     expect(body).toHaveProperty("prompt");
     expect(body).toHaveProperty("status");
     expect(body).toHaveProperty("flowId");
+    expect(body.displayStatus).toEqual({ key: "ready", label: "Ready", tone: "success" });
 
     // Verify no leaked fields
     expect((body as any).acp_session_id).toBeUndefined();
@@ -316,6 +317,7 @@ describe("PATCH /api/v1/ext/projects/[slug]/tasks/[taskId]", () => {
     expect(body).toHaveProperty("title", "Updated Title");
     expect(body).toHaveProperty("prompt", "New prompt");
     expect(body).toHaveProperty("revision", 1);
+    expect(body.displayStatus).toEqual({ key: "ready", label: "Ready", tone: "success" });
 
     const auditRows = await db
       .select()

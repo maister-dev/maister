@@ -261,6 +261,9 @@ export type E2EWorkTableFixture = {
   alphaKeyRef: string;
   // An `Executing` task in the same project — the stage filter needs two.
   alphaExecutingKeyRef: string;
+  alphaIncomingKeyRef: string;
+  alphaNullTriageKeyRef: string;
+  alphaAbandonedKeyRef: string;
   // A task in the project the member must NOT see.
   betaKeyRef: string;
   member: E2EUserFixture;

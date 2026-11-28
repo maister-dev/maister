@@ -31,6 +31,8 @@ function row(overrides: Partial<WorkTableRow> = {}): WorkTableRow {
     projectSlug: "alpha",
     projectName: "Alpha",
     stage: "Ready",
+    displayStatus: { key: "ready", label: "Ready", tone: "success" },
+    nextAction: "launch",
     blocked: false,
     clarificationPending: false,
     promotedKind: null,
@@ -291,3 +293,23 @@ function flatKeys(value: Record<string, unknown>, prefix = ""): string[] {
       : [`${prefix}${key}`],
   );
 }
+
+it("supports canonical status and preserves the selection of a legacy workflow link", () => {
+  const rows = [
+    row({ keyRef: "AAA-1", stage: "Triage" }),
+    row({
+      keyRef: "AAA-2",
+      stage: "Ready",
+      displayStatus: { key: "blocked", label: "Blocked", tone: "warning" },
+    }),
+  ];
+  const status = normalizeWorkTableFilters({ status: "ready" });
+  const stage = normalizeWorkTableFilters({ stage: "Ready" });
+
+  expect(normalizeWorkTableFilters({ status: "unknown", stage: "Ready" })).toEqual(stage);
+
+  expect(filterWorkTableRows(rows, status).map(({ keyRef }) => keyRef)).toEqual(["AAA-1"]);
+  expect(filterWorkTableRows(rows, stage).map(({ keyRef }) => keyRef)).toEqual(["AAA-2"]);
+  expect(workTableFiltersToQuery(status)).toBe("status=ready");
+  expect(workTableFiltersToQuery(stage)).toBe("stage=Ready");
+});

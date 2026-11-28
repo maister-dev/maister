@@ -148,13 +148,12 @@ test.describe("run git panel (ADR-181)", () => {
     ).toHaveLength(1);
     expect(readFakeGhState().views).toContain(ownedPr.number);
 
-    // The board follows the run: a Done run whose worktree is still present is
-    // in its shipping window, the In Delivery column (lib/board.ts).
+    // Delivered work is shown in Done while the workspace's git controls remain available.
     await page.goto(`/projects/${fx.projectSlug}`);
     await expect(
       page
         .getByRole("main")
-        .locator('[data-stage="delivery"]')
+        .locator('[data-stage="done"]')
         .getByText("Fix the widget"),
     ).toBeVisible();
   });

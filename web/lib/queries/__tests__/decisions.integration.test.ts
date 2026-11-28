@@ -411,7 +411,9 @@ describe("IT-ATN-04 a relation-blocked task counts in neither counter", () => {
   it("still admits the blocker itself once nothing holds it", async () => {
     const queue = await getDecisionsQueue(fx.member, "member");
 
-    expect(queue.items.map((item) => item.taskId)).toContain(fx.flaggedTask);
+    const item = queue.items.find((candidate) => candidate.taskId === fx.flaggedTask);
+
+    expect(item?.displayStatus).toEqual({ key: "needs_review", label: "Needs review", tone: "warning" });
   });
 
   it("admits the task as soon as the blocking relation is gone", async () => {
@@ -472,4 +474,19 @@ describe("IT-ATN-14 a project viewer gets no decisions they cannot resolve", () 
 
     expect(admin.items.length).toBeGreaterThan(0);
   });
+});
+
+it("shows the current task status on decisions referencing an earlier Flow", async () => {
+  const latestRunId = randomUUID();
+
+  await seedRun(latestRunId, fx.project, fx.flow, fx.hitlTask, "Review");
+
+  const queue = await getDecisionsQueue(fx.member, "member");
+  const old = queue.items.find((item) => item.kind === "hitl" && item.runId === fx.hitlRun);
+  const latest = queue.items.find((item) => item.kind === "promotable" && item.runId === latestRunId);
+
+  expect(old?.displayStatus).toEqual({ key: "in_review", label: "In review", tone: "accent" });
+  expect(latest?.displayStatus).toEqual(old?.displayStatus);
+  expect(old?.kind === "hitl" && old.hitl.displayStatus).toEqual(old?.displayStatus);
+  expect((await getDecisionsQueue(fx.viewer, "member")).items.some((item) => item.taskId === fx.hitlTask)).toBe(false);
 });

@@ -23,6 +23,10 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sql, and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import pino from "pino";
 
+import { deriveTaskDisplayStatus, type TaskDisplayStatus } from "@/lib/tasks/task-display-status";
+import { taskDisplayLatestFlow, taskDisplayStatusColumns } from "@/lib/tasks/task-display-status-queries";
+import { isManualTriageHold } from "@/lib/tasks/manual-launch-hold";
+import { workNextAction, type WorkNextAction } from "@/lib/work/work-table-view";
 import { incomingWorkPredicate } from "@/lib/tasks/qualification-predicates";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -96,6 +100,8 @@ export interface WorkTableRow {
   projectSlug: string;
   projectName: string;
   stage: WorkStage;
+  displayStatus: TaskDisplayStatus;
+  nextAction: WorkNextAction;
   blocked: boolean;
   clarificationPending: boolean;
   promotedKind: PromotedKind | null;
@@ -142,20 +148,24 @@ export async function getWorkTable(
 
   // leftJoin on flows for the same reason the board does it: a flowless
   // simple-intent task is still work, and still belongs in the table.
+  const latestFlow = taskDisplayLatestFlow(client);
   const taskRows = await client
     .select({
+      ...taskDisplayStatusColumns(latestFlow),
       taskId: tasks.id,
       projectId: tasks.projectId,
       number: tasks.number,
       title: tasks.title,
       status: tasks.status,
       stage: tasks.stage,
-      triageStatus: tasks.triageStatus,
+      flowId: tasks.flowId,
+      queuePaused: tasks.queuePaused,
       createdAt: tasks.createdAt,
       flowManifest: flows.manifest,
     })
     .from(tasks)
     .leftJoin(flows, eq(flows.id, tasks.flowId))
+    .leftJoinLateral(latestFlow, sql`true`)
     .where(
       and(
         inArray(tasks.projectId, projectIds),
@@ -183,7 +193,7 @@ export async function getWorkTable(
     .from(runs)
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .where(and(eq(runs.runKind, "flow"), inArray(runs.taskId, taskIds)))
-    .orderBy(desc(runs.startedAt));
+    .orderBy(desc(runs.startedAt), desc(runs.id));
 
   const latestRunByTask = new Map<string, (typeof runRows)[number]>();
 
@@ -345,7 +355,22 @@ export async function getWorkTable(
       progress: progressOfSpine(spine),
     });
 
+    const displayStatus = deriveTaskDisplayStatus({
+      ...task,
+      workspaceRemoved: task.removedAt !== null,
+    });
+    const nextAction = (derived.stage === "Triage" || derived.stage === "Held") &&
+      task.flowId !== null &&
+      !isManualTriageHold(task) &&
+      !task.queuePaused &&
+      !derived.blocked &&
+      !derived.clarificationPending
+        ? "launch"
+        : workNextAction(derived.stage);
+
     rows.push({
+      displayStatus,
+      nextAction,
       taskId: task.taskId,
       number: task.number,
       keyRef: `${project.taskKey}-${task.number}`,

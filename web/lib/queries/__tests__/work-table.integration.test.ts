@@ -362,6 +362,7 @@ describe("IT-EDGE-STG-01 getWorkTable — a task is classified from its latest r
     const row = rows.find((candidate) => candidate.taskId === taskId);
 
     expect(row?.stage).toBe("Executing");
+    expect(row?.displayStatus).toEqual({ key: "in_progress", label: "In progress", tone: "accent" });
     expect(row?.runStatus).toBe("Running");
   });
 });

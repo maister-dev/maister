@@ -25,6 +25,7 @@ function workRowDTO(row: WorkTableRow) {
     projectSlug: row.projectSlug,
     projectName: row.projectName,
     stage: row.stage,
+    displayStatus: row.displayStatus,
     blocked: row.blocked,
     promotedKind: row.promotedKind,
     progress: row.progress,

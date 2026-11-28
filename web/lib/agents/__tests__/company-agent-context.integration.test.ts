@@ -17878,6 +17878,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     number: 1,
     title: taskTitle,
     status: "Backlog",
+    displayStatus: { key: "backlog", label: "Backlog", tone: "neutral" },
   };
 
   expect(

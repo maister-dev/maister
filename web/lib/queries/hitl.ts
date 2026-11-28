@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { TaskDisplayStatus } from "@/lib/tasks/task-display-status";
 import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { Assignment, HitlRequest, RunnerSnapshot } from "@/lib/db/schema";
@@ -25,6 +26,7 @@ import {
   readableKnowledgeRunIds,
   assertRunsKnowledgeDisclosure,
 } from "@/lib/brain/knowledge-run-disclosure";
+import { getTaskDisplayStatuses, requireTaskDisplayStatus } from "@/lib/tasks/task-display-status-queries";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { projectHitlAnswer } from "@/lib/hitl-answer-view";
@@ -142,6 +144,7 @@ export interface HitlOption {
 }
 
 export interface HitlItem {
+  displayStatus?: TaskDisplayStatus;
   hitlRequestId: string;
   runId: string;
   runKind: BudgetBreachAvailabilityContext["runKind"];
@@ -469,7 +472,7 @@ export async function getHitlInbox(
       flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
       runKind: runs.runKind,
       runStatus: runs.status,
-      taskId: runs.taskId,
+      taskId: tasks.id,
       agentId: runs.agentId,
       parentRunId: runs.parentRunId,
       agentWorkspace: runs.agentWorkspace,
@@ -487,7 +490,7 @@ export async function getHitlInbox(
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
     .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(flows, eq(flows.id, runs.flowId))
-    .leftJoin(tasks, eq(tasks.id, runs.taskId))
+    .leftJoin(tasks, and(eq(tasks.id, runs.taskId), eq(tasks.projectId, runs.projectId)))
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(
       and(
@@ -570,8 +573,15 @@ export async function getHitlInbox(
       visibleRows.filter((row) => row.nativeKnowledge).map((row) => row.runId),
     );
 
+  const taskIds = [...new Set(visibleRows.flatMap((row) => row.taskId ? [row.taskId] : []))];
+  const statuses = await getTaskDisplayStatuses(taskIds, client);
+
   return {
-    items,
+    items: items.map((item, index) => {
+      const taskId = visibleRows[index].taskId;
+
+      return taskId ? { ...item, displayStatus: requireTaskDisplayStatus(statuses, taskId) } : item;
+    }),
     count: items.length,
     oldest: items.length > 0 ? items[0].time : null,
   };

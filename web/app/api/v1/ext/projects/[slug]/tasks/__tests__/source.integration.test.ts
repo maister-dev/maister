@@ -242,7 +242,13 @@ describe("ext task source wire contract (S5, S8)", () => {
 
     expect(found).toMatchObject({
       status: 200,
-      body: { task: { id: created.body.taskId, source: SOURCE } },
+      body: {
+        task: {
+          id: created.body.taskId,
+          source: SOURCE,
+          displayStatus: { key: "backlog", label: "Backlog", tone: "neutral" },
+        },
+      },
     });
 
     const repeat = await createWithSource(SOURCE);

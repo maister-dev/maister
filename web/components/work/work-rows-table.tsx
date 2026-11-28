@@ -18,9 +18,10 @@ import clsx from "clsx";
 import { useState } from "react";
 import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 
+import { TaskStatusChip } from "@/components/tasks/task-status-chip";
 import { LocalTime } from "@/components/ui/local-time";
-import { WorkStageChip } from "@/components/work/work-stage-chip";
-import { workAge, workNextAction } from "@/lib/work/work-table-view";
+import { workRunRefinement } from "@/components/work/work-stage-chip";
+import { workAge } from "@/lib/work/work-table-view";
 
 /**
  * What a ROW needs. `WorkTableLabels` extends it, so adding a column is a
@@ -235,7 +236,8 @@ function WorkTableRowView({
   columnCount: number;
 }): ReactElement {
   const taskHref = `/projects/${row.projectSlug}/tasks/${row.number}`;
-  const nextAction = workNextAction(row.stage);
+  const nextAction = row.nextAction;
+  const runRefinement = workRunRefinement(row.runStatus);
   // Open state gates RENDERING, so it lives in `useState` — a ref read during
   // render is a silent no-re-render bug this project has already paid for.
   const [open, setOpen] = useState(false);
@@ -311,15 +313,17 @@ function WorkTableRowView({
           </td>
         ) : null}
         <td className={CELL}>
-          <WorkStageChip
-            blocked={row.blocked}
-            labels={labels.stage}
-            progress={row.progress}
-            promotedKind={row.promotedKind}
-            refinementVisibility="hidden @min-[1110px]:inline"
-            runStatus={row.runStatus}
-            stage={row.stage}
-          />
+          <TaskStatusChip status={row.displayStatus.key} />
+          {runRefinement ? (
+            <span className="ml-1 hidden text-[11px] text-mute @min-[1110px]:inline">
+              {labels.stage[`run${runRefinement}`]}
+            </span>
+          ) : null}
+          {row.progress ? (
+            <span className="ml-1 font-mono text-[11px] text-mute">
+              {row.progress.done}/{row.progress.total}
+            </span>
+          ) : null}
         </td>
         <td className={clsx(CELL, DROP_SM)}>
           {row.readiness === null ? (

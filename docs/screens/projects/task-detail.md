@@ -27,7 +27,7 @@ Run page tabs directly.
 
 ## Layout & regions
 
-1. **Header** — `KEY-N`, title, status chip, source chip (label = localized kind
+1. **Header** — `KEY-N`, title, [shared task status](../../system-analytics/tasks.md#human-facing-task-status-designed), source chip (label = localized kind
    or raw `source_kind`; text = `external_key ?? external_id`; link only when
    `external_url` is set) with an icon-only **Detach source** control for
    members (`web/components/tasks/task-source-detach.tsx`; shared confirmation
@@ -61,8 +61,8 @@ State → primary / secondary actions (owned by `taskNextAction`):
 | Task state | Primary | Secondary ("More") |
 | --- | --- | --- |
 | Incoming, qualification missing or held | Add to backlog and Launch Flow (or its blocker reason) | Send to triage, run agent, queue controls |
-| Backlog, launchable | Launch | Send to triage, run agent, queue controls |
-| Backlog, blocked | Blocker reason + link | Send to triage, run agent, queue controls |
+| Ready, launchable | Launch | Send to triage, run agent, queue controls |
+| Blocked | Blocker reason + link | Send to triage, run agent, queue controls |
 | InFlight, Running / Pending | Open Run | Queue controls, run agent |
 | InFlight, NeedsInput | Respond (HITL link) | — |
 | InFlight, Review | Open review | Complete (when completion evidence is ready) |

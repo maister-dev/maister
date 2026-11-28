@@ -1,9 +1,11 @@
 import "server-only";
 
+import type { TaskDisplayStatus } from "@/lib/tasks/task-display-status";
 import type { GlobalRole } from "@/lib/db/schema";
 import type { AssignmentInboxItemView } from "./assignment-inbox";
 import type { StandIncidentInboxItemView } from "./stand-incident-inbox";
 
+import { getTaskDisplayStatuses, requireTaskDisplayStatus } from "@/lib/tasks/task-display-status-queries";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { readAssignmentInboxItems } from "./assignment-inbox";
@@ -21,6 +23,7 @@ export type InboxItemView =
 
 export type LegacyInboxItemView = {
   assignmentId?: never;
+  displayStatus: TaskDisplayStatus;
   id: string;
   projectSlug: string;
   projectName: string;
@@ -112,11 +115,15 @@ export async function getInboxItems(
       projectName: projects.name,
       taskKey: projects.taskKey,
       taskNumber: tasks.number,
+      taskId: tasks.id,
       taskTitle: tasks.title,
     })
     .from(inboxItems)
     .innerJoin(projects, eq(inboxItems.projectId, projects.id))
-    .innerJoin(tasks, eq(inboxItems.taskId, tasks.id));
+    .innerJoin(tasks, and(
+      eq(inboxItems.taskId, tasks.id),
+      eq(inboxItems.projectId, tasks.projectId),
+    ));
 
   if (globalRole !== "admin") {
     query = query.innerJoin(
@@ -140,10 +147,13 @@ export async function getInboxItems(
     projectName: string;
     taskKey: string;
     taskNumber: number;
+    taskId: string;
     taskTitle: string;
   }>;
 
+  const statuses = await getTaskDisplayStatuses([...new Set(rows.map((row) => row.taskId))]);
   const legacy: LegacyInboxItemView[] = rows.map((row) => ({
+    displayStatus: requireTaskDisplayStatus(statuses, row.taskId),
     id: row.id,
     projectSlug: row.projectSlug,
     projectName: row.projectName,

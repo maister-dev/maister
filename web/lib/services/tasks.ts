@@ -1,11 +1,13 @@
 import "server-only";
 
+import type { TaskDisplayStatus } from "@/lib/tasks/task-display-status";
 import type { Db as QualificationDb } from "@/lib/execution-host/db";
 import type { Task } from "@/lib/db/schema";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskPriority } from "@/lib/tasks/criticality";
 import type { TaskSource } from "@/lib/tasks/external-source/model";
 
+import { getTaskDisplayStatuses, requireTaskDisplayStatus } from "@/lib/tasks/task-display-status-queries";
 import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, inArray, notExists, sql } from "drizzle-orm";
@@ -350,6 +352,7 @@ export async function createTask(
 }
 
 export type TaskDTO = {
+  displayStatus: TaskDisplayStatus;
   qualification: TaskQualificationSummary;
   // ADR-206: structured external source binding, or null.
   source: TaskSource | null;
@@ -384,7 +387,9 @@ async function taskToDTO(
   db: { select: any },
   qualification?: TaskQualificationSummary,
   prefetchedSources?: Map<string, TaskSource>,
+  prefetchedStatuses?: ReadonlyMap<string, TaskDisplayStatus>,
 ): Promise<TaskDTO> {
+  const statuses = prefetchedStatuses ?? await getTaskDisplayStatuses([row.id], db as QualificationDb);
   const sources = prefetchedSources ?? (await loadTaskSources(db, [row.id]));
   const summary =
     qualification ??
@@ -412,6 +417,7 @@ async function taskToDTO(
     .limit(1);
 
   return {
+    displayStatus: requireTaskDisplayStatus(statuses, row.id),
     qualification: summary,
     source: sources.get(row.id) ?? null,
     id: row.id,
@@ -463,18 +469,15 @@ export async function listTaskDTOs(
     .where(eq(tasks.projectId, projectId))
     .orderBy(desc(tasks.createdAt));
 
-  const summaries = await getTaskQualificationSummaries(
-    _db as QualificationDb,
-    rows.map((row: { id: string }) => row.id),
-  );
-
-  const sources = await loadTaskSources(
-    _db,
-    rows.map((row: { id: string }) => row.id),
-  );
+  const ids = rows.map((row: { id: string }) => row.id);
+  const [summaries, sources, statuses] = await Promise.all([
+    getTaskQualificationSummaries(_db as QualificationDb, ids),
+    loadTaskSources(_db, ids),
+    getTaskDisplayStatuses(ids, _db as QualificationDb),
+  ]);
 
   return Promise.all(
-    rows.map((r: any) => taskToDTO(r, _db, summaries.get(r.id), sources)),
+    rows.map((r: any) => taskToDTO(r, _db, summaries.get(r.id), sources, statuses)),
   );
 }
 

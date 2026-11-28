@@ -23,9 +23,9 @@ const nextConfig = {
     authInterrupts: true,
     // Persisted compilation data need not occupy RAM throughout an idle dev
     // session. Keep source maps and on-demand rebuilding available.
-    turbopackMemoryEviction: "full",
-    turbopackLazyDynamicImports: true,
-    turbopackLazyDynamicImportsSSR: true,
+    turbopackMemoryEviction: false,
+    turbopackLazyDynamicImports: false,
+    turbopackLazyDynamicImportsSSR: false,
     ...(buildWorkers === undefined ? {} : { cpus: buildWorkers }),
   },
   // The production wrapper owns the separate tsc pass for cold builds.

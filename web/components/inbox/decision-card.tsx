@@ -7,6 +7,7 @@ import clsx from "clsx";
 
 import { AgentIncidentCard } from "@/components/agents/agent-incident-card";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
+import { TaskStatusChip } from "@/components/tasks/task-status-chip";
 import { WorkStageChip } from "@/components/work/work-stage-chip";
 
 export interface DecisionCardLabels {
@@ -58,13 +59,17 @@ export function DecisionCard({
       data-testid="decision-card"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <WorkStageChip
-          blocked={false}
-          labels={labels.stage}
-          progress={null}
-          promotedKind={null}
-          stage={item.stage}
-        />
+        {item.displayStatus ? (
+          <TaskStatusChip status={item.displayStatus.key} />
+        ) : (
+          <WorkStageChip
+            blocked={false}
+            labels={labels.stage}
+            progress={null}
+            promotedKind={null}
+            stage={item.stage}
+          />
+        )}
         <span className="font-mono text-[11px] text-mute">
           {item.projectName}
         </span>

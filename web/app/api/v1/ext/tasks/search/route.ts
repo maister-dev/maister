@@ -49,6 +49,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
               number: hit.number,
               title: hit.title,
               status: hit.status,
+              displayStatus: hit.displayStatus,
               projectId: hit.projectId,
               projectSlug: hit.projectSlug,
               projectName: hit.projectName,

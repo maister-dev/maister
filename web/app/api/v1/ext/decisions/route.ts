@@ -113,6 +113,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             projectId: item.projectId,
             projectSlug: item.projectSlug,
             taskKey: item.taskKey,
+            ...(item.taskKey && item.displayStatus ? { displayStatus: item.displayStatus } : {}),
             runId: item.runId,
             hitlRequestId:
               item.kind === "hitl" ? item.hitl.hitlRequestId : null,

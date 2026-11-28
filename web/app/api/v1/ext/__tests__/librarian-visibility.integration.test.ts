@@ -131,6 +131,11 @@ describe("IT-LAU-06: reads never reveal a project the owner cannot see", () => {
     expect(res.status).toBe(200);
     expect(body.tasks).toHaveLength(1);
     expect(body.tasks[0].projectSlug).toBe(fx.visible.slug);
+    expect(body.tasks[0].displayStatus).toEqual({
+      key: "backlog",
+      label: "Backlog",
+      tone: "neutral",
+    });
     expect(body.truncated).toBe(false);
     expect(mentionsForeign(body)).toBe(false);
   });
@@ -142,6 +147,11 @@ describe("IT-LAU-06: reads never reveal a project the owner cannot see", () => {
     expect(res.status).toBe(200);
     expect(body.projectCount).toBe(1);
     expect(body.rows.length).toBeGreaterThan(0);
+    expect(body.rows[0].displayStatus).toEqual({
+      key: "backlog",
+      label: "Backlog",
+      tone: "neutral",
+    });
     expect(mentionsForeign(body)).toBe(false);
   });
 

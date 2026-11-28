@@ -10,10 +10,14 @@ import type { ReactElement } from "react";
 import { BookmarkIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 
 import { WorkRowsTable } from "@/components/work/work-rows-table";
+import {
+  TASK_DISPLAY_STATUS,
+  type TaskDisplayStatusKey,
+} from "@/lib/tasks/task-display-status";
 import { useIsClient } from "@/lib/use-is-client";
-import { WORK_STAGES } from "@/lib/work/stage";
 import {
   WORK_GROUP_BYS,
   workTableFiltersToQuery,
@@ -27,6 +31,7 @@ export interface WorkTableProjectOption {
 /** The full `/work` surface: the shared row labels plus this page's chrome. */
 export interface WorkTableLabels extends WorkRowsLabels {
   rowCount: string;
+  workflowFilter: string;
   filters: Record<
     "project" | "allProjects" | "stage" | "allStages" | "group" | "apply",
     string
@@ -91,6 +96,7 @@ export function WorkTable({
   locale,
   now,
 }: WorkTableProps): ReactElement {
+  const tStatus = useTranslations("taskDisplayStatus");
   const isClient = useIsClient();
   // localStorage is read once the client takes over so the server and the first
   // client render agree; saved views are a per-browser convenience, never filter
@@ -147,13 +153,18 @@ export function WorkTable({
         </FilterSelect>
         <FilterSelect
           label={labels.filters.stage}
-          name="stage"
-          value={filters.stage ?? ""}
+          name="status"
+          value={filters.status ?? filters.stage ?? ""}
         >
           <option value="">{labels.filters.allStages}</option>
-          {WORK_STAGES.map((stage) => (
-            <option key={stage} value={stage}>
-              {labels.stage[stage]}
+          {filters.stage ? (
+            <option value={filters.stage}>
+              {labels.workflowFilter} · {labels.stage[filters.stage]}
+            </option>
+          ) : null}
+          {(Object.keys(TASK_DISPLAY_STATUS) as TaskDisplayStatusKey[]).map((status) => (
+            <option key={status} value={status}>
+              {tStatus(status)}
             </option>
           ))}
         </FilterSelect>
