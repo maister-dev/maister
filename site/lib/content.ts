@@ -316,22 +316,22 @@ const CONTENT = {
         {
           id: "board",
           label: "Board",
-          title: "Kanban visibility across the portfolio.",
-          body: "Each project board shows which tasks are queued, running, blocked, awaiting review, or done. The same state stays visible across repositories without following every terminal.",
+          title: "Choose where a task runs.",
+          body: "Launch a Flow on a supervisor configured for your project. Follow the Run from its board card, then open the delivered pull request and check its status.",
           alt: "MAIster project board with Backlog, Prepare, In production, and On review columns",
         },
         {
           id: "run",
           label: "Run",
           title: "A Flow you can inspect while it runs.",
-          body: "Follow the active node and inspect each attempt. When the agent reports context usage or compacts its conversation, you can see how much of the window it used and where the compaction happened.",
+          body: "Inspect the active step, its transcript and context usage. Pause an agent step to give it a correction. If a step fails, you can retry an eligible attempt with the current files or restore its saved checkpoint.",
           alt: "MAIster Run page with the outcome, flow verification, and the Flow graph",
         },
         {
           id: "inbox",
           label: "Inbox",
           title: "Give each teammate one queue for decisions.",
-          body: "Answer a permission request to resume its Run. In the same inbox, review proposed edits to agent notes and shared knowledge when you have time.",
+          body: "Answer a Flow agent’s question from the Inbox and follow the resumed step. Review proposed edits to agent notes and shared knowledge in the same place. The librarian’s private questions stay in your conversation.",
           alt: "MAIster inbox with a held task and two operations that need attention",
         },
         {
@@ -345,7 +345,7 @@ const CONTENT = {
           id: "knowledge",
           label: "Knowledge",
           title: "Knowledge you can trace to its evidence.",
-          body: "Company Brain lists company and project knowledge with its basis, confirmation, and freshness. Open a record to inspect the source it came from, propose a correction, or review a proposal.",
+          body: "Review proposals across the projects you can access. Open an accepted revision to see what was published, inspect its evidence and decide whether to confirm the assertion.",
           alt: "MAIster Company Brain with knowledge search filters and a list of records",
         },
       ],
@@ -376,7 +376,7 @@ const CONTENT = {
         {
           number: "01",
           title: "Versioned Flow packages",
-          body: "Install, inspect, trust, enable, upgrade, roll back, and keep active runs pinned to their original revision.",
+          body: "Register a project with pinned package versions. Track each installation separately, fix a failed dependency and retry it. Active Runs keep the revisions they started with.",
           meta: "provenance · compatibility · trust",
         },
         {
@@ -400,7 +400,7 @@ const CONTENT = {
         {
           number: "05",
           title: "Scoped runtime capabilities",
-          body: "Materialize only the declared skills, MCP servers, tools, environment, and guardrails for each ACP session.",
+          body: "Review skills from skills.sh and MCP descriptors from the official registry in Flow Studio. Pin them in a package and choose which agents or project sessions receive them.",
           meta: "capabilities · sandbox · policy",
         },
         {
@@ -629,7 +629,7 @@ const CONTENT = {
         {
           question: "How does it run?",
           answer:
-            "The web control plane owns product state. A separate execution-host supervisor owns ACP sessions and agent processes. Postgres keeps the durable ledger; isolated git worktrees hold code and evidence payloads. Today both processes share one trusted host; multi-host placement is on the roadmap.",
+            "Web stores Run history in Postgres. By default the supervisor runs on the same host. When you launch a Flow from the board, you can choose an execution host configured for the project. Its supervisor owns the Git worktree and resumes the Run there.",
         },
         {
           question: "What does it cost?",
@@ -786,22 +786,22 @@ const CONTENT = {
         {
           id: "board",
           label: "Доска",
-          title: "Канбан-доска и наблюдаемость портфеля.",
-          body: "Канбан-доска проекта показывает, какие задачи стоят в очереди, выполняются, заблокированы, ждут проверки или завершены. Та же картина собирается по всем репозиториям без обхода терминалов.",
+          title: "Выберите, где запустить задачу.",
+          body: "При запуске Flow с доски выберите доступный проекту супервизор. Из карточки задачи можно перейти к прогону, а после публикации — открыть PR и проверить его статус.",
           alt: "Доска проекта MAIster с колонками Бэклог, Подготовка, В производстве и На ревью",
         },
         {
           id: "run",
           label: "Запуск",
           title: "Flow, который можно рассмотреть прямо во время работы.",
-          body: "Следите за активным узлом и открывайте историю его попыток. По данным агента видно, сколько токенов занято в окне контекста. Когда агент сжимает диалог, в истории появляется отметка.",
+          body: "Откройте текущий шаг, чтобы прочитать переписку и посмотреть расход контекста. Агентный шаг можно приостановить для уточнения. Если доступен повтор после сбоя, выберите текущие файлы или сохранённую точку восстановления.",
           alt: "Страница запуска MAIster с результатом, проверкой Flow и графом Flow",
         },
         {
           id: "inbox",
           label: "Входящие",
           title: "Одна очередь решений вместо обхода терминалов.",
-          body: "Ответьте на запрос разрешения, чтобы агент продолжил работу. В тех же «Входящих» можно в удобное время проверить правки, которые агенты предлагают для своих заметок и общей базы знаний.",
+          body: "Ответьте на вопрос агента Flow во входящих и проследите, как продолжится шаг. Там же можно рассмотреть правки к памяти агентов и общим знаниям. На личные вопросы библиотекаря отвечайте прямо в диалоге.",
           alt: "Раздел «Входящие» MAIster с удержанной задачей и двумя операциями, требующими внимания",
         },
         {
@@ -815,7 +815,7 @@ const CONTENT = {
           id: "knowledge",
           label: "Знания",
           title: "Знания, которые можно проследить до доказательств.",
-          body: "Мозг компании показывает знания компании и проектов с их основанием, подтверждением и актуальностью. Откройте запись, чтобы проверить источник, предложить исправление или рассмотреть предложение.",
+          body: "Рассматривайте предложения из доступных вам проектов в общей очереди. Откройте принятую версию записи, проверьте её источники и отдельно решите, подтверждают ли они утверждение.",
           alt: "Мозг компании MAIster с фильтрами поиска знаний и списком записей",
         },
       ],
@@ -846,7 +846,7 @@ const CONTENT = {
         {
           number: "01",
           title: "Версионированные пакеты Flow",
-          body: "Устанавливайте, проверяйте, доверяйте, включайте, обновляйте и откатывайте пакеты, не меняя уже запущенные процессы.",
+          body: "При регистрации проекта закрепите версии пакетов. Следите за каждой установкой отдельно, исправьте проблемную зависимость и повторите попытку. Активные прогоны сохраняют исходные версии.",
           meta: "происхождение · совместимость · доверие",
         },
         {
@@ -870,7 +870,7 @@ const CONTENT = {
         {
           number: "05",
           title: "Ограниченные возможности среды",
-          body: "Каждая ACP-сессия получает только объявленные навыки, MCP-серверы, инструменты, переменные окружения и ограничения.",
+          body: "В Студии Flow проверьте навыки из skills.sh и описания MCP-серверов из официального реестра. Закрепите их в версии пакета и настройте, каким агентам или сессиям проекта они доступны.",
           meta: "возможности · изоляция · правила",
         },
         {
@@ -1101,7 +1101,7 @@ const CONTENT = {
         {
           question: "Как это устроено?",
           answer:
-            "Веб-контур управления хранит состояние продукта. Отдельный супервизор узла исполнения управляет ACP-сессиями и процессами агентов. Postgres хранит постоянный реестр, а изолированные Git worktree содержат код и данные доказательств. Сейчас оба процесса работают на одном доверенном узле; работа на нескольких узлах в дорожной карте.",
+            "Веб-приложение хранит историю прогонов в Postgres. По умолчанию супервизор работает на том же хосте. При запуске Flow с доски можно выбрать доступный проекту хост исполнения. На нём остаётся рабочая копия Git, там же возобновляется прогон.",
         },
         {
           question: "Сколько это стоит?",

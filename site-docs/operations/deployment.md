@@ -3,9 +3,10 @@ title: "Single-host deployment"
 description: "Deploy MAIster on a Linux host with systemd, a local execution supervisor, Postgres, and a TLS reverse proxy."
 ---
 
-This is the supported production topology: the web process and execution
-supervisor run as unprivileged host services, Postgres runs locally, and a TLS
-reverse proxy exposes only the web application.
+This guide installs Web, the supervisor and Postgres on one host. Web and the
+supervisor run as unprivileged services. A TLS reverse proxy exposes only Web.
+To configure a remote supervisor on a private endpoint, see
+[Execution hosts](/operations/execution-hosts).
 
 ## Topology
 

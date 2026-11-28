@@ -66,6 +66,10 @@ dispatched initial, resume, rework, and message prompts alongside responses.
 Steered messages appear in the same conversation. Open full artifacts when a
 node or consensus result only shows a bounded excerpt.
 
+Select **Changes** in the header to open the corresponding diff. Open the
+graph full screen to inspect a wide Flow. Escape returns to the same selected
+node. Long user messages in the transcript have a **Show full message** control.
+
 ## Read context usage and compaction
 
 On the Run page or in the workbench inspector, open the context meter for the
@@ -119,6 +123,15 @@ failure requiring investigation, not proof that the agent completed successfully
 Host-pressure pauses have their own notice and
 [continuation rules](/operations/execution-hosts#when-the-host-pauses-work).
 
+### Retry a failed Flow step
+
+If a project Flow is **Failed** and still has its worktree, select the failed
+attempt and look for **Restart this node**. Keep the current files to build on
+partial work. To start from the state before the attempt, inspect the checkpoint
+preview and confirm the restore. MAIster saves the current work in a Git rescue
+snapshot first. If the files changed after the preview, review it again.
+The next attempt runs in the same Run. An agent step starts a new ACP session.
+
 ## Open code, evidence, and history
 
 The lower workbench provides these views:
@@ -129,6 +142,9 @@ The lower workbench provides these views:
 | Diff | Review changes for the whole Run, the current review, or the last node. |
 | Results and checks | Read recorded verification and retained output, including after a failed execution, and every blocker that affects readiness. Artifact previews show up to 64 KiB with a link to the original. **Provenance graph** traces each result back to a node attempt. |
 | Timeline | Read state changes, human decisions, retries, interrupts, and promotion events in order. |
+
+Large diffs may display some files as plain text when they reach the syntax
+highlighting limit. You can still read the changed lines.
 
 The right inspector contains actions that apply to the current state: respond
 to a human gate, recover an eligible attempt, interrupt a node, take over the

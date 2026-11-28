@@ -46,6 +46,11 @@ continue with the [node catalog](/studio/node-types) and
 [structured results and Run context](/studio/structured-results-and-context) to
 pass typed data between graph steps.
 
+Import [skills and MCP servers into a package](/studio/flow-studio-and-packages#import-skills-and-mcp-servers)
+and [attach a reviewed version to your project](/guides/package-sources-and-versions).
+To deliver through a pull request, configure the Flow to
+[wait for CI on the published commit](/guides/flow-waits-and-ci).
+
 ## Inspect quality and economics
 
 - [Compare Runs](/evaluation/run-comparison) across Flows, coding agents,
@@ -75,8 +80,7 @@ approval, access, evidence, or promotion boundaries.
 
 ## Current operating boundary
 
-The current production topology keeps the web control plane and execution
-supervisor on one trusted host with access to the same repositories and
-worktrees; Postgres stores the durable ledger. The architecture has stable host
-identities and ownership epochs for further multi-host work, but the public
-operation guide does not promise transparent mid-session migration.
+The default installation runs Web and its supervisor on one host. When launching
+a Flow from the board, a project member can choose an eligible supervisor. The selected host keeps the Run’s worktree, agent sessions and Git
+operations. To resume interrupted work, restore that host with its original
+state. See [Execution hosts](/operations/execution-hosts).

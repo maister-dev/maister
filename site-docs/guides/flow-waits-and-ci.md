@@ -88,3 +88,16 @@ in `Review`. You can place a hold from the Run or disable autonomous completion
 for the project or platform. The Run and Desk show the engine's decision, and
 the regular [review and promotion controls](/guides/review-and-promote) remain
 available.
+
+## Recover from a pull request conflict
+
+For a Flow with autonomous completion, configure a bounded rework transition
+for the PR wait’s `conflict` outcome. When the provider reports a conflict on
+the exact publication and both the launch policy and current policy permit
+recovery, the Run parks in **Review**. Its original supervisor runs the
+resolver. After a successful merge, the Flow resumes at the declared rework
+node, republishes and collects fresh CI and review evidence for the new commit.
+
+If the resolver fails, the deadline expires or an operator places a hold,
+inspect the reason in the Run history. Manually setting the wait outcome to
+`conflict` leaves the automatic recovery path unavailable.

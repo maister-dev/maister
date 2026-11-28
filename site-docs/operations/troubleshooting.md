@@ -67,6 +67,13 @@ Use the [Git panel](/guides/run-git) to preserve or publish useful work, or to
 reattach a missing worktree before an eligible recovery. Reattach alone does
 not resume execution.
 
+After a confirmed supervisor restart, MAIster can resume an interrupted coding
+or judge step in a top-level project Flow if the agent session can be restored.
+Check the existing Run before starting another attempt. If recovery requires
+your input, use the action on that Run. A Flow in **Failed** may instead offer
+[Restart this node](/product-tour/run-history-and-workbench#retry-a-failed-flow-step)
+with a choice of worktree state.
+
 ## Recover staged work after worktree cleanup
 
 Before archive, drop, or automatic cleanup removes a worktree, MAIster preserves

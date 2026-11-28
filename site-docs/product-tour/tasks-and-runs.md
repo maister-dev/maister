@@ -32,6 +32,10 @@ escalation, or assignment needs a person.
 **Runs and working copies** above the board groups the project's active Runs
 and retained working copies, with a link to each Run.
 
+On a card with a delivered pull request, select its number to open it at the
+provider. The card shows the last known PR state. For branch changes or
+publication, open the Run’s [Git panel](/guides/run-git).
+
 ## Create and configure a task
 
 ![Task editor with delivery settings](/assets/screens/en/task-editor.png)
@@ -94,6 +98,15 @@ for the next attempt; each Run in the history keeps the runner and model it
 used.
 
 ## Launch deliberately
+
+To accept an incoming request for planning, open the task and choose **Add to
+backlog**. This requires permission to edit the task. The Triager’s assessment
+stays on record and execution starts only when separately authorized.
+
+For an immediate board launch in a project with host selection, choose an
+eligible supervisor and inspect the branch preview for that host. The launch
+receipt identifies the supervisor for first dispatch. Scheduled launches use
+the project default.
 
 Selecting a Flow or runner configures the task; it does not start execution.
 Open **Launch**, check the task revision, runner/model and delivery settings, then

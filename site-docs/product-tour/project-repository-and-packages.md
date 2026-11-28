@@ -54,6 +54,12 @@ files. To commit package pins, use the separate
 [configuration save](/guides/save-project-configuration). Existing Runs keep
 their pinned revisions.
 
+Under **Declared dependencies**, compare the version the project requested
+with the version currently available. If an install failed, inspect the stage
+and error. A platform administrator can retry the same request or repair the
+package pin. Other dependencies can finish independently.
+[Package installation and recovery](/guides/package-sources-and-versions)
+
 ## Use a forked local package
 
 Installed revisions stay immutable. To change one:

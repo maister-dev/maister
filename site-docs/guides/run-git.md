@@ -54,6 +54,11 @@ An AI resolver is offered only in **Review**. Update is unavailable for scratch
 Runs, orchestrator children, shared worktrees, launched evaluation participants,
 and already-promoted Runs. Other eligible Git actions remain independent.
 
+Follow the latest update in the Git panel or the Run timeline. Both show the
+target and current phase, plus the before and after commits, resolver session
+and push outcome when available. On a selected supervisor, conflict resolution
+uses the host that owns the worktree.
+
 Review and regenerate affected evidence after changing the branch.
 
 ## 4. Open a pull request and finalize

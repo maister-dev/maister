@@ -14,14 +14,14 @@
 
 Coding agents can write code. MAIster makes the process around them repeatable:
 versioned delivery flows, isolated workspaces, scoped capabilities, human
-decisions, evidence gates, cost controls, and promotion to a pull request or
-local target branch.
+decisions, evidence gates, cost controls, and delivery through a pull request,
+a published branch or a local merge.
 
 ## The 60-second model
 
 ```text
 Task → version-pinned Flow → isolated worktree → ACP coding agent
-     → human input + evidence gates → review → PR or local merge
+     → human input + evidence gates → review → PR, published branch or local merge
 ```
 
 - **One control plane:** see projects, active workspaces, tasks, and requests
@@ -52,9 +52,10 @@ multiple private repositories and coding agents on its own infrastructure.
 
 The web tier and supervisor run as separate Node processes and communicate
 over HTTP and server-sent events. The default deployment runs both on one host.
-The selected-supervisor pilot uses host-owned Git worktrees and private
-endpoints. PostgreSQL stores durable control plane state. External ACP adapters
-remain the agent runtimes. [Deployment guide](docs/deployment.md#selected-supervisor-local-pilot)
+When launching a Flow from the board, a project member can choose a host
+configured for that project. Its supervisor prepares the worktree and handles Git publication
+and checkpoint recovery there. PostgreSQL stores durable control plane state.
+External ACP adapters remain the agent runtimes. [Deployment guide](docs/deployment.md#selected-supervisor-local-pilot)
 
 ## Quick start
 

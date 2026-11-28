@@ -37,6 +37,11 @@ can lag independently. Stream diagnostics distinguish measurable backlog from
 unknown or stale data. A live connection alone does not prove that the displayed
 Run state is current. Check both services' logs when progress stops.
 
+The sidebar shows runner readiness from a diagnostics snapshot. Operations that
+record runner readiness or require fresh launch evidence request fresh host
+diagnostics. If a launch is refused while the sidebar still shows Ready, inspect
+the reason for that launch on the selected supervisor.
+
 ## When the host pauses work
 
 When Web falls behind on acknowledging events, the supervisor can pause event
@@ -83,6 +88,16 @@ recovery action and retain diagnostics as described in
 3. On Web and each supervisor running the addressed MAIster MCP facade, set the same reachable `MAISTER_API_BASE_URL`. The supervisor uses its local facade executable for scoped operations such as asking a human. Keep the original supervisor state and workspace for checkpoint continuation.
 
 Runner evidence for strict tools and MCPs and for read-only execution is checked on the selected supervisor when required. Versioned Flow sessions open private adapter configuration directories. For Claude, the supervisor links the operator-managed `.credentials.json`; the user's settings, memory, plugins and skills are outside that directory. Put required skills in packages and configure execution credentials on every eligible host.
+
+To limit host selection to particular projects, set
+`MAISTER_SELECTED_EXECUTION_HOST_PROJECT_IDS` to a JSON array of project IDs on
+Web. The current limit is one primary supervisor plus at most one additional
+supervisor. Give the additional supervisor its own URL and key.
+Its optional `projectIds` further limits which projects can use it.
+Set `draining` to `true` in that descriptor and reload Web to stop assigning
+new work there. Keep the endpoint configured while it owns existing Runs.
+After an outage, restore connectivity, the original supervisor state and its
+worktrees so Web can reconcile pending operations.
 
 ## Prepare the selected MCP servers
 

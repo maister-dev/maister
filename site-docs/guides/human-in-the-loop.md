@@ -52,6 +52,11 @@ Review the patch and current evidence. Accept the result or request rework with
 specific comments. Rework comments become input to the next attempt and remain
 visible in the history.
 
+At a human or form gate with a retained agent session, you can ask the agent
+to explain its work before deciding. Gate chat uses the selected session.
+The request stays open while you talk. Submit the decision on the gate when
+you are ready to continue.
+
 ## Consensus decision
 
 A consensus request distinguishes complete drafts, partial drafts with retained
@@ -74,7 +79,8 @@ to the timeline and the evidence; the liveness pill shows whether the stream is
 `live` or `reconnecting`. When something goes wrong, you do not have to wait for
 the node to finish.
 
-**Interrupt node** pauses a live agent node mid-turn (agent, judge, and
+In the current step’s header, choose **Stop current step**. If the active step
+has no card, use the same action in the Run summary. It pauses a live agent node mid-turn (agent, judge, and
 orchestrator nodes; command and check nodes run to completion) and turns the Run
 into a human-in-the-loop request with four options:
 

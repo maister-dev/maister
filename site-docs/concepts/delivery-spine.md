@@ -18,7 +18,7 @@ platform records ownership, state, evidence, budgets, decisions, and promotion.
 7. **Human-in-the-loop requests** pause at declared decisions.
 8. **Evidence** reports whether required outputs are present and current.
 9. **Review** applies human judgment to the result.
-10. **Promotion** creates a pull request or performs a controlled local merge.
+10. **Promotion** opens a pull request, publishes a branch or performs a local merge.
 
 ## What is deterministic
 
@@ -39,6 +39,7 @@ pretending the creative work is deterministic.
 
 ## Trust boundary
 
-The web control plane owns product state. The execution supervisor owns agent
-processes and live ACP sessions. Both currently run on one trusted host and use
-the same local repositories and worktrees. Postgres stores the durable ledger.
+Web records Run state, decisions and evidence references in Postgres. The
+assigned supervisor owns the worktree and agent sessions. In a project
+configured for host selection, review, publication and recovery use the
+worktree on that supervisor. See [Execution hosts](/operations/execution-hosts).
